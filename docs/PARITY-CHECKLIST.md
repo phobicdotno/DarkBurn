@@ -26,8 +26,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SHELL-09 Preferences saved to disk, with safe start after a crash
 - [x] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
 - [x] SHELL-11 Theme picker (SolidCraft's bundled themes)
-- [ ] SHELL-12 Windows installer (MSI) and app icon
-- [ ] SHELL-13 Update check
+- [x] SHELL-12 Windows installer (MSI) and app icon
+- [~] SHELL-13 Update check
 
 ---
 
@@ -960,7 +960,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 26. Platform
 
-- [~] PLAT-01 Windows file association and single running copy
+- [x] PLAT-01 Windows file association and single running copy
 - [ ] PLAT-02 Explorer thumbnails for project files
 - [ ] PLAT-03 Recent files in the Windows jump list
 - [x] PLAT-04 Debug log

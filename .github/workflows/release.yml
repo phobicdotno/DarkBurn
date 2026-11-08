@@ -1,0 +1,96 @@
+# Builds the Windows installer (MSI) and the portable zip when a version tag is pushed, and
+# attaches both to a DRAFT release. Nothing is published until a person reviews the draft and
+# presses Publish. Tag format: v<version> where <version> is the workspace version
+# (see docs/RELEASING.md).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out SolidCraft next to this repository
+        shell: pwsh
+        env:
+          SOLIDCRAFT_TOKEN: ${{ secrets.SOLIDCRAFT_TOKEN }}
+          SOLIDCRAFT_REF: ${{ vars.SOLIDCRAFT_REF || 'main' }}
+        run: |
+          if (-not $env:SOLIDCRAFT_TOKEN) { throw 'The SOLIDCRAFT_TOKEN secret is not set.' }
+          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'solidcraft'
+          git clone --depth 1 --branch $env:SOLIDCRAFT_REF "https://x-access-token:$($env:SOLIDCRAFT_TOKEN)@github.com/phobicdotno/solidcraft.git" $dest
+          if ($LASTEXITCODE -ne 0) { throw 'could not clone SolidCraft' }
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: The tag matches the workspace version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $inPkg = $false; $version = $null
+          foreach ($line in Get-Content Cargo.toml) {
+            if ($line -match '^\s*\[') { $inPkg = ($line.Trim() -eq '[workspace.package]'); continue }
+            if ($inPkg -and $line -match '^\s*version\s*=\s*"([^"]+)"') { $version = $Matches[1]; break }
+          }
+          $tag = '${{ github.ref_name }}'
+          if ($tag -ne "v$version") { throw "tag $tag does not match the workspace version v$version" }
+
+      - name: Install cargo-about, WiX and the WiX extensions
+        shell: pwsh
+        run: |
+          cargo install cargo-about --locked --features cli
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Build the installer (MSI)
+        shell: pwsh
+        run: scripts/build-installer.ps1
+
+      - name: Build the portable zip
+        shell: pwsh
+        run: scripts/build-portable.ps1 -SkipBuild
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darkburn-windows
+          path: |
+            dist/*.msi
+            dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach to a draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title "DarkBurn $tag" --notes "Draft. Fill in from CHANGELOG.md before publishing."
+            if ($LASTEXITCODE -ne 0) { throw 'could not create the draft release' }
+          }
+          gh release upload $tag (Get-ChildItem dist -Include *.msi, *.zip -Recurse).FullName --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'could not upload the files' }

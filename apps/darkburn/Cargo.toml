@@ -53,6 +53,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 ron = { workspace = true }
+# The update check (SHELL-13): HTTPS with rustls, certificates from the operating system.
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 raw-window-handle = "0.6"

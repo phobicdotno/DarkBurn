@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DarkBurn MSI (WiX Toolset v5, with the UI and Util extensions). Built by scripts/build-installer.ps1:
+
+    wix build packaging/windows/darkburn.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+      -d Version=0.0.24 -d BinDir=... -d IconPath=... -o dist/darkburn-0.0.24-windows-x64.msi
+
+  One package that installs for the current user by default (no admin rights; into
+  %LocalAppData%\Apps\DarkBurn) or for all users (Program Files\DarkBurn, asks for admin) - the
+  wizard's "Just for me / Anyone who uses this computer" page chooses, and so does the command
+  line: `msiexec /i darkburn.msi` (per user), `msiexec /i darkburn.msi ALLUSERS=1` (all users).
+  `INSTALLFOLDER`-style override on the command line: APPLICATIONFOLDER=D:\Tools\DarkBurn.
+
+  Installs darkburn.exe, darkburn-mcp.exe, the licences, a Start menu shortcut, an optional
+  desktop shortcut, and the file types .dbrn (project), .dbdev (device profile), .dbclb (cut
+  library), .dbart (art library) and .dbhk (hotkeys) with the `open` verb (docs/FILE-ASSOCIATIONS.md).
+
+  Uninstall removes what the installer put there and leaves the user's settings folder
+  (%AppData%\DarkBurn). `msiexec /x darkburn.msi REMOVE_SETTINGS=1` removes that too.
+
+  Wizard shape adapted from SolidCraft's installer (MIT OR Apache-2.0, see ATTRIBUTION.md).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- Never change the UpgradeCode: it is what lets a new MSI replace every earlier install. -->
+  <Package
+      Name="DarkBurn"
+      Manufacturer="DarkBurn contributors"
+      Version="$(var.Version)"
+      UpgradeCode="D7B4E1A2-5C3F-4E8A-9B61-2F0A8C4D7E15"
+      Scope="perUserOrMachine"
+      Compressed="yes"
+      Language="1033">
+    <SummaryInformation Description="DarkBurn laser cutter and engraver" Manufacturer="DarkBurn contributors" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of DarkBurn is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="DarkBurnIcon.ico" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="DarkBurnIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/phobicdotno/DarkBurn" />
+    <Property Id="ARPCOMMENTS" Value="DarkBurn laser cutter and engraver" />
+
+    <!-- Per user by default (WixUI_Advanced reads these). -->
+    <Property Id="ApplicationFolderName" Value="DarkBurn" />
+    <Property Id="WixAppFolder" Value="WixPerUserFolder" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="APPLICATIONFOLDER" Name="DarkBurn" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="AppDataFolder" />
+
+    <!-- The settings folder, removed on uninstall only when asked (REMOVE_SETTINGS=1). -->
+    <SetProperty Id="SETTINGSFOLDER" Value="[AppDataFolder]DarkBurn" Before="CostFinalize" Condition="NOT SETTINGSFOLDER" />
+    <CustomAction Id="RemoveUserSettings" Directory="AppDataFolder" Execute="deferred" Impersonate="yes" Return="ignore"
+        ExeCommand="cmd.exe /c rd /s /q &quot;[SETTINGSFOLDER]&quot;" />
+    <InstallExecuteSequence>
+      <Custom Action="RemoveUserSettings" Before="RemoveFiles"
+          Condition="REMOVE=&quot;ALL&quot; AND REMOVE_SETTINGS=&quot;1&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <Feature Id="Main" Title="DarkBurn" Description="The program, the MCP server and the licences." Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="DarkBurnFiles" />
+      <ComponentGroupRef Id="DarkBurnFileTypes" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+    <Feature Id="DesktopShortcutFeature" Title="Desktop shortcut" Description="A DarkBurn shortcut on the desktop." Level="1" AllowAbsent="yes">
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_Advanced" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="DarkBurn $(var.Version) is installed. Start it from the Start menu." />
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="DarkBurnFiles" Directory="APPLICATIONFOLDER">
+      <Component Id="DarkBurnApp" Guid="3E9C5A71-8B2D-4F6A-A1C4-6D7E0B9F2A38">
+        <File Id="DarkBurnExe" Source="$(var.BinDir)\darkburn.exe" KeyPath="yes" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe" Name="FriendlyAppName" Value="DarkBurn" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\darkburn.exe" Value="[APPLICATIONFOLDER]darkburn.exe" Type="string" />
+      </Component>
+      <Component Id="DarkBurnMcp" Guid="B0A5D2C8-4E17-49F3-8C6B-1A9E3D7F5042">
+        <File Id="DarkBurnMcpExe" Source="$(var.BinDir)\darkburn-mcp.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="DarkBurnLicences" Guid="5F1B8E34-7A90-4D2C-B3E6-9C4A0D8F1B67">
+        <File Id="LicenseMit" Source="$(var.BinDir)\LICENSE-MIT" KeyPath="yes" />
+        <File Id="LicenseApache" Source="$(var.BinDir)\LICENSE-APACHE" />
+        <File Id="Attribution" Source="$(var.BinDir)\ATTRIBUTION.md" />
+        <File Id="ThirdParty" Source="$(var.BinDir)\THIRD-PARTY-LICENSES.txt" />
+        <File Id="ReadmeFile" Source="$(var.BinDir)\README.md" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The install folder, recorded so a later install or a script can find it. -->
+    <ComponentGroup Id="DarkBurnFileTypes" Directory="APPLICATIONFOLDER">
+      <Component Id="FileTypes" Guid="8C2F6D19-3B54-4A7E-95D0-E1A7B4C93F26">
+        <RegistryValue Root="HKMU" Key="Software\DarkBurn" Name="InstallDir" Value="[APPLICATIONFOLDER]" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKMU" Key="Software\DarkBurn" Name="Version" Value="$(var.Version)" Type="string" />
+
+        <!-- Each type: ProgId, description, icon, and `open` = darkburn.exe "%1" (single-instance
+             hand-over is the app's job, docs/FILE-ASSOCIATIONS.md). Registered under
+             Software\Classes of HKCU for a per-user install and HKLM for all users. -->
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbrn" Value="DarkBurn.Project" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbrn" Name="Content Type" Value="application/x-darkburn-project" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Project" Value="DarkBurn project" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Project\DefaultIcon" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Project\shell\open" Name="FriendlyAppName" Value="DarkBurn" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Project\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbdev" Value="DarkBurn.DeviceProfile" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.DeviceProfile" Value="DarkBurn device profile" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.DeviceProfile\DefaultIcon" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.DeviceProfile\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbclb" Value="DarkBurn.CutLibrary" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.CutLibrary" Value="DarkBurn cut library" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.CutLibrary\DefaultIcon" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.CutLibrary\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbart" Value="DarkBurn.ArtLibrary" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.ArtLibrary" Value="DarkBurn art library" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.ArtLibrary\DefaultIcon" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.ArtLibrary\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+
+        <RegistryValue Root="HKMU" Key="Software\Classes\.dbhk" Value="DarkBurn.Hotkeys" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Hotkeys" Value="DarkBurn hotkeys" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Hotkeys\DefaultIcon" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot;,0" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\DarkBurn.Hotkeys\shell\open\command" Value="&quot;[APPLICATIONFOLDER]darkburn.exe&quot; &quot;%1&quot;" Type="string" />
+
+        <!-- "Open with" list entries. -->
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\SupportedTypes" Name=".dbrn" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\SupportedTypes" Name=".dbdev" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\SupportedTypes" Name=".dbclb" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\SupportedTypes" Name=".dbart" Value="" Type="string" />
+        <RegistryValue Root="HKMU" Key="Software\Classes\Applications\darkburn.exe\SupportedTypes" Name=".dbhk" Value="" Type="string" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Shortcuts. Each component's key path is a registry value under the install's own hive. -->
+  <Fragment>
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="2A7D9F40-6E31-4C58-8B0D-F4C1A3E65D92">
+      <Shortcut Id="StartMenuLink" Name="DarkBurn" Description="DarkBurn laser cutter and engraver"
+          Target="[APPLICATIONFOLDER]darkburn.exe" WorkingDirectory="APPLICATIONFOLDER" Icon="DarkBurnIcon.ico" IconIndex="0" />
+      <RegistryValue Root="HKCU" Key="Software\DarkBurn" Name="StartMenuShortcut" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+    <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="7F3E1C85-D204-4B9A-A6E7-0B58C9D1F340">
+      <Shortcut Id="DesktopLink" Name="DarkBurn" Description="DarkBurn laser cutter and engraver"
+          Target="[APPLICATIONFOLDER]darkburn.exe" WorkingDirectory="APPLICATIONFOLDER" Icon="DarkBurnIcon.ico" IconIndex="0" />
+      <RegistryValue Root="HKCU" Key="Software\DarkBurn" Name="DesktopShortcut" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>

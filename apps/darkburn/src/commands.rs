@@ -227,6 +227,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("help.support_data", "Generate Support Data", "", ""),
     c("help.camera", "Camera Selection Help", "", ""),
     c("help.updates", "Check for Updates", "", ""),
+    a("help.check_updates", "Check for Updates Now", ""),
     c("help.debug_log", "Enable Debug Log", "", ""),
     // Selection and shapes, with arguments
     a(
@@ -555,6 +556,7 @@ pub fn works(id: &str) -> bool {
             | "help.support_data"
             | "help.camera"
             | "help.updates"
+            | "help.check_updates"
             | "help.debug_log"
             | "file.hotkeys"
     ) || crate::machine_ui::handles(id)
@@ -759,7 +761,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "help.docs" => &["HELP-03"],
         "help.support_data" | "support.write" => &["HELP-04", "PLAT-05"],
         "help.camera" => &["HELP-05"],
-        "help.updates" => &["HELP-06"],
+        "help.updates" | "help.check_updates" => &["HELP-06", "SHELL-13"],
         "help.debug_log" => &["HELP-07", "PLAT-04"],
         "file.hotkeys" | "hotkeys.set" | "hotkeys.reset" | "hotkeys.list" | "hotkeys.export" | "hotkeys.import" => &["FILE-19", "AUX-08", "KEY-08"],
         _ if id.starts_with("library.") => &["LIB-01", "LIB-05", "LIB-07", "LIB-08"],

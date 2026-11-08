@@ -523,7 +523,7 @@ pub enum Forbidden {
     FifoFrame(String),
     /// Laser-enabling data. This crate cannot encode it.
     LaserData(String),
-    /// Control writes other than [1], [2], [3].
+    /// Control writes other than the values 1, 2 and 3.
     FifoControl,
     /// Address not in the write allow-list.
     NotInAllowList(u32),

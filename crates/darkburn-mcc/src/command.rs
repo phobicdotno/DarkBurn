@@ -290,7 +290,9 @@ pub fn classify_write(addr: u32, words: &[u32], cfg: &SafetyConfig, do_word: Opt
 }
 
 /// A validated write to the card. Cannot be constructed for a forbidden register or vector.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Two writes are equal when register and words are equal; the constructor name is a label.
+#[derive(Clone, Debug)]
 pub struct SafeWrite {
     register: u32,
     words: Vec<u32>,
@@ -298,6 +300,14 @@ pub struct SafeWrite {
     policy: Policy,
     needs_homed: bool,
 }
+
+impl PartialEq for SafeWrite {
+    fn eq(&self, other: &SafeWrite) -> bool {
+        self.register == other.register && self.words == other.words
+    }
+}
+
+impl Eq for SafeWrite {}
 
 impl SafeWrite {
     /// Classify a raw write and wrap it. Laser data is refused here too: this crate cannot

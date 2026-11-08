@@ -1160,7 +1160,7 @@ mod tests {
     fn material_test_through_commands_with_undo_and_presets() {
         let mut a = app();
         let r = run(&mut a, "job.material_test", json!({ "columns": 3, "rows": 2, "x_min": 100, "x_max": 300, "y_min": 20, "y_max": 60 })).unwrap();
-        assert_eq!(r["shapes"].as_array().unwrap().len(), 6 + 5);
+        assert_eq!(r["shapes"].as_array().unwrap().len(), 6 + 5 + 2);
         assert_eq!(a.editor.doc.layer(0).main().speed, 100.0);
         assert_eq!(a.editor.doc.layer(2).main().speed, 300.0);
         run(&mut a, "edit.undo", Value::Null).unwrap();

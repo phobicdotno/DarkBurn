@@ -173,7 +173,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-11 Interval test
 - [x] LT-12 Material test
 - [x] LT-13 Centre finder
-- [ ] LT-14 Feeder setup
+- [x] LT-14 Feeder setup
 - [x] LT-15 Cylinder correction
 - [x] LT-16 Get controller info
 - [ ] LT-17 Repeat marking (galvo)
@@ -336,11 +336,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
-- [~] VTP-01 Start, end, current, advance by
-- [~] VTP-02 Previous and next
-- [~] VTP-03 Auto-advance
-- [~] VTP-04 Test, reset, bake
-- [~] VTP-05 CSV file browse and clear
+- [x] VTP-01 Start, end, current, advance by
+- [x] VTP-02 Previous and next
+- [x] VTP-03 Auto-advance
+- [x] VTP-04 Test, reset, bake
+- [x] VTP-05 CSV file browse and clear
 
 ### Shape Properties
 - [x] SP-01 Property grid for the selected shape
@@ -368,7 +368,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PANEL-01 Default right-side tab groups as in LightBurn
 - [x] PANEL-02 Move, Art Library and File List hidden by default
 - [x] PANEL-03 Compact layout on small screens
-- [~] PANEL-04 Panel layout saved per device
+- [x] PANEL-04 Panel layout saved per device
 
 ---
 
@@ -515,7 +515,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LAYER-07 Default layer settings per device: make default, make default for all, reset
 - [x] LAYER-08 Load default layer settings on new project option
 - [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
-- [~] LAYER-10 Layers linked to material library entries
+- [x] LAYER-10 Layers linked to material library entries
 
 ### Modes
 - [x] MODE-01 Line
@@ -832,7 +832,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
 - [x] ROT-05 Mirror output
 - [~] ROT-06 Test rotation
-- [ ] ROT-07 Read settings from controller (Ruida)
+- [x] ROT-07 Read settings from controller (Ruida)
 - [x] ROT-08 Rotary toggle on the main window
 
 ## 19. Print and cut
@@ -862,7 +862,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-04 Feeder setup
 - [x] OTHER-05 Cylinder correction, including concave
 - [x] OTHER-06 Pre-job checklist editor
-- [ ] OTHER-07 Project notes dialog shown on open
+- [x] OTHER-07 Project notes dialog shown on open
 - [x] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
@@ -954,7 +954,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] I18N-01 Translation system
 - [x] I18N-02 English
-- [~] I18N-03 Norwegian
+- [x] I18N-03 Norwegian
 - [ ] I18N-04 The other 22 LightBurn languages
 - [ ] I18N-05 Machine error messages translated
 

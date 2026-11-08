@@ -295,10 +295,7 @@ pub fn frame_test(app: &mut crate::shell::DarkBurn) -> Result<(), String> {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
     let points = frame_points(app)?;
-    app.machine
-        .handle
-        .frame_outline(points, crate::machine_api::FrameSpec { feed: 3000.0, laser_percent: None })
-        .map_err(|e| e.to_string())
+    app.machine.handle.frame_outline(points, crate::machine_api::FrameSpec { feed: 3000.0, laser_percent: None }).map_err(|e| e.to_string())
 }
 
 // ----- Presets (MT-05) ---------------------------------------------------------------------------

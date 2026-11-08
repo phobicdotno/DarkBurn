@@ -229,6 +229,7 @@
   "cmd.tabs.auto": "Tappposisjoner for lag",
   "cmd.tabs.clear": "Fjern tapper",
   "cmd.tabs.remove": "Fjern tapp",
+  "cmd.text.edit_dialog": "Rediger tekstformer",
   "cmd.tools.adjust_image": "Juster bilde",
   "cmd.tools.boolean_assistant": "Boolsk assistent",
   "cmd.tools.cut_shapes": "Kutt former",

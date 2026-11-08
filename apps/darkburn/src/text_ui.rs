@@ -1693,4 +1693,55 @@ mod tests {
         let (len, err, matrix) = qr_preview(q);
         assert!(len > 10 && err.is_none() && !matrix.is_empty());
     }
+
+    fn frame(ctx: &Context, app: &mut DarkBurn, events: Vec<egui::Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn typing_on_the_canvas_across_frames_keeps_the_focus() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.fonts.default_family = "IBM Plex Sans".into();
+        app.set_tool(Tool::Text);
+        frame(&ctx, &mut app, vec![]);
+        place_text(&mut app, Point::new(50.0, 50.0));
+        for ch in ["H", "e", "l", "l", "o"] {
+            frame(&ctx, &mut app, vec![egui::Event::Text(ch.into())]);
+        }
+        let id = app.text.typing.as_ref().expect("still typing after several frames").id;
+        assert_eq!(text_cmds::find_text(&app.editor.doc, id).unwrap().text, "Hello");
+        frame(&ctx, &mut app, vec![key(Key::Enter, false), egui::Event::Text("x".into())]);
+        assert_eq!(text_cmds::find_text(&app.editor.doc, id).unwrap().text, "Hello\nx");
+        assert!(app.editor.doc.get(id).unwrap().bbox().height() > 10.0);
+        frame(&ctx, &mut app, vec![key(Key::Escape, false)]);
+        assert!(app.text.typing.is_none());
+        assert_eq!(app.tool, Tool::Text, "the text tool stays on");
+        assert_eq!(app.editor.history.len(), 1, "typing a text is one undo step");
+        // The window code runs with text selected: toolbar, properties, dialogs, the panel.
+        app.editor.selection.set([id]);
+        app.prefs.ribbon_tab = "text".into();
+        app.text.open_edit_dialog(&app.editor);
+        app.text.qr.open_new();
+        for _ in 0..3 {
+            frame(&ctx, &mut app, vec![]);
+        }
+        assert!(app.text.edit.open && app.text.qr.open);
+    }
+
+    #[test]
+    fn double_click_with_the_select_tool_starts_editing() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let r = crate::shape_ops::tests::run(&mut app, "text.add", json!({ "text": "Edit me", "x": 30, "y": 30, "font": "IBM Plex Sans" })).unwrap();
+        let id = ShapeId(r["id"].as_u64().unwrap());
+        frame(&ctx, &mut app, vec![]);
+        assert!(on_double_click(&mut app, Some(Point::new(35.0, 33.0)), 1.0));
+        assert_eq!(app.tool, Tool::Text);
+        assert_eq!(app.text.typing.as_ref().map(|t| t.id), Some(id));
+        finish_typing(&mut app);
+        assert!(app.editor.doc.get(id).is_some(), "an unchanged text stays and leaves no undo step");
+    }
 }

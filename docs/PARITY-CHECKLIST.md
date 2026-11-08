@@ -96,10 +96,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-05 Polygon
 - [~] TOOLS-06 Edit nodes
 - [~] TOOLS-07 Add tabs
-- [ ] TOOLS-08 Edit text
+- [~] TOOLS-08 Edit text
 - [ ] TOOLS-09 Position laser
 - [~] TOOLS-10 Measure
-- [ ] TOOLS-11 Create QR code
+- [~] TOOLS-11 Create QR code
 - [~] TOOLS-12 Offset shapes
 - [x] TOOLS-13 Weld shapes
 - [x] TOOLS-14 Boolean union
@@ -109,7 +109,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-18 Cut shapes
 - [ ] TOOLS-19 Adjust image
 - [ ] TOOLS-20 Trace image
-- [ ] TOOLS-21 Apply path to text
+- [x] TOOLS-21 Apply path to text
 - [ ] TOOLS-22 Apply mask to image
 - [~] TOOLS-23 Resize slots in selection
 - [x] TOOLS-24 Select shapes smaller than selected
@@ -222,10 +222,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-13 Numeric edits: 9-point anchor picker
 - [x] TB-14 Numeric edits: rotate field, mm or inch toggle
 - [x] TB-15 Numeric fields accept equations and unit suffixes
-- [ ] TB-16 Text options: font picker with recent and favourite fonts and live preview
-- [ ] TB-17 Text options: height, bold, italic, upper case, distort, welded
-- [ ] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
-- [ ] TB-19 Text options: variable text type, offset
+- [~] TB-16 Text options: font picker with recent and favourite fonts and live preview
+- [~] TB-17 Text options: height, bold, italic, upper case, distort, welded
+- [~] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
+- [~] TB-19 Text options: variable text type, offset
 - [x] TB-20 Cut palette: 30 colour layers and 2 tool layers
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
@@ -336,11 +336,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
-- [ ] VTP-01 Start, end, current, advance by
-- [ ] VTP-02 Previous and next
-- [ ] VTP-03 Auto-advance
-- [ ] VTP-04 Test, reset, bake
-- [ ] VTP-05 CSV file browse and clear
+- [~] VTP-01 Start, end, current, advance by
+- [~] VTP-02 Previous and next
+- [~] VTP-03 Auto-advance
+- [~] VTP-04 Test, reset, bake
+- [~] VTP-05 CSV file browse and clear
 
 ### Shape Properties
 - [x] SP-01 Property grid for the selected shape
@@ -419,20 +419,20 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] DRAW-05 Remove rounded corners
 - [x] DRAW-06 Ellipse
 - [x] DRAW-07 Polygon with N sides
-- [ ] DRAW-08 Text: multi-line, right-to-left, CJK input
-- [ ] DRAW-09 Text: double-click to edit, edit several text objects at once
-- [ ] DRAW-10 Text: edit text shapes dialog with zoom and pan
-- [ ] DRAW-11 Text on a path, with distort option
-- [ ] DRAW-12 Text: auto-weld, upper case, bold, italic
-- [ ] DRAW-13 Text: single-line SHX fonts
-- [ ] DRAW-14 Text: font favourites and recent fonts, default font and size
-- [ ] DRAW-15 Text: backup outline when a font is missing
-- [ ] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
-- [ ] DRAW-17 QR code error correction level, size limit, editable later
+- [~] DRAW-08 Text: multi-line, right-to-left, CJK input
+- [~] DRAW-09 Text: double-click to edit, edit several text objects at once
+- [~] DRAW-10 Text: edit text shapes dialog with zoom and pan
+- [x] DRAW-11 Text on a path, with distort option
+- [x] DRAW-12 Text: auto-weld, upper case, bold, italic
+- [x] DRAW-13 Text: single-line SHX fonts
+- [~] DRAW-14 Text: font favourites and recent fonts, default font and size
+- [x] DRAW-15 Text: backup outline when a font is missing
+- [x] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
+- [x] DRAW-17 QR code error correction level, size limit, editable later
 - [~] DRAW-18 Measure: length, arc angle and length, area, width and height
 - [~] DRAW-19 Measure: unit switch, remembers last position, axis snap
 - [ ] DRAW-20 Position laser: click to move the head
-- [ ] DRAW-21 Barcode *(later)*
+- [x] DRAW-21 Barcode *(later)*
 - [ ] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
@@ -452,7 +452,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 8. Shape operations
 
-- [~] SHAPE-01 Convert to path, including variable text
+- [x] SHAPE-01 Convert to path, including variable text
 - [ ] SHAPE-02 Convert to bitmap with DPI dialog
 - [x] SHAPE-03 Close path
 - [~] SHAPE-04 Close path with tolerance dialog
@@ -479,7 +479,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] SHAPE-25 Mirror across line
 - [x] SHAPE-26 Make same width and same height about the centre
 - [x] SHAPE-27 Rubber-band outline
-- [ ] SHAPE-28 Apply path to text
+- [x] SHAPE-28 Apply path to text
 - [ ] SHAPE-29 Apply mask to image, flatten and remove crop
 - [ ] SHAPE-30 Lock and unlock shapes
 
@@ -806,7 +806,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] AUX-07 Scanning offset files
 - [ ] AUX-08 Hotkey files
 - [ ] AUX-09 Galvo lens correction files
-- [ ] AUX-10 CSV and text files for variable text
+- [x] AUX-10 CSV and text files for variable text
 - [ ] AUX-11 SHX fonts
 - [ ] AUX-12 Import LightBurn library, art, device and hotkey files *(decide)*
 
@@ -846,13 +846,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 20. Variable text
 
-- [ ] VT-01 Date and time with format codes
-- [ ] VT-02 Serial numbers
-- [ ] VT-03 CSV merge with quoted and multi-line fields
-- [ ] VT-04 Cut setting values in text
-- [ ] VT-05 Auto-advance after a job
-- [ ] VT-06 QR codes follow the current index
-- [ ] VT-07 Works inside virtual arrays
+- [x] VT-01 Date and time with format codes
+- [x] VT-02 Serial numbers
+- [x] VT-03 CSV merge with quoted and multi-line fields
+- [x] VT-04 Cut setting values in text
+- [x] VT-05 Auto-advance after a job
+- [x] VT-06 QR codes follow the current index
+- [x] VT-07 Works inside virtual arrays
 
 ## 21. Other tools
 

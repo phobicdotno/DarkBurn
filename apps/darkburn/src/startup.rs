@@ -78,3 +78,30 @@ pub fn begin(dir: &Path) -> u32 {
 pub fn started(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(MARKER));
 }
+
+/// The file whose presence next to the program makes it portable (the zip build has one).
+pub const PORTABLE_MARKER: &str = "portable.txt";
+
+/// The settings folder of a portable copy: `settings` beside the program, when `exe_dir` holds
+/// the marker file. `None` for an installed copy (settings then live in the user's profile).
+pub fn portable_dir(exe_dir: &Path) -> Option<PathBuf> {
+    exe_dir.join(PORTABLE_MARKER).is_file().then(|| exe_dir.join("settings"))
+}
+
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+
+    #[test]
+    fn marker_beside_the_program_moves_settings_beside_it() {
+        let dir = std::env::temp_dir().join(format!("darkburn-portable-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(portable_dir(&dir), None, "no marker: settings stay in the profile");
+        std::fs::create_dir_all(dir.join(PORTABLE_MARKER)).unwrap();
+        assert_eq!(portable_dir(&dir), None, "a folder with that name is not the marker");
+        std::fs::remove_dir(dir.join(PORTABLE_MARKER)).unwrap();
+        std::fs::write(dir.join(PORTABLE_MARKER), "portable").unwrap();
+        assert_eq!(portable_dir(&dir), Some(dir.join("settings")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

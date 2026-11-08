@@ -104,6 +104,7 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
         "library" => return crate::library::show(ui, app),
         "art_library" => return crate::art_library::show(ui, app),
         "shape_properties" => return crate::shape_props::show(ui, app),
+        "variable_text" => return crate::text_ui::variable_panel(ui, app),
         "laser" | "move" | "console" | "file_list" => {
             crate::laser_panel::show_panel(ui, id, app);
             return;

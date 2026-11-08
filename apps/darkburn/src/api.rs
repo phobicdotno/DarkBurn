@@ -40,6 +40,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = with_args(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::text_cmds::execute(app, id, args) {
+        return result;
+    }
     if let Some(result) = crate::shape_ops::execute(app, id, args) {
         return result;
     }
@@ -395,7 +398,7 @@ mod tests {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
         assert!(run(&mut app, "tools.position_laser", Value::Null).unwrap_err().contains("machine"));
-        assert!(run(&mut app, "tools.qr", Value::Null).unwrap_err().contains("not implemented"));
+        assert!(run(&mut app, "tools.resize_slots", Value::Null).is_err());
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));
         assert!(run(&mut app, "layer.set_param", json!({ "layer": 99, "field": "speed", "value": 1 })).is_err());

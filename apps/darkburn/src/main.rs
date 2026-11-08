@@ -71,8 +71,14 @@ mod shape_props;
 mod shape_ui;
 mod shell;
 mod startup;
+mod text_cmds;
+mod text_render;
+#[cfg(test)]
+mod text_tests;
+mod text_ui;
 mod thumbnail;
 mod tools;
+mod updates;
 mod view;
 mod vision_cmds;
 mod vision_state;
@@ -86,9 +92,11 @@ use shell::DarkBurn;
 
 const APP_NAME: &str = "DarkBurn";
 
-/// The settings folder: `%APPDATA%\DarkBurn\data` on Windows.
+/// The settings folder: `settings` beside the program for a portable copy (a `portable.txt`
+/// next to it), else `%APPDATA%\DarkBurn\data` on Windows.
 fn settings_dir() -> Option<std::path::PathBuf> {
-    eframe::storage_dir(APP_NAME)
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+    exe_dir.and_then(|d| startup::portable_dir(&d)).or_else(|| eframe::storage_dir(APP_NAME))
 }
 
 /// Windows: put the restored window back inside the monitor's work area if it is out of reach.
@@ -197,6 +205,7 @@ impl eframe::App for App {
         }
         self.app.apply_theme(ctx);
         self.app.shortcuts(ctx);
+        text_ui::tick(&mut self.app, ctx);
         if self.app.safe_mode {
             return;
         }

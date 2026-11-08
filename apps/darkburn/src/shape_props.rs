@@ -280,18 +280,6 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             },
         );
-        g.text(
-            ui,
-            "Font",
-            |s| text_of(s).map(|t| t.font.clone()),
-            |s, v| {
-                if let Some(t) = text_mut(s)
-                    && !v.trim().is_empty()
-                {
-                    t.font = v.to_string();
-                }
-            },
-        );
         g.number(
             ui,
             "Height",
@@ -387,6 +375,13 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             },
         );
+    }
+    if has(&g, |k| matches!(k, ShapeKind::Text(_))) {
+        crate::text_ui::properties_extra(ui, g.app);
+    }
+    if has(&g, |k| matches!(k, ShapeKind::Code(_))) {
+        ui_kit::section_heading(ui, "Code");
+        crate::text_ui::code_properties(ui, g.app);
     }
     if has(&g, |k| matches!(k, ShapeKind::Image(_))) {
         ui_kit::section_heading(ui, "Image");

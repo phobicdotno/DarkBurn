@@ -92,6 +92,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.nodes", "Edit Nodes", "Ctrl+`", "db_node_edit"),
     c("tools.tabs", "Add Tabs", "Ctrl+Tab", "db_tabs"),
     c("tools.text", "Edit Text", "Ctrl+T", "text"),
+    c("text.edit_dialog", "Edit Text Shapes", "", ""),
     c("tools.position_laser", "Position Laser", "Alt+L", "db_position_laser"),
     c("tools.measure", "Measure", "Alt+M", "measure"),
     c("tools.qr", "Create QR Code", "", "db_qr"),
@@ -226,6 +227,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("help.support_data", "Generate Support Data", "", ""),
     c("help.camera", "Camera Selection Help", "", ""),
     c("help.updates", "Check for Updates", "", ""),
+    a("help.check_updates", "Check for Updates Now", ""),
     c("help.debug_log", "Enable Debug Log", "", ""),
     // Selection and shapes, with arguments
     a(
@@ -554,6 +556,7 @@ pub fn works(id: &str) -> bool {
             | "help.support_data"
             | "help.camera"
             | "help.updates"
+            | "help.check_updates"
             | "help.debug_log"
             | "file.hotkeys"
     ) || crate::machine_ui::handles(id)
@@ -565,6 +568,7 @@ pub fn works(id: &str) -> bool {
         || crate::job_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
+        || crate::text_cmds::works(id)
         || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
@@ -758,7 +762,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "help.docs" => &["HELP-03"],
         "help.support_data" | "support.write" => &["HELP-04", "PLAT-05"],
         "help.camera" => &["HELP-05"],
-        "help.updates" => &["HELP-06"],
+        "help.updates" | "help.check_updates" => &["HELP-06", "SHELL-13"],
         "help.debug_log" => &["HELP-07", "PLAT-04"],
         "file.hotkeys" | "hotkeys.set" | "hotkeys.reset" | "hotkeys.list" | "hotkeys.export" | "hotkeys.import" => &["FILE-19", "AUX-08", "KEY-08"],
         _ if id.starts_with("library.") => &["LIB-01", "LIB-05", "LIB-07", "LIB-08"],
@@ -768,6 +772,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         _ => {
             let jobs = crate::job_cmds::checklist(id);
             let jobs = if jobs.is_empty() { crate::vision_cmds::checklist(id) } else { jobs };
+            let jobs = if jobs.is_empty() { crate::text_cmds::checklist(id) } else { jobs };
             if jobs.is_empty() { crate::shape_ops::checklist(id) } else { jobs }
         }
     }
@@ -801,6 +806,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::machine_ext::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
+        v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
                 && let Some(args) = crate::shape_ops::args_schema(c.id)
@@ -1023,6 +1029,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.nodes"),
             C("tools.tabs"),
             C("tools.text"),
+            C("text.edit_dialog"),
             C("tools.position_laser"),
             C("tools.measure"),
             C("tools.qr"),

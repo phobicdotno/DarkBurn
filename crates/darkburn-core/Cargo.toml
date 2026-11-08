@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 darkburn-geom = { workspace = true }
+darkburn-text = { path = "../darkburn-text" }
 kurbo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

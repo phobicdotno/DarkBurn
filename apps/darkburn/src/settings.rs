@@ -215,9 +215,14 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
         prefs.opts.speed_per_min = i == 1;
     });
     ui.add_space(t.space_12);
+    crate::text_ui::settings_section(ui, prefs);
+    ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.behaviour", "Behaviour"));
     ui_kit::checkbox(ui, &tr("settings.beginner", "Beginner mode (hides advanced cut settings)"), &mut prefs.cut_beginner);
     ui_kit::checkbox(ui, &tr("settings.check_updates", "Check for updates"), &mut prefs.opts.check_updates);
+    ui_kit::row(ui, &tr("settings.update_url", "Update address"), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut prefs.opts.update_url).hint_text(crate::updates::DEFAULT_URL).desired_width(320.0));
+    });
     ui_kit::checkbox(ui, &tr("settings.running_copy", "Open files in the running copy"), &mut prefs.files.single_instance);
     ui_kit::checkbox(ui, &tr("settings.sound_error", "Play a sound on errors"), &mut prefs.opts.sound_error);
     ui_kit::checkbox(ui, &tr("settings.sound_done", "Play a sound when a job finishes"), &mut prefs.opts.sound_done);

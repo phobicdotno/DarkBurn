@@ -78,6 +78,8 @@ pub struct DarkBurn {
     pub shape_ui: crate::shape_ui::ShapeUi,
     /// Opening, importing and exporting other file types (file_io.rs).
     pub fio: crate::file_io::FileIo,
+    /// The text tool, text dialogs and the Variable Text panel (text_ui.rs).
+    pub text: crate::text_ui::TextUi,
     /// Camera, rotary, cylinder, print and cut and the test tools (vision_cmds.rs).
     pub vision: crate::vision_cmds::Vision,
 }
@@ -116,6 +118,7 @@ impl DarkBurn {
             images: Default::default(),
             shape_ui: Default::default(),
             fio: Default::default(),
+            text: Default::default(),
             vision: Default::default(),
         }
     }
@@ -130,6 +133,9 @@ impl DarkBurn {
     pub fn can_run(&self, id: &str) -> bool {
         let sel = self.editor.selection.len();
         if let Some(can) = crate::shape_ops::can_run(self, id) {
+            return can;
+        }
+        if let Some(can) = crate::text_cmds::can_run(self, id) {
             return can;
         }
         match id {
@@ -199,6 +205,7 @@ impl DarkBurn {
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)
+            || crate::text_cmds::run(self, ctx, id)
             || crate::vision_ui::run(self, ctx, id)
             || crate::extras::run(self, ctx, id)
         {
@@ -315,6 +322,7 @@ impl DarkBurn {
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
+        crate::text_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
         crate::vision_ui::frame(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {

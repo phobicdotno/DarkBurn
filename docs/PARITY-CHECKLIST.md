@@ -26,8 +26,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SHELL-09 Preferences saved to disk, with safe start after a crash
 - [x] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
 - [x] SHELL-11 Theme picker (SolidCraft's bundled themes)
-- [ ] SHELL-12 Windows installer (MSI) and app icon
-- [ ] SHELL-13 Update check
+- [x] SHELL-12 Windows installer (MSI) and app icon
+- [~] SHELL-13 Update check
 
 ---
 
@@ -46,7 +46,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-10 Export
 - [~] FILE-11 Print, black only
 - [~] FILE-12 Print, keep colours
-- [ ] FILE-13 Save processed bitmap
+- [~] FILE-13 Save processed bitmap
 - [x] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
 - [x] FILE-16 Export preferences
@@ -67,7 +67,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-09 Paste in place
 - [x] EDIT-10 Delete
 - [x] EDIT-11 Convert to path
-- [ ] EDIT-12 Convert to bitmap
+- [x] EDIT-12 Convert to bitmap
 - [x] EDIT-13 Close path
 - [~] EDIT-14 Close selected paths with tolerance
 - [~] EDIT-15 Auto-join selected shapes
@@ -77,13 +77,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-19 Select open shapes set to fill
 - [x] EDIT-20 Select all shapes in current layer
 - [x] EDIT-21 Select contained shapes
-- [ ] EDIT-22 Image options: replace image
-- [ ] EDIT-23 Image options: replace image to fit
-- [ ] EDIT-24 Image options: refresh image
-- [ ] EDIT-25 Image options: apply crop path to image
-- [ ] EDIT-26 Image options: flatten image crop
-- [ ] EDIT-27 Image options: remove crop
-- [ ] EDIT-28 Image options: remove backup path
+- [~] EDIT-22 Image options: replace image
+- [~] EDIT-23 Image options: replace image to fit
+- [x] EDIT-24 Image options: refresh image
+- [x] EDIT-25 Image options: apply crop path to image
+- [x] EDIT-26 Image options: flatten image crop
+- [x] EDIT-27 Image options: remove crop
+- [x] EDIT-28 Image options: remove backup path
 - [~] EDIT-29 Settings
 - [x] EDIT-30 Device settings
 - [x] EDIT-31 Machine settings
@@ -96,10 +96,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-05 Polygon
 - [~] TOOLS-06 Edit nodes
 - [~] TOOLS-07 Add tabs
-- [ ] TOOLS-08 Edit text
+- [~] TOOLS-08 Edit text
 - [ ] TOOLS-09 Position laser
 - [~] TOOLS-10 Measure
-- [ ] TOOLS-11 Create QR code
+- [~] TOOLS-11 Create QR code
 - [~] TOOLS-12 Offset shapes
 - [x] TOOLS-13 Weld shapes
 - [x] TOOLS-14 Boolean union
@@ -107,10 +107,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-16 Boolean intersection
 - [~] TOOLS-17 Boolean assistant
 - [x] TOOLS-18 Cut shapes
-- [ ] TOOLS-19 Adjust image
-- [ ] TOOLS-20 Trace image
-- [ ] TOOLS-21 Apply path to text
-- [ ] TOOLS-22 Apply mask to image
+- [x] TOOLS-19 Adjust image
+- [x] TOOLS-20 Trace image
+- [x] TOOLS-21 Apply path to text
+- [x] TOOLS-22 Apply mask to image
 - [~] TOOLS-23 Resize slots in selection
 - [x] TOOLS-24 Select shapes smaller than selected
 - [~] TOOLS-25 Warp selection (4 points)
@@ -222,10 +222,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-13 Numeric edits: 9-point anchor picker
 - [x] TB-14 Numeric edits: rotate field, mm or inch toggle
 - [x] TB-15 Numeric fields accept equations and unit suffixes
-- [ ] TB-16 Text options: font picker with recent and favourite fonts and live preview
-- [ ] TB-17 Text options: height, bold, italic, upper case, distort, welded
-- [ ] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
-- [ ] TB-19 Text options: variable text type, offset
+- [~] TB-16 Text options: font picker with recent and favourite fonts and live preview
+- [~] TB-17 Text options: height, bold, italic, upper case, distort, welded
+- [~] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
+- [~] TB-19 Text options: variable text type, offset
 - [x] TB-20 Cut palette: 30 colour layers and 2 tool layers
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
@@ -336,11 +336,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
-- [ ] VTP-01 Start, end, current, advance by
-- [ ] VTP-02 Previous and next
-- [ ] VTP-03 Auto-advance
-- [ ] VTP-04 Test, reset, bake
-- [ ] VTP-05 CSV file browse and clear
+- [~] VTP-01 Start, end, current, advance by
+- [~] VTP-02 Previous and next
+- [~] VTP-03 Auto-advance
+- [~] VTP-04 Test, reset, bake
+- [~] VTP-05 CSV file browse and clear
 
 ### Shape Properties
 - [x] SP-01 Property grid for the selected shape
@@ -419,20 +419,20 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] DRAW-05 Remove rounded corners
 - [x] DRAW-06 Ellipse
 - [x] DRAW-07 Polygon with N sides
-- [ ] DRAW-08 Text: multi-line, right-to-left, CJK input
-- [ ] DRAW-09 Text: double-click to edit, edit several text objects at once
-- [ ] DRAW-10 Text: edit text shapes dialog with zoom and pan
-- [ ] DRAW-11 Text on a path, with distort option
-- [ ] DRAW-12 Text: auto-weld, upper case, bold, italic
-- [ ] DRAW-13 Text: single-line SHX fonts
-- [ ] DRAW-14 Text: font favourites and recent fonts, default font and size
-- [ ] DRAW-15 Text: backup outline when a font is missing
-- [ ] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
-- [ ] DRAW-17 QR code error correction level, size limit, editable later
+- [~] DRAW-08 Text: multi-line, right-to-left, CJK input
+- [~] DRAW-09 Text: double-click to edit, edit several text objects at once
+- [~] DRAW-10 Text: edit text shapes dialog with zoom and pan
+- [x] DRAW-11 Text on a path, with distort option
+- [x] DRAW-12 Text: auto-weld, upper case, bold, italic
+- [x] DRAW-13 Text: single-line SHX fonts
+- [~] DRAW-14 Text: font favourites and recent fonts, default font and size
+- [x] DRAW-15 Text: backup outline when a font is missing
+- [x] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
+- [x] DRAW-17 QR code error correction level, size limit, editable later
 - [~] DRAW-18 Measure: length, arc angle and length, area, width and height
 - [~] DRAW-19 Measure: unit switch, remembers last position, axis snap
 - [ ] DRAW-20 Position laser: click to move the head
-- [ ] DRAW-21 Barcode *(later)*
+- [x] DRAW-21 Barcode *(later)*
 - [ ] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
@@ -452,8 +452,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 8. Shape operations
 
-- [~] SHAPE-01 Convert to path, including variable text
-- [ ] SHAPE-02 Convert to bitmap with DPI dialog
+- [x] SHAPE-01 Convert to path, including variable text
+- [x] SHAPE-02 Convert to bitmap with DPI dialog
 - [x] SHAPE-03 Close path
 - [~] SHAPE-04 Close path with tolerance dialog
 - [~] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
@@ -479,8 +479,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] SHAPE-25 Mirror across line
 - [x] SHAPE-26 Make same width and same height about the centre
 - [x] SHAPE-27 Rubber-band outline
-- [ ] SHAPE-28 Apply path to text
-- [ ] SHAPE-29 Apply mask to image, flatten and remove crop
+- [x] SHAPE-28 Apply path to text
+- [x] SHAPE-29 Apply mask to image, flatten and remove crop
 - [ ] SHAPE-30 Lock and unlock shapes
 
 ## 9. Arrays and arrangement
@@ -564,16 +564,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] FILL-09 Offset fill specifics: spiral path, power scale respected
 
 ### Image mode
-- [~] IMGL-01 Image mode picker
-- [~] IMGL-02 Line interval and DPI, linked
-- [~] IMGL-03 Scan angle, bi-directional, overscan
-- [~] IMGL-04 Negative image
-- [~] IMGL-05 Pass-through (image is already dithered)
-- [~] IMGL-06 Dot width correction
-- [~] IMGL-07 Halftone cells per inch and angle
-- [~] IMGL-08 Ramp length for threshold mode
-- [~] IMGL-09 Images on one layer merged into one scan
-- [~] IMGL-10 Min power for grayscale
+- [x] IMGL-01 Image mode picker
+- [x] IMGL-02 Line interval and DPI, linked
+- [x] IMGL-03 Scan angle, bi-directional, overscan
+- [x] IMGL-04 Negative image
+- [x] IMGL-05 Pass-through (image is already dithered)
+- [x] IMGL-06 Dot width correction
+- [x] IMGL-07 Halftone cells per inch and angle
+- [x] IMGL-08 Ramp length for threshold mode
+- [x] IMGL-09 Images on one layer merged into one scan
+- [x] IMGL-10 Min power for grayscale
 
 ### Cut settings editor dialog
 - [x] CSE-01 Layer list on the left to edit several layers in one go
@@ -598,30 +598,30 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 11. Image engraving
 
-- [ ] IMG-01 Threshold
-- [ ] IMG-02 Ordered dither
-- [ ] IMG-03 Atkinson
-- [ ] IMG-04 Floyd-Steinberg / Jarvis-Judice-Ninke dither
-- [ ] IMG-05 Stucki
-- [ ] IMG-06 Jarvis
-- [ ] IMG-07 Newsprint
-- [ ] IMG-08 Halftone
-- [ ] IMG-09 Sketch
-- [ ] IMG-10 Grayscale with power modulation
-- [ ] IMG-11 Correct black and white end points and sRGB gamma
-- [ ] IMG-12 Brightness, contrast, gamma
-- [ ] IMG-13 Sharpen with amount, radius and denoise
-- [ ] IMG-14 Transparent images handled in trace, dither and mask
-- [ ] IMG-15 DPI read from file on import
-- [ ] IMG-16 Adjust image dialog with side-by-side preview
-- [ ] IMG-17 Adjust image presets: save, load, import, export
-- [ ] IMG-18 Trace image: threshold, lower cutoff, ignore small, smoothness, optimize
-- [ ] IMG-19 Trace image: fade, show points, clip rectangle, sketch trace, delete image after
-- [ ] IMG-20 Trace from camera capture
+- [x] IMG-01 Threshold
+- [x] IMG-02 Ordered dither
+- [x] IMG-03 Atkinson
+- [x] IMG-04 Floyd-Steinberg / Jarvis-Judice-Ninke dither
+- [x] IMG-05 Stucki
+- [x] IMG-06 Jarvis
+- [x] IMG-07 Newsprint
+- [x] IMG-08 Halftone
+- [x] IMG-09 Sketch
+- [x] IMG-10 Grayscale with power modulation
+- [x] IMG-11 Correct black and white end points and sRGB gamma
+- [x] IMG-12 Brightness, contrast, gamma
+- [x] IMG-13 Sharpen with amount, radius and denoise
+- [x] IMG-14 Transparent images handled in trace, dither and mask
+- [x] IMG-15 DPI read from file on import
+- [x] IMG-16 Adjust image dialog with side-by-side preview
+- [x] IMG-17 Adjust image presets: save, load, import, export
+- [x] IMG-18 Trace image: threshold, lower cutoff, ignore small, smoothness, optimize
+- [x] IMG-19 Trace image: fade, show points, clip rectangle, sketch trace, delete image after
+- [~] IMG-20 Trace from camera capture
 - [ ] IMG-21 Multi-file trace *(later)*
-- [ ] IMG-22 Fast skip of blank areas in G-code
-- [ ] IMG-23 Scanning offset (backlash) table, import and export
-- [ ] IMG-24 Angled image scans
+- [~] IMG-22 Fast skip of blank areas in G-code
+- [~] IMG-23 Scanning offset (backlash) table, import and export
+- [x] IMG-24 Angled image scans
 - [ ] IMG-25 3D model to depth map *(later)*
 
 ---
@@ -806,7 +806,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] AUX-07 Scanning offset files
 - [x] AUX-08 Hotkey files
 - [ ] AUX-09 Galvo lens correction files
-- [ ] AUX-10 CSV and text files for variable text
+- [x] AUX-10 CSV and text files for variable text
 - [ ] AUX-11 SHX fonts
 - [ ] AUX-12 Import LightBurn library, art, device and hotkey files *(decide)*
 
@@ -846,13 +846,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 20. Variable text
 
-- [ ] VT-01 Date and time with format codes
-- [ ] VT-02 Serial numbers
-- [ ] VT-03 CSV merge with quoted and multi-line fields
-- [ ] VT-04 Cut setting values in text
-- [ ] VT-05 Auto-advance after a job
-- [ ] VT-06 QR codes follow the current index
-- [ ] VT-07 Works inside virtual arrays
+- [x] VT-01 Date and time with format codes
+- [x] VT-02 Serial numbers
+- [x] VT-03 CSV merge with quoted and multi-line fields
+- [x] VT-04 Cut setting values in text
+- [x] VT-05 Auto-advance after a job
+- [x] VT-06 QR codes follow the current index
+- [x] VT-07 Works inside virtual arrays
 
 ## 21. Other tools
 
@@ -960,7 +960,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 26. Platform
 
-- [~] PLAT-01 Windows file association and single running copy
+- [x] PLAT-01 Windows file association and single running copy
 - [ ] PLAT-02 Explorer thumbnails for project files
 - [ ] PLAT-03 Recent files in the Windows jump list
 - [x] PLAT-04 Debug log

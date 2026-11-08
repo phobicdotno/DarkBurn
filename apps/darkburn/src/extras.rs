@@ -42,6 +42,7 @@ pub struct Extras {
     pub hover_topic: Option<&'static str>,
     last_hover: Option<&'static str>,
     pub support_status: Option<String>,
+    pub updates: crate::updates::State,
     locks_loaded: bool,
 }
 
@@ -78,6 +79,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     let dir = app.settings_dir.clone();
     app.extras.library.autosave(dir.as_deref(), std::time::Instant::now());
     app.extras.last_hover = app.extras.hover_topic.take();
+    crate::updates::frame(ctx, app);
     if app.extras.library.is_dirty() || !app.extras.art.libs.is_empty() {
         ctx.request_repaint_after(std::time::Duration::from_secs(5));
     }
@@ -141,10 +143,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
             app.extras.help_topic = "camera".into();
             app.extras.help_open = true;
         }
-        "help.updates" => {
-            // No network calls yet: say so rather than pretend.
-            app.note = Some(tr("help.updates_none", "Update checks are not available in this version."));
-        }
+        "help.updates" | "help.check_updates" => crate::updates::run_command(app),
         "help.debug_log" => {
             let on = !help::debug_on();
             help::set_debug(on, app.settings_dir.as_deref());
@@ -287,6 +286,7 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
 
 /// The hotkey editor and the help window.
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
+    crate::updates::dialog(ctx, app);
     if app.extras.help_open {
         let topic = help::topic(&app.extras.help_topic);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_help"), "help", &tr("help.title", "Help"))

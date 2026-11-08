@@ -343,3 +343,110 @@ fn bad_arguments_say_why() {
     wait(&mut a, "framing done", |a| state(a) == LaserState::Ready && a.machine.handle.snapshot().job.is_none());
     let _ = (Family::Grbl, MachineCommand::Stop, Source::Api);
 }
+
+/// Draw one frame of everything the machine side puts on screen.
+fn draw(ctx: &egui::Context, app: &mut DarkBurn, events: Vec<egui::Event>) -> usize {
+    let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))), events, ..Default::default() };
+    let mut out = ctx.run_ui(input, |ui| {
+        machine_ui::frame(ui.ctx(), app);
+        for id in ["laser", "move", "console", "file_list"] {
+            egui::ScrollArea::vertical().id_salt(id).show(ui, |ui| {
+                crate::panels::contents(ui, id, app);
+            });
+        }
+        crate::devices_ui::dialogs(ui.ctx(), app);
+    });
+    out.textures_delta.clear();
+    out.shapes.len()
+}
+
+#[test]
+fn every_panel_and_dialog_draws_in_every_state() {
+    let ctx = egui::Context::default();
+    let mut a = app();
+    // Disconnected, simulator selected.
+    assert!(draw(&ctx, &mut a, vec![]) > 0);
+    // Connected GRBL, then every dialog open at once.
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    run(&mut a, "machine.read_settings", Value::Null).unwrap();
+    wait(&mut a, "settings", |a| a.machine.handle.snapshot().grbl_settings.contains_key(&110));
+    a.machine.dlg.devices = true;
+    a.machine.dlg.wizard = Some(crate::devices::Wizard::new());
+    a.machine.dlg.find = Some(crate::devices::find_my_laser(&[]));
+    a.machine.dlg.settings = Some((a.machine.active().clone(), 0));
+    a.machine.dlg.machine_settings = true;
+    a.machine.dlg.controller_info = true;
+    a.machine.dlg.macro_edit = Some((0, "G0 X1".into()));
+    a.machine.dlg.confirm_close = true;
+    a.machine.dlg.setting_edits.insert(32, "0".into());
+    for _ in 0..3 {
+        assert!(draw(&ctx, &mut a, vec![]) > 0);
+    }
+    for page in 0..4 {
+        a.machine.dlg.settings = Some((a.machine.active().clone(), page));
+        draw(&ctx, &mut a, vec![]);
+    }
+    for step in crate::devices::WizardStep::ALL {
+        let mut w = crate::devices::Wizard::new();
+        w.step = step;
+        a.machine.dlg.wizard = Some(w);
+        draw(&ctx, &mut a, vec![]);
+    }
+    // A job running.
+    run(&mut a, "machine.start", Value::Null).unwrap();
+    wait(&mut a, "busy", |a| a.machine.handle.snapshot().job.is_some() || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+    draw(&ctx, &mut a, vec![]);
+    // Connected Ruida with its file list, settings, dual tube and U axis dialogs.
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
+    a.machine.devices.get_mut(id).unwrap().settings.dsp.dual_tube = true;
+    a.machine.devices.get_mut(id).unwrap().settings.dsp.u_axis = true;
+    run(&mut a, "device.select", json!({ "id": id })).unwrap();
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait(&mut a, "ruida ready", |a| state(a) == LaserState::Ready);
+    for what in ["machine.file_list", "machine.read_settings", "machine.controller_info"] {
+        run(&mut a, what, Value::Null).unwrap();
+    }
+    run(&mut a, "machine.dsp_read", json!({ "what": "laser2" })).unwrap();
+    run(&mut a, "machine.dsp_read", json!({ "what": "u_axis" })).unwrap();
+    wait(&mut a, "ruida data", |a| {
+        let r = &a.machine.handle.snapshot().ruida;
+        r.files.is_some() && r.settings.is_some() && r.info.is_some() && r.laser2.is_some() && r.u_axis.is_some()
+    });
+    a.machine.dlg.laser2 = None;
+    a.machine.dlg.u_axis = None;
+    for _ in 0..3 {
+        assert!(draw(&ctx, &mut a, vec![]) > 0);
+    }
+    assert!(a.machine.dlg.laser2.is_some() && a.machine.dlg.u_axis.is_some(), "the dialogs picked up what the controller sent");
+}
+
+#[test]
+fn the_banner_says_what_is_connected() {
+    let mut a = app();
+    assert!(!a.machine.handle.is_real_machine());
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    assert!(a.machine.handle.is_simulator() && !a.machine.handle.is_real_machine());
+    assert_eq!(crate::laser_panel::mode_status(false, false, true), "Flat bed");
+    assert!(crate::laser_panel::mode_status(true, false, false).contains("no rotary axis"));
+    assert_eq!(crate::laser_panel::macro_label(2, ""), "Macro 3");
+    assert_eq!(crate::laser_panel::macro_label(0, "
+  G0 X10
+G1"), "G0 X10");
+    assert!(crate::laser_panel::macro_label(0, "a very long first line").ends_with("..."));
+}
+
+#[test]
+fn the_frame_button_frames_the_selection_in_machine_coordinates() {
+    use darkburn_core::kurbo::Rect;
+    let mut a = app();
+    assert!(crate::laser_panel::frame_args(&a).is_none(), "nothing drawn, nothing to frame");
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 20, "width": 30, "height": 40 })).unwrap();
+    let f = crate::laser_panel::frame_args(&a).unwrap();
+    assert_eq!((f["x"].as_f64(), f["y"].as_f64(), f["width"].as_f64(), f["height"].as_f64()), (Some(10.0), Some(20.0), Some(30.0), Some(40.0)));
+    // A machine with its zero at the top flips Y: the rectangle sits at 400 - 60.
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
+    a.machine.devices.select(id);
+    let f = crate::laser_panel::frame_args(&a).unwrap();
+    assert_eq!(f["y"].as_f64(), Some(400.0 - 60.0));
+    let _ = Rect::ZERO;
+}

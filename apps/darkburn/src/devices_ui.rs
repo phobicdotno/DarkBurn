@@ -846,8 +846,13 @@ fn dsp_extras(ui: &mut Ui, app: &mut DarkBurn, snap: &crate::machine_api::Snapsh
 fn backups_body(ui: &mut Ui, app: &mut DarkBurn, family: Family) {
     ui_kit::section_heading(ui, "Backups");
     let have = app.machine.handle.backup_settings().is_some();
-    ui.horizontal(|ui| {
-        ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name");
+    // The name field takes the width it is given: left to itself it pushed the buttons off a
+    // narrow window. The row wraps when the window is narrower than the field and the buttons.
+    ui.horizontal_wrapped(|ui| {
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width().min(220.0));
+            ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name");
+        });
         if small(ui, "Back up now", "Keep the settings read from the laser with this device", have)
             && let Some(b) = app.machine.handle.backup_settings()
         {

@@ -88,7 +88,6 @@ pub struct Options {
     pub click_tolerance_px: f32,
     // Behaviour (SET-11 to SET-28)
     pub check_updates: bool,
-    pub open_in_running: bool,
     pub default_cut_selected: bool,
     pub default_use_selection_origin: bool,
     pub save_job_origin: bool,
@@ -111,13 +110,7 @@ pub struct Options {
     pub auto_weld: bool,
     /// Serial ports DarkBurn never lists, one per entry.
     pub excluded_ports: Vec<String>,
-    // Import and export (SET-30 to SET-36)
-    pub dxf_units: String,
-    pub dxf_fallback_units: String,
-    pub dxf_close_tolerance: f64,
-    pub dxf_arcs: bool,
-    pub hpgl_precision: u32,
-    pub import_hidden_layers: bool,
+    // Output (SET-36); the other import and export settings are in formats.rs
     pub output_tolerance: f64,
     // Capture (SET-37)
     pub capture_system: String,
@@ -146,7 +139,6 @@ impl Default for Options {
             object_snap_px: 8.0,
             click_tolerance_px: crate::canvas_input::CLICK_TOLERANCE_PX,
             check_updates: false,
-            open_in_running: true,
             default_cut_selected: false,
             default_use_selection_origin: false,
             save_job_origin: true,
@@ -167,12 +159,6 @@ impl Default for Options {
             font_height: 10.0,
             auto_weld: false,
             excluded_ports: Vec::new(),
-            dxf_units: "auto".into(),
-            dxf_fallback_units: "mm".into(),
-            dxf_close_tolerance: 0.01,
-            dxf_arcs: true,
-            hpgl_precision: 2,
-            import_hidden_layers: false,
             output_tolerance: 0.01,
             capture_system: "default".into(),
             capture_width: 1280,
@@ -202,9 +188,7 @@ impl Options {
         fixd(&mut self.nudge_ctrl, 0.001, 1000.0, d.nudge_ctrl);
         fixd(&mut self.nudge_shift, 0.001, 1000.0, d.nudge_shift);
         fixd(&mut self.font_height, 0.1, 1000.0, d.font_height);
-        fixd(&mut self.dxf_close_tolerance, 0.0, 10.0, d.dxf_close_tolerance);
         fixd(&mut self.output_tolerance, 0.0001, 10.0, d.output_tolerance);
-        self.hpgl_precision = self.hpgl_precision.clamp(0, 6);
         self.capture_width = self.capture_width.clamp(160, 7680);
         self.capture_height = self.capture_height.clamp(120, 4320);
         if self.font_name.trim().is_empty() {
@@ -285,12 +269,11 @@ mod tests {
 
     #[test]
     fn bad_values_are_pulled_into_range() {
-        let mut o: Options = serde_json::from_str(
-            r#"{"ui_scale": 9000, "click_tolerance_px": -1, "nudge": 0, "font_name": " ", "hpgl_precision": 99, "excluded_ports": ["", "COM3"]}"#,
-        )
-        .unwrap();
+        let mut o: Options =
+            serde_json::from_str(r#"{"ui_scale": 9000, "click_tolerance_px": -1, "nudge": 0, "font_name": " ", "excluded_ports": ["", "COM3"]}"#)
+                .unwrap();
         o.sanitise();
-        assert_eq!((o.ui_scale, o.click_tolerance_px, o.hpgl_precision), (250.0, 1.0, 6));
+        assert_eq!((o.ui_scale, o.click_tolerance_px), (250.0, 1.0));
         assert_eq!(o.nudge, 0.001);
         assert_eq!(o.font_name, "IBM Plex Sans");
         assert_eq!(o.excluded_ports, ["COM3"]);

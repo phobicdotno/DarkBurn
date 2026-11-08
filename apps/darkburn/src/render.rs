@@ -312,7 +312,7 @@ fn texture(ctx: &Context, doc: &Document, key: &str) -> Option<TextureHandle> {
 fn paint_image(painter: &Painter, ctx: &Context, xf: &Xf, doc: &Document, leaf: &Shape, img: &darkburn_core::ImageShape, alpha: f32) {
     let (w, h) = (img.width / 2.0, img.height / 2.0);
     let corners = [(-w, h, 0.0, 0.0), (w, h, 1.0, 0.0), (w, -h, 1.0, 1.0), (-w, -h, 0.0, 1.0)];
-    let Some(tex) = texture(ctx, doc, &img.image) else {
+    let Some(tex) = crate::image_render::texture(ctx, doc, leaf, img).or_else(|| texture(ctx, doc, &img.image)) else {
         // Undecodable: a grey box keeps the shape visible.
         let pts: Vec<Pos2> = corners.iter().map(|(x, y, _, _)| xf.to_screen(leaf.transform * Point::new(*x, *y))).collect();
         painter.add(egui::Shape::closed_line(pts, Stroke::new(1.0, Color32::GRAY.gamma_multiply(alpha))));

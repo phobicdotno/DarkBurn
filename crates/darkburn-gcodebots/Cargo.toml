@@ -1,0 +1,17 @@
+[package]
+name = "darkburn-gcodebots"
+description = "Smoothieware, Marlin, LinuxCNC, Snapmaker and custom G-code device drivers, emulators, device profiles and a common GcodeMachine trait for DarkBurn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+darkburn-grbl = { path = "../darkburn-grbl" }
+kurbo = "0.13.1"
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

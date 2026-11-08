@@ -30,11 +30,15 @@ pub const COMMANDS: &[Cmd] = &[
     c("file.new_window", "New Window", "", ""),
     c("file.open", "Open", "Ctrl+O", "open"),
     c("file.import", "Import", "Ctrl+I", "import"),
+    c("file.import_options", "Import Options", "", ""),
     c("file.notes", "Show Notes", "Ctrl+Alt+N", ""),
     c("file.save", "Save", "Ctrl+S", "save"),
     c("file.save_as", "Save As", "Ctrl+Shift+S", ""),
+    c("file.save_lbrn2", "Save as LightBurn Project (.lbrn2)", "", ""),
     c("file.save_gcode", "Save G-code", "Alt+Shift+L", ""),
     c("file.export", "Export", "Alt+X", "export"),
+    c("file.export_gweike_dxf", "Export Gweike DXF (layer per material)", "", ""),
+    c("file.export_gweike_nc", "Export Gweike G-code (.nc)", "", ""),
     c("file.print", "Print (black only)", "Ctrl+P", ""),
     c("file.print_colour", "Print (keep colours)", "Ctrl+Shift+P", ""),
     c("file.save_bitmap", "Save Processed Bitmap", "", ""),
@@ -63,6 +67,8 @@ pub const COMMANDS: &[Cmd] = &[
     c("edit.auto_join", "Auto-Join Selected Shapes", "Alt+J", ""),
     c("edit.optimize", "Optimize Selected Shapes", "Alt+Shift+O", ""),
     c("edit.delete_duplicates", "Delete Duplicates", "Alt+D", ""),
+    c("edit.delete_overlapping", "Delete Overlapping Lines", "", ""),
+    c("shape.remove_rounded_corners", "Remove Rounded Corners", "", ""),
     c("edit.select_open", "Select Open Shapes", "", ""),
     c("edit.select_open_fill", "Select Open Shapes Set to Fill", "", ""),
     c("edit.select_layer", "Select All Shapes in Current Layer", "", ""),
@@ -110,6 +116,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("arrange.group", "Group", "Ctrl+G", "db_group"),
     c("arrange.ungroup", "Ungroup", "Ctrl+U", "db_ungroup"),
     c("arrange.auto_group", "Auto-Group", "", ""),
+    c("arrange.alignment_helper", "Alignment Helper", "", ""),
     c("arrange.flip_h", "Flip Horizontal", "Ctrl+Shift+H", "db_flip_h"),
     c("arrange.flip_v", "Flip Vertical", "Ctrl+Shift+V", "db_flip_v"),
     c("arrange.mirror", "Mirror Across Line", "Ctrl+Shift+M", "mirror"),
@@ -277,6 +284,22 @@ pub const COMMANDS: &[Cmd] = &[
         "Set Shape Properties",
         r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"}}}"#,
     ),
+    a(
+        "shape.set_corner_radius",
+        "Set Rectangle Corner Radius",
+        r#"{"type":"object","properties":{"radius":{"type":"number","description":"mm; negative rounds inwards"}},"required":["radius"]}"#,
+    ),
+    a("shape.add_line", "Add a Line", ""),
+    a("shape.set_start_point", "Set Start Point", ""),
+    a("shape.reverse_direction", "Reverse Direction", ""),
+    a("node.edit", "Edit Nodes", ""),
+    a("tabs.add", "Add Tab", ""),
+    a("tabs.remove", "Remove Tab", ""),
+    a("tabs.clear", "Clear Tabs", ""),
+    a("tabs.auto", "Layer Tab Positions", ""),
+    a("measure.selection", "Measure Selection", ""),
+    a("measure.points", "Measure Between Points", ""),
+    a("measure.arc", "Measure an Arc", ""),
     // Layers, with arguments
     a("layer.select", "Make a Layer Current", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
     a(
@@ -305,6 +328,66 @@ pub const COMMANDS: &[Cmd] = &[
         "Delete a Layer",
         r#"{"type":"object","properties":{"layer":{"type":"integer"},"with_shapes":{"type":"boolean"}},"required":["layer"]}"#,
     ),
+    // Images, with arguments (image_ui.rs)
+    a(
+        "image.adjust",
+        "Adjust Selected Images",
+        r#"{"type":"object","properties":{"brightness":{"type":"number","minimum":-100,"maximum":100},"contrast":{"type":"number","minimum":-100,"maximum":100},"gamma":{"type":"number","minimum":0.1,"maximum":10},"enhance_amount":{"type":"number","description":"percent"},"enhance_radius":{"type":"number","description":"pixels"},"enhance_denoise":{"type":"number"},"image_mode":{"enum":["threshold","ordered","atkinson","dither","stucki","jarvis","newsprint","halftone","sketch","grayscale"]},"dpi":{"type":"number"},"negative":{"type":"boolean"},"pass_through":{"type":"boolean"},"halftone_cells":{"type":"number"},"halftone_angle":{"type":"number"},"threshold_ramp":{"type":"number","description":"mm"}}}"#,
+    ),
+    a(
+        "image.trace",
+        "Trace Selected Images",
+        r#"{"type":"object","properties":{"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"clip":{"type":"array","items":{"type":"number"},"description":"[left, top, right, bottom] as fractions of the picture"},"sketch":{"type":"boolean"},"delete_image":{"type":"boolean"},"layer":{"type":"integer"}}}"#,
+    ),
+    a(
+        "image.trace_capture",
+        "Trace a Captured Picture",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"dpi":{"type":"number"},"threshold":{"type":"integer"},"sketch":{"type":"boolean"},"layer":{"type":"integer"}},"required":["path"]}"#,
+    ),
+    a(
+        "image.convert_bitmap",
+        "Convert Selected Shapes to a Bitmap",
+        r#"{"type":"object","properties":{"dpi":{"type":"number"},"fill":{"type":"boolean"},"stroke_mm":{"type":"number"},"layer":{"type":"integer"},"keep_original":{"type":"boolean"}}}"#,
+    ),
+    a(
+        "image.replace",
+        "Replace the Selected Image from a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"fit":{"type":"boolean"}},"required":["path"]}"#,
+    ),
+    a("image.save_bitmap", "Save the Processed Bitmap", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("image.presets", "List Adjust Image Presets", ""),
+    a(
+        "image.preset_save",
+        "Save the Selected Image's Settings as a Preset",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
+    a(
+        "image.preset_load",
+        "Apply a Preset to the Selected Images",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
+    a("image.preset_delete", "Delete a Preset", r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#),
+    a("image.preset_import", "Import Presets from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "image.preset_export",
+        "Export Presets to a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"names":{"type":"array","items":{"type":"string"}}},"required":["path"]}"#,
+    ),
+    a(
+        "image.scan_offsets",
+        "Scanning Offset Table and Fast Skip",
+        r#"{"type":"object","properties":{"speed":{"type":"number","description":"mm/s"},"offset":{"type":"number","description":"mm"},"remove_speed":{"type":"number"},"fast_skip":{"type":"boolean"},"skip_mm":{"type":"number"}}}"#,
+    ),
+    a(
+        "image.scan_offsets_import",
+        "Import a Scanning Offset File",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
+    a(
+        "image.scan_offsets_export",
+        "Export the Scanning Offset Table",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
     // Project and settings, with arguments
     a("project.info", "Project Summary", ""),
     a("project.open", "Open a Project File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
@@ -312,7 +395,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "project.import",
         "Import Files",
-        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"}},"required":["paths"]}"#,
+        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"},"pdf_page":{"description":"a page number, or \"all\""}},"required":["paths"]}"#,
     ),
     // Libraries, art, hotkeys, help and preferences files, with arguments
     a("library.new", "New Cut Library", ""),
@@ -365,9 +448,19 @@ pub const COMMANDS: &[Cmd] = &[
     a("hotkeys.export", "Export Hotkeys to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("hotkeys.import", "Import Hotkeys from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("help.topic", "Read a Help Topic", r#"{"type":"object","properties":{"topic":{"type":"string"}}}"#),
-    a("prefs.import", "Import Preferences from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
-    a("prefs.export", "Export Preferences to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("support.write", "Write the Support Data Bundle", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "project.export",
+        "Export to a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"}},"required":["path"]}"#,
+    ),
+    a(
+        "project.print_pdf",
+        "Save the Print as a PDF",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"black_only":{"type":"boolean"},"selection_only":{"type":"boolean"}},"required":["path"]}"#,
+    ),
+    a("project.prefs_export", "Export Preferences to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("project.prefs_import", "Import Preferences from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a(
         "setting.set",
         "Change a Setting",
@@ -387,6 +480,17 @@ pub fn works(id: &str) -> bool {
             | "file.save"
             | "file.save_as"
             | "file.prefs_folder"
+            | "file.new_window"
+            | "file.import_options"
+            | "file.save_lbrn2"
+            | "file.export"
+            | "file.export_gweike_dxf"
+            | "file.export_gweike_nc"
+            | "file.print"
+            | "file.print_colour"
+            | "file.prefs_export"
+            | "file.prefs_import"
+            | "file.prefs_backup"
             | "edit.settings"
             | "edit.undo"
             | "edit.redo"
@@ -402,6 +506,18 @@ pub fn works(id: &str) -> bool {
             | "edit.select_open_fill"
             | "edit.select_layer"
             | "edit.select_contained"
+            | "edit.convert_bitmap"
+            | "edit.image_replace"
+            | "edit.image_replace_fit"
+            | "edit.image_refresh"
+            | "edit.image_crop"
+            | "edit.image_flatten"
+            | "edit.image_remove_crop"
+            | "edit.image_remove_backup"
+            | "tools.adjust_image"
+            | "tools.trace_image"
+            | "tools.mask_image"
+            | "file.save_bitmap"
             | "tools.select"
             | "tools.line"
             | "tools.rect"
@@ -440,15 +556,13 @@ pub fn works(id: &str) -> bool {
             | "help.updates"
             | "help.debug_log"
             | "file.hotkeys"
-            | "file.prefs_export"
-            | "file.prefs_import"
-            | "file.prefs_backup"
     ) || id.starts_with("library.")
         || id.starts_with("art.")
         || id.starts_with("hotkeys.")
-        || id.starts_with("prefs.")
         || id.starts_with("support.")
         || id.starts_with("help.topic")
+        || crate::job_cmds::works(id)
+        || crate::shape_ops::works(id)
         || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
@@ -458,6 +572,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("layer.")
         || id.starts_with("project.")
         || id.starts_with("setting.")
+        || id.starts_with("image.")
         || id.starts_with("arrange.align_")
         || id.starts_with("arrange.distribute_")
         || id.starts_with("arrange.move_h_")
@@ -514,7 +629,7 @@ pub fn parse_key(text: &str) -> Option<egui::KeyboardShortcut> {
 pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
     static TABLE: std::sync::OnceLock<Vec<(egui::KeyboardShortcut, &'static str)>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
-        let mut v: Vec<_> = COMMANDS.iter().filter_map(|c| parse_key(c.key).map(|k| (k, c.id))).collect();
+        let mut v: Vec<_> = COMMANDS.iter().chain(crate::job_cmds::COMMANDS).filter_map(|c| parse_key(c.key).map(|k| (k, c.id))).collect();
         let weight = |k: &egui::KeyboardShortcut| k.modifiers.command as u8 + k.modifiers.shift as u8 + k.modifiers.alt as u8;
         v.sort_by_key(|(k, _)| std::cmp::Reverse(weight(k)));
         v
@@ -528,9 +643,11 @@ pub fn find(id: &str) -> Option<&'static Cmd> {
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
 /// device. An agent must ask before running one; none is implemented yet.
 pub fn hardware(id: &str) -> bool {
-    id.starts_with("laser.")
+    (id.starts_with("laser.")
         || id.starts_with("arrange.laser_")
-        || matches!(id, "file.save_gcode" | "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
+        || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
+        || crate::job_cmds::hardware(id))
+        && !crate::job_cmds::not_hardware(id)
 }
 
 /// The checklist items a command implements (the ones that work today).
@@ -538,8 +655,19 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "file.new" => &["FILE-01"],
         "file.open" | "project.open" => &["FILE-04"],
-        "file.import" | "project.import" => &["FILE-05", "IMP-13"],
+        "file.import" | "project.import" => &["FILE-05", "IMP-03", "IMP-04", "IMP-05", "IMP-06", "IMP-13", "PROJ-02", "PROJ-03"],
         "file.notes" => &["FILE-06"],
+        "file.new_window" => &["FILE-02", "PLAT-01"],
+        "file.import_options" => &["SET-29", "SET-30", "SET-31", "SET-32", "SET-33", "SET-34", "SET-35", "IMP-10", "IMP-11", "IMP-12"],
+        "file.save_lbrn2" => &["PROJ-06"],
+        "file.export" | "project.export" => &["FILE-10", "EXP-01", "EXP-02", "EXP-03", "EXP-04", "EXP-05"],
+        "file.export_gweike_dxf" => &["MCC-01"],
+        "file.export_gweike_nc" => &["MCC-03"],
+        "file.print" => &["FILE-11", "PLAT-08"],
+        "file.print_colour" | "project.print_pdf" => &["FILE-12", "PLAT-08"],
+        "file.prefs_export" | "project.prefs_export" => &["FILE-16", "AUX-04"],
+        "file.prefs_import" | "project.prefs_import" => &["FILE-17", "AUX-04"],
+        "file.prefs_backup" => &["FILE-18", "PLAT-07"],
         "file.save" => &["FILE-07"],
         "file.save_as" | "project.save_as" => &["FILE-08"],
         "edit.undo" => &["EDIT-01"],
@@ -556,6 +684,23 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "edit.select_open_fill" => &["EDIT-19"],
         "edit.select_layer" => &["EDIT-20"],
         "edit.select_contained" => &["EDIT-21"],
+        "tools.adjust_image" | "image.adjust" => &["TOOLS-19", "IMG-16", "IMG-12", "IMG-13", "SP-05"],
+        "image.preset_save" | "image.preset_load" | "image.preset_delete" | "image.preset_import" | "image.preset_export" | "image.presets" => {
+            &["IMG-17"]
+        }
+        "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
+        "image.trace_capture" => &["IMG-20"],
+        "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],
+        "edit.image_replace" | "image.replace" => &["EDIT-22"],
+        "edit.image_replace_fit" => &["EDIT-23"],
+        "edit.image_refresh" => &["EDIT-24"],
+        "edit.image_crop" => &["EDIT-25"],
+        "edit.image_flatten" => &["EDIT-26"],
+        "edit.image_remove_crop" => &["EDIT-27"],
+        "edit.image_remove_backup" => &["EDIT-28"],
+        "tools.mask_image" => &["TOOLS-22", "SHAPE-29"],
+        "file.save_bitmap" | "image.save_bitmap" => &["FILE-13"],
+        "image.scan_offsets" | "image.scan_offsets_import" | "image.scan_offsets_export" => &["IMG-22", "IMG-23"],
         "tools.select" => &["TOOLS-01"],
         "tools.line" => &["TOOLS-02", "DRAW-01", "DRAW-02"],
         "tools.rect" | "shape.add_rect" => &["TOOLS-03", "DRAW-04"],
@@ -610,14 +755,14 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "help.updates" => &["HELP-06"],
         "help.debug_log" => &["HELP-07", "PLAT-04"],
         "file.hotkeys" | "hotkeys.set" | "hotkeys.reset" | "hotkeys.list" | "hotkeys.export" | "hotkeys.import" => &["FILE-19", "AUX-08", "KEY-08"],
-        "file.prefs_export" | "prefs.export" => &["FILE-16"],
-        "file.prefs_import" | "prefs.import" => &["FILE-17", "SET-27"],
-        "file.prefs_backup" => &["FILE-18"],
         _ if id.starts_with("library.") => &["LIB-01", "LIB-05", "LIB-07", "LIB-08"],
         _ if id.starts_with("art.") => &["ART-01", "ART-04"],
         _ if id.starts_with("file.recent.") => &["FILE-03"],
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
-        _ => &[],
+        _ => {
+            let jobs = crate::job_cmds::checklist(id);
+            if jobs.is_empty() { crate::shape_ops::checklist(id) } else { jobs }
+        }
     }
 }
 
@@ -645,6 +790,14 @@ pub fn registry() -> &'static [Cmd] {
     ALL.get_or_init(|| {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
+        v.extend_from_slice(crate::job_cmds::COMMANDS);
+        for c in &mut v {
+            if c.args.is_empty()
+                && let Some(args) = crate::shape_ops::args_schema(c.id)
+            {
+                c.args = args;
+            }
+        }
         for p in crate::panels::PANELS {
             v.push(c(leak(format!("panel.{}", p.id)), leak(format!("Show or Hide {}", p.title)), "", ""));
         }
@@ -772,12 +925,16 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             D("recent"),
             C("file.open"),
             C("file.import"),
+            C("file.import_options"),
             C("file.notes"),
             S,
             C("file.save"),
             C("file.save_as"),
+            C("file.save_lbrn2"),
             C("file.save_gcode"),
             C("file.export"),
+            C("file.export_gweike_dxf"),
+            C("file.export_gweike_nc"),
             S,
             C("file.print"),
             C("file.print_colour"),
@@ -818,6 +975,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("edit.auto_join"),
             C("edit.optimize"),
             C("edit.delete_duplicates"),
+            C("edit.delete_overlapping"),
+            C("shape.remove_rounded_corners"),
             S,
             C("edit.select_open"),
             C("edit.select_open_fill"),
@@ -874,6 +1033,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.select_smaller"),
             C("tools.warp"),
             C("tools.deform"),
+            C("tools.start_points"),
+            C("tools.round_corners"),
         ],
     ),
     (
@@ -882,6 +1043,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("arrange.group"),
             C("arrange.ungroup"),
             C("arrange.auto_group"),
+            C("arrange.alignment_helper"),
             S,
             C("arrange.flip_h"),
             C("arrange.flip_v"),
@@ -1140,10 +1302,10 @@ mod tests {
 
     #[test]
     fn working_commands_are_few_and_known() {
-        for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout"] {
+        for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["file.save_gcode", "tools.offset", "arrange.grid_array"] {
+        for id in ["job.start", "laser.rotary"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

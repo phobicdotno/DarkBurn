@@ -87,6 +87,8 @@ pub struct Prefs {
     pub hotkeys: crate::keymap::Overrides,
     /// The cut library file each device last used (empty key: no device).
     pub library_paths: BTreeMap<String, String>,
+    /// Import, export and file preferences (formats.rs).
+    pub files: crate::formats::FilePrefs,
 }
 
 impl Default for Prefs {
@@ -126,6 +128,7 @@ impl Default for Prefs {
             opts: crate::options::Options::default(),
             hotkeys: Default::default(),
             library_paths: BTreeMap::new(),
+            files: Default::default(),
         }
     }
 }
@@ -172,6 +175,7 @@ impl Prefs {
             crate::keymap::bindable().iter().any(|(i, _, _)| i == id) && (key.is_empty() || crate::commands::parse_key(key).is_some())
         });
         self.recent.truncate(crate::files::RECENT_MAX);
+        self.files.sanitise();
         for (id, state) in d.panels {
             self.panels.entry(id).or_insert(state);
         }

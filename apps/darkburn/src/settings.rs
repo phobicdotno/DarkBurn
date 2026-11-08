@@ -218,7 +218,7 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::section_heading(ui, &tr("settings.behaviour", "Behaviour"));
     ui_kit::checkbox(ui, &tr("settings.beginner", "Beginner mode (hides advanced cut settings)"), &mut prefs.cut_beginner);
     ui_kit::checkbox(ui, &tr("settings.check_updates", "Check for updates"), &mut prefs.opts.check_updates);
-    ui_kit::checkbox(ui, &tr("settings.running_copy", "Open files in the running copy"), &mut prefs.opts.open_in_running);
+    ui_kit::checkbox(ui, &tr("settings.running_copy", "Open files in the running copy"), &mut prefs.files.single_instance);
     ui_kit::checkbox(ui, &tr("settings.sound_error", "Play a sound on errors"), &mut prefs.opts.sound_error);
     ui_kit::checkbox(ui, &tr("settings.sound_done", "Play a sound when a job finishes"), &mut prefs.opts.sound_done);
     ui_kit::checkbox(ui, &tr("settings.job_log", "Save a log of each job"), &mut prefs.opts.job_log);
@@ -334,37 +334,9 @@ fn work_area(ui: &mut Ui, prefs: &mut Prefs) {
 
 fn files(ui: &mut Ui, prefs: &mut Prefs) {
     let t = Tokens::get();
-    ui_kit::section_heading(ui, &tr("settings.import", "Import"));
-    ui_kit::row(ui, &tr("settings.svg_dpi", "SVG resolution"), |ui| {
-        let mut i = usize::from(prefs.svg_dpi != 72.0);
-        pick(ui, "svg_dpi", &mut i, &["72 DPI", "96 DPI"]);
-        prefs.svg_dpi = if i == 0 { 72.0 } else { 96.0 };
-    });
-    ui_kit::checkbox(ui, &tr("settings.import_group", "Group imported shapes"), &mut prefs.import_group);
-    ui_kit::checkbox(ui, &tr("settings.import_select", "Select imported shapes"), &mut prefs.import_select);
-    ui_kit::checkbox(ui, &tr("settings.import_tool", "Allow import to tool layers"), &mut prefs.import_tool_layers);
-    ui_kit::checkbox(ui, &tr("settings.import_hidden", "Import hidden Illustrator layers"), &mut prefs.opts.import_hidden_layers);
-    ui_kit::row(ui, &tr("settings.dxf_units", "DXF units"), |ui| {
-        let mut v = prefs.opts.dxf_units.clone();
-        if ui_kit::hint_field(ui, &mut v, &tr("settings.dxf_units_hint", "auto, mm or in")) {
-            prefs.opts.dxf_units = v;
-        }
-    });
-    ui_kit::row(ui, &tr("settings.dxf_fallback", "DXF fallback units"), |ui| {
-        let mut v = prefs.opts.dxf_fallback_units.clone();
-        if ui_kit::hint_field(ui, &mut v, &tr("settings.dxf_units_hint2", "mm or in")) {
-            prefs.opts.dxf_fallback_units = v;
-        }
-    });
-    ui_kit::row(ui, &tr("settings.dxf_close", "DXF auto-close tolerance"), |ui| {
-        length_field(ui, &mut prefs.opts.dxf_close_tolerance, 0.0, 10.0, 0.001, " mm")
-    });
+    ui_kit::section_heading(ui, &tr("settings.files", "Files"));
+    crate::file_io::import_options_body(ui, prefs);
     ui.add_space(t.space_12);
-    ui_kit::section_heading(ui, &tr("settings.export", "Export"));
-    ui_kit::checkbox(ui, &tr("settings.dxf_arcs", "Write DXF curves as arcs"), &mut prefs.opts.dxf_arcs);
-    ui_kit::row(ui, &tr("settings.hpgl_precision", "HPGL decimals"), |ui| {
-        ui_kit::number_field(ui, &mut prefs.opts.hpgl_precision, 0..=6, 1.0, "");
-    });
     ui_kit::row(ui, &tr("settings.output_tolerance", "Output curve tolerance"), |ui| {
         length_field(ui, &mut prefs.opts.output_tolerance, 0.0001, 10.0, 0.001, " mm")
     });

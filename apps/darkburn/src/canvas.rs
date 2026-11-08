@@ -167,6 +167,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
         painter.line_segment([pos2(p.x, canvas.top()), pos2(p.x, p.y - gap)], line);
         painter.line_segment([pos2(p.x, p.y + gap), pos2(p.x, canvas.bottom())], line);
     }
+    crate::job_ui::paint_overlay(&painter, &xf, app, ct.accent);
     paint_rulers(ui, &app.prefs, &view, full, canvas);
     out.cursor = hover.map(|p| app.prefs.origin.to_machine(view.to_page(canvas, p), page));
     out

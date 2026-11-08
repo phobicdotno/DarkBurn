@@ -19,7 +19,6 @@ use crate::{help, options};
 /// The shared defaults file a workshop puts next to the program or in the settings folder.
 pub const DEFAULTS_FILE: &str = "defaults.dbprefs";
 pub const DEFAULTS_EXTENSION: &str = "dbprefs";
-const PREFS_BACKUP: &str = "preferences.backup.json";
 
 #[derive(Default)]
 pub struct HotkeyUi {
@@ -111,30 +110,6 @@ pub fn read_prefs_file(path: &Path) -> Result<crate::prefs::Prefs, String> {
     }
 }
 
-fn backup_prefs(app: &DarkBurn) {
-    if let Some(dir) = &app.settings_dir {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(dir.join(PREFS_BACKUP), app.prefs.to_json());
-    }
-}
-
-/// Replace the preferences by those in `path`; the old ones are kept as a backup.
-pub fn import_prefs(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
-    let new = read_prefs_file(path)?;
-    backup_prefs(app);
-    let recent = app.prefs.recent.clone();
-    app.prefs = crate::prefs::Prefs { recent, ..new };
-    Ok(())
-}
-
-/// Bring back the preferences saved before the last import.
-pub fn restore_prefs_backup(app: &mut DarkBurn) -> Result<(), String> {
-    let dir = app.settings_dir.clone().ok_or_else(|| tr("prefs.no_folder", "There is no settings folder"))?;
-    let new = read_prefs_file(&dir.join(PREFS_BACKUP))?;
-    app.prefs = new;
-    Ok(())
-}
-
 // ----- Commands -----
 
 /// Commands this file runs from menus and buttons; false when `id` is not one of them.
@@ -176,19 +151,6 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
             app.note = Some(if on { tr("help.debug_on", "Debug log is on.") } else { tr("help.debug_off", "Debug log is off.") });
         }
         "file.hotkeys" => app.extras.hotkeys.open = true,
-        "file.prefs_export" => {
-            if let Some(path) =
-                rfd::FileDialog::new().add_filter("DarkBurn preferences", &[DEFAULTS_EXTENSION]).set_file_name("darkburn.dbprefs").save_file()
-            {
-                app.note = std::fs::write(&path, app.prefs.to_json()).err().map(|e| e.to_string());
-            }
-        }
-        "file.prefs_import" => {
-            if let Some(path) = rfd::FileDialog::new().add_filter("DarkBurn preferences", &[DEFAULTS_EXTENSION]).pick_file() {
-                app.note = import_prefs(app, &path).err();
-            }
-        }
-        "file.prefs_backup" => app.note = restore_prefs_backup(app).err(),
         _ => {
             let _ = ctx;
             return false;
@@ -299,10 +261,6 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
         "help.topic" => {
             let t = help::topic(txt(a, "topic").unwrap_or("general"));
             Ok(json!({ "id": t.id, "title": t.title, "text": t.paragraphs }))
-        }
-        "prefs.import" => txt(a, "path").and_then(|p| import_prefs(app, Path::new(p))).map(|_| json!({ "ok": true })),
-        "prefs.export" => {
-            txt(a, "path").and_then(|p| std::fs::write(p, app.prefs.to_json()).map_err(|e| e.to_string())).map(|_| json!({ "ok": true }))
         }
         "support.write" => txt(a, "path")
             .and_then(|p| help::write_support_zip(Path::new(p), &app.prefs.to_json(), app.settings_dir.as_deref()))
@@ -548,22 +506,6 @@ mod tests {
         assert_eq!(got.page_width, 600.0);
         std::fs::write(dir.join(DEFAULTS_FILE), "[1,2]").unwrap();
         assert!(read_prefs_file(&dir.join(DEFAULTS_FILE)).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn importing_preferences_keeps_a_backup_that_can_be_restored() {
-        let dir = std::env::temp_dir().join(format!("darkburn-prefs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let other = Prefs { theme: "light".into(), ..Default::default() };
-        std::fs::write(dir.join("other.dbprefs"), other.to_json()).unwrap();
-        let mut app = app();
-        app.settings_dir = Some(dir.clone());
-        app.prefs.theme = "nord".into();
-        import_prefs(&mut app, &dir.join("other.dbprefs")).unwrap();
-        assert_eq!(app.prefs.theme, "light");
-        restore_prefs_backup(&mut app).unwrap();
-        assert_eq!(app.prefs.theme, "nord");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

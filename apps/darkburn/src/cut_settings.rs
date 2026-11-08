@@ -78,6 +78,25 @@ pub fn reset_setting(s: &CutSetting) -> CutSetting {
 /// A small sample of how `mode` turns a grey ramp (dark on the left) into dots: `w` by `h`
 /// cells, each 0 (no burn) to 1 (full burn).
 pub fn dither_sample(mode: ImageMode, w: usize, h: usize) -> Vec<f32> {
+    dither_sample_engine(mode, w, h).unwrap_or_else(|| dither_sample_basic(mode, w, h))
+}
+
+/// The same sample made by the image engine itself, so the strip shows what will really burn.
+fn dither_sample_engine(mode: ImageMode, w: usize, h: usize) -> Option<Vec<f32>> {
+    use darkburn_raster::{Adjustments, GrayF, process_image};
+    let pitch = 0.1;
+    let grey = GrayF::from_fn(w as u32, h as u32, |x, _| x as f32 / (w.max(2) - 1) as f32);
+    let c = CutSetting { image_mode: mode, interval: pitch, ..CutSetting::default() };
+    let to_mm = darkburn_core::kurbo::Affine::new([pitch, 0.0, 0.0, -pitch, 0.0, h as f64 * pitch]);
+    let p = process_image(&grey, to_mm, &Adjustments::default(), &crate::images::image_settings(&c, 0.0));
+    if (p.map.width as usize, p.map.height as usize) != (w, h) {
+        return None;
+    }
+    Some(p.map.data.iter().map(|&v| f32::from(v) / 255.0).collect())
+}
+
+/// A rough stand-in for [`dither_sample_engine`] (used if the grid does not line up).
+fn dither_sample_basic(mode: ImageMode, w: usize, h: usize) -> Vec<f32> {
     let grey = |x: usize| 1.0 - x as f32 / (w.max(2) - 1) as f32; // burn amount
     let mut out = vec![0.0f32; w * h];
     match mode {
@@ -371,6 +390,9 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     });
     if c != before {
         apply_all(app, s, &before, &c);
+    }
+    if c.mode == Mode::Image && s.advanced && ui_kit::button(ui, "Scanning offset and fast skip...", ui_kit::Button::Small).clicked() {
+        app.images.offsets_open = true;
     }
     let lay = app.editor.doc.layer(l);
     if (output, air, name.trim()) != (lay.output, lay.air, lay.name.as_str()) {

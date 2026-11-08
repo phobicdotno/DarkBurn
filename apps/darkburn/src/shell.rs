@@ -68,6 +68,14 @@ pub struct DarkBurn {
     pub files: crate::files::FileState,
     /// Libraries, hotkey editor, help (extras.rs).
     pub extras: crate::extras::Extras,
+    /// Job, preview, G-code and material test state (job_cmds.rs).
+    pub job: crate::job_cmds::JobState,
+    /// Image windows and presets (image_ui.rs).
+    pub images: crate::image_ui::ImageUi,
+    /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
+    pub shape_ui: crate::shape_ui::ShapeUi,
+    /// Opening, importing and exporting other file types (file_io.rs).
+    pub fio: crate::file_io::FileIo,
 }
 
 impl DarkBurn {
@@ -99,6 +107,10 @@ impl DarkBurn {
             flash_layer: None,
             files: Default::default(),
             extras: Default::default(),
+            job: Default::default(),
+            images: Default::default(),
+            shape_ui: Default::default(),
+            fio: Default::default(),
         }
     }
 
@@ -111,6 +123,9 @@ impl DarkBurn {
     /// Whether command `id` has something to act on now (menus grey out the rest).
     pub fn can_run(&self, id: &str) -> bool {
         let sel = self.editor.selection.len();
+        if let Some(can) = crate::shape_ops::can_run(self, id) {
+            return can;
+        }
         match id {
             "edit.undo" => self.editor.history.can_undo(),
             "edit.redo" => self.editor.history.can_redo(),
@@ -132,6 +147,7 @@ impl DarkBurn {
             | "arrange.ungroup" => sel > 0,
             "arrange.group" | "arrange.same_width" | "arrange.same_height" => sel > 1,
             "edit.paste" | "edit.paste_in_place" => true,
+            _ if crate::image_ui::handles(id) => crate::image_ui::can_run(self, id),
             _ if id.starts_with("arrange.align_") || id.starts_with("arrange.distribute_") || id.starts_with("arrange.move_") => sel > 1,
             _ if id.starts_with("arrange.page_") => sel > 0,
             _ => true,
@@ -170,7 +186,14 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
-        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) || crate::extras::run(self, ctx, id) {
+        if crate::actions::run(self, ctx, id)
+            || crate::files::run(self, ctx, id)
+            || crate::job_cmds::run(self, ctx, id)
+            || crate::image_ui::run(self, ctx, id)
+            || crate::shape_ops::run(self, ctx, id)
+            || crate::file_io::run(self, ctx, id)
+            || crate::extras::run(self, ctx, id)
+        {
             return;
         }
         match id {
@@ -222,6 +245,10 @@ impl DarkBurn {
         }
         let mut run = None;
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
+            // In the node tool the plain letter keys are node commands, not align commands.
+            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+                continue;
+            }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
                 run = Some(id);
                 break;
@@ -249,6 +276,7 @@ impl DarkBurn {
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
+        crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
         if self.prefs.status_bar {
@@ -274,6 +302,10 @@ impl DarkBurn {
         crate::extras::dialogs(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
+        crate::job_ui::frame(ui.ctx(), self);
+        crate::image_ui::dialogs(ui.ctx(), self);
+        crate::shape_ui::show(ui.ctx(), self);
+        crate::file_io::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }

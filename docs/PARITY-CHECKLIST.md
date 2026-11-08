@@ -35,17 +35,17 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### File
 - [x] FILE-01 New
-- [ ] FILE-02 New window (second instance)
+- [~] FILE-02 New window (second instance)
 - [x] FILE-03 Recent projects list (24 entries)
 - [x] FILE-04 Open
 - [x] FILE-05 Import
 - [x] FILE-06 Show project notes
 - [x] FILE-07 Save
 - [x] FILE-08 Save As
-- [ ] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
-- [ ] FILE-10 Export
-- [ ] FILE-11 Print, black only
-- [ ] FILE-12 Print, keep colours
+- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
+- [x] FILE-10 Export
+- [~] FILE-11 Print, black only
+- [~] FILE-12 Print, keep colours
 - [ ] FILE-13 Save processed bitmap
 - [ ] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
@@ -66,13 +66,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-08 Paste
 - [x] EDIT-09 Paste in place
 - [x] EDIT-10 Delete
-- [ ] EDIT-11 Convert to path
+- [x] EDIT-11 Convert to path
 - [ ] EDIT-12 Convert to bitmap
-- [ ] EDIT-13 Close path
-- [ ] EDIT-14 Close selected paths with tolerance
-- [ ] EDIT-15 Auto-join selected shapes
-- [ ] EDIT-16 Optimize selected shapes
-- [ ] EDIT-17 Delete duplicates
+- [x] EDIT-13 Close path
+- [~] EDIT-14 Close selected paths with tolerance
+- [~] EDIT-15 Auto-join selected shapes
+- [x] EDIT-16 Optimize selected shapes
+- [x] EDIT-17 Delete duplicates
 - [x] EDIT-18 Select open shapes
 - [x] EDIT-19 Select open shapes set to fill
 - [x] EDIT-20 Select all shapes in current layer
@@ -94,38 +94,38 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-03 Rectangle
 - [x] TOOLS-04 Ellipse
 - [x] TOOLS-05 Polygon
-- [ ] TOOLS-06 Edit nodes
-- [ ] TOOLS-07 Add tabs
+- [~] TOOLS-06 Edit nodes
+- [~] TOOLS-07 Add tabs
 - [ ] TOOLS-08 Edit text
 - [ ] TOOLS-09 Position laser
-- [ ] TOOLS-10 Measure
+- [~] TOOLS-10 Measure
 - [ ] TOOLS-11 Create QR code
-- [ ] TOOLS-12 Offset shapes
-- [ ] TOOLS-13 Weld shapes
-- [ ] TOOLS-14 Boolean union
-- [ ] TOOLS-15 Boolean difference
-- [ ] TOOLS-16 Boolean intersection
-- [ ] TOOLS-17 Boolean assistant
-- [ ] TOOLS-18 Cut shapes
+- [~] TOOLS-12 Offset shapes
+- [x] TOOLS-13 Weld shapes
+- [x] TOOLS-14 Boolean union
+- [x] TOOLS-15 Boolean difference
+- [x] TOOLS-16 Boolean intersection
+- [~] TOOLS-17 Boolean assistant
+- [x] TOOLS-18 Cut shapes
 - [ ] TOOLS-19 Adjust image
 - [ ] TOOLS-20 Trace image
 - [ ] TOOLS-21 Apply path to text
 - [ ] TOOLS-22 Apply mask to image
-- [ ] TOOLS-23 Resize slots in selection
-- [ ] TOOLS-24 Select shapes smaller than selected
-- [ ] TOOLS-25 Warp selection (4 points)
-- [ ] TOOLS-26 Deform selection (16 points)
+- [~] TOOLS-23 Resize slots in selection
+- [x] TOOLS-24 Select shapes smaller than selected
+- [~] TOOLS-25 Warp selection (4 points)
+- [~] TOOLS-26 Deform selection (16 points)
 
 ### Arrange
 - [x] ARR-01 Group
 - [x] ARR-02 Ungroup
-- [ ] ARR-03 Auto-group
+- [x] ARR-03 Auto-group
 - [x] ARR-04 Flip horizontal
 - [x] ARR-05 Flip vertical
-- [ ] ARR-06 Mirror across line
+- [~] ARR-06 Mirror across line
 - [x] ARR-07 Rotate 90° clockwise
 - [x] ARR-08 Rotate 90° counter-clockwise
-- [ ] ARR-09 Two-point rotate and scale
+- [~] ARR-09 Two-point rotate and scale
 - [x] ARR-10 Align left
 - [x] ARR-11 Align right
 - [x] ARR-12 Align top
@@ -141,23 +141,23 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-22 Distribute vertical spacing with padding
 - [x] ARR-23 Move horizontally together
 - [x] ARR-24 Move vertically together
-- [ ] ARR-25 Nest selected
-- [ ] ARR-26 Dock left, right, up, down
+- [~] ARR-25 Nest selected
+- [~] ARR-26 Dock left, right, up, down
 - [x] ARR-27 Move selection to one of 9 page positions
 - [ ] ARR-28 Move selection to laser position
 - [ ] ARR-29 Move laser to one of 9 selection positions
-- [ ] ARR-30 Grid array
-- [ ] ARR-31 Circular array
-- [ ] ARR-32 Copy along path
-- [ ] ARR-33 Create rubber-band outline
-- [ ] ARR-34 Break apart
+- [~] ARR-30 Grid array
+- [~] ARR-31 Circular array
+- [~] ARR-32 Copy along path
+- [x] ARR-33 Create rubber-band outline
+- [x] ARR-34 Break apart
 - [x] ARR-35 Push forward in draw order
 - [x] ARR-36 Push backward in draw order
 - [x] ARR-37 Push to front
 - [x] ARR-38 Push to back
 - [x] ARR-39 Lock selected shapes
 - [x] ARR-40 Unlock selected shapes
-- [ ] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
+- [~] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
 - [ ] LT-01 Print and cut: set first target
@@ -171,7 +171,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LT-09 Rotary setup
 - [ ] LT-10 Focus test
 - [ ] LT-11 Interval test
-- [ ] LT-12 Material test
+- [x] LT-12 Material test
 - [ ] LT-13 Centre finder
 - [ ] LT-14 Feeder setup
 - [ ] LT-15 Cylinder correction
@@ -182,7 +182,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Window
 - [x] WIN-01 Reset to default layout
-- [ ] WIN-02 Preview
+- [x] WIN-02 Preview
 - [x] WIN-03 Zoom to page
 - [x] WIN-04 Zoom in
 - [x] WIN-05 Zoom out
@@ -215,9 +215,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] TB-06 Arrange: make same width, make same height, move selection pop-up
 - [ ] TB-07 Arrange long variant
 - [~] TB-08 Tools (vertical, left edge): all creation tools
-- [ ] TB-09 Modifiers: offset, weld, union, difference, intersection
-- [ ] TB-10 Modifiers: grid array, circular array
-- [ ] TB-11 Modifiers: start points tool, round corners tool with radius field
+- [~] TB-09 Modifiers: offset, weld, union, difference, intersection
+- [~] TB-10 Modifiers: grid array, circular array
+- [~] TB-11 Modifiers: start points tool, round corners tool with radius field
 - [x] TB-12 Numeric edits: X, Y, width, height, scale %, lock aspect
 - [x] TB-13 Numeric edits: 9-point anchor picker
 - [x] TB-14 Numeric edits: rotate field, mm or inch toggle
@@ -230,7 +230,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [ ] TB-23 Modes: rotary, print and cut, cylinder correction
-- [ ] TB-24 Docking: four directions, move as group, lock inner objects, padding
+- [~] TB-24 Docking: four directions, move as group, lock inner objects, padding
 - [~] TB-25 All toolbars can be shown, hidden, docked and floated
 
 ## 3. Status bar
@@ -263,19 +263,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-01 Connection status: disconnected, ready, busy, framing, no laser
 - [ ] LASER-02 Job progress bar with elapsed and remaining time
 - [ ] LASER-03 Start, pause, stop
-- [ ] LASER-04 Frame as rectangle
-- [ ] LASER-05 Frame as rubber-band outline, optionally with laser on
-- [ ] LASER-06 Save machine file
+- [~] LASER-04 Frame as rectangle
+- [~] LASER-05 Frame as rubber-band outline, optionally with laser on
+- [~] LASER-06 Save machine file
 - [ ] LASER-07 Run a saved G-code file
 - [ ] LASER-08 Send file to controller, optionally start at once
 - [ ] LASER-09 Home
 - [ ] LASER-10 Go to origin
-- [ ] LASER-11 Start from: current position, user origin, absolute coordinates
-- [ ] LASER-12 Job origin 9-point picker
-- [ ] LASER-13 Cut selected graphics only
-- [ ] LASER-14 Use selection origin
-- [ ] LASER-15 Show last position
-- [ ] LASER-16 Optimize cut path toggle and optimization settings button
+- [x] LASER-11 Start from: current position, user origin, absolute coordinates
+- [x] LASER-12 Job origin 9-point picker
+- [x] LASER-13 Cut selected graphics only
+- [x] LASER-14 Use selection origin
+- [x] LASER-15 Show last position
+- [x] LASER-16 Optimize cut path toggle and optimization settings button
 - [ ] LASER-17 Devices button; right-click resets connection
 - [ ] LASER-18 Port picker with auto choice, remembered port, excluded ports
 - [ ] LASER-19 Device profile picker
@@ -286,7 +286,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-24 Pre-job checklist before start
 - [ ] LASER-25 Sounds on job finished and on error
 - [ ] LASER-26 Job log saved as CSV
-- [ ] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
+- [x] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
 - [ ] LASER-28 Warning when closing during a running job
 
 ### Library (materials)
@@ -414,9 +414,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] DRAW-01 Line tool: straight segments by click, curves by click-drag
 - [x] DRAW-02 Line tool: 45° snap, length readout
-- [ ] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
+- [~] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
 - [x] DRAW-04 Rectangle with corner radius, including inward corners
-- [ ] DRAW-05 Remove rounded corners
+- [~] DRAW-05 Remove rounded corners
 - [x] DRAW-06 Ellipse
 - [x] DRAW-07 Polygon with N sides
 - [ ] DRAW-08 Text: multi-line, right-to-left, CJK input
@@ -429,76 +429,76 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] DRAW-15 Text: backup outline when a font is missing
 - [ ] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
 - [ ] DRAW-17 QR code error correction level, size limit, editable later
-- [ ] DRAW-18 Measure: length, arc angle and length, area, width and height
-- [ ] DRAW-19 Measure: unit switch, remembers last position, axis snap
+- [~] DRAW-18 Measure: length, arc angle and length, area, width and height
+- [~] DRAW-19 Measure: unit switch, remembers last position, axis snap
 - [ ] DRAW-20 Position laser: click to move the head
 - [ ] DRAW-21 Barcode *(later)*
 - [ ] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
 
-- [ ] NODE-01 Drag nodes and control handles
-- [ ] NODE-02 Drag a line to turn it into a curve
-- [ ] NODE-03 Ctrl+click inserts a node
-- [ ] NODE-04 Select several nodes
-- [ ] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
-- [ ] NODE-06 Snap and join while dragging nodes
-- [ ] NODE-07 Constrained drag with Shift
-- [ ] NODE-08 Start node highlight
-- [ ] NODE-09 Align selected nodes
-- [ ] NODE-10 Start points tool: set start node and direction, show start and end markers
-- [ ] NODE-11 Start points work on compound shapes
-- [ ] NODE-12 Node highlight tool
+- [~] NODE-01 Drag nodes and control handles
+- [~] NODE-02 Drag a line to turn it into a curve
+- [~] NODE-03 Ctrl+click inserts a node
+- [~] NODE-04 Select several nodes
+- [~] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
+- [~] NODE-06 Snap and join while dragging nodes
+- [~] NODE-07 Constrained drag with Shift
+- [~] NODE-08 Start node highlight
+- [~] NODE-09 Align selected nodes
+- [~] NODE-10 Start points tool: set start node and direction, show start and end markers
+- [~] NODE-11 Start points work on compound shapes
+- [~] NODE-12 Node highlight tool
 
 ## 8. Shape operations
 
-- [ ] SHAPE-01 Convert to path, including variable text
+- [~] SHAPE-01 Convert to path, including variable text
 - [ ] SHAPE-02 Convert to bitmap with DPI dialog
-- [ ] SHAPE-03 Close path
-- [ ] SHAPE-04 Close path with tolerance dialog
-- [ ] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
-- [ ] SHAPE-06 Optimize shapes: fit lines and arcs, smoothing, before and after counts
-- [ ] SHAPE-07 Delete duplicates
-- [ ] SHAPE-08 Delete overlapping lines
-- [ ] SHAPE-09 Break apart
-- [ ] SHAPE-10 Weld
-- [ ] SHAPE-11 Boolean union, difference and intersection with very fine precision
-- [ ] SHAPE-12 Boolean assistant with preview and reset
-- [ ] SHAPE-13 Offset: distance with units, inward, outward or both
-- [ ] SHAPE-14 Offset: round, bevel or sharp corners
-- [ ] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
-- [ ] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
-- [ ] SHAPE-17 Cut shapes, including through images
-- [ ] SHAPE-18 Trim in node mode
-- [ ] SHAPE-19 Round corners and fillet, including negative radius
-- [ ] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
-- [ ] SHAPE-21 Resize slots: colour-coded highlighting
-- [ ] SHAPE-22 Warp with 4 points
-- [ ] SHAPE-23 Deform with 16 points
-- [ ] SHAPE-24 Two-point rotate and scale
-- [ ] SHAPE-25 Mirror across line
-- [ ] SHAPE-26 Make same width and same height about the centre
-- [ ] SHAPE-27 Rubber-band outline
+- [x] SHAPE-03 Close path
+- [~] SHAPE-04 Close path with tolerance dialog
+- [~] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
+- [x] SHAPE-06 Optimize shapes: fit lines and arcs, smoothing, before and after counts
+- [x] SHAPE-07 Delete duplicates
+- [x] SHAPE-08 Delete overlapping lines
+- [x] SHAPE-09 Break apart
+- [x] SHAPE-10 Weld
+- [x] SHAPE-11 Boolean union, difference and intersection with very fine precision
+- [~] SHAPE-12 Boolean assistant with preview and reset
+- [~] SHAPE-13 Offset: distance with units, inward, outward or both
+- [~] SHAPE-14 Offset: round, bevel or sharp corners
+- [~] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
+- [~] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
+- [x] SHAPE-17 Cut shapes, including through images
+- [~] SHAPE-18 Trim in node mode
+- [~] SHAPE-19 Round corners and fillet, including negative radius
+- [~] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
+- [~] SHAPE-21 Resize slots: colour-coded highlighting
+- [~] SHAPE-22 Warp with 4 points
+- [~] SHAPE-23 Deform with 16 points
+- [~] SHAPE-24 Two-point rotate and scale
+- [~] SHAPE-25 Mirror across line
+- [x] SHAPE-26 Make same width and same height about the centre
+- [x] SHAPE-27 Rubber-band outline
 - [ ] SHAPE-28 Apply path to text
 - [ ] SHAPE-29 Apply mask to image, flatten and remove crop
 - [ ] SHAPE-30 Lock and unlock shapes
 
 ## 9. Arrays and arrangement
 
-- [ ] ARRAY-01 Grid array by rows and columns or from target size
-- [ ] ARRAY-02 Grid array spacing by gap or centre to centre
-- [ ] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
-- [ ] ARRAY-04 Grid array mirror alternates and reverse direction
-- [ ] ARRAY-05 Virtual arrays that stay editable
-- [ ] ARRAY-06 Variable text increments across arrays
-- [ ] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
-- [ ] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
-- [ ] ARRAY-09 Nesting of selected shapes
+- [~] ARRAY-01 Grid array by rows and columns or from target size
+- [~] ARRAY-02 Grid array spacing by gap or centre to centre
+- [~] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
+- [~] ARRAY-04 Grid array mirror alternates and reverse direction
+- [~] ARRAY-05 Virtual arrays that stay editable
+- [~] ARRAY-06 Variable text increments across arrays
+- [~] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
+- [~] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
+- [~] ARRAY-09 Nesting of selected shapes
 - [ ] ARRAY-10 True nest and quick nest *(later)*
-- [ ] ARRAY-11 Auto-group groups shapes that sit inside each other
-- [ ] ARRAY-12 Alignment helper for beginners
-- [ ] ARRAY-13 Docking pushes selection against neighbours
-- [ ] ARRAY-14 9-point anchor used by position, size, scale and rotate fields
+- [x] ARRAY-11 Auto-group groups shapes that sit inside each other
+- [~] ARRAY-12 Alignment helper for beginners
+- [~] ARRAY-13 Docking pushes selection against neighbours
+- [x] ARRAY-14 9-point anchor used by position, size, scale and rotate fields
 - [ ] ARRAY-15 Pages window *(later)*
 
 ---
@@ -586,13 +586,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CSE-08 Z settings greyed out unless the device has Z
 
 ### Material test
-- [ ] MT-01 Grid of speed × power cells
-- [ ] MT-02 Alternative axes: interval, frequency, Q-pulse
-- [ ] MT-03 Min and max, rows and columns, labels and units
-- [ ] MT-04 Label layer settings
-- [ ] MT-05 Presets: save, load, import, export
-- [ ] MT-06 Frame the test before running
-- [ ] MT-07 Works on G-code, DSP and galvo devices
+- [x] MT-01 Grid of speed × power cells
+- [x] MT-02 Alternative axes: interval, frequency, Q-pulse
+- [~] MT-03 Min and max, rows and columns, labels and units
+- [x] MT-04 Label layer settings
+- [x] MT-05 Presets: save, load, import, export
+- [~] MT-06 Frame the test before running
+- [x] MT-07 Works on G-code, DSP and galvo devices
 
 ---
 
@@ -628,47 +628,47 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 12. Preview and simulation
 
-- [ ] PREV-01 Play, pause, slider and playback speed
-- [ ] PREV-02 Shade by power
-- [ ] PREV-03 Show travel moves
-- [ ] PREV-04 Invert view
-- [ ] PREV-05 Cut distance, travel distance and estimated time
-- [ ] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
-- [ ] PREV-07 Zoom, pan, maximise
-- [ ] PREV-08 Save preview image, optionally transparent
-- [ ] PREV-09 Start here: run, send or save from any point in the job
-- [ ] PREV-10 Layer and pass readout
+- [x] PREV-01 Play, pause, slider and playback speed
+- [x] PREV-02 Shade by power
+- [x] PREV-03 Show travel moves
+- [x] PREV-04 Invert view
+- [x] PREV-05 Cut distance, travel distance and estimated time
+- [x] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
+- [x] PREV-07 Zoom, pan, maximise
+- [x] PREV-08 Save preview image, optionally transparent
+- [~] PREV-09 Start here: run, send or save from any point in the job
+- [x] PREV-10 Layer and pass readout
 - [ ] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 
 ## 13. Job origin and coordinates
 
-- [ ] ORIG-01 Absolute coordinates
-- [ ] ORIG-02 Current position
-- [ ] ORIG-03 User origin: set and clear
-- [ ] ORIG-04 Job origin at 9 positions
-- [ ] ORIG-05 Use selection origin
+- [x] ORIG-01 Absolute coordinates
+- [x] ORIG-02 Current position
+- [~] ORIG-03 User origin: set and clear
+- [x] ORIG-04 Job origin at 9 positions
+- [x] ORIG-05 Use selection origin
 - [ ] ORIG-06 Red-dot pointer offset
-- [ ] ORIG-07 Machine origin corner per device
+- [~] ORIG-07 Machine origin corner per device
 - [ ] ORIG-08 Negative-coordinate (CNC) machine mode
 - [ ] ORIG-09 Swap X and Y
-- [ ] ORIG-10 Return to finish position
+- [~] ORIG-10 Return to finish position
 
 ## 14. Cut planner
 
-- [ ] PLAN-01 Optimize cut path on or off
-- [ ] PLAN-02 Order by layer, group and priority, sortable
-- [ ] PLAN-03 Cut inner shapes first
-- [ ] PLAN-04 Cut in direction order
-- [ ] PLAN-05 Reduce travel moves
-- [ ] PLAN-06 Hide backlash
-- [ ] PLAN-07 Reduce direction changes
-- [ ] PLAN-08 Choose best starting point, prefer corners
-- [ ] PLAN-09 Choose best direction
-- [ ] PLAN-10 Remove overlapping lines with distance
-- [ ] PLAN-11 Set as default and reset
-- [ ] PLAN-12 Saved in the project
-- [ ] PLAN-13 Manual cut order and forced start points respected
-- [ ] PLAN-14 Progress and cancel
+- [x] PLAN-01 Optimize cut path on or off
+- [x] PLAN-02 Order by layer, group and priority, sortable
+- [x] PLAN-03 Cut inner shapes first
+- [x] PLAN-04 Cut in direction order
+- [x] PLAN-05 Reduce travel moves
+- [x] PLAN-06 Hide backlash
+- [x] PLAN-07 Reduce direction changes
+- [x] PLAN-08 Choose best starting point, prefer corners
+- [x] PLAN-09 Choose best direction
+- [x] PLAN-10 Remove overlapping lines with distance
+- [x] PLAN-11 Set as default and reset
+- [x] PLAN-12 Saved in the project
+- [~] PLAN-13 Manual cut order and forced start points respected
+- [x] PLAN-14 Progress and cancel
 
 ---
 
@@ -766,19 +766,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Project
 - [x] PROJ-01 DarkBurn project format
-- [ ] PROJ-02 Open LightBurn `.lbrn2` projects
-- [ ] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
+- [x] PROJ-02 Open LightBurn `.lbrn2` projects
+- [x] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
 - [x] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
-- [ ] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
-- [ ] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
+- [~] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
+- [x] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import
 - [~] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
 - [x] IMP-02 SVG: 72 or 96 DPI setting
-- [ ] IMP-03 Adobe Illustrator files
-- [ ] IMP-04 PDF with page choice and embedded images
-- [ ] IMP-05 DXF: units, splines, blocks, text, layers, colours
-- [ ] IMP-06 PLT / HPGL
+- [~] IMP-03 Adobe Illustrator files
+- [x] IMP-04 PDF with page choice and embedded images
+- [x] IMP-05 DXF: units, splines, blocks, text, layers, colours
+- [x] IMP-06 PLT / HPGL
 - [ ] IMP-07 Ruida RD files
 - [ ] IMP-08 SignCut files
 - [x] IMP-09 PNG, JPG, BMP, GIF, TIFF, WebP
@@ -788,19 +788,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] IMP-13 Several files at once; drag and drop
 
 ### Export
-- [ ] EXP-01 SVG
-- [ ] EXP-02 Adobe Illustrator
-- [ ] EXP-03 DXF with arcs or segments
-- [ ] EXP-04 PNG, JPG, BMP when the selection is a bitmap
-- [ ] EXP-05 Export selection or everything
-- [ ] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
+- [x] EXP-01 SVG
+- [x] EXP-02 Adobe Illustrator
+- [x] EXP-03 DXF with arcs or segments
+- [x] EXP-04 PNG, JPG, BMP when the selection is a bitmap
+- [x] EXP-05 Export selection or everything
+- [x] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
 - [ ] EXP-07 RD, OUT and UD5 machine files
 
 ### Other files
 - [ ] AUX-01 Material library files
 - [ ] AUX-02 Art library files
 - [ ] AUX-03 Device profile files
-- [ ] AUX-04 Preferences files
+- [x] AUX-04 Preferences files
 - [ ] AUX-05 Machine settings backup files
 - [ ] AUX-06 Camera calibration files
 - [ ] AUX-07 Scanning offset files
@@ -905,10 +905,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Files
 - [x] SET-29 SVG DPI
-- [~] SET-30 DXF import units, fallback units, auto-close tolerance
-- [~] SET-31 DXF export arcs or lines
-- [~] SET-32 HPGL precision
-- [~] SET-33 Import hidden Illustrator layers
+- [x] SET-30 DXF import units, fallback units, auto-close tolerance
+- [x] SET-31 DXF export arcs or lines
+- [x] SET-32 HPGL precision
+- [x] SET-33 Import hidden Illustrator layers
 - [x] SET-34 Group and select imported shapes
 - [x] SET-35 Allow import to tool layers
 - [~] SET-36 Output curve tolerance
@@ -926,17 +926,17 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] DS-06 Job checklist on and editor
 - [ ] DS-07 Overwrite files by default
 - [ ] DS-08 Scanning offset table
-- [ ] DS-09 G-code: auto-home on start, swap X/Y
-- [ ] DS-10 G-code: fast whitespace scan and its speed
-- [ ] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
-- [ ] DS-12 G-code: air assist commands, S-value max, baud rate
-- [ ] DS-13 G-code: buffered or synchronous transfer
-- [ ] DS-14 G-code: start and end scripts
-- [ ] DS-15 G-code: G0 for overscan, S with every G1
+- [~] DS-09 G-code: auto-home on start, swap X/Y
+- [~] DS-10 G-code: fast whitespace scan and its speed
+- [~] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
+- [~] DS-12 G-code: air assist commands, S-value max, baud rate
+- [~] DS-13 G-code: buffered or synchronous transfer
+- [~] DS-14 G-code: start and end scripts
+- [~] DS-15 G-code: G0 for overscan, S with every G1
 - [ ] DS-16 DSP: U axis, laser 2, filename increment, disable start
 - [ ] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
 - [ ] DS-18 Galvo: all galvo settings from section 15
-- [ ] DS-19 Simulation: acceleration and speed values for the time estimate
+- [~] DS-19 Simulation: acceleration and speed values for the time estimate
 - [ ] DS-20 Frame continuously *(later)*
 
 ## 24. Keyboard
@@ -960,14 +960,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 26. Platform
 
-- [ ] PLAT-01 Windows file association and single running copy
+- [~] PLAT-01 Windows file association and single running copy
 - [ ] PLAT-02 Explorer thumbnails for project files
 - [ ] PLAT-03 Recent files in the Windows jump list
 - [x] PLAT-04 Debug log
 - [x] PLAT-05 Support data bundle
-- [ ] PLAT-06 Crash restore file
-- [ ] PLAT-07 Automatic preference backups
-- [ ] PLAT-08 Print support
+- [~] PLAT-06 Crash restore file
+- [x] PLAT-07 Automatic preference backups
+- [~] PLAT-08 Print support
 - [ ] PLAT-09 macOS build
 - [ ] PLAT-10 Linux build
 - [ ] PLAT-11 REST API *(later)*
@@ -979,9 +979,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 The M3 Ultra is a fibre plus CO2 flatbed run by an Au3tech MCC100 controller card over Ethernet.
 LightBurn cannot drive it. DarkBurn reaches it in safe steps, file export first.
 
-- [ ] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
+- [x] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
 - [ ] MCC-02 Export the vendor's craft file format
-- [ ] MCC-03 Export the G-code flavour the vendor software imports
+- [~] MCC-03 Export the G-code flavour the vendor software imports
 - [ ] MCC-04 Fibre cut settings that LightBurn lacks: assist gas, pierce stages, follower height
 - [ ] MCC-05 Controller card simulator so the backend can be tested without the machine
 - [ ] MCC-06 Native Ethernet backend, built on the protocol work in phobicMlaserLinux, after it is confirmed on the real card

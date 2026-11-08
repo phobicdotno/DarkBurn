@@ -68,6 +68,8 @@ struct ProjectJson {
     shapes: Vec<Shape>,
     images: Vec<ImageEntry>,
     next_id: u64,
+    /// Versioned job settings (optimization, job origin); the app owns the shape.
+    job_settings: Option<serde_json::Value>,
 }
 
 impl Default for ProjectJson {
@@ -83,6 +85,7 @@ impl Default for ProjectJson {
             shapes: Vec::new(),
             images: Vec::new(),
             next_id: 1,
+            job_settings: None,
         }
     }
 }
@@ -123,6 +126,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         shapes: doc.iter().cloned().collect(),
         images,
         next_id: doc.next_id(),
+        job_settings: doc.job_settings.clone(),
     };
     let text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -154,6 +158,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
     let mut doc = Document::new();
     doc.notes = json.notes;
     doc.show_notes_on_load = json.show_notes_on_load;
+    doc.job_settings = json.job_settings;
     for mut l in json.layers {
         if l.index < LAYER_COUNT {
             if l.settings.is_empty() {
@@ -223,6 +228,7 @@ mod tests {
         d.layer_mut(3).add_sub_layer();
         d.move_layer(4, -1);
         d.notes = "Use 3 mm birch".into();
+        d.job_settings = Some(serde_json::json!({ "version": 1, "x": 2 }));
         d.show_notes_on_load = true;
         d
     }
@@ -236,6 +242,7 @@ mod tests {
         assert_eq!(back.app_version, "0.1.0");
         assert_eq!(back.thumbnail.as_deref(), Some(&b"thumb"[..]));
         assert_eq!(back.doc.notes, d.notes);
+        assert_eq!(back.doc.job_settings, d.job_settings);
         assert!(back.doc.show_notes_on_load);
         assert_eq!(back.doc.layers, d.layers);
         assert_eq!(back.doc.layer_order, d.layer_order);

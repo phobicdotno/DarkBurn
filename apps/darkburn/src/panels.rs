@@ -104,6 +104,7 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
         "library" => return crate::library::show(ui, app),
         "art_library" => return crate::art_library::show(ui, app),
         "shape_properties" => return crate::shape_props::show(ui, app),
+        "laser" => return crate::job_ui::laser_panel(ui, app),
         _ => {}
     }
     ui.add_enabled_ui(false, |ui| match id {

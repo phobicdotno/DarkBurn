@@ -8,7 +8,7 @@
 //! - estimate time and simulate the job for the preview ([`sim`]),
 //! - start part-way through ([`Toolpath::slice_from`]),
 //! - check the job against the work area ([`check_bounds`]),
-//! - (G-code output follows).
+//! - write G-code for GRBL, grblHAL, FluidNC, Marlin, Smoothieware and LinuxCNC ([`gcode`]).
 //!
 //! The pipeline inside [`generate`] is: flatten shapes, build cut units per layer mode
 //! (line, fill, fill + line, offset fill, image), plan the cut order ([`planner`]), expand the
@@ -16,6 +16,7 @@
 
 pub mod bounds;
 pub mod fill;
+pub mod gcode;
 pub mod generate;
 pub mod geom;
 pub mod input;

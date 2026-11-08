@@ -1,0 +1,12 @@
+; DarkBurn job for GRBL
+G21
+G90
+M4 S0
+; Layer C00 Cut - Line 10 mm/s 60%
+G0 X10 Y10
+G1 X30 F600 S600
+G1 Y30
+G1 X10
+G1 Y10
+M5
+M2

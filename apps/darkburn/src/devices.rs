@@ -15,6 +15,7 @@ use darkburn_job::Corner;
 use darkburn_job::gcode::Flavor;
 use serde::{Deserialize, Serialize};
 
+use crate::gcode_machines::SimGcode;
 use crate::job_build::{AdditionalSettings, DeviceGcodeSettings, JobDevice, Transfer};
 use crate::machine_api::{ConnectConfig, ConnectSpec, Family, Link};
 
@@ -29,17 +30,60 @@ pub enum DeviceType {
     SimulatorGrbl,
     SimulatorRuida,
     DesignOnly,
+    // G-code controllers of darkburn-gcodebots [GCODE-01..05]
+    Smoothie,
+    Marlin,
+    Snapmaker,
+    /// File output only (no live link).
+    LinuxCnc,
+    Emblaser1,
+    Emblaser2,
+    CustomGcode,
+    SimulatorSmoothie,
+    SimulatorMarlin,
+    SimulatorSnapmaker,
+    SimulatorCustom,
+    // Galvo [GALVO-01]
+    Galvo,
+    SimulatorGalvo,
+    // Gweike M3 Ultra: files only, plus the card simulator [MCC-05]
+    GweikeCardSimulator,
+    // Listed so people can see they are planned: each needs a capture from real hardware first.
+    SnapmakerNetwork,
+    EmblaserWifi,
+    Cubiio,
+    Trocen,
+    TopWisdom,
 }
 
 impl DeviceType {
-    pub const ALL: [DeviceType; 7] = [
+    pub const ALL: [DeviceType; 26] = [
         DeviceType::Grbl,
         DeviceType::GrblHal,
         DeviceType::FluidNc,
+        DeviceType::Smoothie,
+        DeviceType::Marlin,
+        DeviceType::Snapmaker,
+        DeviceType::Emblaser1,
+        DeviceType::Emblaser2,
+        DeviceType::LinuxCnc,
+        DeviceType::CustomGcode,
         DeviceType::Ruida,
+        DeviceType::Galvo,
+        DeviceType::GweikeCardSimulator,
         DeviceType::SimulatorGrbl,
         DeviceType::SimulatorRuida,
+        DeviceType::SimulatorSmoothie,
+        DeviceType::SimulatorMarlin,
+        DeviceType::SimulatorSnapmaker,
+        DeviceType::SimulatorCustom,
+        DeviceType::SimulatorGalvo,
         DeviceType::DesignOnly,
+        DeviceType::SnapmakerNetwork,
+        DeviceType::EmblaserWifi,
+        DeviceType::Cubiio,
+        DeviceType::Trocen,
+        DeviceType::TopWisdom,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -50,22 +94,117 @@ impl DeviceType {
             Self::SimulatorGrbl => "Simulator (GRBL)",
             Self::SimulatorRuida => "Simulator (Ruida)",
             Self::DesignOnly => "Design only (no laser)",
+            Self::Smoothie => "Smoothieware",
+            Self::Marlin => "Marlin",
+            Self::Snapmaker => "Snapmaker (USB serial)",
+            Self::LinuxCnc => "LinuxCNC (file output)",
+            Self::Emblaser1 => "Emblaser 1 (GRBL)",
+            Self::Emblaser2 => "Emblaser 2 (serial)",
+            Self::CustomGcode => "Custom G-code device",
+            Self::SimulatorSmoothie => "Simulator (Smoothieware)",
+            Self::SimulatorMarlin => "Simulator (Marlin)",
+            Self::SimulatorSnapmaker => "Simulator (Snapmaker)",
+            Self::SimulatorCustom => "Simulator (custom G-code)",
+            Self::Galvo => "Galvo (EZCad2 board)",
+            Self::SimulatorGalvo => "Simulator (galvo)",
+            Self::GweikeCardSimulator => "Gweike M3 Ultra: card simulator (files only)",
+            Self::SnapmakerNetwork => "Snapmaker over the network",
+            Self::EmblaserWifi => "Emblaser 2 over Wi-Fi",
+            Self::Cubiio => "Cubiio",
+            Self::Trocen => "Trocen / AWC",
+            Self::TopWisdom => "TopWisdom",
         }
     }
     pub fn family(self) -> Family {
         match self {
-            Self::Grbl | Self::GrblHal | Self::FluidNc | Self::SimulatorGrbl => Family::Grbl,
+            Self::Grbl
+            | Self::GrblHal
+            | Self::FluidNc
+            | Self::SimulatorGrbl
+            | Self::Smoothie
+            | Self::Marlin
+            | Self::Snapmaker
+            | Self::LinuxCnc
+            | Self::Emblaser1
+            | Self::Emblaser2
+            | Self::CustomGcode
+            | Self::SimulatorSmoothie
+            | Self::SimulatorMarlin
+            | Self::SimulatorSnapmaker
+            | Self::SimulatorCustom => Family::Grbl,
             Self::Ruida | Self::SimulatorRuida => Family::Ruida,
-            Self::DesignOnly => Family::DesignOnly,
+            Self::Galvo | Self::SimulatorGalvo => Family::Galvo,
+            Self::GweikeCardSimulator => Family::FileOnly,
+            Self::DesignOnly | Self::SnapmakerNetwork | Self::EmblaserWifi | Self::Cubiio | Self::Trocen | Self::TopWisdom => Family::DesignOnly,
         }
     }
     pub fn is_simulator(self) -> bool {
-        matches!(self, Self::SimulatorGrbl | Self::SimulatorRuida)
+        matches!(
+            self,
+            Self::SimulatorGrbl
+                | Self::SimulatorRuida
+                | Self::SimulatorSmoothie
+                | Self::SimulatorMarlin
+                | Self::SimulatorSnapmaker
+                | Self::SimulatorCustom
+                | Self::SimulatorGalvo
+                | Self::GweikeCardSimulator
+        )
+    }
+    /// Why this type cannot be used yet: it needs a capture from real hardware first. These
+    /// are listed in the wizard, greyed out, with this text.
+    pub fn needs_capture(self) -> Option<&'static str> {
+        Some(match self {
+            Self::SnapmakerNetwork => {
+                "Needs hardware capture. Snapmaker's network (HTTP) interface is not documented anywhere DarkBurn may read. Use the USB serial entry for now."
+            }
+            Self::EmblaserWifi => {
+                "Needs hardware capture. The Wi-Fi port and protocol of the Emblaser 2 are not documented. Use the serial entry for now."
+            }
+            Self::Cubiio => {
+                "Needs hardware capture. The Cubiio only takes G-code files over Wi-Fi through an undocumented web interface. Export G-code and load it with Cubiio's own app."
+            }
+            Self::Trocen => {
+                "Needs hardware capture. There is no public description of the Trocen / AWC USB or Ethernet protocol or of the .ud5 file. A capture from a real controller is needed first."
+            }
+            Self::TopWisdom => {
+                "Needs hardware capture. There is no public description of the TopWisdom protocol or of the .out file. A capture from a real controller is needed first."
+            }
+            _ => return None,
+        })
+    }
+    /// The wizard lets the user pick this type.
+    pub fn selectable(self) -> bool {
+        self.needs_capture().is_none()
+    }
+    /// The G-code firmware of `darkburn-gcodebots` this type runs (None for the built-in GRBL
+    /// driver and for everything that is not G-code).
+    pub fn lib_kind(self) -> Option<darkburn_gcodebots::profile::DeviceKind> {
+        use darkburn_gcodebots::profile::DeviceKind as K;
+        Some(match self {
+            Self::Smoothie | Self::Emblaser2 | Self::SimulatorSmoothie => K::Smoothie,
+            Self::Marlin | Self::SimulatorMarlin => K::Marlin,
+            Self::Snapmaker | Self::SimulatorSnapmaker => K::Snapmaker,
+            Self::LinuxCnc => K::LinuxCnc,
+            Self::CustomGcode | Self::SimulatorCustom => K::Custom,
+            _ => return None,
+        })
+    }
+    /// A G-code device whose job is translated by `darkburn-gcodebots`.
+    pub fn is_translated(self) -> bool {
+        self.lib_kind().is_some()
+    }
+    /// Gweike machine concepts (files and the card simulator only).
+    pub fn is_gweike(self) -> bool {
+        self == Self::GweikeCardSimulator
     }
     pub fn flavor(self) -> Flavor {
         match self {
             Self::GrblHal => Flavor::GrblHal,
             Self::FluidNc => Flavor::FluidNc,
+            Self::Smoothie | Self::Emblaser2 | Self::SimulatorSmoothie => Flavor::Smoothieware,
+            Self::Marlin | Self::Snapmaker | Self::SimulatorMarlin | Self::SimulatorSnapmaker => Flavor::Marlin,
+            Self::LinuxCnc => Flavor::LinuxCnc,
             _ => Flavor::Grbl,
         }
     }
@@ -74,13 +213,20 @@ impl DeviceType {
         match self {
             Self::Grbl | Self::GrblHal => &[ConnectionKind::Serial, ConnectionKind::Tcp],
             Self::FluidNc => &[ConnectionKind::Serial, ConnectionKind::Tcp],
+            Self::Smoothie | Self::CustomGcode => &[ConnectionKind::Serial, ConnectionKind::Tcp],
+            Self::Marlin | Self::Snapmaker | Self::Emblaser1 | Self::Emblaser2 => &[ConnectionKind::Serial],
             Self::Ruida => &[ConnectionKind::Udp, ConnectionKind::Usb],
-            Self::SimulatorGrbl | Self::SimulatorRuida | Self::DesignOnly => &[ConnectionKind::None],
+            Self::Galvo => &[ConnectionKind::BoardUsb],
+            _ => &[ConnectionKind::None],
         }
     }
     fn default_size(self) -> (f64, f64) {
         match self {
             Self::Ruida | Self::SimulatorRuida => (600.0, 400.0),
+            Self::Snapmaker | Self::SimulatorSnapmaker => (320.0, 350.0),
+            Self::Galvo | Self::SimulatorGalvo => (110.0, 110.0),
+            Self::GweikeCardSimulator => (1371.0, 950.0),
+            Self::Smoothie | Self::SimulatorSmoothie | Self::Marlin | Self::SimulatorMarlin => (300.0, 200.0),
             _ => (400.0, 400.0),
         }
     }
@@ -94,6 +240,8 @@ pub enum ConnectionKind {
     Tcp,
     Udp,
     Usb,
+    /// A galvo board over USB (not built in yet).
+    BoardUsb,
 }
 
 impl ConnectionKind {
@@ -104,6 +252,7 @@ impl ConnectionKind {
             Self::Tcp => "TCP/IP",
             Self::Udp => "Ethernet (UDP)",
             Self::Usb => "USB (FTDI)",
+            Self::BoardUsb => "USB (galvo board)",
         }
     }
 }
@@ -166,6 +315,12 @@ pub struct DeviceSettings {
     pub gcode: DeviceGcodeSettings,
     pub dsp: DspSettings,
     pub additional: AdditionalSettings,
+    /// What the G-code firmwares of `darkburn-gcodebots` need beyond `gcode` [GCODE-01..05].
+    pub gcode_ext: crate::gcode_machines::GcodeExt,
+    /// The galvo board [DS-18].
+    pub galvo: crate::galvo_settings::GalvoDeviceSettings,
+    /// Gweike material and craft mapping [MCC-04].
+    pub gweike: crate::gweike_workflow::GweikeSettings,
 }
 
 impl Default for DeviceSettings {
@@ -191,6 +346,9 @@ impl Default for DeviceSettings {
             gcode: DeviceGcodeSettings::default(),
             dsp: DspSettings::default(),
             additional: AdditionalSettings::default(),
+            gcode_ext: crate::gcode_machines::GcodeExt::default(),
+            galvo: crate::galvo_settings::GalvoDeviceSettings::default(),
+            gweike: crate::gweike_workflow::GweikeSettings::default(),
         }
     }
 }
@@ -282,11 +440,21 @@ impl Device {
             // Nothing can burn in a simulator, so its Fire button is on.
             settings.gcode.fire_button = true;
         }
+        crate::gcode_machines::apply_preset(kind, &mut settings);
+        if kind.family() == Family::Galvo {
+            settings.galvo.field_size_mm = w;
+        }
         Device {
             id: 0,
             name: match kind {
                 DeviceType::SimulatorGrbl => "Simulator (GRBL), no hardware".into(),
                 DeviceType::SimulatorRuida => "Simulator (Ruida), no hardware".into(),
+                DeviceType::SimulatorSmoothie => "Simulator (Smoothieware), no hardware".into(),
+                DeviceType::SimulatorMarlin => "Simulator (Marlin), no hardware".into(),
+                DeviceType::SimulatorSnapmaker => "Simulator (Snapmaker), no hardware".into(),
+                DeviceType::SimulatorCustom => "Simulator (custom G-code), no hardware".into(),
+                DeviceType::SimulatorGalvo => "Simulator (galvo), no hardware".into(),
+                DeviceType::GweikeCardSimulator => "Gweike card simulator, no hardware".into(),
                 DeviceType::DesignOnly => "Design only".into(),
                 k => format!("My {}", k.label()),
             },
@@ -315,9 +483,10 @@ impl Device {
     /// What the job builder needs to know about this machine: bed, origin corner, negative
     /// coordinates, swapped axes and Z.
     pub fn job_device(&self) -> JobDevice {
+        let (bed_w, bed_h) = self.bed();
         JobDevice {
-            bed_w: self.width_mm,
-            bed_h: self.height_mm,
+            bed_w,
+            bed_h,
             origin: self.origin,
             negative_coords: self.settings.negative_coords,
             swap_xy: self.settings.gcode.swap_xy,
@@ -330,8 +499,14 @@ impl Device {
     pub fn is_design_only(&self) -> bool {
         self.kind == DeviceType::DesignOnly
     }
+    /// The work area. A galvo's is the square marking field.
     pub fn bed(&self) -> (f64, f64) {
-        (self.width_mm, self.height_mm)
+        if self.family() == Family::Galvo { crate::galvo_machine::bed_of(&self.settings.galvo) } else { (self.width_mm, self.height_mm) }
+    }
+    /// No laser can be connected: design only, the Gweike file workflow, or a type that still
+    /// needs a hardware capture.
+    pub fn has_no_laser(&self) -> bool {
+        self.family().no_laser() || self.kind == DeviceType::LinuxCnc
     }
 
     /// Sanity-check what the wizard and the Device Settings dialog accept. The messages are shown
@@ -356,6 +531,12 @@ impl Device {
             ConnectionKind::Serial if self.settings.gcode.baud_rate == 0 => v.push("Pick a baud rate.".into()),
             _ => {}
         }
+        if self.family() == Family::Galvo {
+            v.extend(self.settings.galvo.validate());
+        }
+        if let Some(why) = self.kind.needs_capture() {
+            v.push(why.to_owned());
+        }
         if self.settings.gcode.s_max <= 0.0 && self.family() == Family::Grbl {
             v.push("S max must be above zero.".into());
         }
@@ -369,6 +550,17 @@ impl Device {
             (DeviceType::SimulatorGrbl, _) => Ok(Link::SimulatorGrbl),
             (DeviceType::SimulatorRuida, _) => Ok(Link::SimulatorRuida),
             (DeviceType::DesignOnly, _) => Err("This device is design only; there is no laser to connect.".into()),
+            (DeviceType::SimulatorSmoothie, _) => Ok(Link::SimulatorGcode(SimGcode::Smoothie)),
+            (DeviceType::SimulatorMarlin, _) => Ok(Link::SimulatorGcode(SimGcode::Marlin)),
+            (DeviceType::SimulatorSnapmaker, _) => Ok(Link::SimulatorGcode(SimGcode::Snapmaker)),
+            (DeviceType::SimulatorCustom, _) => Ok(Link::SimulatorGcode(SimGcode::Custom)),
+            (DeviceType::SimulatorGalvo, _) => Ok(Link::SimulatorGalvo),
+            (DeviceType::Galvo, _) => Ok(Link::GalvoUsb),
+            (DeviceType::LinuxCnc, _) => Err("LinuxCNC is file output only. Use Save G-code and open the file in LinuxCNC.".into()),
+            (DeviceType::GweikeCardSimulator, _) => {
+                Err("The Gweike machine is a file workflow. Use the Gweike window to export files or run the card simulator.".into())
+            }
+            (k, _) if k.needs_capture().is_some() => Err(k.needs_capture().unwrap_or_default().to_owned()),
             (_, ConnectionKind::Serial) => {
                 let port = pick_port(ports, &self.state.port, &self.state.excluded_ports)
                     .ok_or_else(|| "No serial port found. Plug the laser in and press Rescan.".to_string())?;
@@ -377,6 +569,7 @@ impl Device {
             (_, ConnectionKind::Tcp) => Ok(Link::Tcp { host: self.host.trim().to_owned(), port: self.tcp_port }),
             (_, ConnectionKind::Udp) => Ok(Link::Udp { ip: self.host.trim().to_owned() }),
             (_, ConnectionKind::Usb) => Ok(Link::Usb { serial: (!self.usb_serial.is_empty()).then(|| self.usb_serial.clone()) }),
+            (_, ConnectionKind::BoardUsb) => Ok(Link::GalvoUsb),
             (_, ConnectionKind::None) => Err("Choose how this device connects.".into()),
         }
     }
@@ -393,6 +586,8 @@ impl Device {
             bed: Some(self.bed()),
             max_fire_percent: self.settings.fire_max_percent.clamp(0.0, 100.0),
             overwrite_default: self.settings.overwrite_files.then_some(darkburn_ruida::OverwriteChoice::Overwrite),
+            gcode: self.kind.is_translated().then(|| std::sync::Arc::new(crate::gcode_machines::to_profile(self))),
+            galvo: (self.family() == Family::Galvo).then(|| std::sync::Arc::new(self.settings.galvo.clone())),
             ..Default::default()
         };
         Ok(ConnectSpec { link, config })
@@ -430,6 +625,7 @@ fn chip_name(vid: u16, pid: u16) -> Option<&'static str> {
         (0x2341, _) | (0x2A03, _) => Some("Arduino"),
         (0x303A, _) => Some("ESP32 (FluidNC)"),
         (0x0483, _) => Some("STM32 (grblHAL)"),
+        (0x1D50, _) => Some("Smoothieboard USB"),
         _ => None,
     }
 }
@@ -444,6 +640,7 @@ pub fn find_my_laser(ports: &[PortInfo]) -> Vec<Candidate> {
             let kind = match p.vid {
                 Some(0x303A) => DeviceType::FluidNc,
                 Some(0x0483) => DeviceType::GrblHal,
+                Some(0x1D50) => DeviceType::Smoothie,
                 _ => DeviceType::Grbl,
             };
             Candidate {
@@ -451,8 +648,10 @@ pub fn find_my_laser(ports: &[PortInfo]) -> Vec<Candidate> {
                 label: p.label(),
                 kind,
                 note: match chip {
-                    Some(c) => format!("{c}. Add it, then press Connect to check what is on the other end."),
-                    None => "Unknown device. Add it as GRBL and press Connect to find out.".into(),
+                    Some(c) => format!(
+                        "{c}. Only the port list was read. Add it, press Connect, and DarkBurn tells you if the firmware that answers (GRBL, Smoothieware, Marlin, Snapmaker) is not the type you chose."
+                    ),
+                    None => "Unknown device. Add it as GRBL and press Connect; DarkBurn reads the firmware banner then and suggests the right type.".into(),
                 },
             }
         })
@@ -599,6 +798,21 @@ impl DeviceStore {
 
     /// DEV-05: add a device from `.dbdev` text. Returns its id.
     pub fn import_profile(&mut self, text: &str) -> Result<u64, String> {
+        // A device file written by `darkburn-gcodebots` (`{"darkburn_device": 1, ...}`) converts
+        // into the one profile format here.
+        if text.contains("\"darkburn_device\"") {
+            let devices = crate::gcode_machines::import_library_profiles(text)?;
+            let mut first = None;
+            for d in devices {
+                let errs = d.validate();
+                if let Some(e) = errs.first() {
+                    return Err(format!("The device file has a problem: {e}"));
+                }
+                let id = self.add(d);
+                first.get_or_insert(id);
+            }
+            return first.ok_or_else(|| "The device file has no device in it.".to_string());
+        }
         let p: Profile = serde_json::from_str(text).map_err(|e| format!("This is not a DarkBurn device file: {e}"))?;
         if p.format != PROFILE_FORMAT {
             return Err("This is not a DarkBurn device file.".into());
@@ -787,6 +1001,7 @@ impl Wizard {
                     ConnectionKind::Tcp => format!("{}:{}", d.host, d.tcp_port),
                     ConnectionKind::Udp => format!("UDP {}", d.host),
                     ConnectionKind::Usb => "FTDI USB".into(),
+                    ConnectionKind::BoardUsb => "Galvo board over USB (simulator only for now)".into(),
                     ConnectionKind::None => "None".into(),
                 },
             ));
@@ -805,6 +1020,10 @@ impl Wizard {
         }
         let mut d = self.draft.clone();
         d.settings.gcode.auto_home = d.auto_home;
+        if d.family() == Family::Galvo {
+            // The size typed in the wizard is the lens field.
+            d.settings.galvo.field_size_mm = d.width_mm;
+        }
         let id = store.add(d);
         store.active = Some(id);
         Ok(id)

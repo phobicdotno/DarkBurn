@@ -15,6 +15,13 @@ mod extras;
 mod file_io;
 mod files;
 mod formats;
+mod galvo_job;
+mod galvo_machine;
+mod galvo_settings;
+mod galvo_ui;
+mod gcode_machines;
+mod gweike_ui;
+mod gweike_workflow;
 mod help;
 mod i18n;
 mod image_ops;
@@ -32,6 +39,11 @@ mod library;
 mod machine_api;
 #[cfg(test)]
 mod machine_api_tests;
+mod machine_ext;
+#[cfg(test)]
+mod machine_ext_tests;
+#[cfg(test)]
+mod machine_ext_ui_tests;
 mod machine_job;
 mod machine_ui;
 #[cfg(test)]

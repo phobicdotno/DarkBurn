@@ -40,15 +40,25 @@ pub enum Family {
     Ruida,
     /// No laser at all: design only.
     DesignOnly,
+    /// EzCad2-style galvo marking board (fibre, MOPA, UV, CO2 galvo).
+    Galvo,
+    /// Files only: DarkBurn writes the files and another program runs them (Gweike).
+    FileOnly,
 }
 
 impl Family {
     pub fn label(self) -> &'static str {
         match self {
-            Family::Grbl => "GRBL",
+            Family::Grbl => "G-code",
             Family::Ruida => "Ruida (DSP)",
             Family::DesignOnly => "Design only",
+            Family::Galvo => "Galvo",
+            Family::FileOnly => "File workflow",
         }
+    }
+    /// There is no live link at all for this family.
+    pub fn no_laser(self) -> bool {
+        matches!(self, Family::DesignOnly | Family::FileOnly)
     }
 }
 
@@ -67,22 +77,32 @@ pub enum Link {
     Udp { ip: String },
     /// Ruida FTDI USB (needs the `usb` feature).
     Usb { serial: Option<String> },
+    /// An in-memory Smoothieware, Marlin, Snapmaker, custom or library-GRBL machine. Safe.
+    SimulatorGcode(crate::gcode_machines::SimGcode),
+    /// The in-memory galvo board. Safe.
+    SimulatorGalvo,
+    /// A galvo board over USB. Not built into this version: simulator only.
+    GalvoUsb,
 }
 
 impl Link {
     pub fn is_simulator(&self) -> bool {
-        matches!(self, Link::SimulatorGrbl | Link::SimulatorRuida)
+        matches!(self, Link::SimulatorGrbl | Link::SimulatorRuida | Link::SimulatorGcode(_) | Link::SimulatorGalvo)
     }
     pub fn family(&self) -> Family {
         match self {
-            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } => Family::Grbl,
+            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) => Family::Grbl,
             Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } => Family::Ruida,
+            Link::SimulatorGalvo | Link::GalvoUsb => Family::Galvo,
         }
     }
     pub fn label(&self) -> String {
         match self {
             Link::SimulatorGrbl => "Simulator (GRBL)".into(),
             Link::SimulatorRuida => "Simulator (Ruida)".into(),
+            Link::SimulatorGcode(s) => format!("Simulator ({})", s.label()),
+            Link::SimulatorGalvo => "Simulator (galvo)".into(),
+            Link::GalvoUsb => "Galvo USB".into(),
             Link::Serial { port, baud } => format!("{port} @ {baud}"),
             Link::Tcp { host, port } => format!("tcp://{host}:{port}"),
             Link::Udp { ip } => format!("udp://{ip}"),
@@ -124,6 +144,11 @@ pub struct ConnectConfig {
     pub overwrite_default: Option<ruida::OverwriteChoice>,
     /// GRBL simulator only: homing is enabled, so the machine starts locked in alarm until homed.
     pub sim_homing: bool,
+    /// The device profile for the G-code firmwares of `darkburn-gcodebots` (Smoothieware,
+    /// Marlin, Snapmaker, custom). `None` for GRBL and Ruida.
+    pub gcode: Option<Arc<darkburn_gcodebots::DeviceProfile>>,
+    /// The galvo board's settings.
+    pub galvo: Option<Arc<crate::galvo_settings::GalvoDeviceSettings>>,
 }
 
 impl Default for ConnectConfig {
@@ -140,6 +165,8 @@ impl Default for ConnectConfig {
             sim_time_scale: 4.0,
             overwrite_default: None,
             sim_homing: false,
+            gcode: None,
+            galvo: None,
         }
     }
 }
@@ -311,6 +338,13 @@ pub struct Snapshot {
     pub grbl_settings: BTreeMap<u16, String>,
     pub bed: Option<(f64, f64)>,
     pub ruida: RuidaCache,
+    /// Settings of a Smoothieware or Marlin style controller (config keys, `M92.X`).
+    pub gcode_settings: BTreeMap<String, String>,
+    /// Set for the controllers that run through `darkburn-gcodebots` (not the built-in GRBL one).
+    pub gcode_firmware: Option<darkburn_gcodebots::MachineFamily>,
+    pub air_on: bool,
+    /// The galvo board's state.
+    pub galvo: Option<crate::galvo_machine::GalvoStatus>,
 }
 
 impl Snapshot {
@@ -385,6 +419,8 @@ pub enum JobData {
     /// A finished `.rd` file (swizzled bytes) stored on the controller under `name`; run if
     /// `start_immediately`.
     RdFile { name: String, data: Vec<u8> },
+    /// A compiled galvo job. The laser must be armed first.
+    Galvo { job: Box<darkburn_galvo::CompiledJob>, wait_for_foot: bool, skip_framing_check: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -515,6 +551,34 @@ pub enum MachineCommand {
     ReadUAxis,
     WriteUAxis(ruida::settings::UAxisSettings),
     AnswerOverwrite(ruida::OverwriteChoice),
+    // G-code controllers of darkburn-gcodebots
+    /// The controller's own emergency stop (M112 / soft reset). Always allowed while connected.
+    EmergencyStop,
+    Air(bool),
+    /// Store the settings in the controller's memory (Marlin M500).
+    PersistSettings,
+    /// A setting by its name (config key, `M92.X`).
+    WriteGcodeSetting {
+        key: String,
+        value: String,
+    },
+    // Galvo only
+    /// Arm or disarm the laser for the next job. The laser is never enabled without this.
+    GalvoArm(bool),
+    /// A red-light frame (no laser). `repeat` keeps lapping until Stop.
+    GalvoFrame {
+        frame: Box<darkburn_galvo::CompiledFrame>,
+        repeat: bool,
+    },
+    /// The red pointer on or off at the current position.
+    GalvoLight(bool),
+    /// Replace the lens correction table (`None` clears it).
+    GalvoLens(Option<Box<darkburn_galvo::CorTable>>),
+    /// Move an external axis (0 or 1) to an absolute position in mm.
+    GalvoAxis {
+        axis: u8,
+        mm: f64,
+    },
 }
 
 /// A settings backup that can be saved as a `.dbset` file.
@@ -542,7 +606,8 @@ impl SettingsBackup {
         match family {
             Family::Grbl => grbl::SettingsBackup::parse(text).map(Self::Grbl),
             Family::Ruida => serde_json::from_str(text).map(Self::Ruida).map_err(|e| format!("settings file: {e}")),
-            Family::DesignOnly => Err("a design-only device has no machine settings".into()),
+            Family::DesignOnly | Family::FileOnly => Err("this device has no machine settings".into()),
+            Family::Galvo => Err("a galvo board has no settings backup file".into()),
         }
     }
     pub fn len(&self) -> usize {
@@ -636,6 +701,16 @@ impl MachineHandle {
         Ok(())
     }
 
+    /// Use an adapter that is already built, for a simulator whose in-memory board the caller
+    /// keeps a handle to (tests, demos). Real links never come through here.
+    pub fn attach_simulator(&mut self, adapter: Box<dyn DriverAdapter>, link: Link) {
+        assert!(link.is_simulator(), "only simulators can be attached");
+        self.disconnect();
+        self.snapshot = adapter.snapshot();
+        self.adapter = Some(adapter);
+        self.last_link = Some(link);
+    }
+
     /// Stops any job, turns the laser off, closes the link.
     pub fn disconnect(&mut self) {
         if let Some(mut a) = self.adapter.take() {
@@ -700,7 +775,7 @@ impl MachineHandle {
     /// Send any command.
     pub fn command(&mut self, cmd: MachineCommand) -> Result<(), MachineError> {
         let family = self.snapshot.family;
-        if family == Family::DesignOnly {
+        if family.no_laser() {
             return Err(MachineError::Refused("This device is design only; there is no laser to command.".into()));
         }
         match self.adapter.as_mut() {
@@ -893,6 +968,8 @@ pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Res
             let transport: Box<dyn ruida::Transport> = Box::new(ruida::MemoryTransport::udp(emu.clone()));
             Ok(Box::new(RuidaAdapter::new(transport, &spec.config, true, Some((emu, spec.config.sim_time_scale.max(0.1))))))
         }
+        Link::SimulatorGcode(kind) => crate::gcode_machines::open_simulator(*kind, &spec.config),
+        Link::SimulatorGalvo => crate::galvo_machine::open_simulator(&spec.config),
         real => {
             if cfg!(test) {
                 return Err(MachineError::Refused("Real connections are disabled in test builds.".into()));
@@ -911,7 +988,7 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         #[cfg(feature = "serial")]
         Link::Serial { port, baud } => {
             let t = grbl::SerialTransport::open(port, *baud).map_err(|e| MachineError::Driver(format!("Could not open {port}: {e}")))?;
-            Ok(Box::new(GrblAdapter::new(Box::new(t), config, false, None)))
+            Ok(crate::gcode_machines::adapter_for(Box::new(t), config))
         }
         #[cfg(not(feature = "serial"))]
         Link::Serial { .. } => Err(MachineError::Unsupported("this build has no serial port support".into())),
@@ -924,7 +1001,7 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
                 .ok_or_else(|| MachineError::Driver(format!("No address for {host}")))?;
             let t = grbl::TcpTransport::connect(addr, Duration::from_secs(5))
                 .map_err(|e| MachineError::Driver(format!("Could not connect to {addr}: {e}")))?;
-            Ok(Box::new(GrblAdapter::new(Box::new(t), config, false, None)))
+            Ok(crate::gcode_machines::adapter_for(Box::new(t), config))
         }
         Link::Udp { ip } => {
             let ip: std::net::IpAddr = ip.parse().map_err(|_| MachineError::Invalid(format!("'{ip}' is not an IP address.")))?;
@@ -938,7 +1015,13 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         }
         #[cfg(not(feature = "usb"))]
         Link::Usb { .. } => Err(MachineError::Unsupported("this build has no raw USB support".into())),
-        Link::SimulatorGrbl | Link::SimulatorRuida => Err(MachineError::Invalid("not a real link".into())),
+        Link::GalvoUsb => Err(MachineError::Unsupported(
+            "the galvo USB link is not built into this version. Use the galvo simulator until the hardware checks in docs/hardware-checks-galvo.md are done."
+                .into(),
+        )),
+        Link::SimulatorGrbl | Link::SimulatorRuida | Link::SimulatorGcode(_) | Link::SimulatorGalvo => {
+            Err(MachineError::Invalid("not a real link".into()))
+        }
     }
 }
 
@@ -1195,6 +1278,12 @@ impl DriverAdapter for GrblAdapter {
             C::ReadControllerInfo => unsupported("Controller info"),
             C::ReadLaser2 | C::WriteLaser2(_) => unsupported("Laser 2 settings"),
             C::ReadUAxis | C::WriteUAxis(_) => unsupported("U axis settings"),
+            C::EmergencyStop => Ok(m.stop()?),
+            C::Air(on) => Ok(m.run_macro(if on { "M8" } else { "M9" })?),
+            C::PersistSettings | C::WriteGcodeSetting { .. } => Err(MachineError::Unsupported("GRBL settings are written with $N=value".into())),
+            C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {
+                Err(MachineError::Unsupported("that is a galvo command; this is a GRBL machine".into()))
+            }
         }
     }
 
@@ -1558,6 +1647,7 @@ impl DriverAdapter for RuidaAdapter {
                 self.note(ConsoleKind::Sent, format!("Send job {}", req.name));
                 match req.data {
                     JobData::Gcode(_) => Err(MachineError::Unsupported("a DSP controller runs .rd jobs, not G-code".into())),
+                    JobData::Galvo { .. } => Err(MachineError::Unsupported("a DSP controller cannot run a galvo job".into())),
                     JobData::Rd(job) => self.req(R::RunJobNow(Box::new(job)), Op::Job),
                     JobData::RdFile { name, data } => self.req(R::UploadRdFile { name, data, magic: None, options }, Op::Job),
                 }
@@ -1715,6 +1805,13 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
+            C::EmergencyStop => self.req(R::Stop, Op::Other("stop")),
+            C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
+                Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
+            }
+            C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {
+                Err(MachineError::Unsupported("that is a galvo command; this is a Ruida controller".into()))
+            }
         }
     }
 

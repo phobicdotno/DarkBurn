@@ -12,8 +12,6 @@ use crate::numeric::{self, Num};
 use crate::palette::layer_colour;
 use crate::shell::DarkBurn;
 
-/// The device is a galvo (shows the galvo settings). Gantry only for now.
-const GALVO: bool = false;
 /// The device has a Z axis (otherwise the Z settings are greyed out).
 const DEVICE_HAS_Z: bool = false;
 
@@ -374,6 +372,8 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     }
 
     let before = app.editor.doc.layer(l).settings[s.sub].clone();
+    // The galvo-only fields show on the Advanced tab when the selected device is a galvo.
+    let galvo_device = app.machine.active().family() == crate::machine_api::Family::Galvo;
     let mut c = before.clone();
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
@@ -384,7 +384,7 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         } else {
             common(ui, &mut c, &modes, &layer, &mut output, &mut air, &mut name, s.sub);
         }
-        if GALVO {
+        if galvo_device && s.advanced {
             galvo(ui, &mut c);
         }
     });

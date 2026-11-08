@@ -1,7 +1,7 @@
 //! Byte transports between the driver and a controller.
 //!
 //! The driver only ever talks through [`Transport`]. Tests and demos use [`MemoryTransport`],
-//! which is wired straight into the in-memory [`GrblEmulator`](crate::GrblEmulator).
+//! which is wired straight into the in-memory [`GrblEmulator`].
 //! [`SerialTransport`] (cargo feature `serial`) and [`TcpTransport`] reach real hardware and are
 //! only opened when the application explicitly asks for a port or address.
 

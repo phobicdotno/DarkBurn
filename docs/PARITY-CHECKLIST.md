@@ -9,7 +9,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 0 of 778 done.
+**Progress:** 0 of 785 done.
 
 ---
 
@@ -756,9 +756,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] GALVO-19 Drill mode
 
 ### User's machines (acceptance targets)
-- [ ] TARGET-01 A GRBL laser over USB, end to end
-- [ ] TARGET-02 A Ruida laser over Ethernet, end to end
-- [ ] TARGET-03 Gweike M3 Ultra, end to end
+- [ ] TARGET-01 Atomstack 400×400 mm, GRBL over USB serial at 115200 baud, end to end
+- [ ] TARGET-02 A Ruida laser over Ethernet, end to end (no Ruida machine on hand yet; test against an emulator)
+- [ ] TARGET-03 Gweike M3 Ultra, end to end through the steps in section 27
 
 ---
 
@@ -971,6 +971,21 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] PLAT-09 macOS build
 - [ ] PLAT-10 Linux build
 - [ ] PLAT-11 REST API *(later)*
+
+---
+
+## 27. Beyond LightBurn: Gweike M3 Ultra
+
+The M3 Ultra is a fibre plus CO2 flatbed run by an Au3tech MCC100 controller card over Ethernet.
+LightBurn cannot drive it. DarkBurn reaches it in safe steps, file export first.
+
+- [ ] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
+- [ ] MCC-02 Export the vendor's craft file format
+- [ ] MCC-03 Export the G-code flavour the vendor software imports
+- [ ] MCC-04 Fibre cut settings that LightBurn lacks: assist gas, pierce stages, follower height
+- [ ] MCC-05 Controller card simulator so the backend can be tested without the machine
+- [ ] MCC-06 Native Ethernet backend, built on the protocol work in phobicMlaserLinux, after it is confirmed on the real card
+- [ ] MCC-07 Safety: the machine's height follower, piercing and gas logic stay in charge and are never bypassed
 
 ---
 

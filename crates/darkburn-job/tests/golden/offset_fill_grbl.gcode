@@ -1,0 +1,22 @@
+; DarkBurn job for GRBL
+G21
+G90
+M4 S0
+; Layer C00 Offset - OffsetFill 60 mm/s 25%
+G0 X0.5 Y0.5
+G1 X5.5 F3600 S125
+G1 Y5.5
+G1 X0.5
+G1 Y0.5
+G1 X1.5 Y1.5
+G1 X4.5
+G1 Y4.5
+G1 X1.5
+G1 Y1.5
+G1 X2.5 Y2.5
+G1 X3.5
+G1 Y3.5
+G1 X2.5
+G1 Y2.5
+M5
+M2

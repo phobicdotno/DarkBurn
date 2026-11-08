@@ -18,7 +18,16 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 
+[features]
+# Real USB serial ports for GRBL machines (listing ports and opening one when the user clicks Connect).
+default = ["serial"]
+serial = ["darkburn-grbl/serial"]
+# Ruida over raw FTDI USB.
+usb = ["darkburn-ruida/usb"]
+
 [dependencies]
+darkburn-grbl = { path = "../../crates/darkburn-grbl" }
+darkburn-ruida = { path = "../../crates/darkburn-ruida" }
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }
 darkburn-geom = { workspace = true }

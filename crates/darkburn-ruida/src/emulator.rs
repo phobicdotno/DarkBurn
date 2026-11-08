@@ -214,6 +214,10 @@ impl RuidaEmulator {
     pub fn position(&self) -> [i32; 4] {
         self.pos
     }
+    /// Commands run and total of the job now running, for a progress bar.
+    pub fn job_progress(&self) -> Option<(usize, usize)> {
+        self.job.as_ref().map(|j| (j.pc, j.cmds.len()))
+    }
     pub fn state(&self) -> RunState {
         self.state
     }

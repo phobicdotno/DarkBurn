@@ -10,6 +10,9 @@ mod cut_settings;
 mod cuts_panel;
 mod files;
 mod import;
+mod machine_api;
+#[cfg(test)]
+mod machine_api_tests;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod numeric;

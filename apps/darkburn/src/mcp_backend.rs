@@ -103,6 +103,7 @@ pub fn run_command(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Val
             let value = args.get("value").ok_or("argument value is missing")?;
             insp::set_setting(app, key, value)
         }
+        "layer.set_cut_settings" => set_cut_settings(app, &args),
         "file.new" => {
             if app.editor.is_modified() && !flag(&args, "discard_changes") {
                 return Err(
@@ -159,6 +160,56 @@ pub fn run_command(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Val
             go(app, id, &args)
         }
     }
+}
+
+fn mode_variant(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "line" | "Line" => "Line",
+        "fill" | "Fill" => "Fill",
+        "fill_line" | "FillLine" => "FillLine",
+        "offset_fill" | "OffsetFill" => "OffsetFill",
+        "image" | "Image" => "Image",
+        _ => return None,
+    })
+}
+
+/// `layer.set_cut_settings`: merge named fields into one cut setting, validated by serde.
+fn set_cut_settings(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
+    let layer =
+        a.get("layer").and_then(Value::as_u64).filter(|l| *l < darkburn_core::LAYER_COUNT as u64).ok_or("argument layer must be 0 to 31")? as usize;
+    let sub = a.get("sublayer").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let values = a.get("settings").and_then(Value::as_object).ok_or("argument settings must be an object")?;
+    let current = app.editor.doc.layer(layer).settings.get(sub).ok_or_else(|| format!("layer {layer} has no sub-layer {sub}"))?;
+    let mut cur = serde_json::to_value(current).map_err(|e| e.to_string())?;
+    let mut new_mode = None;
+    for (k, v) in values {
+        let field = cur.get_mut(k).ok_or_else(|| format!("unknown cut setting `{k}`: inspect_design layers.{layer} lists them"))?;
+        let v = if k == "mode" {
+            let name = v.as_str().and_then(mode_variant).ok_or("mode is line, fill, fill_line, offset_fill or image")?;
+            new_mode = serde_json::from_value::<darkburn_core::Mode>(json!(name)).ok();
+            json!(name)
+        } else {
+            v.clone()
+        };
+        if std::mem::discriminant(&*field) != std::mem::discriminant(&v) && !(field.is_number() && v.is_number()) {
+            return Err(format!("cut setting `{k}` needs a different kind of value"));
+        }
+        *field = v;
+    }
+    if let Some(m) = new_mode
+        && sub == 0
+        && !crate::cuts_panel::modes_for(&app.editor.doc, layer).contains(&m)
+    {
+        return Err(format!("layer {layer} cannot use {}", m.label()));
+    }
+    let mut new: darkburn_core::layer::CutSetting = serde_json::from_value(cur).map_err(|e| format!("cut settings: {e}"))?;
+    new.sanitise();
+    let changed = app.editor.edit("Cut settings", |d, _| {
+        let before = d.layer(layer).clone();
+        d.layer_mut(layer).settings[sub] = new;
+        *d.layer(layer) != before
+    });
+    Ok(json!({ "changed": changed }))
 }
 
 impl McpBackend {

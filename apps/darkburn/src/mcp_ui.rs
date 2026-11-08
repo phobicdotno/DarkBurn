@@ -410,7 +410,7 @@ pub fn crash_reports(settings: Option<&Path>, limit: usize) -> Value {
             }
         }
     }
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
     let reports: Vec<Value> = files
         .into_iter()
         .take(limit.max(1))

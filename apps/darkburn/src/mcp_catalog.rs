@@ -297,10 +297,16 @@ pub fn command_info(app: &DarkBurn, info: &commands::Info, gweike_active: bool) 
     c
 }
 
+const CUT_SETTINGS: &str = r#"{"type":"object","properties":{"layer":{"type":"integer","minimum":0,"maximum":31},"sublayer":{"type":"integer","minimum":0,"description":"0 is the layer's main settings (default), 1 and up its sub-layers"},"settings":{"type":"object","description":"cut setting names and new values, as inspect_design layers.N shows them (mode as line, fill, fill_line, offset_fill, image)"}},"required":["layer","settings"],"additionalProperties":false}"#;
+
 /// Commands that exist only for MCP (no menu item).
 pub fn extra_commands() -> Vec<CommandInfo> {
     let mut c = CommandInfo::new("settings.set", "Change a Setting by Key", "settings");
     c.params_schema = parse(SETTINGS_SET);
     c.doc = "Changes one preference by its dotted key from list_settings (for example opts.snap_grid or page_width). The type must match. The AI-agent switches (mcp.*) cannot be changed through MCP.".into();
-    vec![c]
+    let mut l = CommandInfo::new("layer.set_cut_settings", "Change Any Cut Settings of a Layer", "layer");
+    l.params_schema = parse(CUT_SETTINGS);
+    l.checklist_ids = vec!["CUT-01".into()];
+    l.doc = "Changes any of a layer's cut settings (the fields of the Cut Settings editor: kerf, overscan, tabs, ramps, lead-in, Z offset ...) in one undo step. Names and values are those inspect_design layers.N reports; unknown names and wrong types fail.".into();
+    vec![c, l]
 }

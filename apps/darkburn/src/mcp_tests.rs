@@ -388,6 +388,28 @@ fn an_agent_builds_a_design_and_reads_it_back() {
 }
 
 #[test]
+fn any_cut_setting_can_be_changed_and_read_back() {
+    let mut b = backend();
+    exec(&mut b, "shape.add_rect", json!({"x": 0, "y": 0, "width": 10, "height": 10, "layer": 3})).unwrap();
+    exec(
+        &mut b,
+        "layer.set_cut_settings",
+        json!({"layer": 3, "settings": {"kerf": 0.15, "mode": "fill_line", "overscan": 2.5, "cross_hatch": true}}),
+    )
+    .unwrap();
+    let l = b.inspect("design.layers.3", 0).unwrap();
+    assert_eq!(l["mode"], "fill_line");
+    let s = &l["settings"][0];
+    assert_eq!((s["kerf"].as_f64(), s["overscan"].as_f64(), s["cross_hatch"].as_bool()), (Some(0.15), Some(2.5), Some(true)));
+    assert_eq!(b.inspect("undo", 0).unwrap()["undo"][0], "Cut settings");
+    assert!(exec(&mut b, "layer.set_cut_settings", json!({"layer": 3, "settings": {"no_such": 1}})).is_err());
+    assert!(exec(&mut b, "layer.set_cut_settings", json!({"layer": 3, "settings": {"kerf": "wide"}})).is_err());
+    assert!(exec(&mut b, "layer.set_cut_settings", json!({"layer": 3, "sublayer": 4, "settings": {"kerf": 1}})).is_err());
+    exec(&mut b, "edit.undo", json!({})).unwrap();
+    assert_eq!(b.inspect("design.layers.3", 0).unwrap()["mode"], "line");
+}
+
+#[test]
 fn the_agent_forms_of_the_dialog_commands_work_without_a_window() {
     let dir = std::env::temp_dir().join(format!("darkburn-mcp-files-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -527,6 +549,29 @@ fn the_headless_screenshot_is_an_offscreen_drawing() {
     assert!(inked > 200, "the red layer 1 outline is drawn: {inked}");
     let part = b.screenshot(Some(Region { x: 0.0, y: 0.0, width: 60.0, height: 40.0 })).unwrap();
     assert!(image::load_from_memory(&part).is_ok());
+}
+
+#[test]
+fn the_guide_names_every_command_group() {
+    let guide = darkburn_mcp::tools::AGENT_GUIDE;
+    let mut b = backend();
+    let all = b.list_commands(&ListQuery::default()).unwrap().commands;
+    let mut groups: Vec<&str> = all.iter().map(|c| c.id.split('.').next().unwrap()).collect();
+    groups.sort();
+    groups.dedup();
+    let missing: Vec<&str> = groups.into_iter().filter(|g| !(guide.contains(&format!("`{g}.*`")) || guide.contains(&format!("`{g}.")))).collect();
+    assert!(missing.is_empty(), "the agent guide does not mention these command groups: {missing:?}");
+    // The commands the worked example uses exist and their parameters validate.
+    for (id, args) in [
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 60, "height": 40, "layer": 1})),
+        ("layer.set_mode", json!({"layer": 1, "mode": "fill"})),
+        ("layer.set_param", json!({"layer": 1, "field": "interval", "value": 0.1})),
+        ("layer.set_cut_settings", json!({"layer": 1, "settings": {"kerf": 0.1, "overscan": 2}})),
+    ] {
+        let mut g = Gate::new(backend(), PolicyHandle::default());
+        let r = g.execute(id, args);
+        assert!(r.is_ok(), "{id}: {r:?}");
+    }
 }
 
 #[test]

@@ -219,13 +219,14 @@ pub fn design_json(app: &DarkBurn, rest: &[&str]) -> Result<Value, CommandError>
             Ok(layer_json(doc, i, true))
         }
         ["selection"] => Ok(selection_json(app)),
+        ["undo"] => Ok(undo_json(app)),
         ["notes"] => Ok(json!(doc.notes)),
         ["variables"] => Ok(variables_json(doc)),
         ["bbox"] => Ok(json!(doc.bbox().map(bbox_json))),
         ["page"] => Ok(json!({"width": app.prefs.page_width, "height": app.prefs.page_height, "origin": app.prefs.origin.label()})),
         ["job"] => Ok(job_json(app)),
         other => Err(CommandError::failed(format!(
-            "unknown design path `design.{}`: use shapes, shapes.s1, layers, layers.0, layers.<name>, selection, notes, variables, bbox, page",
+            "unknown design path `design.{}`: use shapes, shapes.s1, layers, layers.0, layers.<name>, selection, notes, variables, bbox, page, undo, job",
             other.join(".")
         ))),
     }
@@ -636,8 +637,7 @@ pub fn design_png(doc: &Document, page: (f64, f64), region: Option<Region>, widt
             }
             let [r, g, b] = layer_colour(leaf.layer);
             let Some(p) = build(&leaf.outline()) else { continue };
-            let mut paint = tiny_skia::Paint::default();
-            paint.anti_alias = true;
+            let mut paint = tiny_skia::Paint { anti_alias: true, ..Default::default() };
             if doc.is_filled(&leaf) && leaf.is_closed() {
                 paint.set_color_rgba8(r, g, b, 90);
                 pixmap.fill_path(&p, &paint, tiny_skia::FillRule::EvenOdd, tiny_skia::Transform::identity(), None);

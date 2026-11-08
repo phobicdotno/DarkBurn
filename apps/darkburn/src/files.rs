@@ -82,17 +82,7 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         "file.save_as" => {
             save_as(app);
         }
-        "file.import" => {
-            let exts = import::import_extensions();
-            let mut dialog = rfd::FileDialog::new().add_filter("Artwork and images", &exts).add_filter("SVG", import::VECTOR_EXTENSIONS);
-            dialog = dialog.add_filter("Images", import::BITMAP_EXTENSIONS);
-            if let Some(dir) = last_dir(&app.prefs) {
-                dialog = dialog.set_directory(dir);
-            }
-            if let Some(paths) = dialog.pick_files() {
-                import_paths(app, &paths, None);
-            }
-        }
+        "file.import" => crate::file_io::request_import_dialog(app),
         "file.notes" => app.notes_open = true,
         "file.exit" => guard(app, ctx, Then::Exit),
         _ => {
@@ -125,16 +115,29 @@ fn proceed(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
         Then::New => new_project(app),
         Then::Open(path) => {
             let path = path.or_else(|| {
-                let mut d = rfd::FileDialog::new().add_filter("DarkBurn project", &[project::EXTENSION]);
+                let mut all: Vec<&str> = vec![project::EXTENSION];
+                all.extend(import::import_extensions());
+                all.extend(crate::formats::LIBRARY_EXTENSIONS);
+                let mut d = rfd::FileDialog::new()
+                    .add_filter("Projects, artwork and images", &all)
+                    .add_filter("DarkBurn project", &[project::EXTENSION])
+                    .add_filter("LightBurn project", &["lbrn", "lbrn2"])
+                    .add_filter("DXF, PDF, Illustrator, PLT", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg"])
+                    .add_filter("SVG and images", &import::import_extensions());
                 if let Some(dir) = last_dir(&app.prefs) {
                     d = d.set_directory(dir);
                 }
                 d.pick_file()
             });
-            if let Some(path) = path
-                && let Err(e) = open_path(app, &path)
-            {
-                app.files.message = Some(("Could not open".into(), format!("{}: {e}", path.display())));
+            if let Some(path) = path {
+                if import::kind_of(&path) == FileKind::Project {
+                    if let Err(e) = open_path(app, &path) {
+                        app.files.message = Some(("Could not open".into(), format!("{}: {e}", path.display())));
+                    }
+                } else {
+                    // Everything else is read on a worker thread.
+                    crate::file_io::start_open(app, path);
+                }
             }
         }
         Then::Exit => {
@@ -161,12 +164,7 @@ pub fn new_project(app: &mut DarkBurn) {
 /// Open `path`: a project replaces the open one; artwork opens as a new project holding it.
 pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     if import::kind_of(path) != FileKind::Project {
-        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-        let imported = import::import_bytes(path, &bytes, &import_options(app), None)?;
-        new_project(app);
-        insert(app, vec![imported]);
-        app.editor.history.clear();
-        return Ok(());
+        return crate::file_io::open_sync(app, path);
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let loaded = project::load(&bytes).map_err(|e| e.to_string())?;
@@ -233,7 +231,7 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 }
 
 /// Write through a temporary file so a failed write never leaves half a project.
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -268,30 +266,32 @@ pub fn import_options(app: &DarkBurn) -> import::Options {
     }
 }
 
-/// Import files (centred on `at` when given) as one undo step. Projects among them are skipped
-/// (they open instead). Returns the new shape ids.
+#[cfg(test)]
+/// Import files (centred on `at` when given) as one undo step, now. Returns the new shape ids.
+/// Errors and warnings are shown in windows; `file_io::import_sync` returns them instead.
 pub fn import_paths(app: &mut DarkBurn, paths: &[PathBuf], at: Option<Point>) -> Vec<ShapeId> {
-    let opts = import_options(app);
-    let mut all = Vec::new();
-    let mut errors = Vec::new();
-    for path in paths {
-        let read = std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| import::import_bytes(path, &b, &opts, at));
-        match read {
-            Ok(i) => all.push(i),
-            Err(e) => errors.push(format!("{}: {e}", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default())),
-        }
+    let report = crate::file_io::import_sync(app, paths, at, None);
+    if !report.errors.is_empty() {
+        app.files.message = Some(("Some files were not imported".into(), report.errors.join("\n")));
     }
-    if !errors.is_empty() {
-        app.files.message = Some(("Some files were not imported".into(), errors.join("\n")));
+    if !report.warnings.is_empty() {
+        app.fio.warnings = Some(report.warnings);
     }
-    insert(app, all)
+    report.ids
 }
 
-/// Add imported shapes as one undo step: grouped per file and selected, as the preferences say.
-pub fn insert(app: &mut DarkBurn, imported: Vec<Imported>) -> Vec<ShapeId> {
+/// A message window.
+pub fn show_message(app: &mut DarkBurn, title: &str, text: String) {
+    app.files.message = Some((title.to_string(), text));
+}
+
+/// Add imported shapes as one undo step: grouped per file and selected, as the preferences say,
+/// and put `layers` (cut settings read from a file) into the document.
+pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: Vec<darkburn_core::layer::Layer>) -> Vec<ShapeId> {
     let (group, select) = (app.prefs.import_group, app.prefs.import_select);
     let mut new = Vec::new();
     app.editor.edit("Import", |d, sel| {
+        crate::formats::apply_layers(d, &layers, &Default::default(), |_| true);
         for imp in imported {
             for (k, data) in imp.images {
                 d.images.entry(k).or_insert(data);
@@ -306,7 +306,7 @@ pub fn insert(app: &mut DarkBurn, imported: Vec<Imported>) -> Vec<ShapeId> {
         if select && !new.is_empty() {
             sel.set(new.iter().copied());
         }
-        !new.is_empty()
+        !new.is_empty() || !layers.is_empty()
     });
     new
 }
@@ -321,9 +321,10 @@ fn pointer_point(app: &DarkBurn) -> Option<Point> {
 
 /// Files dropped on the window: the first project opens, artwork is imported at the pointer.
 pub fn drop_files(app: &mut DarkBurn, ctx: &egui::Context, paths: Vec<PathBuf>, at: Option<Point>) {
-    let (projects, art): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| import::kind_of(p) == FileKind::Project);
+    let (projects, art): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| crate::file_io::is_openable_project(p));
     if !art.is_empty() {
-        import_paths(app, &art, at);
+        // Read on a worker thread; device profiles go to their hook.
+        crate::file_io::start_import(app, art, at);
     }
     if let Some(p) = projects.into_iter().next() {
         guard(app, ctx, Then::Open(Some(p)));
@@ -333,7 +334,7 @@ pub fn drop_files(app: &mut DarkBurn, ctx: &egui::Context, paths: Vec<PathBuf>, 
 // ----- Auto-save and crash restore -----
 
 fn autosave_enabled(app: &DarkBurn) -> bool {
-    app.settings_dir.is_some() && !app.safe_mode && app.prefs.autosave_minutes > 0.0
+    app.settings_dir.is_some() && !app.safe_mode && !app.fio.secondary && app.prefs.autosave_minutes > 0.0
 }
 
 /// Write an auto-save of `doc` (and the path of the project it copies) into `dir`.
@@ -584,6 +585,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
         prune_recent(&mut app.prefs);
         if let Some(dir) = app.settings_dir.clone()
             && !app.safe_mode
+            && !app.fio.secondary
         {
             app.files.restore = begin_session(&dir);
         }
@@ -614,7 +616,9 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
             wait_for_autosave(app);
             if let Some(dir) = &app.settings_dir
                 && !app.safe_mode
+                && !app.fio.secondary
             {
+                crate::instance::clear(dir);
                 end_session(dir);
             }
         }

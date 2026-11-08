@@ -30,11 +30,15 @@ pub const COMMANDS: &[Cmd] = &[
     c("file.new_window", "New Window", "", ""),
     c("file.open", "Open", "Ctrl+O", "open"),
     c("file.import", "Import", "Ctrl+I", "import"),
+    c("file.import_options", "Import Options", "", ""),
     c("file.notes", "Show Notes", "Ctrl+Alt+N", ""),
     c("file.save", "Save", "Ctrl+S", "save"),
     c("file.save_as", "Save As", "Ctrl+Shift+S", ""),
+    c("file.save_lbrn2", "Save as LightBurn Project (.lbrn2)", "", ""),
     c("file.save_gcode", "Save G-code", "Alt+Shift+L", ""),
     c("file.export", "Export", "Alt+X", "export"),
+    c("file.export_gweike_dxf", "Export Gweike DXF (layer per material)", "", ""),
+    c("file.export_gweike_nc", "Export Gweike G-code (.nc)", "", ""),
     c("file.print", "Print (black only)", "Ctrl+P", ""),
     c("file.print_colour", "Print (keep colours)", "Ctrl+Shift+P", ""),
     c("file.save_bitmap", "Save Processed Bitmap", "", ""),
@@ -312,8 +316,20 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "project.import",
         "Import Files",
-        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"}},"required":["paths"]}"#,
+        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"},"pdf_page":{"description":"a page number, or \"all\""}},"required":["paths"]}"#,
     ),
+    a(
+        "project.export",
+        "Export to a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"}},"required":["path"]}"#,
+    ),
+    a(
+        "project.print_pdf",
+        "Save the Print as a PDF",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"black_only":{"type":"boolean"},"selection_only":{"type":"boolean"}},"required":["path"]}"#,
+    ),
+    a("project.prefs_export", "Export Preferences to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("project.prefs_import", "Import Preferences from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a(
         "setting.set",
         "Change a Setting",
@@ -333,6 +349,17 @@ pub fn works(id: &str) -> bool {
             | "file.save"
             | "file.save_as"
             | "file.prefs_folder"
+            | "file.new_window"
+            | "file.import_options"
+            | "file.save_lbrn2"
+            | "file.export"
+            | "file.export_gweike_dxf"
+            | "file.export_gweike_nc"
+            | "file.print"
+            | "file.print_colour"
+            | "file.prefs_export"
+            | "file.prefs_import"
+            | "file.prefs_backup"
             | "edit.settings"
             | "edit.undo"
             | "edit.redo"
@@ -463,8 +490,19 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "file.new" => &["FILE-01"],
         "file.open" | "project.open" => &["FILE-04"],
-        "file.import" | "project.import" => &["FILE-05", "IMP-13"],
+        "file.import" | "project.import" => &["FILE-05", "IMP-03", "IMP-04", "IMP-05", "IMP-06", "IMP-13", "PROJ-02", "PROJ-03"],
         "file.notes" => &["FILE-06"],
+        "file.new_window" => &["FILE-02", "PLAT-01"],
+        "file.import_options" => &["SET-29", "SET-30", "SET-31", "SET-32", "SET-33", "SET-34", "SET-35", "IMP-10", "IMP-11", "IMP-12"],
+        "file.save_lbrn2" => &["PROJ-06"],
+        "file.export" | "project.export" => &["FILE-10", "EXP-01", "EXP-02", "EXP-03", "EXP-04", "EXP-05"],
+        "file.export_gweike_dxf" => &["MCC-01"],
+        "file.export_gweike_nc" => &["MCC-03"],
+        "file.print" => &["FILE-11", "PLAT-08"],
+        "file.print_colour" | "project.print_pdf" => &["FILE-12", "PLAT-08"],
+        "file.prefs_export" | "project.prefs_export" => &["FILE-16", "AUX-04"],
+        "file.prefs_import" | "project.prefs_import" => &["FILE-17", "AUX-04"],
+        "file.prefs_backup" => &["FILE-18", "PLAT-07"],
         "file.save" => &["FILE-07"],
         "file.save_as" | "project.save_as" => &["FILE-08"],
         "edit.undo" => &["EDIT-01"],
@@ -684,12 +722,16 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             D("recent"),
             C("file.open"),
             C("file.import"),
+            C("file.import_options"),
             C("file.notes"),
             S,
             C("file.save"),
             C("file.save_as"),
+            C("file.save_lbrn2"),
             C("file.save_gcode"),
             C("file.export"),
+            C("file.export_gweike_dxf"),
+            C("file.export_gweike_nc"),
             S,
             C("file.print"),
             C("file.print_colour"),

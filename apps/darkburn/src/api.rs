@@ -3,7 +3,7 @@
 //! scripts and tests use. The commands and their argument schemas are listed in `commands.rs`;
 //! this file does the work of the ones that take arguments and refuses the ones that cannot run.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use darkburn_core::arrange::{self, Anchor};
 use darkburn_core::kurbo::{BezPath, Point, Rect};
@@ -225,24 +225,8 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         "project.info" => Ok(info(app)),
         "project.open" => text(a, "path").and_then(|p| crate::files::open_path(app, Path::new(p))).map(|_| info(app)),
         "project.save_as" => text(a, "path").and_then(|p| crate::files::save_to(app, Path::new(p))).map(|_| info(app)),
-        "project.import" => (|| {
-            let paths: Vec<PathBuf> = a
-                .get("paths")
-                .and_then(Value::as_array)
-                .ok_or("argument paths must be a list")?
-                .iter()
-                .filter_map(Value::as_str)
-                .map(PathBuf::from)
-                .collect();
-            let at = match (opt_num(a, "x"), opt_num(a, "y")) {
-                (Some(x), Some(y)) => Some(Point::new(x, y)),
-                _ => None,
-            };
-            let ids = crate::files::import_paths(app, &paths, at);
-            Ok(json!({ "imported": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
-        })(),
         "setting.set" => setting(app, a),
-        _ => return None,
+        _ => return crate::file_io::with_args(app, id, a),
     })
 }
 

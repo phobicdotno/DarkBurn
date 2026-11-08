@@ -66,6 +66,8 @@ pub struct DarkBurn {
     pub flash_layer: Option<(usize, f64)>,
     /// Project files, auto-save and the system clipboard (files.rs).
     pub files: crate::files::FileState,
+    /// Opening, importing and exporting other file types (file_io.rs).
+    pub fio: crate::file_io::FileIo,
 }
 
 impl DarkBurn {
@@ -96,6 +98,7 @@ impl DarkBurn {
             notes_open: false,
             flash_layer: None,
             files: Default::default(),
+            fio: Default::default(),
         }
     }
 
@@ -167,7 +170,7 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
-        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) {
+        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) || crate::file_io::run(self, ctx, id) {
             return;
         }
         match id {
@@ -245,6 +248,7 @@ impl DarkBurn {
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
+        crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
         if self.prefs.status_bar {
@@ -269,6 +273,7 @@ impl DarkBurn {
         self.dialogs(ui.ctx());
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
+        crate::file_io::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }

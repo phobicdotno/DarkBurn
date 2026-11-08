@@ -815,6 +815,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.select_smaller"),
             C("tools.warp"),
             C("tools.deform"),
+            C("tools.start_points"),
+            C("tools.round_corners"),
         ],
     ),
     (

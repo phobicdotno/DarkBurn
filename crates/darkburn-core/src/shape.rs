@@ -337,6 +337,12 @@ impl Shape {
                 c.set_layer(layer);
             }
         }
+        // A virtual array keeps its originals on the same layer, so editing it keeps the layer.
+        if let Some(a) = &mut self.array {
+            for s in &mut a.source {
+                s.set_layer(layer);
+            }
+        }
     }
 
     /// The layers used by this shape (several for groups), sorted.

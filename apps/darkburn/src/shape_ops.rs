@@ -12,6 +12,7 @@ use darkburn_core::arrange;
 use darkburn_core::expr;
 use darkburn_core::kurbo::{Affine, BezPath, Point, Rect};
 use darkburn_core::{Document, Editor, Selection, Shape, ShapeId, ShapeKind};
+use darkburn_geom::FillRule;
 use darkburn_geom::boolean;
 use darkburn_geom::cleanup;
 use darkburn_geom::fillet;
@@ -21,7 +22,6 @@ use darkburn_geom::path as gpath;
 use darkburn_geom::query;
 use darkburn_geom::slots::{self, Slot, SlotKind, SlotQuery};
 use darkburn_geom::transform as gxf;
-use darkburn_geom::FillRule;
 use serde_json::{Value, json};
 
 use crate::shell::DarkBurn;
@@ -247,8 +247,7 @@ fn auto_join(e: &mut Editor, a: &Value) -> R {
     if groups.is_empty() {
         return Err("select open paths to join".into());
     }
-    let results: Vec<Vec<BezPath>> =
-        groups.iter().map(|g| cleanup::auto_join(&g.2, tol, &mut |_, _| true).unwrap_or_else(|| g.2.clone())).collect();
+    let results: Vec<Vec<BezPath>> = groups.iter().map(|g| cleanup::auto_join(&g.2, tol, &mut |_, _| true).unwrap_or_else(|| g.2.clone())).collect();
     apply_joined(e, &groups, results)
 }
 
@@ -684,12 +683,6 @@ pub fn find_slots_in(doc: &Document, ids: &[ShapeId], q: &SlotQuery) -> Vec<Slot
     out
 }
 
-/// The display class of a slot, so a dialog can colour like with like: `Rect` and `Round`
-/// slots, each by whether it is a notch or a protruding tab.
-pub fn slot_class(s: &Slot) -> (SlotKind, bool) {
-    (s.kind, s.protruding)
-}
-
 fn resize_slots_cmd(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
     let q = slot_query(a);
@@ -728,7 +721,9 @@ fn select_smaller(e: &mut Editor, _a: &Value) -> R {
         .filter(|s| !s.locked && !ids.contains(&s.id) && e.doc.is_selectable(s))
         .filter(|s| {
             let b = s.bbox();
-            b.width() <= reference.width() + 1e-9 && b.height() <= reference.height() + 1e-9 && (b.width() * b.height()) < reference.width() * reference.height() - 1e-9
+            b.width() <= reference.width() + 1e-9
+                && b.height() <= reference.height() + 1e-9
+                && (b.width() * b.height()) < reference.width() * reference.height() - 1e-9
         })
         .map(|s| s.id)
         .collect();
@@ -823,7 +818,8 @@ fn straight_line(doc: &Document, id: ShapeId) -> Option<(Point, Point)> {
     let _ = s;
     let cs = gpath::contours(&p);
     let c = cs.first()?;
-    (cs.len() == 1 && !c.closed && c.segs.len() == 1 && matches!(c.segs[0], darkburn_core::kurbo::PathSeg::Line(_))).then(|| (c.start().unwrap_or_default(), c.end().unwrap_or_default()))
+    (cs.len() == 1 && !c.closed && c.segs.len() == 1 && matches!(c.segs[0], darkburn_core::kurbo::PathSeg::Line(_)))
+        .then(|| (c.start().unwrap_or_default(), c.end().unwrap_or_default()))
 }
 
 fn mirror(e: &mut Editor, a: &Value) -> R {
@@ -899,7 +895,9 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         "tools.warp" => {
             r#"{"type":"object","properties":{"corners":{"type":"array","description":"four [x, y] points: bottom-left, bottom-right, top-right, top-left"},"mode":{"enum":["perspective","bilinear"]}},"required":["corners"]}"#
         }
-        "tools.deform" => r#"{"type":"object","properties":{"grid":{"type":"array","description":"16 [x, y] points, bottom row first"}},"required":["grid"]}"#,
+        "tools.deform" => {
+            r#"{"type":"object","properties":{"grid":{"type":"array","description":"16 [x, y] points, bottom row first"}},"required":["grid"]}"#
+        }
         "tools.round_corners" => {
             r#"{"type":"object","properties":{"radius":{"type":"number","description":"negative cuts inwards"},"chamfer":{"type":"boolean"},"nodes":{"type":"array","description":"[subpath, node] pairs; all corners when missing"}}}"#
         }
@@ -993,14 +991,19 @@ pub fn can_run(app: &DarkBurn, id: &str) -> Option<bool> {
     }
     let sel = app.editor.selection.len();
     Some(match id {
-        "tools.union" | "tools.difference" | "tools.intersection" | "tools.cut_shapes" | "tools.weld" | "arrange.nest" => sel >= 2 || (id == "arrange.nest" && sel >= 1),
+        "tools.union" | "tools.difference" | "tools.intersection" | "tools.cut_shapes" | "tools.weld" | "arrange.nest" => {
+            sel >= 2 || (id == "arrange.nest" && sel >= 1)
+        }
         "tools.boolean_assistant" => true,
         "arrange.mirror" | "arrange.alignment_helper" => sel >= 1,
-        "arrange.array_edit" | "arrange.array_add" | "arrange.array_remove" | "arrange.array_exit" | "arrange.array_flatten" | "arrange.array_duplicate" => {
-            crate::shape_arrays::can_run(app, id)
-        }
+        "arrange.array_edit"
+        | "arrange.array_add"
+        | "arrange.array_remove"
+        | "arrange.array_exit"
+        | "arrange.array_flatten"
+        | "arrange.array_duplicate" => crate::shape_arrays::can_run(app, id),
         "arrange.auto_group" => true,
-        id if id.starts_with("tools.") && matches!(id, "tools.nodes" | "tools.tabs" | "tools.measure" | "tools.start_points" | "tools.warp" | "tools.deform") => true,
+        "tools.nodes" | "tools.tabs" | "tools.measure" | "tools.start_points" | "tools.round_corners" => true,
         _ => sel >= 1,
     })
 }
@@ -1205,7 +1208,7 @@ pub(crate) mod tests {
         let out = run(&mut app, "tools.boolean_assistant", json!({ "op": "difference", "a": [b.0], "b": [a.0], "keep_originals": true })).unwrap();
         assert_eq!(out["ids"].as_array().unwrap().len(), 1);
         assert_eq!(app.editor.doc.len(), 3);
-        assert!(run(&mut app, "tools.union", Value::Null).is_err() || app.editor.selection.len() >= 1);
+        assert!(run(&mut app, "tools.union", Value::Null).is_err() || !app.editor.selection.is_empty());
     }
 
     #[test]
@@ -1334,7 +1337,12 @@ pub(crate) mod tests {
         assert!(app.editor.doc.iter().any(|s| (s.bbox().x0 - 30.0).abs() < 1e-6 && (s.bbox().x1 - 40.0).abs() < 1e-6));
         let r3 = add_rect(&mut app, 100.0, 100.0, 10.0, 0.0001 + 10.0, 0);
         select(&mut app, &[r3]);
-        run(&mut app, "arrange.two_point", json!({ "from_a": [100, 100], "from_b": [110, 100], "to_a": [100, 100], "to_b": [100, 120], "uniform": true })).unwrap();
+        run(
+            &mut app,
+            "arrange.two_point",
+            json!({ "from_a": [100, 100], "from_b": [110, 100], "to_a": [100, 100], "to_b": [100, 120], "uniform": true }),
+        )
+        .unwrap();
         let bb = app.editor.doc.get(r3).unwrap().bbox();
         assert!((bb.height() - 20.0).abs() < 0.01, "{bb:?}");
         select(&mut app, &[r2, r3]);
@@ -1350,5 +1358,108 @@ pub(crate) mod tests {
             assert!(crate::commands::lookup(id).is_some());
             assert!(works(id));
         }
+    }
+
+    #[test]
+    fn every_edit_is_one_undo_step_and_undo_restores() {
+        let cases: Vec<(&str, Value)> = vec![
+            ("edit.convert_path", json!({})),
+            ("tools.offset", json!({ "distance": 1 })),
+            ("tools.weld", json!({})),
+            ("tools.union", json!({})),
+            ("tools.difference", json!({})),
+            ("tools.intersection", json!({})),
+            ("tools.cut_shapes", json!({})),
+            ("tools.round_corners", json!({ "radius": 1 })),
+            ("arrange.mirror", json!({ "a": [0, 0], "b": [0, 1] })),
+            ("arrange.rubber_band", json!({})),
+            ("arrange.grid_array", json!({ "rows": 2, "cols": 2, "virtual": true })),
+            ("arrange.circular_array", json!({ "cx": 0, "cy": 0, "count": 3 })),
+            ("arrange.nest", json!({})),
+            ("arrange.dock_left", json!({})),
+            ("tabs.add", json!({ "shape": 1, "x": 5, "y": 0 })),
+            ("shape.set_start_point", json!({ "x": 20, "y": 20 })),
+        ];
+        for (id, args) in cases {
+            let mut app = app();
+            let a = add_rect(&mut app, 10.0, 10.0, 20.0, 20.0, 1);
+            let b = add_rect(&mut app, 20.0, 20.0, 20.0, 20.0, 1);
+            select(&mut app, &[a, b]);
+            let before = app.editor.doc.clone();
+            let steps = app.editor.history.len();
+            let r = run(&mut app, id, args).unwrap_or_else(|e| panic!("{id}: {e}"));
+            assert_eq!(app.editor.history.len(), steps + 1, "{id} must be exactly one undo step: {r}");
+            run(&mut app, "edit.undo", Value::Null).unwrap();
+            assert_eq!(app.editor.doc, before, "{id}: undo restores the document");
+            run(&mut app, "edit.redo", Value::Null).unwrap();
+        }
+    }
+
+    #[test]
+    fn every_command_of_this_area_is_registered_and_described() {
+        for id in [
+            "edit.convert_path",
+            "edit.close_path",
+            "edit.close_tolerance",
+            "edit.auto_join",
+            "edit.optimize",
+            "edit.delete_duplicates",
+            "edit.delete_overlapping",
+            "shape.remove_rounded_corners",
+            "tools.offset",
+            "tools.weld",
+            "tools.union",
+            "tools.difference",
+            "tools.intersection",
+            "tools.boolean_assistant",
+            "tools.cut_shapes",
+            "tools.resize_slots",
+            "tools.select_smaller",
+            "tools.warp",
+            "tools.deform",
+            "tools.round_corners",
+            "tools.start_points",
+            "tools.nodes",
+            "tools.tabs",
+            "tools.measure",
+            "arrange.break_apart",
+            "arrange.auto_group",
+            "arrange.mirror",
+            "arrange.two_point",
+            "arrange.nest",
+            "arrange.dock_left",
+            "arrange.dock_right",
+            "arrange.dock_up",
+            "arrange.dock_down",
+            "arrange.rubber_band",
+            "arrange.grid_array",
+            "arrange.circular_array",
+            "arrange.copy_along_path",
+            "arrange.array_edit",
+            "arrange.array_add",
+            "arrange.array_remove",
+            "arrange.array_exit",
+            "arrange.array_flatten",
+            "arrange.array_duplicate",
+            "arrange.alignment_helper",
+            "node.edit",
+            "tabs.add",
+            "tabs.remove",
+            "tabs.clear",
+            "tabs.auto",
+            "shape.set_corner_radius",
+            "shape.add_line",
+            "shape.set_start_point",
+            "shape.reverse_direction",
+            "measure.selection",
+            "measure.points",
+            "measure.arc",
+        ] {
+            let info = crate::commands::describe(id).unwrap_or_else(|| panic!("{id} is not registered"));
+            assert!(info.implemented, "{id} should be implemented");
+            assert!(!info.hardware, "{id}");
+            assert!(!info.checklist.is_empty(), "{id} names checklist items");
+        }
+        assert!(crate::commands::describe("tools.offset").unwrap().args_schema["properties"]["distance"].is_object());
     }
 }

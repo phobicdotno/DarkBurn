@@ -38,9 +38,12 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.grid_array" => &["ARR-30", "ARRAY-01", "ARRAY-02", "ARRAY-03", "ARRAY-04", "ARRAY-06", "TB-10"],
         "arrange.circular_array" => &["ARR-31", "ARRAY-07", "TB-10"],
         "arrange.copy_along_path" => &["ARR-32", "ARRAY-08"],
-        "arrange.array_edit" | "arrange.array_add" | "arrange.array_remove" | "arrange.array_exit" | "arrange.array_flatten" | "arrange.array_duplicate" => {
-            &["ARR-41", "ARRAY-05"]
-        }
+        "arrange.array_edit"
+        | "arrange.array_add"
+        | "arrange.array_remove"
+        | "arrange.array_exit"
+        | "arrange.array_flatten"
+        | "arrange.array_duplicate" => &["ARR-41", "ARRAY-05"],
         "arrange.nest" => &["ARR-25", "ARRAY-09"],
         "arrange.dock_left" | "arrange.dock_right" | "arrange.dock_up" | "arrange.dock_down" => &["ARR-26", "TB-24", "ARRAY-13"],
         "arrange.alignment_helper" => &["ARRAY-12"],
@@ -62,7 +65,9 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         "arrange.array_edit" => {
             r#"{"type":"object","properties":{"id":{"type":"integer","description":"the virtual array; the selected one when missing"},"kind":{"enum":["grid","circular","along_path"]}},"description":"plus any setting of that array kind"}"#
         }
-        "arrange.array_remove" => r#"{"type":"object","properties":{"index":{"type":"integer","description":"which original item; the last when missing"}}}"#,
+        "arrange.array_remove" => {
+            r#"{"type":"object","properties":{"index":{"type":"integer","description":"which original item; the last when missing"}}}"#
+        }
         "arrange.array_duplicate" => r#"{"type":"object","properties":{"dx":{"type":"number"},"dy":{"type":"number"}}}"#,
         "arrange.nest" => {
             r#"{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"spacing":{"type":"number"},"margin":{"type":"number"},"rotation_step":{"type":"number","description":"degrees; 0 for none"},"allow_mirror":{"type":"boolean"}},"description":"the sheet is the work area when x, y, width, height are missing"}"#
@@ -91,10 +96,14 @@ pub fn run_args(_app: &DarkBurn, _id: &str) -> Value {
 
 /// Grid settings: `a` over `base`.
 pub fn grid_from(a: &Value, base: &GridDef) -> GridDef {
-    let amount = num(a, "shift_amount", match base.shift {
-        GridShift::AltRows(v) | GridShift::AltCols(v) => v,
-        _ => 0.0,
-    });
+    let amount = num(
+        a,
+        "shift_amount",
+        match base.shift {
+            GridShift::AltRows(v) | GridShift::AltCols(v) => v,
+            _ => 0.0,
+        },
+    );
     let shift = match a.get("shift").and_then(Value::as_str) {
         Some("none") => GridShift::None,
         Some("alt_rows") => GridShift::AltRows(amount),
@@ -458,10 +467,10 @@ impl Dir {
         let overlap_y = m.y0 < o.y1 - EPS && o.y0 < m.y1 - EPS;
         let overlap_x = m.x0 < o.x1 - EPS && o.x0 < m.x1 - EPS;
         match self {
-            Dir::Left => (overlap_y && o.x1 <= m.x0 + EPS).then(|| m.x0 - o.x1),
-            Dir::Right => (overlap_y && o.x0 >= m.x1 - EPS).then(|| o.x0 - m.x1),
-            Dir::Up => (overlap_x && o.y0 >= m.y1 - EPS).then(|| o.y0 - m.y1),
-            Dir::Down => (overlap_x && o.y1 <= m.y0 + EPS).then(|| m.y0 - o.y1),
+            Dir::Left => (overlap_y && o.x1 <= m.x0 + EPS).then_some(m.x0 - o.x1),
+            Dir::Right => (overlap_y && o.x0 >= m.x1 - EPS).then_some(o.x0 - m.x1),
+            Dir::Up => (overlap_x && o.y0 >= m.y1 - EPS).then_some(o.y0 - m.y1),
+            Dir::Down => (overlap_x && o.y1 <= m.y0 + EPS).then_some(m.y0 - o.y1),
         }
     }
 
@@ -520,7 +529,11 @@ fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
                 if leaders.iter().any(|l| l.0 == *id) {
                     continue;
                 }
-                if let Some(l) = leaders.iter_mut().filter(|l| contains(l.1, *r)).min_by(|a, b| (a.1.width() * a.1.height()).total_cmp(&(b.1.width() * b.1.height()))) {
+                if let Some(l) = leaders
+                    .iter_mut()
+                    .filter(|l| contains(l.1, *r))
+                    .min_by(|a, b| (a.1.width() * a.1.height()).total_cmp(&(b.1.width() * b.1.height())))
+                {
                     l.2.push(*id);
                 }
             }
@@ -590,7 +603,12 @@ mod tests {
         let mut app = app();
         let r = add_rect(&mut app, 0.0, 0.0, 10.0, 10.0, 0);
         select(&mut app, &[r]);
-        run(&mut app, "arrange.grid_array", json!({ "fit_width": 45, "fit_height": 25, "centre_to_centre": true, "dx": 15, "dy": 15, "shift": "alt_rows", "shift_amount": 5 })).unwrap();
+        run(
+            &mut app,
+            "arrange.grid_array",
+            json!({ "fit_width": 45, "fit_height": 25, "centre_to_centre": true, "dx": 15, "dy": 15, "shift": "alt_rows", "shift_amount": 5 }),
+        )
+        .unwrap();
         // 45 wide fits 3 columns (0, 15, 30 -> right edge 40); 25 high fits 2 rows.
         assert_eq!(app.editor.doc.len(), 6, "{}", app.editor.doc.len());
         let mut app2 = crate::shape_ops::tests::app();
@@ -630,6 +648,11 @@ mod tests {
         // Edit the settings: the array stays one editable object.
         run(&mut app, "arrange.array_edit", json!({ "cols": 5 })).unwrap();
         assert!(matches!(&app.editor.doc.get(gid).unwrap().kind, ShapeKind::Group { children } if children.len() == 5));
+        // A layer change survives editing the array.
+        run(&mut app, "shape.set_layer", json!({ "layer": 7 })).unwrap();
+        run(&mut app, "arrange.array_edit", json!({ "cols": 4 })).unwrap();
+        assert!(app.editor.doc.get(gid).unwrap().leaves().iter().all(|l| l.layer == 7));
+        run(&mut app, "arrange.array_edit", json!({ "cols": 5 })).unwrap();
         // Add another original.
         let extra = add_rect(&mut app, 0.0, 30.0, 4.0, 4.0, 1);
         select(&mut app, &[gid, extra]);

@@ -37,7 +37,9 @@ pub fn works(id: &str) -> bool {
 
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
-        "tools.nodes" | "node.edit" => &["TOOLS-06", "NODE-01", "NODE-02", "NODE-03", "NODE-04", "NODE-05", "NODE-06", "NODE-07", "NODE-08", "NODE-09", "SHAPE-18"],
+        "tools.nodes" | "node.edit" => {
+            &["TOOLS-06", "NODE-01", "NODE-02", "NODE-03", "NODE-04", "NODE-05", "NODE-06", "NODE-07", "NODE-08", "NODE-09", "SHAPE-18"]
+        }
         "tools.tabs" | "tabs.add" | "tabs.remove" | "tabs.clear" | "tabs.auto" => &["TOOLS-07"],
         "tools.measure" | "measure.selection" | "measure.points" | "measure.arc" => &["TOOLS-10", "DRAW-18", "DRAW-19"],
         "tools.start_points" | "shape.set_start_point" | "shape.reverse_direction" => &["NODE-10", "NODE-11", "NODE-12", "TB-11"],
@@ -53,11 +55,19 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         "node.edit" => {
             r#"{"type":"object","properties":{"shape":{"type":"integer","description":"the selected shape when missing"},"op":{"enum":["insert","delete","delete_segment","break","to_line","to_curve","corner","smooth","move","align","trim","extend"]},"subpath":{"type":"integer"},"node":{"type":"integer"},"seg":{"type":"integer"},"t":{"type":"number","description":"0 to 1 along the segment for insert"},"dx":{"type":"number"},"dy":{"type":"number"},"nodes":{"type":"array","description":"[subpath, node] pairs for align"},"align":{"enum":["left","right","top","bottom","center_h","center_v"]},"at":{"type":"array","description":"[x, y] for trim"},"max_dist":{"type":"number"}},"required":["op"]}"#
         }
-        "tabs.add" => r#"{"type":"object","properties":{"shape":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"required":["x","y"]}"#,
-        "tabs.remove" => r#"{"type":"object","properties":{"shape":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"radius":{"type":"number"}},"required":["x","y"]}"#,
+        "tabs.add" => {
+            r#"{"type":"object","properties":{"shape":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"required":["x","y"]}"#
+        }
+        "tabs.remove" => {
+            r#"{"type":"object","properties":{"shape":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"radius":{"type":"number"}},"required":["x","y"]}"#
+        }
         "tabs.clear" => r#"{"type":"object","properties":{"shape":{"type":"integer"}}}"#,
-        "tabs.auto" => r#"{"type":"object","properties":{"shape":{"type":"integer"},"force":{"type":"boolean","description":"even when the layer's tabs are off"}}}"#,
-        "shape.set_corner_radius" => r#"{"type":"object","properties":{"radius":{"type":"number","description":"mm; negative rounds inwards"}},"required":["radius"]}"#,
+        "tabs.auto" => {
+            r#"{"type":"object","properties":{"shape":{"type":"integer"},"force":{"type":"boolean","description":"even when the layer's tabs are off"}}}"#
+        }
+        "shape.set_corner_radius" => {
+            r#"{"type":"object","properties":{"radius":{"type":"number","description":"mm; negative rounds inwards"}},"required":["radius"]}"#
+        }
         "shape.add_line" => {
             r#"{"type":"object","properties":{"points":{"type":"array","description":"[x, y] points"},"closed":{"type":"boolean"},"connect":{"type":"boolean","description":"join to an open line on the same layer that ends there"},"layer":{"type":"integer"},"tolerance":{"type":"number"}},"required":["points"]}"#
         }
@@ -67,7 +77,9 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         "shape.reverse_direction" => r#"{"type":"object","properties":{"shape":{"type":"integer"}}}"#,
         "measure.selection" => r#"{"type":"object","properties":{}}"#,
         "measure.points" => r#"{"type":"object","properties":{"a":{"type":"array"},"b":{"type":"array"}},"required":["a","b"]}"#,
-        "measure.arc" => r#"{"type":"object","properties":{"a":{"type":"array"},"b":{"type":"array"},"c":{"type":"array","description":"three points on the arc"}},"required":["a","b","c"]}"#,
+        "measure.arc" => {
+            r#"{"type":"object","properties":{"a":{"type":"array"},"b":{"type":"array"},"c":{"type":"array","description":"three points on the arc"}},"required":["a","b","c"]}"#
+        }
         _ => return None,
     })
 }
@@ -239,7 +251,11 @@ fn tabs_auto(e: &mut Editor, a: &Value) -> R {
     let force = flag(a, "force", false);
     let list: Vec<Value> = ids
         .iter()
-        .flat_map(|id| auto_gaps(&e.doc, *id, force).into_iter().map(move |g| json!({ "shape": id.0, "from": [g.from.x, g.from.y], "to": [g.to.x, g.to.y], "length": g.len })))
+        .flat_map(|id| {
+            auto_gaps(&e.doc, *id, force)
+                .into_iter()
+                .map(move |g| json!({ "shape": id.0, "from": [g.from.x, g.from.y], "to": [g.to.x, g.to.y], "length": g.len }))
+        })
         .collect();
     Ok(json!({ "changed": false, "gaps": list }))
 }
@@ -325,11 +341,8 @@ pub fn add_line_in(d: &mut Document, path: BezPath, layer: usize, connect: bool,
             cs.first().filter(|c| cs.len() == 1 && !c.closed).map(|c| (c.start().unwrap_or_default(), c.end().unwrap_or_default()))
         };
         if let Some((ns, ne)) = ends {
-            let cand: Option<(ShapeId, BezPath)> = d
-                .iter()
-                .rev()
-                .filter(|s| s.layer == layer && !s.locked && matches!(s.kind, ShapeKind::Path { .. }))
-                .find_map(|s| {
+            let cand: Option<(ShapeId, BezPath)> =
+                d.iter().rev().filter(|s| s.layer == layer && !s.locked && matches!(s.kind, ShapeKind::Path { .. })).find_map(|s| {
                     let p = s.outline();
                     let cs = gpath::contours(&p);
                     let c = cs.first()?;
@@ -403,7 +416,9 @@ fn measure_selection(e: &mut Editor, _a: &Value) -> R {
         }
     }
     let bb = e.doc.bbox_of(&ids).ok_or("nothing to measure")?;
-    Ok(json!({ "count": ids.len(), "x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height(), "length": length, "area": area, "nodes": nodes }))
+    Ok(
+        json!({ "count": ids.len(), "x": bb.x0, "y": bb.y0, "width": bb.width(), "height": bb.height(), "length": length, "area": area, "nodes": nodes }),
+    )
 }
 
 fn measure_points(a: &Value) -> R {
@@ -497,7 +512,10 @@ mod tests {
         run(&mut app, "shape.set_corner_radius", json!({ "radius": -3 })).unwrap();
         assert!(matches!(app.editor.doc.get(r).unwrap().kind, ShapeKind::Rect { radius, .. } if (radius + 3.0).abs() < 1e-9));
         run(&mut app, "shape.set_corner_radius", json!({ "radius": 50 })).unwrap();
-        assert!(matches!(app.editor.doc.get(r).unwrap().kind, ShapeKind::Rect { radius, .. } if (radius - 5.0).abs() < 1e-9), "limited to half the short side");
+        assert!(
+            matches!(app.editor.doc.get(r).unwrap().kind, ShapeKind::Rect { radius, .. } if (radius - 5.0).abs() < 1e-9),
+            "limited to half the short side"
+        );
         run(&mut app, "shape.remove_rounded_corners", Value::Null).unwrap();
         assert!(matches!(app.editor.doc.get(r).unwrap().kind, ShapeKind::Rect { radius, .. } if radius == 0.0));
         let a = run(&mut app, "shape.add_line", json!({ "points": [[100, 0], [110, 0]], "layer": 2 })).unwrap();
@@ -518,6 +536,9 @@ mod tests {
         let p = run(&mut app, "measure.points", json!({ "a": [0, 0], "b": [3, 4] })).unwrap();
         assert!((p["distance"].as_f64().unwrap() - 5.0).abs() < 1e-9);
         let arc = run(&mut app, "measure.arc", json!({ "a": [10, 0], "b": [0, 10], "c": [-10, 0] })).unwrap();
-        assert!((arc["radius"].as_f64().unwrap() - 10.0).abs() < 1e-6 && (arc["sweep_degrees"].as_f64().unwrap().abs() - 180.0).abs() < 1e-3, "{arc}");
+        assert!(
+            (arc["radius"].as_f64().unwrap() - 10.0).abs() < 1e-6 && (arc["sweep_degrees"].as_f64().unwrap().abs() - 180.0).abs() < 1e-3,
+            "{arc}"
+        );
     }
 }

@@ -197,7 +197,12 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
     p.origin = corner_to(d.origin);
     p.negative_coordinates = s.negative_coords;
     p.pointer_offset = gp::PointerOffset { x: s.red_dot_x, y: s.red_dot_y };
-    p.z = gp::ZSettings { enabled: s.z_enabled, reverse: s.z_reverse, relative_moves_only: s.gcode.z_relative_only, optimize_moves: s.gcode.z_optimize };
+    p.z = gp::ZSettings {
+        enabled: s.z_enabled,
+        reverse: s.z_reverse,
+        relative_moves_only: s.gcode.z_relative_only,
+        optimize_moves: s.gcode.z_optimize,
+    };
     p.tab_pulse_width_ms = s.tab_pulse_width;
     p.checklist = gp::JobChecklist { enabled: s.checklist_on, items: s.checklist.clone() };
     p.overwrite_files = s.overwrite_files;

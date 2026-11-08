@@ -113,10 +113,10 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                     ops: Vec::new(),
                 });
                 // The layer's U axis offset is applied before its first move.
-                if l.dsp.u_offset != 0.0 {
-                    if let Some(layer) = job.layers.last_mut() {
-                        layer.ops.push(ruida::RdOp::U(l.dsp.u_offset));
-                    }
+                if l.dsp.u_offset != 0.0
+                    && let Some(layer) = job.layers.last_mut()
+                {
+                    layer.ops.push(ruida::RdOp::U(l.dsp.u_offset));
                 }
                 laser2_only = l.laser == 2;
                 dot_layer = l.dot.is_some();

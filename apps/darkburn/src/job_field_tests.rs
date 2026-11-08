@@ -468,6 +468,8 @@ fn fill_overscan_as_distance_and_percent() {
     }
     let os: Vec<Seg> = segs(&build(d.clone()).toolpath).into_iter().filter(|s| s.kind == 'O').collect();
     assert!(!os.is_empty() && os.iter().all(|s| (len(s) - 5.0).abs() < 1e-6), "5 % of 100 mm/s is 5 mm");
+    // The distance readout in the editor shows the same number the job uses.
+    assert!((d.layer(0).main().overscan_mm() - 5.0).abs() < 1e-9);
     d.layer_mut(0).main_mut().overscan = 0.0;
     assert_eq!(segs(&build(d).toolpath).iter().filter(|s| s.kind == 'O').count(), 0);
 }
@@ -781,4 +783,17 @@ fn set_props_command_sets_direction_and_start_point() {
     let s = app.editor.doc.get(id).unwrap();
     assert!(s.start_point.is_none() && s.direction == darkburn_core::CutDirection::Auto);
     assert!(crate::api::execute_headless(&mut app, "shape.set_props", &serde_json::json!({ "direction": "sideways" })).is_err());
+}
+
+#[test]
+fn speed_units_convert_between_mm_s_and_mm_min() {
+    let per_min = crate::options::Options { speed_per_min: true, ..Default::default() };
+    assert_eq!(per_min.speed_value(10.0), 600.0);
+    assert_eq!(per_min.speed_to_mm_s(600.0), 10.0);
+    let per_s = crate::options::Options::default();
+    assert_eq!(per_s.speed_value(10.0), 10.0);
+    // The job always carries mm/s: a layer typed as 600 mm/min writes F600.
+    let mut d = line_doc(20.0);
+    d.layer_mut(0).main_mut().speed = per_min.speed_to_mm_s(600.0);
+    assert!(gcode(&build(d)).contains("F600"));
 }

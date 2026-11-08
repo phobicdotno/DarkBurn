@@ -100,7 +100,13 @@ impl Grid<'_> {
         let Some((set, mixed)) = common(&self.shapes, |s| Some(s.start_point.is_some())) else { return };
         let mut clear = false;
         ui_kit::row(ui, "Start point", |ui| {
-            ui.label(if mixed { "Mixed" } else if set { "Set" } else { "Automatic" });
+            ui.label(if mixed {
+                "Mixed"
+            } else if set {
+                "Set"
+            } else {
+                "Automatic"
+            });
             if (set || mixed) && ui_kit::button(ui, "Clear", ui_kit::Button::Small).clicked() {
                 clear = true;
             }

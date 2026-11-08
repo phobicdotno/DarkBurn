@@ -184,9 +184,19 @@ fn z_relative_only_and_z_optimize_change_the_gcode() {
 #[test]
 fn gcode_device_settings_reach_the_writer() {
     let b = build(line_doc(20.0));
-    let g = gcode_text(&b, None, &DeviceGcodeSettings { auto_home: true, start_script: "M999".into(), end_script: "M5 ; done".into(), ..Default::default() });
-    assert!(g.starts_with("$H") || g.contains("$H
-"), "{g}");
+    let g = gcode_text(
+        &b,
+        None,
+        &DeviceGcodeSettings { auto_home: true, start_script: "M999".into(), end_script: "M5 ; done".into(), ..Default::default() },
+    );
+    assert!(
+        g.starts_with("$H")
+            || g.contains(
+                "$H
+"
+            ),
+        "{g}"
+    );
     assert!(g.contains("M999") && g.contains("M5 ; done"));
     assert!(g.find("$H").unwrap() < g.find("M999").unwrap());
     // S with every G1.

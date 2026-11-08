@@ -1348,7 +1348,9 @@ impl RuidaAdapter {
         let machine = ruida::RuidaMachine::new(
             transport,
             ruida::MachineConfig {
-                timeout: cfg.net_timeout_ms.map_or(ruida::MachineConfig::default().timeout, |ms| Duration::from_millis(u64::from(ms.clamp(100, 60_000)))),
+                timeout: cfg
+                    .net_timeout_ms
+                    .map_or(ruida::MachineConfig::default().timeout, |ms| Duration::from_millis(u64::from(ms.clamp(100, 60_000)))),
                 ..ruida::MachineConfig::default()
             },
         );

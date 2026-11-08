@@ -543,6 +543,18 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
     } else if pressed(Modifiers::NONE, Key::V) {
         *run = Some("arrange.flip_v");
     }
+    // `<` and `>` turn the selection 90 degrees (the shell runs those); `,` and `.` turn it by a
+    // small angle: 1 degree, Ctrl 5 degrees, Alt 10 degrees.
+    if !app.editor.selected().is_empty() {
+        for (m, deg) in [(Modifiers::ALT, 10.0), (Modifiers::COMMAND, 5.0), (Modifiers::NONE, 1.0)] {
+            if pressed(m, Key::Comma) {
+                let _ = crate::api::execute_headless(app, "arrange.rotate_by", &serde_json::json!({ "degrees": deg }));
+            }
+            if pressed(m, Key::Period) {
+                let _ = crate::api::execute_headless(app, "arrange.rotate_by", &serde_json::json!({ "degrees": -deg }));
+            }
+        }
+    }
     // Arrow keys nudge, with key repeat.
     let nudges: Vec<(Key, Modifiers)> = ctx.input(|i| {
         i.events

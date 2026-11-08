@@ -30,6 +30,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.dock_up"
             | "arrange.dock_down"
             | "arrange.alignment_helper"
+            | "arrange.rotate_by"
     )
 }
 
@@ -47,6 +48,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.nest" => &["ARR-25", "ARRAY-09"],
         "arrange.dock_left" | "arrange.dock_right" | "arrange.dock_up" | "arrange.dock_down" => &["ARR-26", "TB-24", "ARRAY-13"],
         "arrange.alignment_helper" => &["ARRAY-12"],
+        "arrange.rotate_by" => &["CANVAS-19", "ARR-07", "ARR-08"],
         _ => &[],
     }
 }
@@ -556,6 +558,14 @@ fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
     Ok(json!({ "changed": done && moved }))
 }
 
+/// Rotate the selection by `degrees` (counter-clockwise) about its centre.
+fn rotate_by(e: &mut Editor, a: &Value) -> R {
+    let ids = selected_items(e)?;
+    let degrees = num(a, "degrees", 0.0);
+    let done = e.edit("Rotate", |d, _| arrange::rotate(d, &ids, degrees));
+    ok(done, &ids)
+}
+
 pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
     Some(match id {
         "arrange.grid_array" => grid_array(e, a),
@@ -568,6 +578,7 @@ pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
         "arrange.array_flatten" => array_flatten(e, a),
         "arrange.array_duplicate" => array_duplicate(e, a),
         "arrange.nest" => nest_cmd(e, a, env),
+        "arrange.rotate_by" => rotate_by(e, a),
         "arrange.dock_left" => dock(e, a, env, Dir::Left),
         "arrange.dock_right" => dock(e, a, env, Dir::Right),
         "arrange.dock_up" => dock(e, a, env, Dir::Up),

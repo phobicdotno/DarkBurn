@@ -1,0 +1,162 @@
+//! Canvas behaviour driven through real egui frames: pointer and key events go through the same
+//! code as in the window (`DarkBurn::shortcuts`, then `canvas::show`).
+
+use darkburn_core::kurbo::{Point, Rect as KRect};
+use darkburn_core::{Shape, ShapeId};
+use egui::{Event, Key, Modifiers, PointerButton, Pos2, Rect, vec2};
+
+use crate::prefs::Prefs;
+use crate::render::Xf;
+use crate::shell::DarkBurn;
+
+const SCREEN: (f32, f32) = (1200.0, 900.0);
+
+struct Rig {
+    ctx: egui::Context,
+    app: DarkBurn,
+    time: f64,
+}
+
+impl Rig {
+    fn new() -> Rig {
+        let mut rig = Rig { ctx: egui::Context::default(), app: DarkBurn::new(Prefs::default()), time: 0.0 };
+        rig.frame(vec![], Modifiers::NONE);
+        rig
+    }
+
+    fn frame(&mut self, events: Vec<Event>, modifiers: Modifiers) {
+        self.time += 0.016;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
+            time: Some(self.time),
+            events,
+            ..Default::default()
+        };
+        let app = &mut self.app;
+        let mut out = self.ctx.run_ui(input, |ui| {
+            app.shortcuts(ui.ctx());
+            let cmd = app.view_cmd.take();
+            crate::canvas::show(ui, app, cmd);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn canvas(&self) -> Rect {
+        Rect::from_min_max(Pos2::new(crate::canvas::RULER, crate::canvas::RULER), Pos2::new(SCREEN.0, SCREEN.1))
+    }
+
+    fn xf(&self) -> Xf {
+        Xf::new(self.canvas(), &self.app.prefs.view, self.app.prefs.page().y)
+    }
+
+    fn screen(&self, p: Point) -> Pos2 {
+        self.xf().to_screen(p)
+    }
+
+    fn mv(&mut self, to: Pos2) {
+        self.frame(vec![Event::PointerMoved(to)], Modifiers::NONE);
+    }
+
+    fn button(&mut self, at: Pos2, b: PointerButton, pressed: bool) {
+        self.frame(vec![Event::PointerButton { pos: at, button: b, pressed, modifiers: Modifiers::NONE }], Modifiers::NONE);
+    }
+
+    fn key(&mut self, key: Key, m: Modifiers) {
+        self.frame(vec![Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: m }], m);
+        self.frame(vec![Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: m }], m);
+    }
+
+    fn add_rect(&mut self, r: KRect, layer: usize) -> ShapeId {
+        let mut id = ShapeId(0);
+        self.app.editor.edit("Add", |d, sel| {
+            id = d.add(Shape::rect(r, 0.0, layer));
+            sel.set([id]);
+            true
+        });
+        id
+    }
+
+    fn rotation_deg(&self, id: ShapeId) -> f64 {
+        let c = self.app.editor.doc.get(id).unwrap().transform.as_coeffs();
+        c[1].atan2(c[0]).to_degrees()
+    }
+}
+
+#[test]
+fn comma_and_period_rotate_by_one_five_and_ten_degrees_and_shifted_by_ninety() {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 140.0, 120.0), 0);
+    let at = rig.screen(Point::new(10.0, 10.0));
+    rig.mv(at);
+    rig.key(Key::Comma, Modifiers::NONE);
+    assert!((rig.rotation_deg(id) - 1.0).abs() < 1e-6, "{}", rig.rotation_deg(id));
+    rig.key(Key::Period, Modifiers::COMMAND);
+    assert!((rig.rotation_deg(id) - -4.0).abs() < 1e-6, "{}", rig.rotation_deg(id));
+    rig.key(Key::Comma, Modifiers::ALT);
+    assert!((rig.rotation_deg(id) - 6.0).abs() < 1e-6, "{}", rig.rotation_deg(id));
+    rig.key(Key::Period, Modifiers::SHIFT);
+    assert!((rig.rotation_deg(id) - -84.0).abs() < 1e-6, "{}", rig.rotation_deg(id));
+}
+
+#[test]
+fn dragging_a_shape_to_the_edge_pans_the_view() {
+    let mut rig = Rig::new();
+    rig.add_rect(KRect::new(100.0, 100.0, 140.0, 120.0), 0);
+    let start = rig.screen(Point::new(120.0, 110.0));
+    rig.mv(start);
+    rig.button(start, PointerButton::Primary, true);
+    let before = rig.app.prefs.view;
+    let edge = Pos2::new(rig.canvas().right() - 4.0, start.y);
+    let mut p = start;
+    while p.x < edge.x {
+        p.x = (p.x + 40.0).min(edge.x);
+        rig.mv(p);
+    }
+    for _ in 0..10 {
+        rig.mv(edge);
+    }
+    assert!(rig.app.prefs.view != before, "the view moved while holding the shape at the edge");
+    rig.button(edge, PointerButton::Primary, false);
+}
+
+#[test]
+fn double_middle_click_frames_the_design() {
+    let mut rig = Rig::new();
+    rig.add_rect(KRect::new(10.0, 10.0, 40.0, 30.0), 0);
+    let before = rig.app.prefs.view;
+    let at = Pos2::new(600.0, 400.0);
+    rig.mv(at);
+    for _ in 0..2 {
+        rig.button(at, PointerButton::Middle, true);
+        rig.button(at, PointerButton::Middle, false);
+    }
+    rig.frame(vec![], Modifiers::NONE);
+    rig.frame(vec![], Modifiers::NONE);
+    assert!(rig.app.prefs.view.zoom > before.zoom * 2.0, "zoomed in on the small design: {} -> {}", before.zoom, rig.app.prefs.view.zoom);
+}
+
+#[test]
+fn the_full_screen_cursor_option_draws_lines_across_the_canvas() {
+    let mut rig = Rig::new();
+    let at = Pos2::new(600.0, 400.0);
+    rig.mv(at);
+    let count = |rig: &mut Rig| {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
+            events: vec![Event::PointerMoved(at)],
+            ..Default::default()
+        };
+        let app = &mut rig.app;
+        let mut out = rig.ctx.run_ui(input, |ui| {
+            crate::canvas::show(ui, app, None);
+        });
+        out.textures_delta.clear();
+        out.shapes.len()
+    };
+    rig.app.prefs.opts.fullscreen_cursor = false;
+    let _ = count(&mut rig);
+    let off = count(&mut rig);
+    rig.app.prefs.opts.fullscreen_cursor = true;
+    let on = count(&mut rig);
+    assert!(on > off, "the crosshair adds shapes: {off} -> {on}");
+}

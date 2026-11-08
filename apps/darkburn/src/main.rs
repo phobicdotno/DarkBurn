@@ -6,6 +6,8 @@ mod api;
 mod art_library;
 mod canvas;
 mod canvas_input;
+#[cfg(test)]
+mod canvas_tests;
 mod commands;
 mod cut_settings;
 mod cuts_panel;

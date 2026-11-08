@@ -179,6 +179,7 @@ fn convert_path(e: &mut Editor, _a: &Value) -> R {
     let ids = selected(e)?;
     let mut n = 0;
     let done = e.edit("Convert to path", |d, _| {
+        crate::text_render::refresh(d);
         n = map_shapes(d, &ids, &mut |s| (!matches!(s.kind, ShapeKind::Path { .. })).then(|| s.outline()));
         n > 0
     });

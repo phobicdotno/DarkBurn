@@ -24,6 +24,10 @@ fn hits(doc: &Document, s: &Shape, p: Point, tolerance: f64) -> bool {
     if (s.is_image() || doc.is_filled(s)) && s.contains(p) {
         return true;
     }
+    // Text and codes are picked anywhere in their box.
+    if matches!(s.kind, crate::shape::ShapeKind::Text(_) | crate::shape::ShapeKind::Code(_)) {
+        return true;
+    }
     if let crate::shape::ShapeKind::Group { children } = &s.kind {
         // Groups are hit through their children, each by its own rules.
         let local = s.transform.inverse() * p;

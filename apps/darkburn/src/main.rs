@@ -42,6 +42,11 @@ mod shape_props;
 mod shape_ui;
 mod shell;
 mod startup;
+mod text_cmds;
+mod text_render;
+#[cfg(test)]
+mod text_tests;
+mod text_ui;
 mod thumbnail;
 mod tools;
 mod view;
@@ -164,6 +169,7 @@ impl eframe::App for App {
         }
         self.app.apply_theme(ctx);
         self.app.shortcuts(ctx);
+        text_ui::tick(&mut self.app, ctx);
         if self.app.safe_mode {
             return;
         }

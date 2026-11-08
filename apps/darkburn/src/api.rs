@@ -34,6 +34,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = with_args(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::text_cmds::execute(app, id, args) {
+        return result;
+    }
     if let Some(result) = crate::shape_ops::execute(app, id, args) {
         return result;
     }

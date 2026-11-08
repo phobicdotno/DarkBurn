@@ -83,6 +83,10 @@ pub struct Prefs {
     pub cut_beginner: bool,
     /// Import, export and file preferences (formats.rs).
     pub files: crate::formats::FilePrefs,
+    /// Recent and favourite fonts, default font and size for new text (text_ui.rs).
+    pub fonts: darkburn_text::FontPrefs,
+    /// SHX single-line fonts the user added: "shx:" and the file path.
+    pub shx_fonts: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -120,6 +124,8 @@ impl Default for Prefs {
             lock_aspect: true,
             cut_beginner: false,
             files: Default::default(),
+            fonts: Default::default(),
+            shx_fonts: Vec::new(),
         }
     }
 }

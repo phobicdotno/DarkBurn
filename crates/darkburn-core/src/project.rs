@@ -15,7 +15,7 @@ use crate::shape::Shape;
 /// File extension.
 pub const EXTENSION: &str = "dbrn";
 /// The schema version this build writes.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 const FORMAT_NAME: &str = "darkburn-project";
 
 /// Why a project did not open.
@@ -70,6 +70,8 @@ struct ProjectJson {
     next_id: u64,
     /// Versioned job settings (optimization, job origin); the app owns the shape.
     job_settings: Option<serde_json::Value>,
+    /// Variable text state (version 2).
+    variables: darkburn_text::VariableState,
 }
 
 impl Default for ProjectJson {
@@ -86,6 +88,7 @@ impl Default for ProjectJson {
             images: Vec::new(),
             next_id: 1,
             job_settings: None,
+            variables: Default::default(),
         }
     }
 }
@@ -127,6 +130,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         images,
         next_id: doc.next_id(),
         job_settings: doc.job_settings.clone(),
+        variables: doc.variables.clone(),
     };
     let text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -159,6 +163,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
     doc.notes = json.notes;
     doc.show_notes_on_load = json.show_notes_on_load;
     doc.job_settings = json.job_settings;
+    doc.variables = json.variables;
     for mut l in json.layers {
         if l.index < LAYER_COUNT {
             if l.settings.is_empty() {
@@ -268,7 +273,7 @@ mod tests {
         let mut zip = zip::ZipArchive::new(Cursor::new(&bytes[..])).unwrap();
         let mut text = String::new();
         zip.by_name("project.json").unwrap().read_to_string(&mut text).unwrap();
-        let text = text.replacen("\"version\": 1", "\"version\": 99, \"future_thing\": [1,2]", 1);
+        let text = text.replacen(&format!("\"version\": {FORMAT_VERSION}"), "\"version\": 99, \"future_thing\": [1,2]", 1);
         let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
         w.start_file("project.json", zip::write::SimpleFileOptions::default()).unwrap();
         w.write_all(text.as_bytes()).unwrap();

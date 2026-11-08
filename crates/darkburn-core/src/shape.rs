@@ -75,8 +75,10 @@ pub enum ShapeKind {
     Ellipse { rx: f64, ry: f64 },
     /// A regular polygon centred on the origin, `radius` to its corners, first corner on top.
     Polygon { sides: u32, radius: f64 },
-    /// Text. Its outline is the backup outline once fonts are rendered, else a placeholder box.
+    /// Text. Its outline is the rendered text kept in `backup`, else a placeholder box.
     Text(TextShape),
+    /// A QR code or barcode that stays editable. Its outline is the rendered code kept in `cache`.
+    Code(CodeShape),
     /// A bitmap.
     Image(ImageShape),
     /// Shapes moved and edited together. Children keep their own transforms and layers.
@@ -135,6 +137,64 @@ pub struct TextShape {
     /// The rendered outline kept for when the font is missing, in local coordinates.
     #[serde(with = "serde_kurbo::opt_path")]
     pub backup: Option<BezPath>,
+    /// Glyph outlines saved with the project so the text opens on a machine without the font.
+    pub backup_glyphs: Option<darkburn_text::BackupOutline>,
+    /// The text follows this path (Text on Path); `distort` bends the letters along it.
+    pub on_path: Option<PathText>,
+    /// What `backup` was rendered from (a hash of the settings and the evaluated text); the app
+    /// renders again when it no longer matches.
+    pub render_key: u64,
+}
+
+/// Where text sits on a path (local coordinates of the text shape).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PathText {
+    #[serde(with = "serde_kurbo::path")]
+    pub path: BezPath,
+    /// Distance along the path where the text starts, in millimetres.
+    pub start_offset: f64,
+    /// Distance from the path, positive to its left.
+    pub offset: f64,
+    pub center_on_path: bool,
+    pub flip: bool,
+}
+
+impl Default for PathText {
+    fn default() -> Self {
+        PathText { path: BezPath::new(), start_offset: 0.0, offset: 0.0, center_on_path: false, flip: false }
+    }
+}
+
+/// A QR code or a barcode.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CodeSpec {
+    Qr(darkburn_text::QrSpec),
+    Barcode(darkburn_text::BarcodeSpec),
+}
+
+/// A code shape's settings.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CodeShape {
+    pub spec: CodeSpec,
+    /// The data holds variable text tokens such as `{serial}`.
+    pub variable: bool,
+    /// Index offset of this copy (virtual arrays).
+    pub offset: i64,
+    /// The rendered code, centred on the origin, in local coordinates.
+    #[serde(with = "serde_kurbo::opt_path")]
+    pub cache: Option<BezPath>,
+    /// Why the code could not be made (too much data, bad digits), if so.
+    pub error: Option<String>,
+    pub render_key: u64,
+}
+
+impl Default for CodeShape {
+    fn default() -> Self {
+        CodeShape { spec: CodeSpec::Qr(Default::default()), variable: false, offset: 0, cache: None, error: None, render_key: 0 }
+    }
 }
 
 impl Default for TextShape {
@@ -155,6 +215,9 @@ impl Default for TextShape {
             variable: VariableText::Normal,
             offset: 0,
             backup: None,
+            backup_glyphs: None,
+            on_path: None,
+            render_key: 0,
         }
     }
 }
@@ -246,6 +309,10 @@ impl Shape {
             ShapeKind::Ellipse { .. } => "Ellipse",
             ShapeKind::Polygon { .. } => "Polygon",
             ShapeKind::Text(_) => "Text",
+            ShapeKind::Code(c) => match c.spec {
+                CodeSpec::Qr(_) => "QR code",
+                CodeSpec::Barcode(_) => "Barcode",
+            },
             ShapeKind::Image(_) => "Image",
             ShapeKind::Group { .. } => "Group",
         }
@@ -259,6 +326,7 @@ impl Shape {
             ShapeKind::Ellipse { rx, ry } => kurbo::Ellipse::new(Point::ZERO, Vec2::new(*rx, *ry), 0.0).path_elements(OUTLINE_TOLERANCE).collect(),
             ShapeKind::Polygon { sides, radius } => polygon(*sides, *radius),
             ShapeKind::Text(t) => t.backup.clone().unwrap_or_else(|| Rect::from_origin_size(Point::ZERO, t.placeholder_size()).to_path(0.1)),
+            ShapeKind::Code(c) => c.cache.clone().unwrap_or_else(|| Rect::from_center_size(Point::ZERO, (10.0, 10.0)).to_path(0.1)),
             ShapeKind::Image(img) => img.crop.clone().unwrap_or_else(|| Rect::from_center_size(Point::ZERO, (img.width, img.height)).to_path(0.1)),
             ShapeKind::Group { children } => {
                 let mut all = BezPath::new();

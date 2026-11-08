@@ -52,6 +52,8 @@ pub struct Document {
     /// Job settings saved with the project (optimization, job origin): an opaque, versioned JSON
     /// value owned by the app. None until the user changes them.
     pub job_settings: Option<serde_json::Value>,
+    /// Variable text state (serial number, merge row, auto-advance), saved with the project.
+    pub variables: darkburn_text::VariableState,
     next_id: u64,
 }
 
@@ -77,6 +79,7 @@ impl Document {
             notes: String::new(),
             show_notes_on_load: false,
             job_settings: None,
+            variables: Default::default(),
             next_id: 1,
         }
     }

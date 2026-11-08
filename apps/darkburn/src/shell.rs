@@ -74,6 +74,8 @@ pub struct DarkBurn {
     pub shape_ui: crate::shape_ui::ShapeUi,
     /// Opening, importing and exporting other file types (file_io.rs).
     pub fio: crate::file_io::FileIo,
+    /// The text tool, text dialogs and the Variable Text panel (text_ui.rs).
+    pub text: crate::text_ui::TextUi,
 }
 
 impl DarkBurn {
@@ -108,6 +110,7 @@ impl DarkBurn {
             images: Default::default(),
             shape_ui: Default::default(),
             fio: Default::default(),
+            text: Default::default(),
         }
     }
 
@@ -121,6 +124,9 @@ impl DarkBurn {
     pub fn can_run(&self, id: &str) -> bool {
         let sel = self.editor.selection.len();
         if let Some(can) = crate::shape_ops::can_run(self, id) {
+            return can;
+        }
+        if let Some(can) = crate::text_cmds::can_run(self, id) {
             return can;
         }
         match id {
@@ -189,6 +195,7 @@ impl DarkBurn {
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)
+            || crate::text_cmds::run(self, ctx, id)
         {
             return;
         }

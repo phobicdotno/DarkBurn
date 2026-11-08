@@ -194,6 +194,7 @@ impl ArrayDef {
 fn advance_text(s: &mut Shape, n: i64) {
     match &mut s.kind {
         ShapeKind::Text(t) if t.variable != VariableText::Normal => t.offset += n,
+        ShapeKind::Code(c) if c.variable => c.offset += n,
         ShapeKind::Group { children } => children.iter_mut().for_each(|c| advance_text(c, n)),
         _ => {}
     }

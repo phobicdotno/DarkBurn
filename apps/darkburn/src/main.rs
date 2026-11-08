@@ -9,6 +9,7 @@ mod canvas_input;
 mod commands;
 mod cut_settings;
 mod cuts_panel;
+mod dock_geom;
 mod devices;
 mod devices_ui;
 mod extras;

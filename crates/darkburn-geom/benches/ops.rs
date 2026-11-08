@@ -33,5 +33,5 @@ fn main() {
         let o = OffsetOptions { distance: 0.5, side: OffsetSide::Both, join, tol: 0.01, ..Default::default() };
         time(&format!("offset both 2000 ({name})"), 5, || offset(&s, &o));
     }
-    time("kerf 2000 (each)", 5, || s.iter().map(|p| kerf_offset(p, 0.1, 0.01)).count());
+    time("kerf 2000 (each)", 5, || s.iter().map(|p| kerf_offset(p, 0.1, 0.01)).collect::<Vec<_>>());
 }

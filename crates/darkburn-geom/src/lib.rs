@@ -17,6 +17,7 @@ pub use kurbo;
 pub mod array;
 pub mod boolean;
 pub mod cleanup;
+pub mod clip;
 pub mod fillet;
 pub mod hull;
 pub mod nest;

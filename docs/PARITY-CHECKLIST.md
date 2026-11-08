@@ -46,7 +46,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-10 Export
 - [~] FILE-11 Print, black only
 - [~] FILE-12 Print, keep colours
-- [ ] FILE-13 Save processed bitmap
+- [~] FILE-13 Save processed bitmap
 - [x] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
 - [x] FILE-16 Export preferences
@@ -67,7 +67,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-09 Paste in place
 - [x] EDIT-10 Delete
 - [x] EDIT-11 Convert to path
-- [ ] EDIT-12 Convert to bitmap
+- [x] EDIT-12 Convert to bitmap
 - [x] EDIT-13 Close path
 - [~] EDIT-14 Close selected paths with tolerance
 - [~] EDIT-15 Auto-join selected shapes
@@ -77,13 +77,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-19 Select open shapes set to fill
 - [x] EDIT-20 Select all shapes in current layer
 - [x] EDIT-21 Select contained shapes
-- [ ] EDIT-22 Image options: replace image
-- [ ] EDIT-23 Image options: replace image to fit
-- [ ] EDIT-24 Image options: refresh image
-- [ ] EDIT-25 Image options: apply crop path to image
-- [ ] EDIT-26 Image options: flatten image crop
-- [ ] EDIT-27 Image options: remove crop
-- [ ] EDIT-28 Image options: remove backup path
+- [~] EDIT-22 Image options: replace image
+- [~] EDIT-23 Image options: replace image to fit
+- [x] EDIT-24 Image options: refresh image
+- [x] EDIT-25 Image options: apply crop path to image
+- [x] EDIT-26 Image options: flatten image crop
+- [x] EDIT-27 Image options: remove crop
+- [x] EDIT-28 Image options: remove backup path
 - [~] EDIT-29 Settings
 - [x] EDIT-30 Device settings
 - [x] EDIT-31 Machine settings
@@ -107,10 +107,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-16 Boolean intersection
 - [~] TOOLS-17 Boolean assistant
 - [x] TOOLS-18 Cut shapes
-- [ ] TOOLS-19 Adjust image
-- [ ] TOOLS-20 Trace image
+- [x] TOOLS-19 Adjust image
+- [x] TOOLS-20 Trace image
 - [x] TOOLS-21 Apply path to text
-- [ ] TOOLS-22 Apply mask to image
+- [x] TOOLS-22 Apply mask to image
 - [~] TOOLS-23 Resize slots in selection
 - [x] TOOLS-24 Select shapes smaller than selected
 - [~] TOOLS-25 Warp selection (4 points)
@@ -453,7 +453,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 8. Shape operations
 
 - [x] SHAPE-01 Convert to path, including variable text
-- [ ] SHAPE-02 Convert to bitmap with DPI dialog
+- [x] SHAPE-02 Convert to bitmap with DPI dialog
 - [x] SHAPE-03 Close path
 - [~] SHAPE-04 Close path with tolerance dialog
 - [~] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
@@ -480,7 +480,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SHAPE-26 Make same width and same height about the centre
 - [x] SHAPE-27 Rubber-band outline
 - [x] SHAPE-28 Apply path to text
-- [ ] SHAPE-29 Apply mask to image, flatten and remove crop
+- [x] SHAPE-29 Apply mask to image, flatten and remove crop
 - [ ] SHAPE-30 Lock and unlock shapes
 
 ## 9. Arrays and arrangement
@@ -564,16 +564,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] FILL-09 Offset fill specifics: spiral path, power scale respected
 
 ### Image mode
-- [~] IMGL-01 Image mode picker
-- [~] IMGL-02 Line interval and DPI, linked
-- [~] IMGL-03 Scan angle, bi-directional, overscan
-- [~] IMGL-04 Negative image
-- [~] IMGL-05 Pass-through (image is already dithered)
-- [~] IMGL-06 Dot width correction
-- [~] IMGL-07 Halftone cells per inch and angle
-- [~] IMGL-08 Ramp length for threshold mode
-- [~] IMGL-09 Images on one layer merged into one scan
-- [~] IMGL-10 Min power for grayscale
+- [x] IMGL-01 Image mode picker
+- [x] IMGL-02 Line interval and DPI, linked
+- [x] IMGL-03 Scan angle, bi-directional, overscan
+- [x] IMGL-04 Negative image
+- [x] IMGL-05 Pass-through (image is already dithered)
+- [x] IMGL-06 Dot width correction
+- [x] IMGL-07 Halftone cells per inch and angle
+- [x] IMGL-08 Ramp length for threshold mode
+- [x] IMGL-09 Images on one layer merged into one scan
+- [x] IMGL-10 Min power for grayscale
 
 ### Cut settings editor dialog
 - [x] CSE-01 Layer list on the left to edit several layers in one go
@@ -598,30 +598,30 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 11. Image engraving
 
-- [ ] IMG-01 Threshold
-- [ ] IMG-02 Ordered dither
-- [ ] IMG-03 Atkinson
-- [ ] IMG-04 Floyd-Steinberg / Jarvis-Judice-Ninke dither
-- [ ] IMG-05 Stucki
-- [ ] IMG-06 Jarvis
-- [ ] IMG-07 Newsprint
-- [ ] IMG-08 Halftone
-- [ ] IMG-09 Sketch
-- [ ] IMG-10 Grayscale with power modulation
-- [ ] IMG-11 Correct black and white end points and sRGB gamma
-- [ ] IMG-12 Brightness, contrast, gamma
-- [ ] IMG-13 Sharpen with amount, radius and denoise
-- [ ] IMG-14 Transparent images handled in trace, dither and mask
-- [ ] IMG-15 DPI read from file on import
-- [ ] IMG-16 Adjust image dialog with side-by-side preview
-- [ ] IMG-17 Adjust image presets: save, load, import, export
-- [ ] IMG-18 Trace image: threshold, lower cutoff, ignore small, smoothness, optimize
-- [ ] IMG-19 Trace image: fade, show points, clip rectangle, sketch trace, delete image after
-- [ ] IMG-20 Trace from camera capture
+- [x] IMG-01 Threshold
+- [x] IMG-02 Ordered dither
+- [x] IMG-03 Atkinson
+- [x] IMG-04 Floyd-Steinberg / Jarvis-Judice-Ninke dither
+- [x] IMG-05 Stucki
+- [x] IMG-06 Jarvis
+- [x] IMG-07 Newsprint
+- [x] IMG-08 Halftone
+- [x] IMG-09 Sketch
+- [x] IMG-10 Grayscale with power modulation
+- [x] IMG-11 Correct black and white end points and sRGB gamma
+- [x] IMG-12 Brightness, contrast, gamma
+- [x] IMG-13 Sharpen with amount, radius and denoise
+- [x] IMG-14 Transparent images handled in trace, dither and mask
+- [x] IMG-15 DPI read from file on import
+- [x] IMG-16 Adjust image dialog with side-by-side preview
+- [x] IMG-17 Adjust image presets: save, load, import, export
+- [x] IMG-18 Trace image: threshold, lower cutoff, ignore small, smoothness, optimize
+- [x] IMG-19 Trace image: fade, show points, clip rectangle, sketch trace, delete image after
+- [~] IMG-20 Trace from camera capture
 - [ ] IMG-21 Multi-file trace *(later)*
-- [ ] IMG-22 Fast skip of blank areas in G-code
-- [ ] IMG-23 Scanning offset (backlash) table, import and export
-- [ ] IMG-24 Angled image scans
+- [~] IMG-22 Fast skip of blank areas in G-code
+- [~] IMG-23 Scanning offset (backlash) table, import and export
+- [x] IMG-24 Angled image scans
 - [ ] IMG-25 3D model to depth map *(later)*
 
 ---

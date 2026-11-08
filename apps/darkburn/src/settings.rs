@@ -269,6 +269,8 @@ fn display(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::checkbox(ui, &tr("settings.rotary_toggles", "Show the rotary and cylinder toggles"), &mut prefs.opts.show_rotary_toggles);
     prefs.toolbars.insert("modes".into(), prefs.opts.show_rotary_toggles);
     ui.add_space(t.space_12);
+    toolbars_section(ui, prefs);
+    ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.quality", "Quality"));
     ui_kit::row(ui, &tr("settings.curve_quality", "Curve quality"), |ui| {
         pick_enum(ui, "curve_quality", &mut prefs.opts.curve_quality, &CurveQuality::ALL, |q| match q {
@@ -424,5 +426,27 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), ids.len());
+    }
+}
+
+/// Which toolbars show and in what order (the ribbon cannot float or dock its groups, so order
+/// and visibility are what can be set).
+fn toolbars_section(ui: &mut egui::Ui, prefs: &mut Prefs) {
+    ui_kit::section_heading(ui, &tr("settings.toolbars", "Toolbars"));
+    let order = prefs.full_toolbar_order();
+    for (i, id) in order.iter().enumerate() {
+        let label = crate::prefs::TOOLBARS.iter().find(|(t, _)| t == id).map(|(_, l)| *l).unwrap_or(id.as_str());
+        let mut on = prefs.toolbar(id);
+        ui.horizontal(|ui| {
+            if ui_kit::checkbox(ui, &tr(&format!("toolbar.{id}"), label), &mut on).changed() {
+                prefs.toolbars.insert(id.clone(), on);
+            }
+            if ui_kit::text_button(ui, "Earlier", i > 0).clicked() {
+                prefs.move_toolbar(id, -1);
+            }
+            if ui_kit::text_button(ui, "Later", i + 1 < order.len()).clicked() {
+                prefs.move_toolbar(id, 1);
+            }
+        });
     }
 }

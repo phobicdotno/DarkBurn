@@ -214,6 +214,11 @@ pub const COMMANDS: &[Cmd] = &[
     c("laser.capture", "Capture Camera Image", "", "db_capture"),
     // Window
     c("window.reset_layout", "Reset to Default Layout", "", ""),
+    a(
+        "window.toolbar_move",
+        "Move a Toolbar",
+        r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id, for example arrange"},"delta":{"type":"integer","description":"places to move: negative is earlier"}},"required":["toolbar"]}"#,
+    ),
     c("window.preview", "Preview", "Alt+P", "db_preview"),
     c("view.zoom_page", "Zoom to Page", "Ctrl+0", "db_zoom_page"),
     c("view.zoom_in", "Zoom In", "Ctrl+=", "db_zoom_in"),
@@ -547,6 +552,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.lock"
             | "arrange.unlock"
             | "window.reset_layout"
+            | "window.toolbar_move"
             | "view.zoom_page"
             | "view.zoom_in"
             | "view.zoom_out"

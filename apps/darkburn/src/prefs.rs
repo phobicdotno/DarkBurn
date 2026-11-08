@@ -51,6 +51,8 @@ pub struct Prefs {
     /// The tab in front in each panel area.
     pub active_tab: BTreeMap<Area, String>,
     pub toolbars: BTreeMap<String, bool>,
+    /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
+    pub toolbar_order: Vec<String>,
     pub ribbon_tab: String,
     pub status_bar: bool,
     pub view: View,
@@ -114,6 +116,7 @@ impl Default for Prefs {
             panels,
             active_tab,
             toolbars,
+            toolbar_order: Vec::new(),
             ribbon_tab: "home".into(),
             status_bar: true,
             view: View::default(),
@@ -192,6 +195,9 @@ impl Prefs {
         for (id, on) in d.toolbars {
             self.toolbars.entry(id).or_insert(on);
         }
+        if !self.toolbar_order.is_empty() {
+            self.toolbar_order = self.full_toolbar_order();
+        }
         if !(self.view.zoom.is_finite() && self.view.zoom > 0.0 && self.view.offset.is_finite()) {
             self.view = View::default();
         }
@@ -203,8 +209,45 @@ impl Prefs {
         self.panels = d.panels;
         self.active_tab = d.active_tab;
         self.toolbars = d.toolbars;
+        self.toolbar_order = Vec::new();
         self.ribbon_tab = d.ribbon_tab;
         self.status_bar = true;
+    }
+
+    /// Every toolbar id once, in the user's order (unknown ids dropped, missing ones last).
+    pub fn full_toolbar_order(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for id in &self.toolbar_order {
+            if TOOLBARS.iter().any(|(t, _)| t == id) && !out.contains(id) {
+                out.push(id.clone());
+            }
+        }
+        for (id, _) in TOOLBARS {
+            if !out.iter().any(|o| o == id) {
+                out.push((*id).to_string());
+            }
+        }
+        out
+    }
+
+    /// Where toolbar `id` sits in the order (for sorting ribbon groups).
+    pub fn toolbar_rank(&self, id: &str) -> usize {
+        self.full_toolbar_order().iter().position(|t| t == id).unwrap_or(usize::MAX)
+    }
+
+    /// Move toolbar `id` earlier (`delta` < 0) or later (`delta` > 0) by that many places.
+    /// Returns whether it moved.
+    pub fn move_toolbar(&mut self, id: &str, delta: i32) -> bool {
+        let mut order = self.full_toolbar_order();
+        let Some(at) = order.iter().position(|t| t == id) else { return false };
+        let to = (at as i32 + delta).clamp(0, order.len() as i32 - 1) as usize;
+        if to == at {
+            return false;
+        }
+        let item = order.remove(at);
+        order.insert(to, item);
+        self.toolbar_order = order;
+        true
     }
 
     pub fn toolbar(&self, id: &str) -> bool {

@@ -116,6 +116,15 @@ fn changed(done: bool) -> Result<Value, String> {
 /// The commands that take arguments; None when `id` is not one of them.
 fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     Some(match id {
+        "window.toolbar_move" => (|| {
+            let tb = text(a, "toolbar")?;
+            if !crate::prefs::TOOLBARS.iter().any(|(t, _)| *t == tb) {
+                return Err(format!("unknown toolbar {tb}"));
+            }
+            let delta = opt_num(a, "delta").unwrap_or(-1.0) as i32;
+            let moved = app.prefs.move_toolbar(tb, delta);
+            Ok(json!({ "changed": moved, "order": app.prefs.full_toolbar_order() }))
+        })(),
         "selection.set" => (|| {
             let ids: Vec<ShapeId> =
                 a.get("ids").and_then(Value::as_array).ok_or("argument ids must be a list")?.iter().filter_map(Value::as_u64).map(ShapeId).collect();

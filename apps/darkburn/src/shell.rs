@@ -884,6 +884,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn toolbars_can_be_hidden_and_reordered_and_the_order_is_saved() {
+        let mut app = DarkBurn::new(Prefs::default());
+        let before = app.prefs.full_toolbar_order();
+        assert_eq!(before[0], "main");
+        let out = crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "arrange", "delta": -1 })).unwrap();
+        assert_eq!(out["changed"], true);
+        assert_eq!(app.prefs.full_toolbar_order()[0], "arrange");
+        assert!(app.prefs.toolbar_rank("arrange") < app.prefs.toolbar_rank("main"));
+        // At the start already: nothing moves. Unknown toolbars are refused.
+        let out = crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "arrange", "delta": -1 })).unwrap();
+        assert_eq!(out["changed"], false);
+        assert!(crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "nope" })).is_err());
+        // The order survives a save and load, and a layout reset restores the default.
+        let mut back: Prefs = serde_json::from_str(&app.prefs.to_json()).unwrap();
+        back.sanitise();
+        assert_eq!(back.full_toolbar_order()[0], "arrange");
+        app.prefs.reset_layout();
+        assert_eq!(app.prefs.full_toolbar_order(), before);
+        // A frame with the reordered ribbon draws.
+        let ctx = egui::Context::default();
+        app.prefs.move_toolbar("modes", -5);
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() }, |ui| app.ui(ui));
+        out.textures_delta.clear();
+    }
+
+    #[test]
     fn commands_toggle_panels_and_toolbars() {
         let ctx = egui::Context::default();
         let mut app = DarkBurn::new(Prefs::default());

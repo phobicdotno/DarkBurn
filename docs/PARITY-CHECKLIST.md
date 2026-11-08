@@ -47,7 +47,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] FILE-11 Print, black only
 - [~] FILE-12 Print, keep colours
 - [ ] FILE-13 Save processed bitmap
-- [ ] FILE-14 Save background camera capture
+- [x] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
 - [x] FILE-16 Export preferences
 - [x] FILE-17 Import preferences
@@ -160,21 +160,21 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
-- [ ] LT-01 Print and cut: set first target
-- [ ] LT-02 Print and cut: set second target
-- [ ] LT-03 Print and cut: align output to targets
-- [ ] LT-04 Print and cut: align without scaling
-- [ ] LT-05 Print and cut: reset
-- [ ] LT-06 Print and cut wizard
-- [ ] LT-07 Calibrate camera lens
-- [ ] LT-08 Calibrate camera alignment
-- [ ] LT-09 Rotary setup
-- [ ] LT-10 Focus test
-- [ ] LT-11 Interval test
+- [~] LT-01 Print and cut: set first target
+- [~] LT-02 Print and cut: set second target
+- [x] LT-03 Print and cut: align output to targets
+- [x] LT-04 Print and cut: align without scaling
+- [x] LT-05 Print and cut: reset
+- [x] LT-06 Print and cut wizard
+- [x] LT-07 Calibrate camera lens
+- [x] LT-08 Calibrate camera alignment
+- [x] LT-09 Rotary setup
+- [x] LT-10 Focus test
+- [x] LT-11 Interval test
 - [x] LT-12 Material test
-- [ ] LT-13 Centre finder
+- [x] LT-13 Centre finder
 - [ ] LT-14 Feeder setup
-- [ ] LT-15 Cylinder correction
+- [x] LT-15 Cylinder correction
 - [ ] LT-16 Get controller info
 - [ ] LT-17 Repeat marking (galvo)
 - [ ] LT-18 Lens correction test (galvo)
@@ -229,7 +229,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-20 Cut palette: 30 colour layers and 2 tool layers
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
-- [ ] TB-23 Modes: rotary, print and cut, cylinder correction
+- [x] TB-23 Modes: rotary, print and cut, cylinder correction
 - [~] TB-24 Docking: four directions, move as group, lock inner objects, padding
 - [~] TB-25 All toolbars can be shown, hidden, docked and floated
 
@@ -281,7 +281,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-19 Device profile picker
 - [ ] LASER-20 Rescan network bridge
 - [ ] LASER-21 Red light toggle (galvo)
-- [ ] LASER-22 Rotary and cylinder correction toggles, mode status text
+- [x] LASER-22 Rotary and cylinder correction toggles, mode status text
 - [ ] LASER-23 Option to disable Start on machines that take uploads
 - [ ] LASER-24 Pre-job checklist before start
 - [ ] LASER-25 Sounds on job finished and on error
@@ -327,13 +327,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] MOVE-18 Laser 2 controls
 
 ### Camera Control
-- [ ] CAMP-01 Camera picker
-- [ ] CAMP-02 Live viewfinder
-- [ ] CAMP-03 Update overlay
-- [ ] CAMP-04 Trace from capture
-- [ ] CAMP-05 Save settings
-- [ ] CAMP-06 Fade and show toggles
-- [ ] CAMP-07 Overlay width, height, X shift, Y shift
+- [~] CAMP-01 Camera picker
+- [~] CAMP-02 Live viewfinder
+- [x] CAMP-03 Update overlay
+- [x] CAMP-04 Trace from capture
+- [x] CAMP-05 Save settings
+- [x] CAMP-06 Fade and show toggles
+- [x] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
 - [ ] VTP-01 Start, end, current, advance by
@@ -814,35 +814,35 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 17. Camera
 
-- [ ] CAM-01 Camera selection with exposure and brightness
-- [ ] CAM-02 Overhead or head-mounted camera type
-- [ ] CAM-03 Lens calibration wizard, standard and fisheye
-- [ ] CAM-04 Camera alignment wizard
-- [ ] CAM-05 Head-mounted camera alignment and image stitching
-- [ ] CAM-06 Overlay on the canvas
-- [ ] CAM-07 Camera settings import and export
-- [ ] CAM-08 Colour or black-and-white view
-- [ ] CAM-09 Remember last camera, crop to page
+- [~] CAM-01 Camera selection with exposure and brightness
+- [x] CAM-02 Overhead or head-mounted camera type
+- [x] CAM-03 Lens calibration wizard, standard and fisheye
+- [x] CAM-04 Camera alignment wizard
+- [~] CAM-05 Head-mounted camera alignment and image stitching
+- [x] CAM-06 Overlay on the canvas
+- [x] CAM-07 Camera settings import and export
+- [x] CAM-08 Colour or black-and-white view
+- [x] CAM-09 Remember last camera, crop to page
 
 ## 18. Rotary
 
-- [ ] ROT-01 Enable rotary
-- [ ] ROT-02 Chuck or roller type
-- [ ] ROT-03 Rotary axis choice
-- [ ] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
-- [ ] ROT-05 Mirror output
-- [ ] ROT-06 Test rotation
+- [x] ROT-01 Enable rotary
+- [x] ROT-02 Chuck or roller type
+- [x] ROT-03 Rotary axis choice
+- [x] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
+- [x] ROT-05 Mirror output
+- [~] ROT-06 Test rotation
 - [ ] ROT-07 Read settings from controller (Ruida)
-- [ ] ROT-08 Rotary toggle on the main window
+- [x] ROT-08 Rotary toggle on the main window
 
 ## 19. Print and cut
 
-- [ ] PNC-01 Two target positions
-- [ ] PNC-02 Align with scaling
-- [ ] PNC-03 Align without scaling
-- [ ] PNC-04 Reset
-- [ ] PNC-05 Wizard
-- [ ] PNC-06 Status shown on main window
+- [~] PNC-01 Two target positions
+- [x] PNC-02 Align with scaling
+- [x] PNC-03 Align without scaling
+- [x] PNC-04 Reset
+- [x] PNC-05 Wizard
+- [x] PNC-06 Status shown on main window
 
 ## 20. Variable text
 
@@ -856,11 +856,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 21. Other tools
 
-- [ ] OTHER-01 Focus test
-- [ ] OTHER-02 Interval test
-- [ ] OTHER-03 Centre finder
-- [ ] OTHER-04 Feeder setup
-- [ ] OTHER-05 Cylinder correction, including concave
+- [x] OTHER-01 Focus test
+- [x] OTHER-02 Interval test
+- [x] OTHER-03 Centre finder
+- [x] OTHER-04 Feeder setup
+- [x] OTHER-05 Cylinder correction, including concave
 - [ ] OTHER-06 Pre-job checklist editor
 - [ ] OTHER-07 Project notes dialog shown on open
 - [ ] OTHER-08 Hotkey editor

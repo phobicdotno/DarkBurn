@@ -3,11 +3,14 @@
 #![forbid(unsafe_code)]
 
 pub mod calibrate;
+pub mod camera;
+pub mod capture;
 pub mod detect;
 pub mod homography;
 pub mod imageops;
 pub mod lens;
 pub mod linalg;
+pub mod transform2d;
 
 #[cfg(test)]
 mod testutil;

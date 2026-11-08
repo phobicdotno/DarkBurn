@@ -54,6 +54,9 @@ and settings are all commands; if you can click it, there is a command (find it 
 | `job.*` | generate the job, G-code and simulation settings, optimization, job origin, user origin, material test, preview actions; `job.start`, `job.send`, `job.frame` and friends are hardware |
 | `laser.*` | the Laser Tools menu: the document tools (`laser.rotary`, `laser.material_test`, print and cut) and the hardware ones (`laser.controller_info`, `laser.devices`) |
 | `machine.*`, `device.*` | the connected machine (all hardware) and the device list (`device.list`, `device.select`, ...) |
+| `gcode.*` | G-code dialects for Smoothieware, Marlin, Snapmaker, LinuxCNC and custom devices: settings and `gcode.export` (writes a file) |
+| `galvo.*` | galvo (fibre, UV) devices: settings, lens correction files, red-light framing and repeat marking; actions that mark or arm are hardware |
+| `gweike.*` | the Gweike M3 Ultra file workflow: layer to material and craft mapping, `.chf`, DXF and `.nc` export, the planner dry run and the card simulator. There is no command that connects to the real card |
 
 The dedicated tools (`new_design`, `open`, `save`, `import`, `export`, `undo`, `redo`,
 `set_setting`) are shortcuts for `file.new`, `file.open`, `file.save` / `file.save_as`,

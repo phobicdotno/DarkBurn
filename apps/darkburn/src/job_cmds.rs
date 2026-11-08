@@ -410,7 +410,7 @@ pub fn open_preview(app: &mut DarkBurn) {
 
 /// Write the G-code of `job` to `path`. `from_op` starts part-way (Save from here).
 pub fn write_gcode(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) -> Result<usize, String> {
-    let text = job_build::gcode_text(job, from_op, &app.job.gcode);
+    let text = crate::gcode_machines::job_text(app.machine.active(), job, from_op, &app.job.gcode);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }

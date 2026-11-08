@@ -111,6 +111,7 @@ pub fn hardware_class(id: &str) -> Option<HardwareClass> {
 
 /// Commands that write a file the user can see (save, export, print to PDF, support data).
 const WRITES_FILES: &[&str] = &[
+    "device.export_library",
     "file.save",
     "file.save_as",
     "file.save_lbrn2",
@@ -162,7 +163,7 @@ pub const NOT_FILE_WRITES: &[&str] = &[
 ];
 
 pub fn writes_files(id: &str) -> bool {
-    WRITES_FILES.contains(&id)
+    WRITES_FILES.contains(&id) || crate::machine_ext::writes_files(id)
 }
 
 /// Whether the command talks to a Gweike machine. Exports of Gweike file formats are not that

@@ -13,6 +13,7 @@ use serde_json::json;
 use solidcraft_theme::Tokens;
 
 use crate::devices::{ConnectionKind, Device, DeviceType, RUIDA_DISCOVERY_NOTE, SortBy, Wizard, WizardStep, find_my_laser};
+use crate::i18n::tr;
 use crate::job_build::Transfer;
 use crate::machine_api::{Family, SettingsBackup};
 use crate::machine_ui;
@@ -40,6 +41,8 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     checklist_dialog(ctx, app);
     overwrite_dialog(ctx, app);
     macro_dialog(ctx, app);
+    crate::galvo_ui::dialogs(ctx, app);
+    crate::gweike_ui::dialogs(ctx, app);
 }
 
 // ----- Devices [DEV-01, DEV-04, DEV-05] ---------------------------------------------------------
@@ -183,10 +186,32 @@ fn wizard_dialog(ctx: &Context, app: &mut DarkBurn) {
             match w.step {
                 WizardStep::Type => {
                     note(ui, "What kind of laser is it? Pick a simulator to try DarkBurn with no hardware.");
-                    for k in DeviceType::ALL {
-                        if ui.selectable_label(w.draft.kind == k, k.label()).clicked() {
-                            w.set_type(k);
+                    egui::ScrollArea::vertical().id_salt("wizard_types").max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+                        for k in DeviceType::ALL {
+                            match k.needs_capture() {
+                                None => {
+                                    if ui.selectable_label(w.draft.kind == k, k.label()).clicked() {
+                                        w.set_type(k);
+                                    }
+                                }
+                                // Planned, but nothing can be built without a capture from real hardware.
+                                Some(why) => {
+                                    ui.add_enabled(false, egui::Button::new(format!("{} (needs hardware capture)", k.label())))
+                                        .on_disabled_hover_text(why);
+                                    ui.label(RichText::new(why).size(Tokens::get().font_small).color(Tokens::get().text_dim));
+                                }
+                            }
                         }
+                    });
+                    note(
+                        ui,
+                        "Greyed entries need a capture from real hardware before DarkBurn can support them. The simulators run with no hardware.",
+                    );
+                    if w.draft.kind == DeviceType::GweikeCardSimulator {
+                        note(ui, crate::gweike_workflow::DIRECT_CONTROL_NOTE);
+                    }
+                    if w.draft.kind == DeviceType::LinuxCnc {
+                        note(ui, "LinuxCNC is file output only: DarkBurn writes the .ngc program and you run it in LinuxCNC.");
                     }
                 }
                 WizardStep::Connection => {
@@ -283,6 +308,12 @@ fn connection_fields(ui: &mut Ui, d: &mut Device) {
             });
             note(ui, "Raw USB needs a build with USB support.");
         }
+        ConnectionKind::BoardUsb => {
+            note(
+                ui,
+                "The galvo board's USB link is not built into this version. Use the galvo simulator until it has been checked on real hardware (docs/hardware-checks-galvo.md).",
+            );
+        }
         ConnectionKind::None => {}
     }
 }
@@ -329,7 +360,7 @@ fn find_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 // ----- Device Settings [DS-01..DS-17, DS-19] -----------------------------------------------------
 
-const PAGES: [&str; 4] = ["Basic", "GCode", "DSP", "Additional"];
+const PAGES: [&str; 5] = ["Basic", "GCode", "DSP", "Additional", "Galvo"];
 
 fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     let Some((mut d, mut page)) = app.machine.dlg.settings.take() else { return };
@@ -341,7 +372,8 @@ fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
         .show(ctx, errs.is_empty(), |ui| {
             ui.horizontal(|ui| {
                 for (i, p) in PAGES.iter().enumerate() {
-                    let hidden = (i == 1 && d.family() != Family::Grbl) || (i == 2 && d.family() != Family::Ruida);
+                    let hidden =
+                        (i == 1 && d.family() != Family::Grbl) || (i == 2 && d.family() != Family::Ruida) || (i == 4 && d.family() != Family::Galvo);
                     if !hidden && ui_kit::choice_chip(ui, &format!("ds_page_{i}"), p, page == i).clicked() {
                         page = i;
                     }
@@ -351,6 +383,7 @@ fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
                 0 => basic_page(ui, &mut d, app),
                 1 => gcode_page(ui, &mut d),
                 2 => dsp_page(ui, &mut d),
+                4 => crate::galvo_ui::settings_page(ui, &mut d, &mut app.machine.ext.galvo_message),
                 _ => additional_page(ui, &mut d),
             }
             for e in &errs {
@@ -391,12 +424,16 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         connection_fields(ui, d);
     }
     ui_kit::section_heading(ui, "Work area");
-    ui_kit::row(ui, "Width", |ui| {
-        ui_kit::number_field(ui, &mut d.width_mm, 1.0..=10_000.0, 1.0, " mm");
-    });
-    ui_kit::row(ui, "Height", |ui| {
-        ui_kit::number_field(ui, &mut d.height_mm, 1.0..=10_000.0, 1.0, " mm");
-    });
+    if d.family() == Family::Galvo {
+        note(ui, "The work area of a galvo is its square lens field. Set the size on the Galvo page.");
+    } else {
+        ui_kit::row(ui, "Width", |ui| {
+            ui_kit::number_field(ui, &mut d.width_mm, 1.0..=10_000.0, 1.0, " mm");
+        });
+        ui_kit::row(ui, "Height", |ui| {
+            ui_kit::number_field(ui, &mut d.height_mm, 1.0..=10_000.0, 1.0, " mm");
+        });
+    }
     origin_fields(ui, d);
     ui_kit::checkbox(ui, "Home when a job starts", &mut d.auto_home);
     ui_kit::checkbox(ui, "Negative coordinates (zero at the far corner)", &mut d.settings.negative_coords);
@@ -529,6 +566,82 @@ fn gcode_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::text_area(ui, "Start script", Id::unique("ds_start_script"), &mut g.start_script, 3, 10_000);
     ui_kit::text_area(ui, "End script", Id::unique("ds_end_script"), &mut g.end_script, 3, 10_000);
     d.settings.gcode.s_max = d.settings.gcode.s_max.max(1.0);
+    if d.kind.is_translated() {
+        gcode_firmware_fields(ui, d);
+    }
+}
+
+/// What the G-code firmwares of `darkburn-gcodebots` add to the GCode page [DS-12, GCODE-01..05].
+fn gcode_firmware_fields(ui: &mut Ui, d: &mut Device) {
+    use darkburn_gcodebots::profile::{DeviceKind, MarlinPowerMode};
+    let kind = d.kind.lib_kind();
+    ui_kit::section_heading(ui, &tr("gcode.firmware", "This firmware"));
+    note(ui, "The job is written as plain G-code and rewritten for this controller with the settings above. The dialect box does not apply.");
+    let e = &mut d.settings.gcode_ext;
+    ui_kit::row(ui, "Air assist on", |ui| {
+        ui_kit::hint_field(ui, &mut e.air_on, "none");
+    });
+    ui_kit::row(ui, "Air assist off", |ui| {
+        ui_kit::hint_field(ui, &mut e.air_off, "none");
+    });
+    ui_kit::row(ui, "Longest fire", |ui| {
+        ui_kit::number_field(ui, &mut e.max_fire_seconds, 0.1..=600.0, 0.5, " s");
+    });
+    if matches!(kind, Some(DeviceKind::Marlin | DeviceKind::Snapmaker)) {
+        let modes = [MarlinPowerMode::M3, MarlinPowerMode::M4, MarlinPowerMode::Inline, MarlinPowerMode::Fan];
+        let mut mi = modes.iter().position(|m| *m == e.marlin_power).unwrap_or(0);
+        ui_kit::row(ui, "Laser power", |ui| {
+            ui_kit::dropdown(ui, "ds_marlin_mode", &mut mi, &["M3 S (constant)", "M4 S (dynamic)", "Inline (M3 I)", "Fan output (M106)"]);
+        });
+        e.marlin_power = modes[mi];
+        ui_kit::row(ui, "Fan or tool number", |ui| {
+            ui_kit::number_field(ui, &mut e.tool_index, 0..=9, 1.0, "");
+        });
+    }
+    if kind == Some(DeviceKind::Smoothie) {
+        ui_kit::checkbox(ui, "Merge raster moves into longer ones (clustering)", &mut e.clustering);
+        ui_kit::checkbox(ui, "Shorter pause delay", &mut e.reduce_smoothie_pause_delay);
+    }
+    if kind == Some(DeviceKind::LinuxCnc) {
+        ui_kit::checkbox(ui, "Power on the spindle output (M3 S) instead of M67", &mut e.constant_power);
+        note(ui, "LinuxCNC is file output only. Use Save G-code and open the .ngc file in LinuxCNC.");
+    }
+    if kind == Some(DeviceKind::Snapmaker) {
+        let s = &mut e.snapmaker;
+        ui_kit::row(ui, "Model", |ui| {
+            ui_kit::field(ui, &mut s.model);
+        });
+        ui_kit::row(ui, "Laser module", |ui| {
+            ui_kit::field(ui, &mut s.tool_head);
+        });
+        ui_kit::checkbox(ui, "Write the file header", &mut s.header);
+        ui_kit::row(ui, "Focus height", |ui| {
+            ui_kit::number_field(ui, &mut s.focus_height_mm, -100.0..=300.0, 0.1, " mm");
+        });
+        ui_kit::row(ui, "Material height", |ui| {
+            ui_kit::number_field(ui, &mut s.material_height_mm, 0.0..=300.0, 0.1, " mm");
+        });
+    }
+    if kind == Some(DeviceKind::Custom) {
+        ui_kit::section_heading(ui, "Command templates");
+        note(ui, "Placeholders: {dx} {dy} {dz} {feed} for jogging, {s} {percent} for the fire button. Empty means not supported.");
+        let c = &mut e.custom;
+        for (label, field, rows) in [
+            ("Home", &mut c.home, 1),
+            ("Jog", &mut c.jog, 3),
+            ("Pause", &mut c.pause, 1),
+            ("Resume", &mut c.resume, 1),
+            ("Stop", &mut c.stop, 1),
+            ("Fire on", &mut c.fire_on, 1),
+            ("Fire off", &mut c.fire_off, 1),
+            ("Status request", &mut c.status, 1),
+            ("Unlock", &mut c.unlock, 1),
+            ("Laser off", &mut c.laser_off, 1),
+            ("After the last line", &mut c.finish_sync, 1),
+        ] {
+            ui_kit::text_area(ui, label, Id::unique(("ds_custom", label)), field, rows, 1000);
+        }
+    }
 }
 
 fn dsp_page(ui: &mut Ui, d: &mut Device) {
@@ -590,9 +703,11 @@ fn machine_settings_dialog(ctx: &Context, app: &mut DarkBurn) {
                 ui_kit::status_line(ui, "Connect to the laser to read and change its settings.", StatusTone::Warning);
             }
             match family {
+                Family::Grbl if app.machine.handle.snapshot().gcode_firmware.is_some() => gcode_settings_body(ui, app),
                 Family::Grbl => grbl_settings_body(ui, app),
                 Family::Ruida => ruida_settings_body(ui, app),
-                Family::DesignOnly => note(ui, "This device has no machine settings."),
+                Family::Galvo => note(ui, "A galvo board is set up in Device Settings (Galvo page)."),
+                Family::DesignOnly | Family::FileOnly => note(ui, "This device has no machine settings."),
             }
             backups_body(ui, app, family);
         });
@@ -606,6 +721,50 @@ fn machine_settings_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 fn banner(ui: &mut Ui, app: &DarkBurn) {
     crate::laser_panel::banner(ui, app);
+}
+
+/// Machine Settings of a Smoothieware, Marlin, Snapmaker or custom controller [GCODE-01..05]:
+/// the settings it reports by name, edited and written one at a time.
+fn gcode_settings_body(ui: &mut Ui, app: &mut DarkBurn) {
+    let snap = app.machine.handle.snapshot().clone();
+    let connected = snap.connected();
+    ui.horizontal(|ui| {
+        if small(ui, &tr("gcode.read", "Read from laser"), "Ask the controller for its settings", connected) {
+            machine_ui::run_with(app, "machine.read_settings", &json!({}));
+        }
+        let n = app.machine.ext.gcode_edits.len();
+        if small(ui, &format!("Write {n} changed"), "Write the changed values to the controller", connected && n > 0) {
+            let edits = std::mem::take(&mut app.machine.ext.gcode_edits);
+            for (k, v) in edits {
+                machine_ui::run_with(app, "machine.write_gcode_setting", &json!({ "key": k, "value": v }));
+            }
+        }
+        if small(ui, "Store in the controller", "Keep the settings after a restart (Marlin M500)", connected) {
+            machine_ui::run_with(app, "machine.persist_settings", &json!({}));
+        }
+        if small(ui, "Discard changes", "", n > 0) {
+            app.machine.ext.gcode_edits.clear();
+        }
+    });
+    if let Some(f) = snap.gcode_firmware {
+        note(ui, &format!("Controller: {}", f.label()));
+    }
+    if snap.gcode_settings.is_empty() {
+        note(ui, "Press Read from laser to list the settings this controller reports.");
+    }
+    egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+        for (k, val) in snap.gcode_settings.iter() {
+            let mut v = app.machine.ext.gcode_edits.get(k).cloned().unwrap_or_else(|| val.clone());
+            ui_kit::row(ui, k, |ui| {
+                ui_kit::field(ui, &mut v);
+            });
+            if &v != val {
+                app.machine.ext.gcode_edits.insert(k.clone(), v);
+            } else {
+                app.machine.ext.gcode_edits.remove(k);
+            }
+        }
+    });
 }
 
 fn grbl_settings_body(ui: &mut Ui, app: &mut DarkBurn) {

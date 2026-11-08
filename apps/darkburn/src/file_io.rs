@@ -385,7 +385,7 @@ fn open_export(app: &mut DarkBurn, title: &'static str, formats_list: Vec<Export
         svg_work_area: false,
         dxf_arcs: app.prefs.files.dxf_arcs,
         dxf_layers: app.prefs.files.dxf_layer_names,
-        materials: Default::default(),
+        materials: app.machine.active().settings.gweike.materials(&app.editor.doc),
         layer_names,
         default_material: String::new(),
         nc_on: "M07".into(),
@@ -665,6 +665,10 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
                 req.materials = m.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect();
             }
             req.default_material = a.get("default_material").and_then(Value::as_str).map(str::to_string);
+            if format.is_gweike() && req.materials.is_empty() {
+                // The layer to material mapping of the Gweike window.
+                req.materials = app.machine.active().settings.gweike.materials(&app.editor.doc).into_iter().collect();
+            }
             let warnings = export_to(app, &path, &req)?;
             Ok(json!({ "path": path.display().to_string(), "warnings": warnings }))
         })(),

@@ -70,6 +70,8 @@ pub struct DarkBurn {
     pub job: crate::job_cmds::JobState,
     /// Image windows and presets (image_ui.rs).
     pub images: crate::image_ui::ImageUi,
+    /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
+    pub shape_ui: crate::shape_ui::ShapeUi,
 }
 
 impl DarkBurn {
@@ -102,6 +104,7 @@ impl DarkBurn {
             files: Default::default(),
             job: Default::default(),
             images: Default::default(),
+            shape_ui: Default::default(),
         }
     }
 
@@ -114,6 +117,9 @@ impl DarkBurn {
     /// Whether command `id` has something to act on now (menus grey out the rest).
     pub fn can_run(&self, id: &str) -> bool {
         let sel = self.editor.selection.len();
+        if let Some(can) = crate::shape_ops::can_run(self, id) {
+            return can;
+        }
         match id {
             "edit.undo" => self.editor.history.can_undo(),
             "edit.redo" => self.editor.history.can_redo(),
@@ -174,7 +180,12 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
-        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) || crate::job_cmds::run(self, ctx, id) || crate::image_ui::run(self, ctx, id) {
+        if crate::actions::run(self, ctx, id)
+            || crate::files::run(self, ctx, id)
+            || crate::job_cmds::run(self, ctx, id)
+            || crate::image_ui::run(self, ctx, id)
+            || crate::shape_ops::run(self, ctx, id)
+        {
             return;
         }
         match id {
@@ -226,6 +237,10 @@ impl DarkBurn {
         }
         let mut run = None;
         for (shortcut, id) in commands::shortcut_table() {
+            // In the node tool the plain letter keys are node commands, not align commands.
+            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+                continue;
+            }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
                 run = Some(*id);
                 break;
@@ -278,6 +293,7 @@ impl DarkBurn {
         crate::files::dialogs(ui.ctx(), self);
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
+        crate::shape_ui::show(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }

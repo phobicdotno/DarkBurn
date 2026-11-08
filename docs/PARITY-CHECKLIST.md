@@ -66,13 +66,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-08 Paste
 - [x] EDIT-09 Paste in place
 - [x] EDIT-10 Delete
-- [ ] EDIT-11 Convert to path
+- [x] EDIT-11 Convert to path
 - [ ] EDIT-12 Convert to bitmap
-- [ ] EDIT-13 Close path
-- [ ] EDIT-14 Close selected paths with tolerance
-- [ ] EDIT-15 Auto-join selected shapes
-- [ ] EDIT-16 Optimize selected shapes
-- [ ] EDIT-17 Delete duplicates
+- [x] EDIT-13 Close path
+- [~] EDIT-14 Close selected paths with tolerance
+- [~] EDIT-15 Auto-join selected shapes
+- [x] EDIT-16 Optimize selected shapes
+- [x] EDIT-17 Delete duplicates
 - [x] EDIT-18 Select open shapes
 - [x] EDIT-19 Select open shapes set to fill
 - [x] EDIT-20 Select all shapes in current layer
@@ -94,38 +94,38 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-03 Rectangle
 - [x] TOOLS-04 Ellipse
 - [x] TOOLS-05 Polygon
-- [ ] TOOLS-06 Edit nodes
-- [ ] TOOLS-07 Add tabs
+- [~] TOOLS-06 Edit nodes
+- [~] TOOLS-07 Add tabs
 - [ ] TOOLS-08 Edit text
 - [ ] TOOLS-09 Position laser
-- [ ] TOOLS-10 Measure
+- [~] TOOLS-10 Measure
 - [ ] TOOLS-11 Create QR code
-- [ ] TOOLS-12 Offset shapes
-- [ ] TOOLS-13 Weld shapes
-- [ ] TOOLS-14 Boolean union
-- [ ] TOOLS-15 Boolean difference
-- [ ] TOOLS-16 Boolean intersection
-- [ ] TOOLS-17 Boolean assistant
-- [ ] TOOLS-18 Cut shapes
+- [~] TOOLS-12 Offset shapes
+- [x] TOOLS-13 Weld shapes
+- [x] TOOLS-14 Boolean union
+- [x] TOOLS-15 Boolean difference
+- [x] TOOLS-16 Boolean intersection
+- [~] TOOLS-17 Boolean assistant
+- [x] TOOLS-18 Cut shapes
 - [ ] TOOLS-19 Adjust image
 - [ ] TOOLS-20 Trace image
 - [ ] TOOLS-21 Apply path to text
 - [ ] TOOLS-22 Apply mask to image
-- [ ] TOOLS-23 Resize slots in selection
-- [ ] TOOLS-24 Select shapes smaller than selected
-- [ ] TOOLS-25 Warp selection (4 points)
-- [ ] TOOLS-26 Deform selection (16 points)
+- [~] TOOLS-23 Resize slots in selection
+- [x] TOOLS-24 Select shapes smaller than selected
+- [~] TOOLS-25 Warp selection (4 points)
+- [~] TOOLS-26 Deform selection (16 points)
 
 ### Arrange
 - [x] ARR-01 Group
 - [x] ARR-02 Ungroup
-- [ ] ARR-03 Auto-group
+- [x] ARR-03 Auto-group
 - [x] ARR-04 Flip horizontal
 - [x] ARR-05 Flip vertical
-- [ ] ARR-06 Mirror across line
+- [~] ARR-06 Mirror across line
 - [x] ARR-07 Rotate 90° clockwise
 - [x] ARR-08 Rotate 90° counter-clockwise
-- [ ] ARR-09 Two-point rotate and scale
+- [~] ARR-09 Two-point rotate and scale
 - [x] ARR-10 Align left
 - [x] ARR-11 Align right
 - [x] ARR-12 Align top
@@ -141,23 +141,23 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-22 Distribute vertical spacing with padding
 - [x] ARR-23 Move horizontally together
 - [x] ARR-24 Move vertically together
-- [ ] ARR-25 Nest selected
-- [ ] ARR-26 Dock left, right, up, down
+- [~] ARR-25 Nest selected
+- [~] ARR-26 Dock left, right, up, down
 - [x] ARR-27 Move selection to one of 9 page positions
 - [ ] ARR-28 Move selection to laser position
 - [ ] ARR-29 Move laser to one of 9 selection positions
-- [ ] ARR-30 Grid array
-- [ ] ARR-31 Circular array
-- [ ] ARR-32 Copy along path
-- [ ] ARR-33 Create rubber-band outline
-- [ ] ARR-34 Break apart
+- [~] ARR-30 Grid array
+- [~] ARR-31 Circular array
+- [~] ARR-32 Copy along path
+- [x] ARR-33 Create rubber-band outline
+- [x] ARR-34 Break apart
 - [x] ARR-35 Push forward in draw order
 - [x] ARR-36 Push backward in draw order
 - [x] ARR-37 Push to front
 - [x] ARR-38 Push to back
 - [x] ARR-39 Lock selected shapes
 - [x] ARR-40 Unlock selected shapes
-- [ ] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
+- [~] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
 - [ ] LT-01 Print and cut: set first target
@@ -215,9 +215,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] TB-06 Arrange: make same width, make same height, move selection pop-up
 - [ ] TB-07 Arrange long variant
 - [~] TB-08 Tools (vertical, left edge): all creation tools
-- [ ] TB-09 Modifiers: offset, weld, union, difference, intersection
-- [ ] TB-10 Modifiers: grid array, circular array
-- [ ] TB-11 Modifiers: start points tool, round corners tool with radius field
+- [~] TB-09 Modifiers: offset, weld, union, difference, intersection
+- [~] TB-10 Modifiers: grid array, circular array
+- [~] TB-11 Modifiers: start points tool, round corners tool with radius field
 - [x] TB-12 Numeric edits: X, Y, width, height, scale %, lock aspect
 - [x] TB-13 Numeric edits: 9-point anchor picker
 - [x] TB-14 Numeric edits: rotate field, mm or inch toggle
@@ -230,7 +230,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [ ] TB-23 Modes: rotary, print and cut, cylinder correction
-- [ ] TB-24 Docking: four directions, move as group, lock inner objects, padding
+- [~] TB-24 Docking: four directions, move as group, lock inner objects, padding
 - [~] TB-25 All toolbars can be shown, hidden, docked and floated
 
 ## 3. Status bar
@@ -414,9 +414,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] DRAW-01 Line tool: straight segments by click, curves by click-drag
 - [x] DRAW-02 Line tool: 45° snap, length readout
-- [ ] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
+- [~] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
 - [x] DRAW-04 Rectangle with corner radius, including inward corners
-- [ ] DRAW-05 Remove rounded corners
+- [~] DRAW-05 Remove rounded corners
 - [x] DRAW-06 Ellipse
 - [x] DRAW-07 Polygon with N sides
 - [ ] DRAW-08 Text: multi-line, right-to-left, CJK input
@@ -429,76 +429,76 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] DRAW-15 Text: backup outline when a font is missing
 - [ ] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
 - [ ] DRAW-17 QR code error correction level, size limit, editable later
-- [ ] DRAW-18 Measure: length, arc angle and length, area, width and height
-- [ ] DRAW-19 Measure: unit switch, remembers last position, axis snap
+- [~] DRAW-18 Measure: length, arc angle and length, area, width and height
+- [~] DRAW-19 Measure: unit switch, remembers last position, axis snap
 - [ ] DRAW-20 Position laser: click to move the head
 - [ ] DRAW-21 Barcode *(later)*
 - [ ] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
 
-- [ ] NODE-01 Drag nodes and control handles
-- [ ] NODE-02 Drag a line to turn it into a curve
-- [ ] NODE-03 Ctrl+click inserts a node
-- [ ] NODE-04 Select several nodes
-- [ ] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
-- [ ] NODE-06 Snap and join while dragging nodes
-- [ ] NODE-07 Constrained drag with Shift
-- [ ] NODE-08 Start node highlight
-- [ ] NODE-09 Align selected nodes
-- [ ] NODE-10 Start points tool: set start node and direction, show start and end markers
-- [ ] NODE-11 Start points work on compound shapes
-- [ ] NODE-12 Node highlight tool
+- [~] NODE-01 Drag nodes and control handles
+- [~] NODE-02 Drag a line to turn it into a curve
+- [~] NODE-03 Ctrl+click inserts a node
+- [~] NODE-04 Select several nodes
+- [~] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
+- [~] NODE-06 Snap and join while dragging nodes
+- [~] NODE-07 Constrained drag with Shift
+- [~] NODE-08 Start node highlight
+- [~] NODE-09 Align selected nodes
+- [~] NODE-10 Start points tool: set start node and direction, show start and end markers
+- [~] NODE-11 Start points work on compound shapes
+- [~] NODE-12 Node highlight tool
 
 ## 8. Shape operations
 
-- [ ] SHAPE-01 Convert to path, including variable text
+- [~] SHAPE-01 Convert to path, including variable text
 - [ ] SHAPE-02 Convert to bitmap with DPI dialog
-- [ ] SHAPE-03 Close path
-- [ ] SHAPE-04 Close path with tolerance dialog
-- [ ] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
-- [ ] SHAPE-06 Optimize shapes: fit lines and arcs, smoothing, before and after counts
-- [ ] SHAPE-07 Delete duplicates
-- [ ] SHAPE-08 Delete overlapping lines
-- [ ] SHAPE-09 Break apart
-- [ ] SHAPE-10 Weld
-- [ ] SHAPE-11 Boolean union, difference and intersection with very fine precision
-- [ ] SHAPE-12 Boolean assistant with preview and reset
-- [ ] SHAPE-13 Offset: distance with units, inward, outward or both
-- [ ] SHAPE-14 Offset: round, bevel or sharp corners
-- [ ] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
-- [ ] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
-- [ ] SHAPE-17 Cut shapes, including through images
-- [ ] SHAPE-18 Trim in node mode
-- [ ] SHAPE-19 Round corners and fillet, including negative radius
-- [ ] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
-- [ ] SHAPE-21 Resize slots: colour-coded highlighting
-- [ ] SHAPE-22 Warp with 4 points
-- [ ] SHAPE-23 Deform with 16 points
-- [ ] SHAPE-24 Two-point rotate and scale
-- [ ] SHAPE-25 Mirror across line
-- [ ] SHAPE-26 Make same width and same height about the centre
-- [ ] SHAPE-27 Rubber-band outline
+- [x] SHAPE-03 Close path
+- [~] SHAPE-04 Close path with tolerance dialog
+- [~] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
+- [x] SHAPE-06 Optimize shapes: fit lines and arcs, smoothing, before and after counts
+- [x] SHAPE-07 Delete duplicates
+- [x] SHAPE-08 Delete overlapping lines
+- [x] SHAPE-09 Break apart
+- [x] SHAPE-10 Weld
+- [x] SHAPE-11 Boolean union, difference and intersection with very fine precision
+- [~] SHAPE-12 Boolean assistant with preview and reset
+- [~] SHAPE-13 Offset: distance with units, inward, outward or both
+- [~] SHAPE-14 Offset: round, bevel or sharp corners
+- [~] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
+- [~] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
+- [x] SHAPE-17 Cut shapes, including through images
+- [~] SHAPE-18 Trim in node mode
+- [~] SHAPE-19 Round corners and fillet, including negative radius
+- [~] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
+- [~] SHAPE-21 Resize slots: colour-coded highlighting
+- [~] SHAPE-22 Warp with 4 points
+- [~] SHAPE-23 Deform with 16 points
+- [~] SHAPE-24 Two-point rotate and scale
+- [~] SHAPE-25 Mirror across line
+- [x] SHAPE-26 Make same width and same height about the centre
+- [x] SHAPE-27 Rubber-band outline
 - [ ] SHAPE-28 Apply path to text
 - [ ] SHAPE-29 Apply mask to image, flatten and remove crop
 - [ ] SHAPE-30 Lock and unlock shapes
 
 ## 9. Arrays and arrangement
 
-- [ ] ARRAY-01 Grid array by rows and columns or from target size
-- [ ] ARRAY-02 Grid array spacing by gap or centre to centre
-- [ ] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
-- [ ] ARRAY-04 Grid array mirror alternates and reverse direction
-- [ ] ARRAY-05 Virtual arrays that stay editable
-- [ ] ARRAY-06 Variable text increments across arrays
-- [ ] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
-- [ ] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
-- [ ] ARRAY-09 Nesting of selected shapes
+- [~] ARRAY-01 Grid array by rows and columns or from target size
+- [~] ARRAY-02 Grid array spacing by gap or centre to centre
+- [~] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
+- [~] ARRAY-04 Grid array mirror alternates and reverse direction
+- [~] ARRAY-05 Virtual arrays that stay editable
+- [~] ARRAY-06 Variable text increments across arrays
+- [~] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
+- [~] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
+- [~] ARRAY-09 Nesting of selected shapes
 - [ ] ARRAY-10 True nest and quick nest *(later)*
-- [ ] ARRAY-11 Auto-group groups shapes that sit inside each other
-- [ ] ARRAY-12 Alignment helper for beginners
-- [ ] ARRAY-13 Docking pushes selection against neighbours
-- [ ] ARRAY-14 9-point anchor used by position, size, scale and rotate fields
+- [x] ARRAY-11 Auto-group groups shapes that sit inside each other
+- [~] ARRAY-12 Alignment helper for beginners
+- [~] ARRAY-13 Docking pushes selection against neighbours
+- [x] ARRAY-14 9-point anchor used by position, size, scale and rotate fields
 - [ ] ARRAY-15 Pages window *(later)*
 
 ---

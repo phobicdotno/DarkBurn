@@ -33,6 +33,8 @@ enum Item {
     Choices(&'static [(&'static str, &'static [&'static str])]),
     /// The numeric edits: position, size, scale and rotation of the selection.
     Numeric,
+    /// A live control drawn by `shape_ui.rs`: "dock_padding", "dock_checks" or "corner_radius".
+    Live(&'static str),
 }
 
 struct Group {
@@ -41,7 +43,7 @@ struct Group {
     items: &'static [Item],
 }
 
-use Item::{Checks, Choices, Cmd, Fields, Numeric};
+use Item::{Checks, Choices, Cmd, Fields, Live, Numeric};
 
 const fn g(caption: &'static str, toolbar: &'static str, items: &'static [Item]) -> Group {
     Group { caption, toolbar, items }
@@ -77,8 +79,8 @@ const TABS: &[(&str, &str, &[Group])] = &[
                     Cmd("arrange.dock_right"),
                     Cmd("arrange.dock_up"),
                     Cmd("arrange.dock_down"),
-                    Checks(&["Move as group", "Lock inner objects"]),
-                    Fields(&[("Padding", "0.00 mm")], 130.0),
+                    Live("dock_checks"),
+                    Live("dock_padding"),
                 ],
             ),
         ],
@@ -90,7 +92,7 @@ const TABS: &[(&str, &str, &[Group])] = &[
             g("Offset", "modifiers", &[Cmd("tools.offset")]),
             g("Boolean", "modifiers", &[Cmd("tools.weld"), Cmd("tools.union"), Cmd("tools.difference"), Cmd("tools.intersection")]),
             g("Array", "modifiers", &[Cmd("arrange.grid_array"), Cmd("arrange.circular_array")]),
-            g("Corners", "modifiers", &[Cmd("tools.start_points"), Cmd("tools.round_corners"), Fields(&[("Radius", "1.00 mm")], 120.0)]),
+            g("Corners", "modifiers", &[Cmd("tools.start_points"), Cmd("tools.round_corners"), Live("corner_radius")]),
         ],
     ),
     (
@@ -176,6 +178,7 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
             for item in group.items {
                 gx = match item {
                     Numeric => crate::numeric_edits::show(ui, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
+                    Live(kind) => crate::shape_ui::ribbon_item(ui, kind, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
                     _ => item_at(ui, *item, gx, row, pan_tool, &mut app.hint, clicked),
                 } + BUTTON_GAP;
             }
@@ -286,7 +289,7 @@ fn item_at(ui: &mut Ui, item: Item, x: f32, row: Rect, pan_tool: bool, hint: &mu
             });
             area.right()
         }
-        Numeric => x,
+        Numeric | Live(_) => x,
     }
 }
 

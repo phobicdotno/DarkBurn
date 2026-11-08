@@ -35,6 +35,12 @@ pub struct Shape {
     pub priority: i32,
     /// Power scale in percent applied to this shape's layer power.
     pub power_scale: f64,
+    /// Manually placed tabs (the cut skips them), as points on the outline in local coordinates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<[f64; 2]>,
+    /// Set on a group that is a virtual array: the original items and the array settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub array: Option<Box<crate::varray::ArrayDef>>,
 }
 
 impl Default for Shape {
@@ -48,6 +54,8 @@ impl Default for Shape {
             locked: false,
             priority: 0,
             power_scale: 100.0,
+            tabs: Vec::new(),
+            array: None,
         }
     }
 }
@@ -331,6 +339,12 @@ impl Shape {
         if let ShapeKind::Group { children } = &mut self.kind {
             for c in children {
                 c.set_layer(layer);
+            }
+        }
+        // A virtual array keeps its originals on the same layer, so editing it keeps the layer.
+        if let Some(a) = &mut self.array {
+            for s in &mut a.source {
+                s.set_layer(layer);
             }
         }
     }

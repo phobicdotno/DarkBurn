@@ -638,9 +638,10 @@ impl DarkBurn {
                     let split = r.top() + (r.height() * 0.58).round();
                     let upper = Rect::from_min_max(r.min, pos2(r.right(), split));
                     let lower = Rect::from_min_max(pos2(r.left(), split + 1.0), r.max);
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(upper), |ui| self.tab_group(ui, Area::RightTop));
+                    // Each group has its own id: both draw a close button with the same id source.
+                    ui.scope_builder(egui::UiBuilder::new().id_salt("db_right_top").max_rect(upper), |ui| self.tab_group(ui, Area::RightTop));
                     ui.painter().hline(r.x_range(), split + 0.5, Stroke::new(1.0, t.border));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(lower), |ui| self.tab_group(ui, Area::RightBottom));
+                    ui.scope_builder(egui::UiBuilder::new().id_salt("db_right_bottom").max_rect(lower), |ui| self.tab_group(ui, Area::RightBottom));
                 }
                 (true, false) => self.tab_group(ui, Area::RightTop),
                 _ => self.tab_group(ui, Area::RightBottom),

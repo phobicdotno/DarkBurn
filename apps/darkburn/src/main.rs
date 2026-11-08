@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod actions;
+mod api;
 mod canvas;
 mod canvas_input;
 mod commands;

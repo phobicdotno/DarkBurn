@@ -857,7 +857,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "darkburn"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "arboard",
  "darkburn-core",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-core"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "darkburn-geom",
  "kurbo 0.13.1",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-geom"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "cavalier_contours",
  "i_overlay",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-grbl"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "kurbo 0.13.1",
  "log",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-import"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "base64",
  "dxf",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-job"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "kurbo 0.13.1",
  "serde",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-raster"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "image",
  "kurbo 0.13.1",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-ruida"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "futures-lite",
  "kurbo 0.13.1",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "darkburn-ui"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "arboard",
  "egui",

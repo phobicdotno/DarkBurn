@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.0.24 (build 5)
+- Every action in the app can now be run by a script or an agent
+
 ## v0.0.23 (build 4)
 - Draw lines, rectangles, ellipses and polygons
 - Select shapes by click or box, then move, resize, rotate and shear them

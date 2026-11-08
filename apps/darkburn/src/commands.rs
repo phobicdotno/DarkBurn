@@ -2,6 +2,8 @@
 //! the menus built from them. Commands whose feature arrives in a later phase are listed (so the
 //! menus are complete) but disabled; [`works`] names the ones that run today.
 
+#![allow(dead_code, reason = "the registry queries are used by the MCP backend, wired in the next step")]
+
 /// A command: stable id, menu label, shortcut as shown, icon (empty for none).
 #[derive(Clone, Copy, Debug)]
 pub struct Cmd {
@@ -9,10 +11,17 @@ pub struct Cmd {
     pub label: &'static str,
     pub key: &'static str,
     pub icon: &'static str,
+    /// JSON Schema (as text) of the command's arguments; empty when it takes none.
+    pub args: &'static str,
 }
 
 const fn c(id: &'static str, label: &'static str, key: &'static str, icon: &'static str) -> Cmd {
-    Cmd { id, label, key, icon }
+    Cmd { id, label, key, icon, args: "" }
+}
+
+/// A command that takes arguments (agents and scripts call these; it has no menu item).
+const fn a(id: &'static str, label: &'static str, args: &'static str) -> Cmd {
+    Cmd { id, label, key: "", icon: "", args }
 }
 
 pub const COMMANDS: &[Cmd] = &[
@@ -211,6 +220,105 @@ pub const COMMANDS: &[Cmd] = &[
     c("help.camera", "Camera Selection Help", "", ""),
     c("help.updates", "Check for Updates", "", ""),
     c("help.debug_log", "Enable Debug Log", "", ""),
+    // Selection and shapes, with arguments
+    a(
+        "selection.set",
+        "Select Shapes by Id",
+        r#"{"type":"object","properties":{"ids":{"type":"array","items":{"type":"integer"}}},"required":["ids"]}"#,
+    ),
+    a("selection.clear", "Clear Selection", ""),
+    a(
+        "shape.add_rect",
+        "Add Rectangle",
+        r#"{"type":"object","properties":{"x":{"type":"number","description":"left, mm"},"y":{"type":"number","description":"bottom, mm"},"width":{"type":"number"},"height":{"type":"number"},"radius":{"type":"number","description":"corner radius, negative rounds inwards"},"layer":{"type":"integer"}},"required":["x","y","width","height"]}"#,
+    ),
+    a(
+        "shape.add_ellipse",
+        "Add Ellipse",
+        r#"{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"layer":{"type":"integer"}},"required":["x","y","width","height"]}"#,
+    ),
+    a(
+        "shape.add_polygon",
+        "Add Polygon",
+        r#"{"type":"object","properties":{"cx":{"type":"number"},"cy":{"type":"number"},"sides":{"type":"integer","minimum":3},"radius":{"type":"number"},"layer":{"type":"integer"}},"required":["cx","cy","sides","radius"]}"#,
+    ),
+    a(
+        "shape.add_path",
+        "Add Path",
+        r#"{"type":"object","properties":{"svg_path":{"type":"string","description":"SVG path data in mm, Y up"},"layer":{"type":"integer"}},"required":["svg_path"]}"#,
+    ),
+    a(
+        "shape.place",
+        "Move Selection to a Point",
+        r#"{"type":"object","properties":{"anchor":{"enum":["top_left","top","top_right","left","centre","right","bottom_left","bottom","bottom_right"]},"x":{"type":"number"},"y":{"type":"number"}},"required":["x","y"]}"#,
+    ),
+    a(
+        "shape.translate",
+        "Move Selection by",
+        r#"{"type":"object","properties":{"dx":{"type":"number"},"dy":{"type":"number"}},"required":["dx","dy"]}"#,
+    ),
+    a(
+        "shape.resize",
+        "Resize Selection",
+        r#"{"type":"object","properties":{"anchor":{"type":"string"},"width":{"type":"number"},"height":{"type":"number"}},"required":["width","height"]}"#,
+    ),
+    a(
+        "shape.rotate",
+        "Rotate Selection",
+        r#"{"type":"object","properties":{"degrees":{"type":"number","description":"counter-clockwise"}},"required":["degrees"]}"#,
+    ),
+    a(
+        "shape.set_layer",
+        "Put Selection on a Layer",
+        r#"{"type":"object","properties":{"layer":{"type":"integer","minimum":0,"maximum":31}},"required":["layer"]}"#,
+    ),
+    a(
+        "shape.set_props",
+        "Set Shape Properties",
+        r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"}}}"#,
+    ),
+    // Layers, with arguments
+    a("layer.select", "Make a Layer Current", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
+    a(
+        "layer.assign",
+        "Put Selection on a Layer and Make it Current",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#,
+    ),
+    a("layer.select_shapes", "Select a Layer's Shapes", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
+    a(
+        "layer.set_mode",
+        "Set a Layer's Mode",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"mode":{"enum":["line","fill","fill_line","offset_fill","image"]}},"required":["layer","mode"]}"#,
+    ),
+    a(
+        "layer.set_param",
+        "Set a Layer Setting",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"field":{"enum":["name","speed","max_power","min_power","interval","passes","output","show","air"]},"value":{}},"required":["layer","field","value"]}"#,
+    ),
+    a(
+        "layer.move",
+        "Move a Layer in Output Order",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"delta":{"type":"integer"}},"required":["layer","delta"]}"#,
+    ),
+    a(
+        "layer.delete",
+        "Delete a Layer",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"with_shapes":{"type":"boolean"}},"required":["layer"]}"#,
+    ),
+    // Project and settings, with arguments
+    a("project.info", "Project Summary", ""),
+    a("project.open", "Open a Project File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("project.save_as", "Save the Project to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "project.import",
+        "Import Files",
+        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"}},"required":["paths"]}"#,
+    ),
+    a(
+        "setting.set",
+        "Change a Setting",
+        r#"{"type":"object","properties":{"key":{"enum":["filled","smooth","show_grid","theme","page_width","page_height","autosave_minutes","svg_dpi","import_group","import_select","import_tool_layers"]},"value":{}},"required":["key","value"]}"#,
+    ),
 ];
 
 /// The commands that run in this build.
@@ -275,6 +383,11 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
         || id.starts_with("file.recent.")
+        || id.starts_with("selection.")
+        || id.starts_with("shape.")
+        || id.starts_with("layer.")
+        || id.starts_with("project.")
+        || id.starts_with("setting.")
         || id.starts_with("arrange.align_")
         || id.starts_with("arrange.distribute_")
         || id.starts_with("arrange.move_h_")
@@ -335,6 +448,219 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
     COMMANDS.iter().find(|c| c.id == id)
+}
+
+/// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
+/// device. An agent must ask before running one; none is implemented yet.
+pub fn hardware(id: &str) -> bool {
+    id.starts_with("laser.")
+        || id.starts_with("arrange.laser_")
+        || matches!(id, "file.save_gcode" | "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
+}
+
+/// The checklist items a command implements (the ones that work today).
+pub fn checklist(id: &str) -> &'static [&'static str] {
+    match id {
+        "file.new" => &["FILE-01"],
+        "file.open" | "project.open" => &["FILE-04"],
+        "file.import" | "project.import" => &["FILE-05", "IMP-13"],
+        "file.notes" => &["FILE-06"],
+        "file.save" => &["FILE-07"],
+        "file.save_as" | "project.save_as" => &["FILE-08"],
+        "edit.undo" => &["EDIT-01"],
+        "edit.redo" => &["EDIT-02"],
+        "edit.select_all" => &["EDIT-03"],
+        "edit.invert_selection" => &["EDIT-04"],
+        "edit.cut" => &["EDIT-05"],
+        "edit.copy" => &["EDIT-06"],
+        "edit.duplicate" => &["EDIT-07"],
+        "edit.paste" => &["EDIT-08"],
+        "edit.paste_in_place" => &["EDIT-09"],
+        "edit.delete" => &["EDIT-10"],
+        "edit.select_open" => &["EDIT-18"],
+        "edit.select_open_fill" => &["EDIT-19"],
+        "edit.select_layer" => &["EDIT-20"],
+        "edit.select_contained" => &["EDIT-21"],
+        "tools.select" => &["TOOLS-01"],
+        "tools.line" => &["TOOLS-02", "DRAW-01", "DRAW-02"],
+        "tools.rect" | "shape.add_rect" => &["TOOLS-03", "DRAW-04"],
+        "tools.ellipse" | "shape.add_ellipse" => &["TOOLS-04", "DRAW-06"],
+        "tools.polygon" | "shape.add_polygon" => &["TOOLS-05", "DRAW-07"],
+        "arrange.group" => &["ARR-01"],
+        "arrange.ungroup" => &["ARR-02"],
+        "arrange.flip_h" => &["ARR-04"],
+        "arrange.flip_v" => &["ARR-05"],
+        "arrange.rotate_cw" => &["ARR-07"],
+        "arrange.rotate_ccw" => &["ARR-08"],
+        "arrange.align_left" => &["ARR-10"],
+        "arrange.align_right" => &["ARR-11"],
+        "arrange.align_top" => &["ARR-12"],
+        "arrange.align_bottom" => &["ARR-13"],
+        "arrange.align_h_centres" => &["ARR-14"],
+        "arrange.align_v_centres" => &["ARR-15"],
+        "arrange.align_centres" => &["ARR-16"],
+        "arrange.distribute_h" => &["ARR-17"],
+        "arrange.distribute_v" => &["ARR-18"],
+        "arrange.distribute_h_centres" => &["ARR-19"],
+        "arrange.distribute_v_centres" => &["ARR-20"],
+        "arrange.distribute_h_spacing" => &["ARR-21"],
+        "arrange.distribute_v_spacing" => &["ARR-22"],
+        "arrange.move_h_together" => &["ARR-23"],
+        "arrange.move_v_together" => &["ARR-24"],
+        "arrange.forward" => &["ARR-35"],
+        "arrange.backward" => &["ARR-36"],
+        "arrange.front" => &["ARR-37"],
+        "arrange.back" => &["ARR-38"],
+        "arrange.lock" => &["ARR-39"],
+        "arrange.unlock" => &["ARR-40"],
+        "shape.place" | "shape.translate" | "shape.resize" | "shape.rotate" => &["TB-12", "TB-14"],
+        "shape.set_props" => &["SP-06"],
+        "shape.set_layer" | "layer.assign" => &["TB-20"],
+        "layer.select_shapes" => &["TB-22"],
+        "layer.set_mode" => &["MODE-01", "CUTS-01"],
+        "layer.set_param" => &["CUTS-08", "CSE-01"],
+        "layer.move" => &["CUTS-03"],
+        "layer.delete" => &["CUTS-04"],
+        "view.frame_selection" => &["WIN-06"],
+        "view.wire_coarse" | "view.wire_smooth" | "view.filled_coarse" | "view.filled_smooth" => &["WIN-07"],
+        "view.toggle_filled" => &["WIN-08"],
+        "view.zoom_in" => &["WIN-04"],
+        "view.zoom_out" => &["WIN-05"],
+        "view.zoom_page" => &["WIN-03"],
+        _ if id.starts_with("file.recent.") => &["FILE-03"],
+        _ if id.starts_with("arrange.page_") => &["ARR-27"],
+        _ => &[],
+    }
+}
+
+/// Everything known about one command, for lists and descriptions.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct Info {
+    pub id: String,
+    pub title: String,
+    pub group: String,
+    /// The menu items that lead to it, outermost first (empty when it has no menu item).
+    pub menu_path: Vec<String>,
+    pub shortcut: String,
+    /// JSON Schema of the arguments (`{}` when there are none).
+    pub args_schema: serde_json::Value,
+    pub hardware: bool,
+    pub checklist: Vec<String>,
+    /// It does something in this build; the rest are listed but do nothing yet.
+    pub implemented: bool,
+}
+
+/// Every registered command: the table above plus the ones generated from the panels,
+/// toolbars, languages and recent projects.
+pub fn registry() -> &'static [Cmd] {
+    static ALL: std::sync::OnceLock<Vec<Cmd>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let mut v: Vec<Cmd> = COMMANDS.to_vec();
+        for p in crate::panels::PANELS {
+            v.push(c(leak(format!("panel.{}", p.id)), leak(format!("Show or Hide {}", p.title)), "", ""));
+        }
+        for (id, label) in crate::prefs::TOOLBARS.iter().copied().chain([("status", "Status Bar")]) {
+            v.push(c(leak(format!("toolbar.{id}")), leak(format!("Show or Hide {label}")), "", ""));
+        }
+        for (code, name) in LANGUAGES {
+            v.push(c(leak(format!("lang.{code}")), name, "", ""));
+        }
+        for i in 0..24 {
+            v.push(c(leak(format!("file.recent.{i}")), leak(format!("Open Recent Project {}", i + 1)), "", ""));
+        }
+        v
+    })
+}
+
+fn menu_paths() -> &'static std::collections::HashMap<&'static str, Vec<String>> {
+    static PATHS: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<String>>> = std::sync::OnceLock::new();
+    PATHS.get_or_init(|| {
+        fn walk(entries: &'static [Entry], path: &mut Vec<String>, out: &mut std::collections::HashMap<&'static str, Vec<String>>) {
+            for e in entries {
+                match e {
+                    Entry::Cmd(id) => {
+                        let mut p = path.clone();
+                        if let Some(c) = find(id) {
+                            p.push(c.label.to_string());
+                        }
+                        out.entry(id).or_insert(p);
+                    }
+                    Entry::Sub(name, inner) => {
+                        path.push(name.to_string());
+                        walk(inner, path, out);
+                        path.pop();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        for (menu, entries) in MENUS {
+            walk(entries, &mut vec![menu.to_string()], &mut out);
+        }
+        out
+    })
+}
+
+/// The registered command `id`.
+pub fn lookup(id: &str) -> Option<&'static Cmd> {
+    registry().iter().find(|c| c.id == id)
+}
+
+/// Description of command `id`.
+pub fn describe(id: &str) -> Option<Info> {
+    let cmd = lookup(id)?;
+    let schema = if cmd.args.is_empty() { None } else { serde_json::from_str(cmd.args).ok() };
+    Some(Info {
+        id: cmd.id.to_string(),
+        title: cmd.label.to_string(),
+        group: cmd.id.split('.').next().unwrap_or("").to_string(),
+        menu_path: menu_paths().get(cmd.id).cloned().unwrap_or_default(),
+        shortcut: cmd.key.to_string(),
+        args_schema: schema.unwrap_or_else(|| serde_json::json!({})),
+        hardware: hardware(cmd.id),
+        checklist: checklist(cmd.id).iter().map(|s| s.to_string()).collect(),
+        implemented: works(cmd.id),
+    })
+}
+
+/// Every registered command.
+pub fn list() -> Vec<Info> {
+    registry().iter().filter_map(|c| describe(c.id)).collect()
+}
+
+/// Whether the command can run right now (it works in this build and has something to act on).
+pub fn enabled(app: &crate::shell::DarkBurn, id: &str) -> bool {
+    works(id) && app.can_run(id)
+}
+
+/// Every action id the interface renders: menu items, ribbon and tool buttons, panel, toolbar
+/// and language entries and recent projects. A test checks that each one is registered.
+pub fn ui_action_ids() -> Vec<String> {
+    fn walk(entries: &[Entry], out: &mut Vec<String>) {
+        for e in entries {
+            match e {
+                Entry::Cmd(id) => out.push(id.to_string()),
+                Entry::Sub(_, inner) => walk(inner, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (_, entries) in MENUS {
+        walk(entries, &mut out);
+    }
+    out.extend(crate::ribbon::command_ids().into_iter().map(String::from));
+    out.extend(crate::shell::tool_ids().iter().map(|s| s.to_string()));
+    out.extend(crate::panels::PANELS.iter().map(|p| format!("panel.{}", p.id)));
+    out.extend(crate::prefs::TOOLBARS.iter().map(|(id, _)| format!("toolbar.{id}")));
+    out.push("toolbar.status".into());
+    out.extend(LANGUAGES.iter().map(|(code, _)| format!("lang.{code}")));
+    out.extend((0..24).map(|i| format!("file.recent.{i}")));
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// One row of a menu.
@@ -687,6 +1013,35 @@ mod tests {
         for (_, entries) in MENUS {
             walk(entries, &mut |id| assert!(find(id).is_some(), "menu names unknown command {id}"));
         }
+    }
+
+    #[test]
+    fn every_action_the_ui_renders_is_registered() {
+        for id in ui_action_ids() {
+            assert!(lookup(&id).is_some(), "{id} is shown in the interface but is not in the command registry");
+        }
+        let mut seen = std::collections::HashSet::new();
+        for c in registry() {
+            assert!(seen.insert(c.id), "{} registered twice", c.id);
+            let info = describe(c.id).unwrap();
+            assert!(info.args_schema.is_object(), "{} schema", c.id);
+            if !c.args.is_empty() {
+                assert!(serde_json::from_str::<serde_json::Value>(c.args).is_ok(), "{} schema is not JSON", c.id);
+            }
+        }
+    }
+
+    #[test]
+    fn hardware_commands_are_flagged_and_do_nothing() {
+        for info in list().into_iter().filter(|i| i.hardware) {
+            assert!(!info.implemented, "{} touches hardware and must not run yet", info.id);
+        }
+        assert!(describe("laser.rotary").unwrap().hardware);
+        assert!(!describe("edit.undo").unwrap().hardware);
+        assert_eq!(describe("shape.add_rect").unwrap().args_schema["required"].as_array().unwrap().len(), 4);
+        assert_eq!(describe("arrange.align_left").unwrap().menu_path, ["Arrange", "Align", "Align Left"]);
+        assert_eq!(describe("edit.undo").unwrap().checklist, ["EDIT-01"]);
+        assert!(list().len() > 250);
     }
 
     #[test]

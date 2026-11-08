@@ -159,6 +159,12 @@ impl DarkBurn {
         self.theme_applied = Some(key);
     }
 
+    #[allow(dead_code, reason = "called by the MCP backend, wired in the next step")]
+    /// Run registered command `id` with JSON arguments, as an agent or script does.
+    pub fn execute(&mut self, ctx: &egui::Context, id: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
+        crate::api::execute(self, ctx, id, args)
+    }
+
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
         if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) {
@@ -686,6 +692,11 @@ fn open_folder(dir: &std::path::Path) {
 }
 
 /// The creation tools, top to bottom along the window's left edge.
+/// The tool column's command ids.
+pub fn tool_ids() -> &'static [&'static str] {
+    TOOLS
+}
+
 const TOOLS: &[&str] = &[
     "tools.select",
     "tools.line",

@@ -111,6 +111,15 @@ const TABS: &[(&str, &str, &[Group])] = &[
     ("modes", "Modes", &[g("Modes", "modes", &[Cmd("laser.rotary"), Cmd("laser.print_and_cut"), Cmd("laser.cylinder")])]),
 ];
 
+/// Every command id a ribbon button runs.
+pub fn command_ids() -> Vec<&'static str> {
+    TABS.iter()
+        .flat_map(|(_, _, groups)| groups.iter())
+        .flat_map(|g| g.items.iter())
+        .filter_map(|i| if let Cmd(id) = i { Some(*id) } else { None })
+        .collect()
+}
+
 fn tab_visible(prefs: &Prefs, groups: &[Group]) -> bool {
     groups.iter().any(|g| prefs.toolbar(g.toolbar))
 }

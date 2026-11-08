@@ -8,6 +8,7 @@ mod canvas_input;
 mod commands;
 mod cut_settings;
 mod cuts_panel;
+mod devices;
 mod files;
 mod import;
 mod machine_api;

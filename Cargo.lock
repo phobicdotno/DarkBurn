@@ -1040,6 +1040,7 @@ dependencies = [
  "darkburn-core",
  "darkburn-geom",
  "darkburn-grbl",
+ "darkburn-job",
  "darkburn-ruida",
  "darkburn-ui",
  "eframe",

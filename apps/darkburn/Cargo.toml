@@ -28,6 +28,7 @@ usb = ["darkburn-ruida/usb"]
 [dependencies]
 darkburn-grbl = { path = "../../crates/darkburn-grbl" }
 darkburn-ruida = { path = "../../crates/darkburn-ruida" }
+darkburn-job = { path = "../../crates/darkburn-job" }
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }
 darkburn-geom = { workspace = true }

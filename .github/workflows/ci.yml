@@ -1,0 +1,57 @@
+# Format, lints and tests on Windows. Runs on pushes and pull requests; nothing is published.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # DarkBurn uses SolidCraft's small UI crates by path (../solidcraft). The repository is
+      # private, so the clone needs a token in the SOLIDCRAFT_TOKEN secret (read access).
+      - name: Check out SolidCraft next to this repository
+        shell: pwsh
+        env:
+          SOLIDCRAFT_TOKEN: ${{ secrets.SOLIDCRAFT_TOKEN }}
+          SOLIDCRAFT_REF: ${{ vars.SOLIDCRAFT_REF || 'main' }}
+        run: |
+          if (-not $env:SOLIDCRAFT_TOKEN) { throw 'The SOLIDCRAFT_TOKEN secret is not set.' }
+          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'solidcraft'
+          git clone --depth 1 --branch $env:SOLIDCRAFT_REF "https://x-access-token:$($env:SOLIDCRAFT_TOKEN)@github.com/phobicdotno/solidcraft.git" $dest
+          if ($LASTEXITCODE -ne 0) { throw 'could not clone SolidCraft' }
+
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked

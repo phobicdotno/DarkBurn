@@ -88,6 +88,8 @@ pub struct Options {
     pub click_tolerance_px: f32,
     // Behaviour (SET-11 to SET-28)
     pub check_updates: bool,
+    /// Where the update check looks (empty: the DarkBurn releases on GitHub).
+    pub update_url: String,
     pub default_cut_selected: bool,
     pub default_use_selection_origin: bool,
     pub save_job_origin: bool,
@@ -139,6 +141,7 @@ impl Default for Options {
             object_snap_px: 8.0,
             click_tolerance_px: crate::canvas_input::CLICK_TOLERANCE_PX,
             check_updates: false,
+            update_url: String::new(),
             default_cut_selected: false,
             default_use_selection_origin: false,
             save_job_origin: true,

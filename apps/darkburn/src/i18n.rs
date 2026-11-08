@@ -127,6 +127,7 @@ mod tests {
         ("keymap.rs", include_str!("keymap.rs")),
         ("help.rs", include_str!("help.rs")),
         ("extras.rs", include_str!("extras.rs")),
+        ("updates.rs", include_str!("updates.rs")),
         ("cuts_panel.rs", include_str!("cuts_panel.rs")),
     ];
 

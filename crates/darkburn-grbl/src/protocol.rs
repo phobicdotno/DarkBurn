@@ -112,13 +112,8 @@ pub fn parse_version(v: &str) -> Option<(u16, u16, Option<char>)> {
 /// `Grbl 3.9 [FluidNC v3.9.7 (noradio) '$' for help]`, `Grbl 0.9j ['$' for help]`.
 pub fn parse_banner(line: &str) -> Option<FirmwareInfo> {
     let line = line.trim();
-    let (kind, rest) = if let Some(r) = line.strip_prefix("GrblHAL ") {
-        (FirmwareKind::GrblHal, r)
-    } else if let Some(r) = line.strip_prefix("Grbl ") {
-        (FirmwareKind::Grbl, r)
-    } else {
-        return None;
-    };
+    let (kind, rest) =
+        if let Some(r) = line.strip_prefix("GrblHAL ") { (FirmwareKind::GrblHal, r) } else { (FirmwareKind::Grbl, line.strip_prefix("Grbl ")?) };
     let ver = rest.split_whitespace().next()?;
     let (major, minor, letter) = parse_version(ver)?;
     let mut info = FirmwareInfo {
@@ -396,20 +391,22 @@ pub fn parse_response(line: &str) -> Response {
             Err(_) => Response::AlarmText(rest.trim().to_owned()),
         };
     }
-    if line.starts_with('<') && line.ends_with('>') {
-        if let Some(s) = parse_status(line) {
-            return Response::Status(s);
-        }
+    if line.starts_with('<')
+        && line.ends_with('>')
+        && let Some(s) = parse_status(line)
+    {
+        return Response::Status(s);
     }
     if let Some(info) = parse_banner(line) {
         return Response::Banner(info);
     }
-    if let Some(rest) = line.strip_prefix('$') {
-        if let Some((n, v)) = rest.split_once('=') {
-            if let Ok(number) = n.parse() {
-                return Response::Setting { number, value: v.trim().to_owned() };
-            }
-        }
+    if let Some(rest) = line.strip_prefix('$')
+        && let Some((n, v)) = rest.split_once('=')
+        && let Ok(number) = n.parse()
+    {
+        // GRBL 0.9 appends a comment: `$0=10 (step pulse, usec)`.
+        let value = v.split_whitespace().next().unwrap_or("").to_owned();
+        return Response::Setting { number, value };
     }
     if let Some(body) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
         let (tag, rest) = body.split_once(':').unwrap_or((body, ""));
@@ -443,10 +440,10 @@ pub fn apply_build_info(info: &mut FirmwareInfo, tag: &str, body: &str) {
             if let Some(b) = it.next().and_then(|v| v.trim().parse().ok()) {
                 info.planner_blocks = Some(b);
             }
-            if let Some(rx) = it.next().and_then(|v| v.trim().parse::<usize>().ok()) {
-                if rx >= 16 {
-                    info.rx_buffer_size = rx;
-                }
+            if let Some(rx) = it.next().and_then(|v| v.trim().parse::<usize>().ok())
+                && rx >= 16
+            {
+                info.rx_buffer_size = rx;
             }
         }
         "FIRMWARE" if body.contains("grblHAL") => {

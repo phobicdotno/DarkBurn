@@ -9,6 +9,8 @@
 //! The emulator is passive: [`MemoryTransport`](crate::MemoryTransport) feeds it bytes and
 //! advances its clock. Test hooks (`trigger_hard_limit`, `unplug`, ...) are plain methods.
 
+#![allow(clippy::needless_range_loop)] // per-axis arithmetic reads clearer with indices
+
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -530,8 +532,11 @@ impl GrblEmulator {
             State::Door(3) => self.state = if self.cycle_pending() { State::Run } else { State::Idle },
             State::Home => {
                 if self.cfg.homing_fails {
+                    // GRBL aborts through its reset path: alarm, the `$H` line's `ok`, banner.
                     self.raise_alarm(9, false);
-                    self.reply_error(9);
+                    self.reply_ok();
+                    self.reset_modal();
+                    self.print_banner();
                     return;
                 }
                 self.mpos = [0.0; 3];
@@ -969,7 +974,7 @@ impl GrblEmulator {
         if !pins.is_empty() {
             let _ = write!(r, "|Pn:{pins}");
         }
-        if self.wco_dirty || self.reports % 10 == 0 {
+        if self.wco_dirty || self.reports.is_multiple_of(10) {
             let _ = write!(r, "|WCO:{}", self.axes_text(wco));
             self.wco_dirty = false;
         } else if self.ov_dirty || self.reports % 10 == 5 {
@@ -1110,16 +1115,15 @@ impl GrblEmulator {
             return LineOutcome::Done;
         }
         self.record(line);
-        if let Some(rest) = cmd.strip_prefix('$') {
-            if let Some((n, v)) = rest.split_once('=') {
-                if let Ok(n) = n.parse::<u16>() {
-                    match self.write_setting(n, v) {
-                        Ok(()) => self.reply_ok(),
-                        Err(code) => self.reply_error(code),
-                    }
-                    return LineOutcome::Done;
-                }
+        if let Some(rest) = cmd.strip_prefix('$')
+            && let Some((n, v)) = rest.split_once('=')
+            && let Ok(n) = n.parse::<u16>()
+        {
+            match self.write_setting(n, v) {
+                Ok(()) => self.reply_ok(),
+                Err(code) => self.reply_error(code),
             }
+            return LineOutcome::Done;
         }
         let alarm_ok = matches!(cmd, "$$" | "$#" | "$G" | "$I" | "$" | "$X" | "$H" | "$N" | "$C" | "$SLP") || cmd.starts_with("$RST=");
         if self.state == State::Alarm && !alarm_ok {

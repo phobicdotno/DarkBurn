@@ -203,6 +203,7 @@ impl DarkBurn {
             || crate::machine_ui::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
+            || crate::layer_defaults::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)

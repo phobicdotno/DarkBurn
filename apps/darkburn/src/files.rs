@@ -168,6 +168,7 @@ pub fn new_project(app: &mut DarkBurn) {
     app.editor.clipboard = clipboard;
     app.project_path = None;
     app.notes_open = false;
+    crate::layer_defaults::on_new_project(app);
     discard_autosave(app);
 }
 

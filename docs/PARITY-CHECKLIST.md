@@ -512,8 +512,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LAYER-04 Sub-layers: up to 11 per layer with their own settings
 - [x] LAYER-05 Sub-layers: add, duplicate, remove, reorder, enable, disable
 - [x] LAYER-06 Layer list shows "Multi" when sub-layers exist
-- [ ] LAYER-07 Default layer settings per device: make default, make default for all, reset
-- [ ] LAYER-08 Load default layer settings on new project option
+- [x] LAYER-07 Default layer settings per device: make default, make default for all, reset
+- [x] LAYER-08 Load default layer settings on new project option
 - [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
 - [~] LAYER-10 Layers linked to material library entries
 

@@ -805,6 +805,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
+        v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {

@@ -27,6 +27,7 @@ mod job_build;
 mod job_cmds;
 mod job_ui;
 mod key_cmds;
+mod layer_defaults;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;

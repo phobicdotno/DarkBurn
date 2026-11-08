@@ -9,7 +9,9 @@ use std::sync::Arc;
 use darkburn_core::kurbo::{Affine, BezPath, Rect, Vec2};
 use darkburn_core::layer::ImageMode as LayerMode;
 use darkburn_core::{Document, Editor, ImageAdjust, ImageData, ImageShape, Mode, Shape, ShapeId, ShapeKind};
-use darkburn_raster::{AdjustPreset, GrayF, ImageMode, PaintStyle, TraceMode, TraceSettings, apply_mask, process_image, rasterize_paths, trace_image};
+use darkburn_raster::{
+    AdjustPreset, GrayF, ImageMode, PaintStyle, TraceMode, TraceSettings, apply_mask, process_image, rasterize_paths, trace_image,
+};
 use image::DynamicImage;
 use serde::Deserialize;
 
@@ -219,12 +221,24 @@ pub fn adjust_doc(d: &mut Document, ids: &[ShapeId], a: &AdjustArgs) -> Result<b
     }
     let mode = a.image_mode.as_deref().map(mode_by_name).transpose()?;
     let v = |x: Option<f64>, lo, hi, what| x.map(|x| finite(x, lo, hi, what)).transpose();
-    let (brightness, contrast, gamma) = (v(a.brightness, -100.0, 100.0, "brightness")?, v(a.contrast, -100.0, 100.0, "contrast")?, v(a.gamma, 0.1, 10.0, "gamma")?);
-    let (amount, radius, denoise) = (v(a.enhance_amount, 0.0, 1000.0, "enhance amount")?, v(a.enhance_radius, 0.0, 100.0, "enhance radius")?, v(a.enhance_denoise, 0.0, 100.0, "enhance denoise")?);
+    let (brightness, contrast, gamma) =
+        (v(a.brightness, -100.0, 100.0, "brightness")?, v(a.contrast, -100.0, 100.0, "contrast")?, v(a.gamma, 0.1, 10.0, "gamma")?);
+    let (amount, radius, denoise) = (
+        v(a.enhance_amount, 0.0, 1000.0, "enhance amount")?,
+        v(a.enhance_radius, 0.0, 100.0, "enhance radius")?,
+        v(a.enhance_denoise, 0.0, 100.0, "enhance denoise")?,
+    );
     let dpi = v(a.dpi, 1.0, 25_400.0, "DPI")?;
-    let (cells, angle, ramp) = (v(a.halftone_cells, 1.0, 1000.0, "halftone cells")?, v(a.halftone_angle, -360.0, 360.0, "halftone angle")?, v(a.threshold_ramp, 0.0, 100.0, "ramp length")?);
+    let (cells, angle, ramp) = (
+        v(a.halftone_cells, 1.0, 1000.0, "halftone cells")?,
+        v(a.halftone_angle, -360.0, 360.0, "halftone angle")?,
+        v(a.threshold_ramp, 0.0, 100.0, "ramp length")?,
+    );
     let snapshot = |d: &Document| -> (Vec<Option<ImageAdjust>>, Vec<darkburn_core::Layer>) {
-        (ids.iter().map(|id| d.get(*id).and_then(|s| if let ShapeKind::Image(i) = &s.kind { Some(i.adjust) } else { None })).collect(), d.layers.clone())
+        (
+            ids.iter().map(|id| d.get(*id).and_then(|s| if let ShapeKind::Image(i) = &s.kind { Some(i.adjust) } else { None })).collect(),
+            d.layers.clone(),
+        )
     };
     let before = snapshot(d);
     {
@@ -496,7 +510,8 @@ pub fn convert_to_bitmap(e: &mut Editor, ids: &[ShapeId], args: &ConvertArgs) ->
         return Err("select shapes to convert (images are bitmaps already)".into());
     }
     let fill = args.fill.unwrap_or(closed);
-    let style = if fill { PaintStyle::Fill { even_odd: false } } else { PaintStyle::Stroke { width_mm: finite(args.stroke_mm, 0.01, 10.0, "pen width")? } };
+    let style =
+        if fill { PaintStyle::Fill { even_odd: false } } else { PaintStyle::Stroke { width_mm: finite(args.stroke_mm, 0.01, 10.0, "pen width")? } };
     let raster = rasterize_paths(&paths, style, dpi, None, CONVERT_MAX_PIXELS).map_err(|e| e.to_string())?;
     let png = artwork_png(&raster.image)?;
     let (w, h) = (raster.image.width, raster.image.height);
@@ -507,7 +522,8 @@ pub fn convert_to_bitmap(e: &mut Editor, ids: &[ShapeId], args: &ConvertArgs) ->
     let layer = args.layer.unwrap_or_else(|| layer.unwrap_or(e.current_layer));
     try_edit(e, "Convert to bitmap", |d, sel| {
         let key = d.add_image(ImageData { format: "png".into(), bytes: Arc::from(png), px_width: w, px_height: h });
-        let shape = Shape::new(ShapeKind::Image(ImageShape { image: key, width: wmm, height: hmm, ..Default::default() }), Affine::translate(centre), layer);
+        let shape =
+            Shape::new(ShapeKind::Image(ImageShape { image: key, width: wmm, height: hmm, ..Default::default() }), Affine::translate(centre), layer);
         if !args.keep_original {
             d.remove(&used);
         }
@@ -873,7 +889,14 @@ mod tests {
     #[test]
     fn sketch_trace_gives_open_lines_and_the_trace_layer_avoids_image_layers() {
         let mut e = Editor::new();
-        let id = add_image(&mut e.doc, png(40, 40, |x, y| if (18..22).contains(&x) && y > 5 && y < 35 { 0 } else { 255 }), (40, 40), (20.0, 20.0), (50.0, 50.0), 3);
+        let id = add_image(
+            &mut e.doc,
+            png(40, 40, |x, y| if (18..22).contains(&x) && y > 5 && y < 35 { 0 } else { 255 }),
+            (40, 40),
+            (20.0, 20.0),
+            (50.0, 50.0),
+            3,
+        );
         let paths = trace_paths(&e.doc, id, &TraceArgs { sketch: true, ..Default::default() }).unwrap();
         assert!(!paths.is_empty());
         image_layer(&mut e.doc, 0, 0.1);
@@ -885,12 +908,22 @@ mod tests {
     #[test]
     fn camera_captures_trace_through_the_hook() {
         let mut e = Editor::new();
-        let cap = DynamicImage::ImageLuma8(image::GrayImage::from_fn(50, 50, |x, y| image::Luma([if (10..30).contains(&x) && (10..30).contains(&y) { 0 } else { 255 }])));
+        let cap = DynamicImage::ImageLuma8(image::GrayImage::from_fn(50, 50, |x, y| {
+            image::Luma([if (10..30).contains(&x) && (10..30).contains(&y) { 0 } else { 255 }])
+        }));
         let r = trace_capture(&mut e, &cap, Affine::new([2.0, 0.0, 0.0, -2.0, 0.0, 100.0]), &TraceArgs::default()).unwrap();
         use darkburn_core::kurbo::Shape as _;
         let bb = e.doc.get(r.shapes[0]).unwrap().outline().bounding_box();
         assert!((bb.x0 - 20.0).abs() < 1.5 && (bb.x1 - 60.0).abs() < 1.5, "{bb:?}");
-        assert!(trace_capture(&mut e, &DynamicImage::ImageLuma8(image::GrayImage::from_pixel(10, 10, image::Luma([255]))), Affine::IDENTITY, &TraceArgs::default()).is_err());
+        assert!(
+            trace_capture(
+                &mut e,
+                &DynamicImage::ImageLuma8(image::GrayImage::from_pixel(10, 10, image::Luma([255]))),
+                Affine::IDENTITY,
+                &TraceArgs::default()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -925,7 +958,9 @@ mod tests {
         let huge = e.doc.add(Shape::rect(Rect::new(0.0, 0.0, 5000.0, 5000.0), 0.0, 0));
         let err = convert_to_bitmap(&mut e, &[huge], &ConvertArgs { dpi: 1200.0, ..Default::default() }).unwrap_err();
         assert!(err.contains("larger than the limit"), "{err}");
-        let kept = convert_to_bitmap(&mut e, &[r], &ConvertArgs { dpi: 50.0, fill: Some(false), keep_original: true, layer: Some(9), ..Default::default() }).unwrap();
+        let kept =
+            convert_to_bitmap(&mut e, &[r], &ConvertArgs { dpi: 50.0, fill: Some(false), keep_original: true, layer: Some(9), ..Default::default() })
+                .unwrap();
         assert!(e.doc.get(r).is_some());
         assert_eq!(e.doc.get(kept).unwrap().layer, 9);
     }

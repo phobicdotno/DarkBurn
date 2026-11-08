@@ -333,8 +333,16 @@ pub const COMMANDS: &[Cmd] = &[
     ),
     a("image.save_bitmap", "Save the Processed Bitmap", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("image.presets", "List Adjust Image Presets", ""),
-    a("image.preset_save", "Save the Selected Image's Settings as a Preset", r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#),
-    a("image.preset_load", "Apply a Preset to the Selected Images", r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#),
+    a(
+        "image.preset_save",
+        "Save the Selected Image's Settings as a Preset",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
+    a(
+        "image.preset_load",
+        "Apply a Preset to the Selected Images",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
     a("image.preset_delete", "Delete a Preset", r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#),
     a("image.preset_import", "Import Presets from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a(
@@ -347,8 +355,16 @@ pub const COMMANDS: &[Cmd] = &[
         "Scanning Offset Table and Fast Skip",
         r#"{"type":"object","properties":{"speed":{"type":"number","description":"mm/s"},"offset":{"type":"number","description":"mm"},"remove_speed":{"type":"number"},"fast_skip":{"type":"boolean"},"skip_mm":{"type":"number"}}}"#,
     ),
-    a("image.scan_offsets_import", "Import a Scanning Offset File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
-    a("image.scan_offsets_export", "Export the Scanning Offset Table", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "image.scan_offsets_import",
+        "Import a Scanning Offset File",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
+    a(
+        "image.scan_offsets_export",
+        "Export the Scanning Offset Table",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
     // Project and settings, with arguments
     a("project.info", "Project Summary", ""),
     a("project.open", "Open a Project File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
@@ -539,7 +555,9 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "edit.select_layer" => &["EDIT-20"],
         "edit.select_contained" => &["EDIT-21"],
         "tools.adjust_image" | "image.adjust" => &["TOOLS-19", "IMG-16", "IMG-12", "IMG-13", "SP-05"],
-        "image.preset_save" | "image.preset_load" | "image.preset_delete" | "image.preset_import" | "image.preset_export" | "image.presets" => &["IMG-17"],
+        "image.preset_save" | "image.preset_load" | "image.preset_delete" | "image.preset_import" | "image.preset_export" | "image.presets" => {
+            &["IMG-17"]
+        }
         "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
         "image.trace_capture" => &["IMG-20"],
         "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],

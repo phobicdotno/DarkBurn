@@ -30,6 +30,7 @@ const KEEP_FRAMES: u64 = 600;
 /// Worker jobs started so far (tests count them).
 static STARTED: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
 pub fn jobs_started() -> usize {
     STARTED.load(Ordering::Relaxed)
 }
@@ -46,6 +47,7 @@ pub struct Job {
 }
 
 /// A processed picture of an image.
+#[allow(dead_code, reason = "dots and reduced are read by tests and a coming status readout")]
 pub struct Rendered {
     pub image: ColorImage,
     /// The dots the picture is made of.
@@ -155,7 +157,8 @@ pub fn texture(ctx: &Context, doc: &Document, leaf: &Shape, img: &ImageShape) ->
         if let Some(result) = done {
             entry.pending = None;
             if let Some(colour) = result {
-                let options = TextureOptions { magnification: egui::TextureFilter::Nearest, minification: egui::TextureFilter::Linear, ..Default::default() };
+                let options =
+                    TextureOptions { magnification: egui::TextureFilter::Nearest, minification: egui::TextureFilter::Linear, ..Default::default() };
                 entry.texture = Some(ctx.load_texture(format!("db_processed_{}", leaf.id.0), colour, options));
                 entry.hash = h;
             }
@@ -214,7 +217,12 @@ mod tests {
         let r = render(&g, (16.0, 2.0), &Adjustments::default(), &s, 2048);
         assert!(!r.reduced);
         assert_eq!(r.dots.0, 64);
-        let ink = |x0: usize, x1: usize| -> usize { (0..r.image.size[1]).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| r.image.pixels[y * r.image.size[0] + x].r() < 128).count() };
+        let ink = |x0: usize, x1: usize| -> usize {
+            (0..r.image.size[1])
+                .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+                .filter(|&(x, y)| r.image.pixels[y * r.image.size[0] + x].r() < 128)
+                .count()
+        };
         let (left, right) = (ink(0, 16), ink(48, 64));
         assert!(left > right * 3, "dark side has more dots: {left} vs {right}");
         assert!(r.image.pixels.iter().all(|p| p.r() == 0 || p.r() == 255), "binary mode gives pure dots");

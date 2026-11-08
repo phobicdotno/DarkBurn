@@ -12,6 +12,8 @@
 //! applies them. The sign of the shift (forward lines go back by half the offset, reverse lines
 //! forward by half) still has to be confirmed on a real machine.
 
+#![allow(dead_code, reason = "the job builder reads the tuning through scan_plans_for_layer once it lands")]
+
 use std::path::Path;
 use std::sync::RwLock;
 

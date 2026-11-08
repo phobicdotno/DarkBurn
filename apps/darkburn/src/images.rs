@@ -25,6 +25,8 @@
 //! The functions are pure reads of the document (plus the process-wide scan tuning) and may be
 //! called from any thread. Decoded images are cached, so calling once per pass is cheap.
 
+#![allow(dead_code, reason = "the job builder calls scan_plans_for_layer and friends once it lands")]
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;

@@ -8,7 +8,6 @@
 
 use std::path::{Path, PathBuf};
 
-use darkburn_core::layer::ImageMode as LayerMode;
 use darkburn_core::{CutSetting, ImageAdjust, ShapeId, ShapeKind};
 use darkburn_raster::{AdjustPreset, Adjustments, ImageMode, ImageSettings, PresetLibrary};
 use darkburn_ui::ui_kit;
@@ -181,14 +180,17 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Result<Value, Stri
             let first = *ids_of(app).first().ok_or("select an image first")?;
             let path = match args.get("path") {
                 Some(_) => path_arg(args)?,
-                None => rfd::FileDialog::new().add_filter("PNG image", &["png"]).set_file_name("processed.png").save_file().ok_or("no file was chosen")?,
+                None => {
+                    rfd::FileDialog::new().add_filter("PNG image", &["png"]).set_file_name("processed.png").save_file().ok_or("no file was chosen")?
+                }
             };
             image_ops::save_processed_bitmap(&app.editor.doc, first, &path)?;
             Ok(json!({ "saved": path.display().to_string() }))
         }
         "image.presets" => Ok(json!({ "presets": app.images.presets(dir.as_deref()).presets.iter().map(|p| &p.name).collect::<Vec<_>>() })),
         "image.preset_save" => {
-            let name = args.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).ok_or("argument name must be text")?.trim().to_string();
+            let name =
+                args.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).ok_or("argument name must be text")?.trim().to_string();
             let first = *ids_of(app).first().ok_or("select an image first")?;
             let a = current_args(app, first)?;
             save_preset(app, a.to_preset(&name))?;
@@ -275,7 +277,9 @@ fn scan_offsets_command(app: &mut DarkBurn, a: &Value) -> Result<Value, String> 
         app.images.offsets_open = true;
     }
     let now = scan_offsets::current();
-    Ok(json!({ "fast_skip": now.fast_skip, "skip_mm": now.skip_mm, "offsets": now.offsets.entries.iter().map(|e| json!([e.speed, e.offset])).collect::<Vec<_>>() }))
+    Ok(
+        json!({ "fast_skip": now.fast_skip, "skip_mm": now.skip_mm, "offsets": now.offsets.entries.iter().map(|e| json!([e.speed, e.offset])).collect::<Vec<_>>() }),
+    )
 }
 
 fn store_tuning(app: &DarkBurn, t: scan_offsets::ScanTuning) {
@@ -635,7 +639,10 @@ impl TraceDialog {
     /// What the preview paths depend on (the display options are left out).
     fn key(&self) -> String {
         let a = self.effective();
-        format!("{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}", a.threshold, a.lower_cutoff, a.ignore_smaller, a.smoothness, a.optimize, a.clip, a.sketch, a.sketch_radius, a.sketch_sensitivity)
+        format!(
+            "{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}{:?}",
+            a.threshold, a.lower_cutoff, a.ignore_smaller, a.smoothness, a.optimize, a.clip, a.sketch, a.sketch_radius, a.sketch_sensitivity
+        )
     }
 
     fn refresh(&mut self, ctx: &Context, app: &DarkBurn) {
@@ -646,7 +653,8 @@ impl TraceDialog {
         if self.base.is_none()
             && let Ok(gray) = images::source_gray(doc, img)
         {
-            let plain = ImageSettings { mode: ImageMode::Grayscale, line_interval_mm: (img.width.max(img.height) / 400.0).max(1e-3), ..Default::default() };
+            let plain =
+                ImageSettings { mode: ImageMode::Grayscale, line_interval_mm: (img.width.max(img.height) / 400.0).max(1e-3), ..Default::default() };
             let r = image_render::render(&gray, (img.width, img.height), &images::adjustments(&img.adjust), &plain, 400);
             self.base = Some(ctx.load_texture("db_trace_base", r.image, TextureOptions::LINEAR));
         }
@@ -747,7 +755,9 @@ fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
                 let fade = d.args.fade.clamp(0.0, 1.0);
                 p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE.gamma_multiply(1.0 - fade));
             }
-            let to_screen = |pt: darkburn_core::kurbo::Point| pos2(r.left() + ((pt.x + w / 2.0) / w) as f32 * r.width(), r.top() + ((h / 2.0 - pt.y) / h) as f32 * r.height());
+            let to_screen = |pt: darkburn_core::kurbo::Point| {
+                pos2(r.left() + ((pt.x + w / 2.0) / w) as f32 * r.width(), r.top() + ((h / 2.0 - pt.y) / h) as f32 * r.height())
+            };
             let ink = t.accent;
             let mut points = 0;
             for path in &d.paths {
@@ -947,10 +957,8 @@ fn offsets_window(ctx: &Context, app: &mut DarkBurn) {
     let mut t = scan_offsets::current();
     let before = t.clone();
     let mut pick: Option<bool> = None;
-    let (closed, action) = ui_kit::Window::new(Id::unique("db_scan_offsets"), "settings", "Scanning Offset")
-        .fields()
-        .actions("", "Close", None)
-        .show(ctx, true, |ui| {
+    let (closed, action) =
+        ui_kit::Window::new(Id::unique("db_scan_offsets"), "settings", "Scanning Offset").fields().actions("", "Close", None).show(ctx, true, |ui| {
             ui_kit::section_heading(ui, "Blank areas");
             ui_kit::checkbox(ui, "Fast skip of blank areas", &mut t.fast_skip);
             if t.fast_skip {
@@ -962,8 +970,12 @@ fn offsets_window(ctx: &Context, app: &mut DarkBurn) {
             for (i, e) in t.offsets.entries.iter_mut().enumerate() {
                 ui.push_id(("so_row", i), |ui| {
                     ui.horizontal(|ui| {
-                        ui.add_sized(vec2(110.0, 24.0), |ui: &mut Ui| numeric::field(ui, &mut e.speed, &Num::new(0.1..=100_000.0, 0, " mm/s").speed(1.0)).response);
-                        ui.add_sized(vec2(110.0, 24.0), |ui: &mut Ui| numeric::field(ui, &mut e.offset, &Num::new(-10.0..=10.0, 3, " mm").speed(0.005)).response);
+                        ui.add_sized(vec2(110.0, 24.0), |ui: &mut Ui| {
+                            numeric::field(ui, &mut e.speed, &Num::new(0.1..=100_000.0, 0, " mm/s").speed(1.0)).response
+                        });
+                        ui.add_sized(vec2(110.0, 24.0), |ui: &mut Ui| {
+                            numeric::field(ui, &mut e.offset, &Num::new(-10.0..=10.0, 3, " mm").speed(0.005)).response
+                        });
                         if ui_kit::button(ui, "Remove", ui_kit::Button::Small).clicked() {
                             remove = Some(i);
                         }
@@ -1000,7 +1012,9 @@ fn offsets_window(ctx: &Context, app: &mut DarkBurn) {
             }
         }
         Some(false) => {
-            if let Some(p) = rfd::FileDialog::new().add_filter("Scanning offset", &[scan_offsets::EXTENSION]).set_file_name("scan-offsets.dbso").save_file() {
+            if let Some(p) =
+                rfd::FileDialog::new().add_filter("Scanning offset", &[scan_offsets::EXTENSION]).set_file_name("scan-offsets.dbso").save_file()
+            {
                 app.images.message = execute(app, "image.scan_offsets_export", &json!({ "path": p.display().to_string() })).err();
             }
         }
@@ -1022,6 +1036,7 @@ mod tests {
     use crate::prefs::Prefs;
     use darkburn_core::Shape;
     use darkburn_core::kurbo::Rect as KRect;
+    use darkburn_core::layer::ImageMode as LayerMode;
 
     fn app_with_image() -> (DarkBurn, ShapeId) {
         let mut app = DarkBurn::new(Prefs::default());
@@ -1065,7 +1080,15 @@ mod tests {
     fn commands_need_the_right_selection() {
         let (mut app, id) = app_with_image();
         app.editor.selection.clear();
-        for cmd in ["tools.adjust_image", "tools.trace_image", "edit.image_flatten", "file.save_bitmap", "edit.image_crop", "tools.mask_image", "edit.convert_bitmap"] {
+        for cmd in [
+            "tools.adjust_image",
+            "tools.trace_image",
+            "edit.image_flatten",
+            "file.save_bitmap",
+            "edit.image_crop",
+            "tools.mask_image",
+            "edit.convert_bitmap",
+        ] {
             assert!(run(&mut app, cmd, Value::Null).is_err(), "{cmd} with nothing selected");
         }
         let shape = app.editor.doc.add(Shape::rect(KRect::new(40.0, 45.0, 50.0, 55.0), 0.0, 1));
@@ -1171,7 +1194,8 @@ mod tests {
         let dir = temp("capture");
         let f = dir.join("cap.png");
         std::fs::write(&f, png(40, 40, |x, y| if (10..30).contains(&x) && (10..30).contains(&y) { 0 } else { 255 })).unwrap();
-        let r = run(&mut app, "image.trace_capture", json!({ "path": f.display().to_string(), "x": 100, "y": 100, "width": 40, "height": 40 })).unwrap();
+        let r =
+            run(&mut app, "image.trace_capture", json!({ "path": f.display().to_string(), "x": 100, "y": 100, "width": 40, "height": 40 })).unwrap();
         let id = ShapeId(r["created"][0].as_u64().unwrap());
         let bb = app.editor.doc.get(id).unwrap().bbox();
         assert!((bb.x0 - 110.0).abs() < 1.5 && (bb.x1 - 130.0).abs() < 1.5, "{bb:?}");
@@ -1278,5 +1302,25 @@ mod tests {
         app.editor.selection.set([shape]);
         run(&mut app, "edit.convert_bitmap", Value::Null).unwrap();
         assert!(app.images.convert.is_some());
+    }
+
+    /// Writes a project with a photo-like image for trying the windows by hand:
+    /// `DARKBURN_DEMO_OUT=path cargo test -- --ignored make_demo_project`.
+    #[test]
+    #[ignore = "writes a demo project for manual checks"]
+    fn make_demo_project() {
+        let Ok(out) = std::env::var("DARKBURN_DEMO_OUT") else { return };
+        let mut app = DarkBurn::new(Prefs::default());
+        image_layer(&mut app.editor.doc, 3, 0.2);
+        let bytes = png(300, 200, |x, y| {
+            let (dx, dy) = (x as f32 - 150.0, y as f32 - 100.0);
+            let r = (dx * dx + dy * dy).sqrt();
+            let v = 255.0 - (r * 1.6).min(255.0) + ((x * 7 + y * 13) % 17) as f32;
+            if r < 50.0 && r > 40.0 { 20 } else { v.clamp(0.0, 255.0) as u8 }
+        });
+        add_image(&mut app.editor.doc, bytes, (300, 200), (90.0, 60.0), (200.0, 200.0), 3);
+        app.editor.doc.add(Shape::rect(KRect::new(60.0, 60.0, 120.0, 100.0), 4.0, 1));
+        let data = darkburn_core::project::save(&app.editor.doc, "demo", None).unwrap();
+        std::fs::write(out, data).unwrap();
     }
 }

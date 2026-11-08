@@ -21,7 +21,7 @@ pub struct McpPolicy {
 
 impl Default for McpPolicy {
     fn default() -> Self {
-        Self { allow_hardware: false, allow_file_write: false, require_confirmation_for_job_start: true, allow_gweike: false }
+        Self { allow_hardware: false, allow_file_write: true, require_confirmation_for_job_start: true, allow_gweike: false }
     }
 }
 

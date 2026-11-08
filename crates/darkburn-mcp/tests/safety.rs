@@ -34,7 +34,7 @@ fn defaults_match_the_spec() {
     assert!(!p.allow_hardware);
     assert!(!p.allow_gweike);
     assert!(p.require_confirmation_for_job_start);
-    assert!(!p.allow_file_write);
+    assert!(p.allow_file_write);
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn no_dialog_means_no_job() {
 
 #[test]
 fn file_writes_need_their_own_permission() {
-    let mut g = gate(McpPolicy::default());
+    let mut g = gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
     assert_eq!(exec(&mut g, "file.save_as", json!({"path": "C:/x/a.db"})).unwrap_err().code, ErrorCode::Denied);
     assert_eq!(exec(&mut g, "file.export", json!({"path": "C:/x/a.svg"})).unwrap_err().code, ErrorCode::Denied);
     assert!(g.inner().executed.is_empty());

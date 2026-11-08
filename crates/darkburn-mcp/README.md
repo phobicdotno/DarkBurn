@@ -64,7 +64,7 @@ it). The human owns the policy (`McpPolicy`, Preferences > AI agents):
 | `allow_hardware` | off | Commands with `hardware: true` are denied until on |
 | `allow_gweike` | off | Gweike commands also need this (on top of `allow_hardware`) |
 | `require_confirmation_for_job_start` | on | Starting a job or firing needs a one-time token issued after the human clicks Confirm |
-| `allow_file_write` | off | Commands with `writes_files: true` (save, export, machine files) |
+| `allow_file_write` | on | Commands with `writes_files: true` (save, export, machine files) |
 
 * Emergency stop, pause and stop (`HardwareClass::Stop`) are always allowed.
 * A denied command never reaches the backend; denial text tells the agent to ask the user.

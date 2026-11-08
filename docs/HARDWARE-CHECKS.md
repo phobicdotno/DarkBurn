@@ -29,3 +29,16 @@ Each line needs a check on real hardware before the matching checklist item is t
 ## Gweike M3 Ultra
 - [ ] Read-only capture on the real card to close the gaps in `docs/research/mlaser-rea-findings.md`
 - [ ] Exported DXF and G-code files open and run in Gweike's own software
+
+## Ruida corrections from public sources (apply to darkburn-ruida, then verify on a controller)
+Source: `docs/research/other-controllers.md`.
+- [ ] Status word: bit 24 = moving, bit 0 = job running, bit 1 = paused or part end. MeerK40t's emulator uses 21/22/23, which should not be copied
+- [ ] Power is 14-bit: raw / 163.84 gives percent (about 0.006 % steps), not 0.1 % steps
+- [ ] Time values are microseconds
+- [ ] Hardware overscan modes are `CA 01 00..05`; which axis each mode uses is unsettled
+- [ ] Known board IDs: 0x65106510 (RDC6442S) and 0x90109010 (RDC8445S); no source names a job start or end delay register
+
+## Controllers that need a real capture first
+- [ ] Trocen / AWC / LO-X7: no public spec; `.ud5` is reported as scrambled; USB chip unresolved
+- [ ] TopWisdom: USB serial per a developer note; `.out` format not public
+- [ ] Cubiio 2 HTTP upload, Emblaser Wi-Fi, Snapmaker 2.0 HTTP

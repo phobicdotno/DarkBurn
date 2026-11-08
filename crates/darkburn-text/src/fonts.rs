@@ -188,7 +188,8 @@ impl FontLibrary {
             if best.is_some_and(|(s, _)| s >= score) {
                 continue;
             }
-            let has = self.db.with_face_data(id, |d, i| ttf_parser::Face::parse(d, i).ok().is_some_and(|f| f.glyph_index(ch).is_some())).unwrap_or(false);
+            let has =
+                self.db.with_face_data(id, |d, i| ttf_parser::Face::parse(d, i).ok().is_some_and(|f| f.glyph_index(ch).is_some())).unwrap_or(false);
             if has {
                 best = Some((score, id));
             }

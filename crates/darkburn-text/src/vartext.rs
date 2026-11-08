@@ -13,8 +13,8 @@
 //! For a whole text object of type [`VarKind::DateTime`] the entire text is a strftime format.
 
 use crate::error::{Result, TextError};
-use chrono::format::{Item, StrftimeItems};
 use chrono::NaiveDateTime;
+use chrono::format::{Item, StrftimeItems};
 use serde::{Deserialize, Serialize};
 
 /// Variable-text type of a text object (the "type" drop-down).

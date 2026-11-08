@@ -13,7 +13,7 @@
 use crate::error::{Result, TextError};
 use crate::fonts::{FontLibrary, ResolvedFace};
 use crate::geomutil;
-use kurbo::{Affine, BezPath, Rect, Shape};
+use kurbo::{Affine, BezPath, Rect};
 use serde::{Deserialize, Serialize};
 use unicode_bidi::{BidiInfo, Level};
 
@@ -307,24 +307,22 @@ impl ttf_parser::OutlineBuilder for Collector {
 }
 
 fn cap_height_units(f: &FaceCtx) -> f64 {
-    if let Some(c) = f.face.capital_height() {
-        if c > 0 {
-            return c as f64;
-        }
+    if let Some(c) = f.face.capital_height().filter(|c| *c > 0) {
+        return c as f64;
     }
-    if let Some(g) = f.face.glyph_index('H') {
-        if let Some(b) = f.face.glyph_bounding_box(g) {
-            if b.y_max > 0 {
-                return b.y_max as f64;
-            }
-        }
+    if let Some(b) = f.face.glyph_index('H').and_then(|g| f.face.glyph_bounding_box(g)).filter(|b| b.y_max > 0) {
+        return b.y_max as f64;
     }
     0.7 * f.upem
 }
 
 fn is_attached(ch: char) -> bool {
     let c = ch as u32;
-    (0x0300..=0x036F).contains(&c) || (0x200B..=0x200F).contains(&c) || (0xFE00..=0xFE0F).contains(&c) || (0x0591..=0x05BD).contains(&c) || (0x064B..=0x065F).contains(&c)
+    (0x0300..=0x036F).contains(&c)
+        || (0x200B..=0x200F).contains(&c)
+        || (0xFE00..=0xFE0F).contains(&c)
+        || (0x0591..=0x05BD).contains(&c)
+        || (0x064B..=0x065F).contains(&c)
 }
 
 #[derive(Clone)]
@@ -335,9 +333,7 @@ struct Segment {
 
 /// Lay out text with the given font library.
 pub fn layout_text(spec: &TextSpec, lib: &FontLibrary) -> Result<TextLayout> {
-    let primary_rf = lib
-        .resolve_or_default(&spec.family, spec.bold, spec.italic)
-        .ok_or_else(|| TextError::Font("no fonts available".into()))?;
+    let primary_rf = lib.resolve_or_default(&spec.family, spec.bold, spec.italic).ok_or_else(|| TextError::Font("no fonts available".into()))?;
     let primary_data = lib.face_data(primary_rf.id).ok_or_else(|| TextError::Font("cannot load font data".into()))?;
     let primary = open_face(&primary_data, &primary_rf)?;
     let family_used = lib.family_of(primary_rf.id).unwrap_or_default();
@@ -462,7 +458,9 @@ pub fn layout_text(spec: &TextSpec, lib: &FontLibrary) -> Result<TextLayout> {
                     }
                     let shear = if fc.synth_italic { ITALIC_SHEAR } else { 0.0 };
                     let origin_x = pen + gp.x_offset as f64 * s;
-                    let xf = Affine::translate((origin_x, baseline_y + gp.y_offset as f64 * s)) * Affine::scale(s) * Affine::new([1.0, 0.0, shear, 1.0, 0.0, 0.0]);
+                    let xf = Affine::translate((origin_x, baseline_y + gp.y_offset as f64 * s))
+                        * Affine::scale(s)
+                        * Affine::new([1.0, 0.0, shear, 1.0, 0.0, 0.0]);
                     let path = xf * path;
                     let cluster = gi.cluster as usize;
                     let ctext = seg.text.get(cluster..).and_then(|t| t.chars().next()).map(|c| c.to_string()).unwrap_or_default();
@@ -520,11 +518,4 @@ pub fn layout_text(spec: &TextSpec, lib: &FontLibrary) -> Result<TextLayout> {
 /// Bounding box helper for any outline list.
 pub fn outlines_bbox(paths: &[BezPath]) -> Rect {
     geomutil::union_bbox(paths.iter()).unwrap_or(Rect::ZERO)
-}
-
-/// Total area-ish sanity helper used by tests: sum of absolute bbox areas.
-#[doc(hidden)]
-pub fn _bbox_area(p: &BezPath) -> f64 {
-    let b = p.bounding_box();
-    b.width() * b.height()
 }

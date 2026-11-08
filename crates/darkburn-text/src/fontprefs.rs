@@ -3,7 +3,7 @@
 use crate::error::Result;
 use crate::fonts::FontLibrary;
 use crate::layout::{HAlign, SizeMode, TextSpec, VAlign, layout_text};
-use kurbo::{Affine, BezPath, Shape};
+use kurbo::{Affine, BezPath};
 use serde::{Deserialize, Serialize};
 
 /// Persisted font preferences (store in the app settings).
@@ -75,7 +75,11 @@ impl FontPrefs {
 
     /// Family for a new text object: the default if installed, otherwise the library default.
     pub fn family_for_new_text(&self, lib: &FontLibrary) -> String {
-        if !self.default_family.is_empty() && lib.has_family(&self.default_family) { self.default_family.clone() } else { lib.default_family().to_string() }
+        if !self.default_family.is_empty() && lib.has_family(&self.default_family) {
+            self.default_family.clone()
+        } else {
+            lib.default_family().to_string()
+        }
     }
 }
 
@@ -111,9 +115,4 @@ pub fn preview_outline(lib: &FontLibrary, family: &str, text: &str, box_w: f64, 
 pub fn size_of(paths: &[BezPath]) -> (f64, f64) {
     let r = crate::layout::outlines_bbox(paths);
     (r.width(), r.height())
-}
-
-#[allow(unused)]
-fn _use_shape(p: &BezPath) -> kurbo::Rect {
-    p.bounding_box()
 }

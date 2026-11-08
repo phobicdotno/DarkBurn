@@ -17,12 +17,10 @@ pub fn flatten_polylines(path: &BezPath, tol: f64) -> Vec<(Vec<Point>, bool)> {
             cur.push(p);
         }
         PathEl::LineTo(p) => cur.push(p),
-        PathEl::ClosePath => {
-            if cur.len() > 1 {
-                let first = cur[0];
-                out.push((std::mem::take(&mut cur), true));
-                cur.push(first);
-            }
+        PathEl::ClosePath if cur.len() > 1 => {
+            let first = cur[0];
+            out.push((std::mem::take(&mut cur), true));
+            cur.push(first);
         }
         _ => {}
     });

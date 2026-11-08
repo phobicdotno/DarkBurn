@@ -330,7 +330,8 @@ impl<'a> Interp<'a> {
             }
             let Some(op) = rd(&mut i) else { return };
             // The command after code 14 is for vertical text only: run it on a scratch state.
-            let saved = if skip_next { Some((self.pos, self.pen_down, self.active, self.scale, self.stack.clone(), self.path.clone())) } else { None };
+            let saved =
+                if skip_next { Some((self.pos, self.pen_down, self.active, self.scale, self.stack.clone(), self.path.clone())) } else { None };
             skip_next = false;
             match op {
                 0 => return,
@@ -403,7 +404,9 @@ impl<'a> Interp<'a> {
                     self.arc(center, r, a0, sweep);
                 }
                 11 => {
-                    let (Some(so), Some(eo), Some(hi), Some(lo), Some(sc)) = (rd(&mut i), rd(&mut i), rd(&mut i), rd(&mut i), rd(&mut i)) else { return };
+                    let (Some(so), Some(eo), Some(hi), Some(lo), Some(sc)) = (rd(&mut i), rd(&mut i), rd(&mut i), rd(&mut i), rd(&mut i)) else {
+                        return;
+                    };
                     let cw = sc & 0x80 != 0;
                     let oct = ((sc >> 4) & 7) as f64;
                     let n = (sc & 0x0F) as f64;

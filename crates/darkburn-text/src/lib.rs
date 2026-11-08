@@ -17,8 +17,8 @@ pub use error::{Result, TextError};
 pub use fontprefs::{FontListing, FontPrefs, list_families, preview_outline};
 pub use fonts::{FaceData, FontLibrary, ResolvedFace};
 pub use layout::{
-    BackupGlyph, BackupOutline, Direction, GlyphOutline, HAlign, LayoutSource, LineMetrics, SizeMode, TextLayout, TextMetrics, TextSpec, VAlign, font_missing,
-    layout_text, layout_with_backup,
+    BackupGlyph, BackupOutline, Direction, GlyphOutline, HAlign, LayoutSource, LineMetrics, SizeMode, TextLayout, TextMetrics, TextSpec, VAlign,
+    font_missing, layout_text, layout_with_backup,
 };
 pub use qr::{ContactCard, EccLevel, MAX_QR_BYTES, QrContent, QrResult, QrSpec, WifiSecurity};
 pub use shx::ShxFont;

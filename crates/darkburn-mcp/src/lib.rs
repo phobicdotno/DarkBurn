@@ -10,6 +10,7 @@
 //! * [`coverage`]: guards that every GUI action has a command.
 
 pub mod backend;
+pub mod config;
 pub mod control;
 pub mod coverage;
 pub mod gate;

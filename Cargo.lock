@@ -1075,6 +1075,7 @@ dependencies = [
  "darkburn-grbl",
  "darkburn-import",
  "darkburn-job",
+ "darkburn-mcp",
  "darkburn-raster",
  "darkburn-ruida",
  "darkburn-text",

@@ -1,0 +1,5 @@
+- AI agents can now use DarkBurn: draw, edit, change cut settings, preview jobs and take screenshots (off until you turn it on in Settings)
+- New "AI agents (MCP)" settings page with the switches, the connection details and a log of what agents did
+- A small "MCP" tag in the status bar shows when agents are connected
+- Agents can't touch the machine unless you allow it, and starting a job always asks you first
+- DarkBurn can run without a window for scripts and testing

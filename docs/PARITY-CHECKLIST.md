@@ -989,6 +989,30 @@ LightBurn cannot drive it. DarkBurn reaches it in safe steps, file export first.
 
 ---
 
+## 28. AI agents (MCP)
+
+An AI agent (Claude Code, Claude Desktop) can run any function through MCP. Off until the user turns it on.
+
+- [x] MCP-01 MCP server over stdio (`darkburn-mcp.exe`, shipped next to the app, `--print-config` prints the registration)
+- [x] MCP-02 Control channel to the running app: loopback only, per-session token, discovery file, nothing listens unless "MCP control" is on
+- [x] MCP-03 Every UI action is a command (a test checks all menu, ribbon, tool, panel and language actions against the registry)
+- [x] MCP-04 Commands carry honest safety classes: hardware (connect, motion, config, fire or job, stop), writes files, Gweike
+- [x] MCP-05 Inspect: design (shapes with stable ids, layers with every cut setting, selection, variables), settings, window state, machines, undo labels, job, library, camera, rotary, print and cut
+- [x] MCP-06 Screenshot of the window (egui, taken on a later frame) and an offscreen drawing when there is no window
+- [x] MCP-07 Measure (bounding boxes, lengths, areas, job time) and job preview with optional G-code text, never sent
+- [x] MCP-08 Safety gate defaults: machines denied, stop always allowed, Gweike separate, file writes on, job start and fire need a click
+- [x] MCP-09 Confirmation dialog with Confirm and Cancel, no keyboard default
+- [x] MCP-10 Audit log of every agent call, shown in Settings
+- [x] MCP-11 Settings page "AI agents (MCP)": switch, port, connection file, copy buttons, the four policy switches, live audit log
+- [x] MCP-12 Status-bar "MCP" chip with connected agents, amber or red while machine control is allowed
+- [x] MCP-13 `darkburn --mcp-headless`: the same tools over stdio with no window (simulators only)
+- [x] MCP-14 Agent guide with a worked example from an empty design to a G-code preview, and every command group
+- [x] MCP-15 Agents cannot change the AI-agent switches (not through settings, not through an imported preferences file)
+- [~] MCP-16 Long operations: job builds and screenshots report progress as pending ids; imports and traces still run inside the call
+- [ ] MCP-17 Window screenshot and confirmation dialog checked by hand in the running app
+
+---
+
 ## Not copied on purpose
 
 These exist in LightBurn and DarkBurn leaves them out.

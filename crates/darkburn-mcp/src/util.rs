@@ -33,6 +33,11 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Standard base64 decode (padding optional). `None` on a bad character.
+/// Standard base64 with padding.
+pub fn base64_encode(data: &[u8]) -> String {
+    solidcraft_mcp_server::base64(data)
+}
+
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc: u32 = 0;

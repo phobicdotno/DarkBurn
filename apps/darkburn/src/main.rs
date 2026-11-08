@@ -37,6 +37,12 @@ mod machine_ui;
 #[cfg(test)]
 mod machine_ui_tests;
 mod material_test;
+mod mcp_backend;
+mod mcp_catalog;
+mod mcp_inspect;
+#[cfg(test)]
+mod mcp_tests;
+mod mcp_ui;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;
@@ -170,13 +176,19 @@ fn changes_settings(event: &egui::Event) -> bool {
 }
 
 struct App {
-    app: DarkBurn,
+    app: std::rc::Rc<std::cell::RefCell<DarkBurn>>,
     writer: PrefsWriter,
     frames: u32,
+    /// The MCP control server and its safety gate (idle unless the user turned MCP control on).
+    mcp: mcp_ui::Host,
 }
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // AI agents (MCP): serve the requests that arrived since the last frame, before drawing.
+        self.mcp.frame(ctx);
+        let mut app = self.app.borrow_mut();
+        let app = &mut *app;
         if self.frames < 2 {
             self.frames += 1;
             #[cfg(target_os = "windows")]
@@ -185,35 +197,37 @@ impl eframe::App for App {
             }
             ctx.request_repaint();
             if self.frames == 2
-                && let Some(dir) = &self.app.settings_dir
+                && let Some(dir) = &app.settings_dir
             {
                 // The window is up: this start did not fail.
                 startup::started(dir);
             }
         }
-        self.app.apply_theme(ctx);
-        self.app.shortcuts(ctx);
-        text_ui::tick(&mut self.app, ctx);
-        if self.app.safe_mode {
+        app.apply_theme(ctx);
+        app.shortcuts(ctx);
+        text_ui::tick(app, ctx);
+        if app.safe_mode {
             return;
         }
         let input = ctx.input(|i| i.events.iter().any(changes_settings));
         let now = std::time::Instant::now();
         if self.writer.due(input, now)
             && let Some(storage) = frame.storage_mut()
-            && let Some(wait) = self.writer.store(storage, self.app.prefs.to_json(), now)
+            && let Some(wait) = self.writer.store(storage, app.prefs.to_json(), now)
         {
             ctx.request_repaint_after(wait);
         }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.app.ui(ui);
+        self.app.borrow_mut().ui(ui);
+        self.mcp.confirmation_ui(ui.ctx());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        if !self.app.safe_mode {
-            storage.set_string(STORAGE_KEY, self.app.prefs.to_json());
+        let app = self.app.borrow();
+        if !app.safe_mode {
+            storage.set_string(STORAGE_KEY, app.prefs.to_json());
         }
     }
 
@@ -243,9 +257,15 @@ fn app_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
-    help::install_logger();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--mcp-headless") {
+        // MCP over stdio with no window: the app's backend on default settings, simulators only.
+        let code = mcp_ui::run_headless(args.iter().any(|a| a == "--mcp-allow-simulator-control"));
+        std::process::exit(if code == std::process::ExitCode::SUCCESS { 0 } else { 1 });
+    }
+    help::install_logger();
     let dir = settings_dir();
+    mcp_ui::install_panic_hook(dir.clone());
     let mut notes = Vec::new();
     let mut safe_mode = args.iter().any(|a| a == "--safe-mode") || startup::env_on(std::env::var(startup::SAFE_MODE_ENV).ok().as_deref());
     if let Some(dir) = &dir {
@@ -319,7 +339,9 @@ fn main() -> eframe::Result {
             app.fio.pending_open = file_args.clone();
             app.apply_theme(&cc.egui_ctx);
             let writer = PrefsWriter::read(app.prefs.to_json());
-            Ok(Box::new(App { app, writer, frames: 0 }))
+            let app = std::rc::Rc::new(std::cell::RefCell::new(app));
+            let mcp = mcp_ui::Host::new(app.clone());
+            Ok(Box::new(App { app, writer, frames: 0, mcp }))
         }),
     )
 }

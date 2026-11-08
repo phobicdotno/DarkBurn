@@ -592,6 +592,7 @@ impl DarkBurn {
                 .or_else(|| self.hint.clone())
                 .unwrap_or_else(|| if self.pan_tool { "Drag to pan the view".into() } else { String::new() });
             let right_edge = crate::vision_ui::status_chips(ui, r, self);
+            let right_edge = crate::mcp_ui::status_chip(ui, r, right_edge, self);
             let clip = ui.painter().with_clip_rect(Rect::from_min_max(pos2(x, r.top()), pos2(right_edge, r.bottom())));
             clip.text(pos2(x, r.center().y), Align2::LEFT_CENTER, tip, font.clone(), ink);
             let right = format!("{:.0} %", self.prefs.view.percent());

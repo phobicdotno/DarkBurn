@@ -702,7 +702,7 @@ fn save_state(app: &DarkBurn) {
     app.job.save(app.settings_dir.as_deref());
 }
 
-fn summary(app: &DarkBurn, job: &BuiltJob) -> Value {
+pub(crate) fn summary(app: &DarkBurn, job: &BuiltJob) -> Value {
     let sim = job.simulate(&app.job.additional);
     let stats = job_build::JobStats::of(job, &sim);
     json!({

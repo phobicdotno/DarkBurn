@@ -69,6 +69,16 @@ struct Autosave {
     writing: Option<mpsc::Receiver<Result<(), String>>>,
 }
 
+impl FileState {
+    /// The file dialogs showing now (for MCP's view of the window).
+    pub fn open_dialogs(&self) -> Vec<&'static str> {
+        [(self.ask_save.is_some(), "unsaved_changes"), (self.restore.is_some(), "restore_autosave"), (self.message.is_some(), "file_message")]
+            .into_iter()
+            .filter_map(|(on, name)| on.then_some(name))
+            .collect()
+    }
+}
+
 // ----- Commands -----
 
 /// Run a File command; returns whether `id` was one.

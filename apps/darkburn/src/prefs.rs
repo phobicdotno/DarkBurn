@@ -81,6 +81,8 @@ pub struct Prefs {
     pub lock_aspect: bool,
     /// The Cut Settings Editor hides its Advanced tab.
     pub cut_beginner: bool,
+    /// Import, export and file preferences (formats.rs).
+    pub files: crate::formats::FilePrefs,
 }
 
 impl Default for Prefs {
@@ -117,6 +119,7 @@ impl Default for Prefs {
             anchor: darkburn_core::arrange::Anchor::Centre,
             lock_aspect: true,
             cut_beginner: false,
+            files: Default::default(),
         }
     }
 }
@@ -159,6 +162,7 @@ impl Prefs {
         }
         self.autosave_minutes = self.autosave_minutes.clamp(0.0, 240.0);
         self.recent.truncate(crate::files::RECENT_MAX);
+        self.files.sanitise();
         for (id, state) in d.panels {
             self.panels.entry(id).or_insert(state);
         }

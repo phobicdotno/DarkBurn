@@ -72,6 +72,8 @@ pub struct DarkBurn {
     pub images: crate::image_ui::ImageUi,
     /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
     pub shape_ui: crate::shape_ui::ShapeUi,
+    /// Opening, importing and exporting other file types (file_io.rs).
+    pub fio: crate::file_io::FileIo,
 }
 
 impl DarkBurn {
@@ -105,6 +107,7 @@ impl DarkBurn {
             job: Default::default(),
             images: Default::default(),
             shape_ui: Default::default(),
+            fio: Default::default(),
         }
     }
 
@@ -185,6 +188,7 @@ impl DarkBurn {
             || crate::job_cmds::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
+            || crate::file_io::run(self, ctx, id)
         {
             return;
         }
@@ -267,6 +271,7 @@ impl DarkBurn {
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
+        crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
         if self.prefs.status_bar {
@@ -294,6 +299,7 @@ impl DarkBurn {
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
+        crate::file_io::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }

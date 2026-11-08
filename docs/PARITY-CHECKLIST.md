@@ -35,7 +35,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### File
 - [x] FILE-01 New
-- [ ] FILE-02 New window (second instance)
+- [~] FILE-02 New window (second instance)
 - [x] FILE-03 Recent projects list (24 entries)
 - [x] FILE-04 Open
 - [x] FILE-05 Import
@@ -43,15 +43,15 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-07 Save
 - [x] FILE-08 Save As
 - [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
-- [ ] FILE-10 Export
-- [ ] FILE-11 Print, black only
-- [ ] FILE-12 Print, keep colours
+- [x] FILE-10 Export
+- [~] FILE-11 Print, black only
+- [~] FILE-12 Print, keep colours
 - [ ] FILE-13 Save processed bitmap
 - [ ] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
-- [ ] FILE-16 Export preferences
-- [ ] FILE-17 Import preferences
-- [ ] FILE-18 Load preferences backup (backup browser)
+- [x] FILE-16 Export preferences
+- [x] FILE-17 Import preferences
+- [x] FILE-18 Load preferences backup (backup browser)
 - [ ] FILE-19 Edit hotkeys
 - [x] FILE-20 Exit
 
@@ -766,19 +766,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Project
 - [x] PROJ-01 DarkBurn project format
-- [ ] PROJ-02 Open LightBurn `.lbrn2` projects
-- [ ] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
+- [x] PROJ-02 Open LightBurn `.lbrn2` projects
+- [x] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
 - [x] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
-- [ ] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
-- [ ] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
+- [~] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
+- [x] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import
 - [~] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
 - [x] IMP-02 SVG: 72 or 96 DPI setting
-- [ ] IMP-03 Adobe Illustrator files
-- [ ] IMP-04 PDF with page choice and embedded images
-- [ ] IMP-05 DXF: units, splines, blocks, text, layers, colours
-- [ ] IMP-06 PLT / HPGL
+- [~] IMP-03 Adobe Illustrator files
+- [x] IMP-04 PDF with page choice and embedded images
+- [x] IMP-05 DXF: units, splines, blocks, text, layers, colours
+- [x] IMP-06 PLT / HPGL
 - [ ] IMP-07 Ruida RD files
 - [ ] IMP-08 SignCut files
 - [x] IMP-09 PNG, JPG, BMP, GIF, TIFF, WebP
@@ -788,11 +788,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] IMP-13 Several files at once; drag and drop
 
 ### Export
-- [ ] EXP-01 SVG
-- [ ] EXP-02 Adobe Illustrator
-- [ ] EXP-03 DXF with arcs or segments
-- [ ] EXP-04 PNG, JPG, BMP when the selection is a bitmap
-- [ ] EXP-05 Export selection or everything
+- [x] EXP-01 SVG
+- [x] EXP-02 Adobe Illustrator
+- [x] EXP-03 DXF with arcs or segments
+- [x] EXP-04 PNG, JPG, BMP when the selection is a bitmap
+- [x] EXP-05 Export selection or everything
 - [x] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
 - [ ] EXP-07 RD, OUT and UD5 machine files
 
@@ -800,7 +800,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] AUX-01 Material library files
 - [ ] AUX-02 Art library files
 - [ ] AUX-03 Device profile files
-- [ ] AUX-04 Preferences files
+- [x] AUX-04 Preferences files
 - [ ] AUX-05 Machine settings backup files
 - [ ] AUX-06 Camera calibration files
 - [ ] AUX-07 Scanning offset files
@@ -905,10 +905,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Files
 - [x] SET-29 SVG DPI
-- [ ] SET-30 DXF import units, fallback units, auto-close tolerance
-- [ ] SET-31 DXF export arcs or lines
-- [ ] SET-32 HPGL precision
-- [ ] SET-33 Import hidden Illustrator layers
+- [x] SET-30 DXF import units, fallback units, auto-close tolerance
+- [x] SET-31 DXF export arcs or lines
+- [x] SET-32 HPGL precision
+- [x] SET-33 Import hidden Illustrator layers
 - [x] SET-34 Group and select imported shapes
 - [x] SET-35 Allow import to tool layers
 - [ ] SET-36 Output curve tolerance
@@ -960,14 +960,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 26. Platform
 
-- [ ] PLAT-01 Windows file association and single running copy
+- [~] PLAT-01 Windows file association and single running copy
 - [ ] PLAT-02 Explorer thumbnails for project files
 - [ ] PLAT-03 Recent files in the Windows jump list
 - [ ] PLAT-04 Debug log
 - [ ] PLAT-05 Support data bundle
-- [ ] PLAT-06 Crash restore file
-- [ ] PLAT-07 Automatic preference backups
-- [ ] PLAT-08 Print support
+- [~] PLAT-06 Crash restore file
+- [x] PLAT-07 Automatic preference backups
+- [~] PLAT-08 Print support
 - [ ] PLAT-09 macOS build
 - [ ] PLAT-10 Linux build
 - [ ] PLAT-11 REST API *(later)*
@@ -979,9 +979,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 The M3 Ultra is a fibre plus CO2 flatbed run by an Au3tech MCC100 controller card over Ethernet.
 LightBurn cannot drive it. DarkBurn reaches it in safe steps, file export first.
 
-- [ ] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
+- [x] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
 - [ ] MCC-02 Export the vendor's craft file format
-- [ ] MCC-03 Export the G-code flavour the vendor software imports
+- [~] MCC-03 Export the G-code flavour the vendor software imports
 - [ ] MCC-04 Fibre cut settings that LightBurn lacks: assist gas, pierce stages, follower height
 - [ ] MCC-05 Controller card simulator so the backend can be tested without the machine
 - [ ] MCC-06 Native Ethernet backend, built on the protocol work in phobicMlaserLinux, after it is confirmed on the real card

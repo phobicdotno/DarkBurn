@@ -1066,6 +1066,7 @@ dependencies = [
  "arboard",
  "darkburn-core",
  "darkburn-geom",
+ "darkburn-import",
  "darkburn-job",
  "darkburn-raster",
  "darkburn-ui",

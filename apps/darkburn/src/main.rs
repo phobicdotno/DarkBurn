@@ -8,6 +8,7 @@ mod canvas_input;
 mod commands;
 mod cut_settings;
 mod cuts_panel;
+mod file_io;
 mod files;
 mod image_ops;
 mod image_render;
@@ -18,6 +19,8 @@ mod job_build;
 mod job_cmds;
 mod job_ui;
 mod material_test;
+mod formats;
+mod instance;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;
@@ -27,6 +30,7 @@ mod palette;
 mod panels;
 mod prefs;
 mod preview;
+mod prefs_files;
 mod render;
 mod ribbon;
 mod scan_offsets;
@@ -225,6 +229,18 @@ fn main() -> eframe::Result {
     if safe_mode && notes.is_empty() {
         notes.push("Safe mode: default settings, nothing is saved.".into());
     }
+    let secondary = args.iter().any(|a| a == "--secondary");
+    let file_args: Vec<std::path::PathBuf> = args.iter().filter(|a| !a.starts_with('-')).map(std::path::PathBuf::from).collect();
+    if !secondary
+        && !safe_mode
+        && let Some(dir) = &dir
+        && instance::wanted(dir, STORAGE_KEY)
+        && instance::running(dir)
+        && instance::forward(dir, &file_args).is_ok()
+    {
+        // Another copy is running and the single-instance preference is on: it takes the files.
+        return Ok(());
+    }
     let custom_titlebar = !cfg!(target_os = "macos");
     let viewport = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
@@ -263,11 +279,9 @@ fn main() -> eframe::Result {
                 }
                 app.native_resize_border = custom_titlebar && native_frame::install(cc);
             }
-            if let Some(path) = args.iter().find(|a| !a.starts_with('-'))
-                && let Err(e) = files::open_path(&mut app, std::path::Path::new(path))
-            {
-                app.note = Some(e);
-            }
+            app.fio.secondary = secondary;
+            // Files given on the command line (file associations) open once the window is up.
+            app.fio.pending_open = file_args.clone();
             app.apply_theme(&cc.egui_ctx);
             let writer = PrefsWriter::read(app.prefs.to_json());
             Ok(Box::new(App { app, writer, frames: 0 }))

@@ -127,15 +127,8 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
         prefs.origin = Origin::ALL[i];
     });
     ui.add_space(t.space_12);
-    ui_kit::section_heading(ui, "Import");
-    ui_kit::row(ui, "SVG resolution", |ui| {
-        let mut i = usize::from(prefs.svg_dpi != 72.0);
-        ui_kit::dropdown(ui, "svg_dpi", &mut i, &["72 DPI", "96 DPI"]);
-        prefs.svg_dpi = if i == 0 { 72.0 } else { 96.0 };
-    });
-    ui_kit::checkbox(ui, "Group imported shapes", &mut prefs.import_group);
-    ui_kit::checkbox(ui, "Select imported shapes", &mut prefs.import_select);
-    ui_kit::checkbox(ui, "Allow import to tool layers", &mut prefs.import_tool_layers);
+    ui_kit::section_heading(ui, "Files");
+    crate::file_io::import_options_body(ui, prefs);
     ui.add_space(t.space_12);
     ui_kit::section_heading(ui, "Auto-save");
     ui_kit::row(ui, "Every", |ui| {

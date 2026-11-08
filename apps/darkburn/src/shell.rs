@@ -287,6 +287,8 @@ impl DarkBurn {
     /// The whole window for one frame.
     pub fn ui(&mut self, ui: &mut Ui) {
         let mut clicked: Option<String> = None;
+        // Forget last frame's published widget rectangles (else the registry grows every frame).
+        solidcraft_ui_registry::clear_handles();
         crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());

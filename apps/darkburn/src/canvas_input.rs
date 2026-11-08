@@ -507,7 +507,9 @@ fn shape_tool(ui: &Ui, app: &mut DarkBurn, st: &mut State, response: &Response, 
 
 fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Option<&'static str>) {
     let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_key(m, k));
-    if pressed(Modifiers::NONE, Key::Escape) {
+    // A dialog or window is open: Escape is its (it closes the dialog), not the canvas's.
+    let window_open = ctx.memory(|m| m.areas().visible_layer_ids().iter().any(|l| matches!(l.order, egui::Order::Middle | egui::Order::Foreground)));
+    if !window_open && pressed(Modifiers::NONE, Key::Escape) {
         if !matches!(st.gesture, Gesture::None) {
             cancel(app, st);
         } else if !st.pen.is_empty() {

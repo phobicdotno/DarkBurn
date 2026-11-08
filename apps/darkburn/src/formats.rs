@@ -238,7 +238,7 @@ pub enum ReadOutcome {
 }
 
 /// File extensions the Open and Import dialogs offer besides the SVG and bitmap ones.
-pub const LIBRARY_EXTENSIONS: &[&str] = &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "lbrn", "lbrn2"];
+pub const LIBRARY_EXTENSIONS: &[&str] = &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "lbrn", "lbrn2", "rd"];
 
 /// Whether `path` names a LightBurn project.
 pub fn is_lightburn(path: &Path) -> bool {
@@ -271,6 +271,14 @@ pub fn read_bytes(name: &Path, bytes: &[u8], opts: &ReadOptions) -> Result<ReadO
 }
 
 fn read_inner(name: &Path, name_text: Option<&str>, bytes: &[u8], opts: &ReadOptions) -> Result<ReadOutcome, String> {
+    if crate::rd_import::is_rd(name) {
+        let imported = crate::rd_import::import(bytes)?;
+        let loaded = convert(imported, opts, false);
+        if loaded.imported.shapes.is_empty() {
+            return Err("there is nothing in it to import".into());
+        }
+        return Ok(ReadOutcome::Loaded(Box::new(loaded)));
+    }
     let by_ext = name.extension().and_then(|e| e.to_str()).and_then(di::Format::from_extension);
     let format = match (by_ext, import::kind_of(name)) {
         (Some(f), _) => Some(f),

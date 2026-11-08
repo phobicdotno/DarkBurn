@@ -56,6 +56,7 @@ mod palette;
 mod panels;
 mod prefs;
 mod prefs_files;
+mod rd_import;
 mod preview;
 mod render;
 mod ribbon;

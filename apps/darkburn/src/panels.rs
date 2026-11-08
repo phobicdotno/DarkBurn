@@ -101,6 +101,8 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
     ui.spacing_mut().item_spacing.y = t.form_gap_y;
     match id {
         "cuts" => return crate::cuts_panel::show(ui, app),
+        "library" => return crate::library::show(ui, app),
+        "art_library" => return crate::art_library::show(ui, app),
         "shape_properties" => return crate::shape_props::show(ui, app),
         "laser" | "move" | "console" | "file_list" => {
             crate::laser_panel::show_panel(ui, id, app);
@@ -109,17 +111,6 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
         _ => {}
     }
     ui.add_enabled_ui(false, |ui| match id {
-        "console" => {
-            coming(ui, "The machine's replies appear here once a laser is connected.");
-            let mut log = String::new();
-            ui_kit::text_area(ui, "Log", egui::Id::unique("console_log"), &mut log, 6, 10_000);
-            ui_kit::row(ui, "Command", |ui| {
-                let mut v = String::new();
-                ui_kit::hint_field(ui, &mut v, "Type a command");
-            });
-            checks(ui, &["Show all"]);
-            buttons(ui, &["Macro 1", "Macro 2", "Macro 3", "Macro 4", "Macro 5", "Macro 6"]);
-        }
         "camera" => {
             coming(ui, "Camera overlay arrives with camera support.");
             choice(ui, "Camera", "camera_pick", &["No camera"]);
@@ -142,45 +133,6 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
                 ui_kit::hint_field(ui, &mut v, "No file");
             });
             buttons(ui, &["Browse", "Clear"]);
-        }
-        "laser" => {
-            ui_kit::status_line(ui, "Disconnected", ui_kit::StatusTone::Dim);
-            ui_kit::progress(ui, "laser_job", 0.0);
-            buttons(ui, &["Start", "Pause", "Stop"]);
-            buttons(ui, &["Frame", "Save G-code", "Run G-code", "Send"]);
-            buttons(ui, &["Home", "Go to origin"]);
-            choice(ui, "Start from", "start_from", &["Absolute coords", "Current position", "User origin"]);
-            checks(ui, &["Cut selected graphics", "Use selection origin", "Show last position", "Optimize cut path"]);
-            buttons(ui, &["Devices"]);
-            choice(ui, "Port", "port", &["(choose)"]);
-            choice(ui, "Device", "device", &["No device"]);
-        }
-        "library" => {
-            coming(ui, "Material library entries will be listed here.");
-            buttons(ui, &["New", "Load", "Save", "Save as"]);
-            buttons(ui, &["Assign to layer", "Create from layer", "Edit", "Delete"]);
-        }
-        "move" => {
-            coming(ui, "Jog the laser once one is connected.");
-            buttons(ui, &["↖", "↑", "↗"]);
-            buttons(ui, &["←", "Home", "→"]);
-            buttons(ui, &["↙", "↓", "↘"]);
-            field_row(ui, "Distance", "10 mm");
-            field_row(ui, "Speed", "100 mm/s");
-            checks(ui, &["Continuous jog"]);
-            buttons(ui, &["Get position", "Move to", "Set origin", "Clear origin", "Fire"]);
-        }
-        "art_library" => {
-            coming(ui, "Art libraries will open here.");
-            ui_kit::row(ui, "Search", |ui| {
-                let mut v = String::new();
-                ui_kit::hint_field(ui, &mut v, "Search art");
-            });
-            buttons(ui, &["Load library", "Add selection"]);
-        }
-        "file_list" => {
-            coming(ui, "Files stored on a DSP controller are listed here.");
-            buttons(ui, &["Refresh", "Upload", "Start", "Delete", "Delete all", "Calc time"]);
         }
         _ => {}
     });

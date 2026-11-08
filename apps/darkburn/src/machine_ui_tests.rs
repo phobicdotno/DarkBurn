@@ -22,7 +22,7 @@ fn run(app: &mut DarkBurn, id: &str, args: Value) -> Result<Value, String> {
     execute_headless(app, id, &args)
 }
 
-fn wait(app: &mut DarkBurn, what: &str, f: impl Fn(&DarkBurn) -> bool) {
+fn wait(app: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
     let end = Instant::now() + T;
     loop {
         app.machine.tick();
@@ -36,6 +36,11 @@ fn wait(app: &mut DarkBurn, what: &str, f: impl Fn(&DarkBurn) -> bool) {
 
 fn state(app: &DarkBurn) -> LaserState {
     app.machine.handle.snapshot().state
+}
+
+/// Something to burn: a 20 mm square on layer 0.
+fn draw_square(app: &mut DarkBurn) {
+    run(app, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
 }
 
 fn connect_sim(app: &mut DarkBurn, kind: DeviceType) {
@@ -94,6 +99,7 @@ fn machine_commands_are_registered_and_flagged_hardware() {
 fn grbl_simulator_through_the_commands() {
     let mut a = app();
     assert_eq!(run(&mut a, "machine.status", Value::Null).unwrap()["state"], "Disconnected");
+    draw_square(&mut a);
     assert!(run(&mut a, "machine.start", Value::Null).is_err(), "no job without a connection");
     assert!(run(&mut a, "machine.stop", Value::Null).is_err());
     connect_sim(&mut a, DeviceType::SimulatorGrbl);
@@ -102,6 +108,7 @@ fn grbl_simulator_through_the_commands() {
     assert_eq!(s["real_machine"], false);
 
     // Job: start, see progress, finish.
+    draw_square(&mut a);
     run(&mut a, "machine.start", Value::Null).unwrap();
     wait(&mut a, "job finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     wait(&mut a, "ready again", |a| state(a) == LaserState::Ready);
@@ -166,6 +173,7 @@ fn ruida_simulator_through_the_commands() {
     connect_sim(&mut a, DeviceType::SimulatorRuida);
     let s = run(&mut a, "machine.status", Value::Null).unwrap();
     assert!(s["firmware"].as_str().unwrap().contains("RDC6442S"));
+    draw_square(&mut a);
     run(&mut a, "machine.start", Value::Null).unwrap();
     wait(&mut a, "job finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     run(&mut a, "machine.file_list", Value::Null).unwrap();
@@ -207,8 +215,8 @@ fn a_real_machine_needs_the_users_confirmation_and_is_refused_to_agents() {
     a.machine.confirm_connect();
     assert!(!a.machine.handle.is_real_machine());
     assert!(a.machine.message.as_ref().is_some_and(|m| m.error && m.text.contains("test")), "{:?}", a.machine.message);
-    // And with no job builder a real machine gets no job.
-    assert!(machine_ui::make_job(&a).is_err());
+    // Nor can an agent start a job on it.
+    assert!(run(&mut a, "job.start", Value::Null).is_err());
 }
 
 #[test]
@@ -230,7 +238,8 @@ fn the_pre_job_checklist_blocks_start_until_ticked() {
         d.settings.checklist_on = true;
         d.settings.checklist = vec!["one".into(), "two".into()];
     }
-    let r = run(&mut a, "machine.start", Value::Null).unwrap();
+    draw_square(&mut a);
+    let r = run(&mut a, "job.start", Value::Null).unwrap();
     assert_eq!(r["waiting_for_checklist"], true);
     assert_eq!(state(&a), LaserState::Ready, "not started yet");
     assert!(a.machine.finish_checklist().is_err(), "unticked items block the start");
@@ -407,7 +416,8 @@ fn every_panel_and_dialog_draws_in_every_state() {
         draw(&ctx, &mut a, vec![]);
     }
     // A job running.
-    run(&mut a, "machine.start", Value::Null).unwrap();
+    draw_square(&mut a);
+    run(&mut a, "job.start", Value::Null).unwrap();
     wait(&mut a, "busy", |a| a.machine.handle.snapshot().job.is_some() || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     draw(&ctx, &mut a, vec![]);
     // Connected Ruida with its file list, settings, dual tube and U axis dialogs.
@@ -456,17 +466,127 @@ G1"
 }
 
 #[test]
-fn the_frame_button_frames_the_selection_in_machine_coordinates() {
-    use darkburn_core::kurbo::Rect;
+fn a_full_grbl_job_runs_end_to_end_through_the_job_commands() {
     let mut a = app();
-    assert!(crate::laser_panel::frame_args(&a).is_none(), "nothing drawn, nothing to frame");
-    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 20, "width": 30, "height": 40 })).unwrap();
-    let f = crate::laser_panel::frame_args(&a).unwrap();
-    assert_eq!((f["x"].as_f64(), f["y"].as_f64(), f["width"].as_f64(), f["height"].as_f64()), (Some(10.0), Some(20.0), Some(30.0), Some(40.0)));
-    // A machine with its zero at the top flips Y: the rectangle sits at 400 - 60.
-    let id = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    draw_square(&mut a);
+    // Build -> start -> progress -> finish.
+    let r = run(&mut a, "job.start", Value::Null).unwrap();
+    assert_eq!(r["ok"], true);
+    assert!(a.job.last_job.is_some(), "the job was recorded as the last one");
+    let mut saw_progress = false;
+    wait(&mut a, "finish", |a| {
+        saw_progress |= a.machine.handle.snapshot().job.is_some();
+        a.machine.job_log.iter().any(|l| l.starts_with("Job finished"))
+    });
+    assert!(saw_progress);
+    wait(&mut a, "ready", |a| state(a) == LaserState::Ready);
+    // The head feeds back into the job state.
+    run(&mut a, "machine.status", Value::Null).unwrap();
+    assert!(a.job.head.is_some());
+    // Frame: rectangle and rubber band.
+    run(&mut a, "job.frame", Value::Null).unwrap();
+    wait(&mut a, "framing done", |a| state(a) == LaserState::Ready && a.machine.handle.snapshot().job.is_none());
+    run(&mut a, "job.frame_rubber", Value::Null).unwrap();
+    wait(&mut a, "framing done", |a| state(a) == LaserState::Ready && a.machine.handle.snapshot().job.is_none());
+    // Origin commands update the job state.
+    run(&mut a, "machine.set_origin", Value::Null).unwrap();
+    assert!(a.job.user_origin.is_some());
+    run(&mut a, "machine.clear_origin", Value::Null).unwrap();
+    assert!(a.job.user_origin.is_none());
+    // Send is for DSP controllers.
+    assert!(run(&mut a, "job.send", Value::Null).unwrap_err().contains("streams"));
+    // Start from an operation (Run from here).
+    run(&mut a, "job.preview_run_from_here", json!({ "op_index": 4 })).unwrap();
+    wait(&mut a, "finish again", |a| a.machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count() >= 2);
+    wait(&mut a, "ready", |a| state(a) == LaserState::Ready);
+    // Home and go to origin through the job ids.
+    run(&mut a, "job.go_origin", Value::Null).unwrap();
+}
+
+#[test]
+fn a_full_ruida_job_runs_end_to_end_and_can_be_sent() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorRuida);
+    draw_square(&mut a);
+    run(&mut a, "job.start", Value::Null).unwrap();
+    wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+    wait(&mut a, "ready", |a| state(a) == LaserState::Ready);
+    // Send stores the job on the controller without running it.
+    run(&mut a, "job.send", Value::Null).unwrap();
+    wait(&mut a, "stored", |a| a.machine.handle.snapshot().ruida.files.as_ref().is_some_and(|f| !f.is_empty()));
+    run(&mut a, "job.frame", Value::Null).unwrap();
+    wait(&mut a, "framed", |a| state(a) == LaserState::Ready);
+    run(&mut a, "job.home", Value::Null).unwrap();
+    run(&mut a, "job.go_origin", Value::Null).unwrap();
+}
+
+#[test]
+fn device_profile_values_reach_the_job_builder() {
+    let mut a = app();
+    let id = a.machine.devices.add(Device {
+        name: "Big".into(),
+        width_mm: 900.0,
+        height_mm: 600.0,
+        origin: darkburn_job::Corner::TopRight,
+        ..Device::new(DeviceType::Grbl)
+    });
+    a.machine.devices.get_mut(id).unwrap().settings.gcode.s_max = 255.0;
+    a.machine.devices.get_mut(id).unwrap().settings.gcode.start_script = "G54".into();
     a.machine.devices.select(id);
-    let f = crate::laser_panel::frame_args(&a).unwrap();
-    assert_eq!(f["y"].as_f64(), Some(400.0 - 60.0));
-    let _ = Rect::ZERO;
+    machine_ui::sync_job_state(&mut a);
+    let input = crate::job_cmds::build_input(&a);
+    assert_eq!((input.device.bed_w, input.device.bed_h, input.device.origin), (900.0, 600.0, darkburn_job::Corner::TopRight));
+    assert_eq!((a.job.gcode.s_max, a.job.gcode.start_script.as_str()), (255.0, "G54"));
+    // An edit made in the job builder's G-code window lands in the profile.
+    a.job.gcode.end_script = "M5".into();
+    machine_ui::sync_job_state(&mut a);
+    assert_eq!(a.machine.devices.get(id).unwrap().settings.gcode.end_script, "M5");
+    // Switching device switches what the builder uses.
+    let first = a.machine.devices.devices[0].id;
+    a.machine.devices.select(first);
+    machine_ui::sync_job_state(&mut a);
+    assert_eq!(a.job.gcode.s_max, 1000.0);
+    assert_eq!(a.job.gcode.end_script, "");
+}
+
+#[test]
+fn scan_offsets_follow_the_device() {
+    let mut a = app();
+    let id = a.machine.devices.add(Device::new(DeviceType::Grbl));
+    a.machine.devices.get_mut(id).unwrap().settings.scan.offsets.set(100.0, 0.05);
+    a.machine.devices.select(id);
+    machine_ui::sync_job_state(&mut a);
+    assert_eq!(crate::scan_offsets::current().offsets.offset_at(100.0), 0.05);
+    let mut t = crate::scan_offsets::current();
+    t.offsets.set(200.0, 0.1);
+    crate::scan_offsets::set(t);
+    machine_ui::sync_job_state(&mut a);
+    assert_eq!(a.machine.devices.get(id).unwrap().settings.scan.offsets.entries.len(), 2);
+    crate::scan_offsets::set(Default::default());
+}
+
+#[test]
+fn a_dropped_dbdev_opens_the_import() {
+    let mut a = app();
+    let id = a.machine.devices.devices[0].id;
+    let text = a.machine.devices.export_profile(id).unwrap();
+    let dir = std::env::temp_dir().join(format!("darkburn-dbdev-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("x.dbdev");
+    std::fs::write(&f, text).unwrap();
+    let n = a.machine.devices.devices.len();
+    crate::file_io::open_sync(&mut a, &f).unwrap();
+    assert_eq!(a.machine.devices.devices.len(), n + 1);
+    assert!(a.machine.dlg.devices);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn each_device_has_its_own_library() {
+    let mut a = app();
+    let id = a.machine.devices.add(Device { name: "Library machine".into(), ..Device::new(DeviceType::Grbl) });
+    a.machine.select_device(id);
+    machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.extras.library.device, "Library machine");
 }

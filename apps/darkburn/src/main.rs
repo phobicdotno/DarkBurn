@@ -3,6 +3,7 @@
 
 mod actions;
 mod api;
+mod art_library;
 mod canvas;
 mod canvas_input;
 mod commands;
@@ -10,26 +11,52 @@ mod cut_settings;
 mod cuts_panel;
 mod devices;
 mod devices_ui;
+mod extras;
+mod file_io;
 mod files;
+mod formats;
+mod help;
+mod i18n;
+mod image_ops;
+mod image_render;
+mod image_ui;
+mod images;
 mod import;
+mod instance;
+mod job_build;
+mod job_cmds;
+mod job_ui;
+mod keymap;
 mod laser_panel;
+mod library;
 mod machine_api;
 #[cfg(test)]
 mod machine_api_tests;
+mod machine_job;
 mod machine_ui;
 #[cfg(test)]
 mod machine_ui_tests;
+mod material_test;
 #[cfg(target_os = "windows")]
 mod native_frame;
+mod node_tool;
 mod numeric;
 mod numeric_edits;
+mod options;
 mod palette;
 mod panels;
 mod prefs;
+mod prefs_files;
+mod preview;
 mod render;
 mod ribbon;
+mod scan_offsets;
 mod settings;
+mod shape_arrays;
+mod shape_nodes;
+mod shape_ops;
 mod shape_props;
+mod shape_ui;
 mod shell;
 mod startup;
 mod thumbnail;
@@ -203,6 +230,7 @@ fn app_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    help::install_logger();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dir = settings_dir();
     let mut notes = Vec::new();
@@ -218,6 +246,18 @@ fn main() -> eframe::Result {
     }
     if safe_mode && notes.is_empty() {
         notes.push("Safe mode: default settings, nothing is saved.".into());
+    }
+    let secondary = args.iter().any(|a| a == "--secondary");
+    let file_args: Vec<std::path::PathBuf> = args.iter().filter(|a| !a.starts_with('-')).map(std::path::PathBuf::from).collect();
+    if !secondary
+        && !safe_mode
+        && let Some(dir) = &dir
+        && instance::wanted(dir, STORAGE_KEY)
+        && instance::running(dir)
+        && instance::forward(dir, &file_args).is_ok()
+    {
+        // Another copy is running and the single-instance preference is on: it takes the files.
+        return Ok(());
     }
     let custom_titlebar = !cfg!(target_os = "macos");
     let viewport = egui::ViewportBuilder::default()
@@ -243,10 +283,15 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             darkburn_ui::fonts::setup_bundled_fonts(&cc.egui_ctx);
             let stored = if safe_mode { None } else { cc.storage.and_then(|s| s.get_string(STORAGE_KEY)) };
-            let prefs = stored.as_deref().map(Prefs::from_json).unwrap_or_default();
+            let prefs = match stored.as_deref() {
+                Some(s) => Prefs::from_json(s),
+                // First run: a workshop's shared defaults, if it left a file.
+                None => extras::shared_defaults(dir.as_deref()).unwrap_or_default(),
+            };
             let mut app = DarkBurn::new(prefs);
             app.settings_dir = dir.clone();
             app.safe_mode = safe_mode;
+            image_ui::load_tuning(&app);
             app.note = (!notes.is_empty()).then(|| notes.join(" "));
             app.custom_titlebar = custom_titlebar;
             #[cfg(target_os = "windows")]
@@ -256,11 +301,9 @@ fn main() -> eframe::Result {
                 }
                 app.native_resize_border = custom_titlebar && native_frame::install(cc);
             }
-            if let Some(path) = args.iter().find(|a| !a.starts_with('-'))
-                && let Err(e) = files::open_path(&mut app, std::path::Path::new(path))
-            {
-                app.note = Some(e);
-            }
+            app.fio.secondary = secondary;
+            // Files given on the command line (file associations) open once the window is up.
+            app.fio.pending_open = file_args.clone();
             app.apply_theme(&cc.egui_ctx);
             let writer = PrefsWriter::read(app.prefs.to_json());
             Ok(Box::new(App { app, writer, frames: 0 }))

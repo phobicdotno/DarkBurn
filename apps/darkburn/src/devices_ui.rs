@@ -12,7 +12,8 @@ use egui::{Context, Id, RichText, Ui};
 use serde_json::json;
 use solidcraft_theme::Tokens;
 
-use crate::devices::{ConnectionKind, Device, DeviceType, RUIDA_DISCOVERY_NOTE, SortBy, Transfer, Wizard, WizardStep, find_my_laser};
+use crate::devices::{ConnectionKind, Device, DeviceType, RUIDA_DISCOVERY_NOTE, SortBy, Wizard, WizardStep, find_my_laser};
+use crate::job_build::Transfer;
 use crate::machine_api::{Family, SettingsBackup};
 use crate::machine_ui;
 use crate::shell::DarkBurn;
@@ -441,7 +442,7 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Scanning offset");
     note(ui, "At each speed, shift the return pass of raster scans by this much.");
     let mut remove = None;
-    for (i, row) in d.settings.scan_offsets.iter_mut().enumerate() {
+    for (i, row) in d.settings.scan.offsets.entries.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             ui_kit::number_field(ui, &mut row.speed, 0.0..=2000.0, 1.0, " mm/s");
             ui_kit::number_field(ui, &mut row.offset, -5.0..=5.0, 0.001, " mm");
@@ -451,11 +452,10 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         });
     }
     if let Some(i) = remove {
-        d.settings.scan_offsets.remove(i);
+        d.settings.scan.offsets.remove(i);
     }
     if small(ui, "Add row", "", true) {
-        d.settings.scan_offsets.push(crate::devices::ScanOffset { speed: 100.0, offset: 0.0 });
-        d.settings.scan_offsets.sort_by(|a, b| a.speed.total_cmp(&b.speed));
+        d.settings.scan.offsets.set(100.0, 0.0);
     }
     ui_kit::section_heading(ui, "This device remembers");
     ui_kit::checkbox(ui, "Inches", &mut d.state.inches);

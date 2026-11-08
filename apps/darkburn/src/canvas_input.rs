@@ -78,8 +78,10 @@ fn mods(m: Modifiers) -> Mods {
 /// The snap settings at this zoom: the finest grid on screen, and the snap distance.
 fn snap_options(xf: &Xf, m: Mods) -> SnapOptions {
     let (major, minor) = crate::view::grid_steps(xf.zoom as f32);
-    let px = if m.alt { SNAP_PX * SNAP_WIDE } else { SNAP_PX };
-    SnapOptions { grid: Some(minor.unwrap_or(major) as f64), objects: true, radius: xf.mm(px) }
+    let o = crate::options::get();
+    let px = if m.alt { o.object_snap_px * SNAP_WIDE } else { o.object_snap_px };
+    let grid = if o.grid_snap_mm > 0.0 { o.grid_snap_mm } else { minor.unwrap_or(major) };
+    SnapOptions { grid: o.snap_grid.then_some(grid as f64), objects: o.snap_objects, radius: xf.mm(px) }
 }
 
 /// `p` snapped (Ctrl shows the unsnapped position).
@@ -143,7 +145,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
     }
     st.snapped = None;
     st.pointer = None;
-    let tol = xf.mm(CLICK_TOLERANCE_PX);
+    let tol = xf.mm(crate::options::get().click_tolerance_px);
     let mut run: Option<&'static str> = None;
 
     if !panning && !app.pan_tool {
@@ -151,6 +153,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
             Tool::Select => select_tool(ui, app, &mut st, response, xf, m, raw, tol),
             Tool::Line => line_tool(ui, app, &mut st, response, xf, m, raw, tol),
             Tool::Rect | Tool::Ellipse | Tool::Polygon => shape_tool(ui, app, &mut st, response, xf, m, raw),
+            _ => crate::node_tool::interact(ui, app, response, xf, m, raw),
         }
     }
 
@@ -435,8 +438,10 @@ fn finish_pen(app: &mut DarkBurn, st: &mut State, closed: bool) {
     st.gesture = Gesture::None;
     if let Some(path) = st.pen.finish(closed) {
         let layer = app.editor.current_layer;
+        // A line that starts or ends on the end of an open line on the same layer extends it.
+        let closed = darkburn_core::shape::path_is_closed(&path);
         app.editor.edit("Draw line", |d, sel| {
-            let id = d.add(Shape::path(path, layer));
+            let (id, _) = crate::shape_nodes::add_line_in(d, path, layer, !closed, 0.05);
             sel.set([id]);
             true
         });
@@ -525,7 +530,9 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
         app.editor.selection.set([id]);
         st.mode = HandleMode::Scale;
     }
-    if pressed(Modifiers::NONE, Key::H) {
+    if app.tool == Tool::Nodes {
+        // The node tool uses the plain letter keys itself.
+    } else if pressed(Modifiers::NONE, Key::H) {
         *run = Some("arrange.flip_h");
     } else if pressed(Modifiers::NONE, Key::V) {
         *run = Some("arrange.flip_v");
@@ -703,7 +710,8 @@ pub fn paint_overlays(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &egui::Painter,
         for (i, n) in st.pen.nodes.iter().enumerate() {
             let p = xf.to_screen(n.at);
             let closing = i == 0 && st.pen.is_on_start(to, xf.mm(SNAP_PX));
-            let size = if closing { 10.0 } else { 6.0 };
+            let node = crate::options::get().node_size;
+            let size = if closing { node * 2.5 } else { node * 1.5 };
             painter.rect_stroke(
                 Rect::from_center_size(p, vec2(size, size)),
                 0.0,
@@ -723,6 +731,9 @@ pub fn paint_overlays(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &egui::Painter,
             painter.text(xf.to_screen(to) + vec2(14.0, 14.0), Align2::LEFT_TOP, format!("{len:.2} mm  {ang:.1}°"), font.clone(), text);
         }
     }
+
+    crate::node_tool::paint(ui, app, xf, painter, accent, dark);
+    crate::shape_ui::paint_preview(app, xf, painter, accent);
 
     // Snap marker.
     if let Some(s) = st.snapped {

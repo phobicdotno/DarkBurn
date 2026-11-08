@@ -93,35 +93,29 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     let start_ok = ready && !(family == Family::Ruida && dev.settings.dsp.disable_start) && !design_only;
     ui.horizontal_wrapped(|ui| {
         if btn(ui, "Start", "Run the job on the laser", start_ok) {
-            go(app, "machine.start", json!({}));
+            go(app, "job.start", json!({}));
         }
         let paused = snap.state == LaserState::Paused;
         if ui_kit::button(ui, if paused { "Resume" } else { "Pause" }, Button::Small).backing_on_hover_text("Pause or resume the job").clicked() {
-            go(app, if paused { "machine.resume" } else { "machine.pause" }, json!({}));
+            go(app, "job.pause", json!({}));
         }
         if ui_kit::button(ui, "Stop", Button::Small).backing_on_hover_text("Stop the job and turn the laser off").clicked() {
-            go(app, "machine.stop", json!({}));
+            go(app, "job.stop", json!({}));
         }
     });
     if family == Family::Ruida && dev.settings.dsp.disable_start {
         ui.label(RichText::new("Start is off for this device. Send the job and start it from the controller.").size(t.font_small).color(t.text_dim));
     }
-    ui.horizontal_wrapped(|ui| {
-        if btn(ui, "Frame", "Trace the job's outline with the laser off", ready && frame_args(app).is_some())
-            && let Some(a) = frame_args(app)
-        {
-            go(app, "machine.frame", a);
-        }
-        if btn(ui, "Home", "Run the homing cycle", ready || snap.state == LaserState::Alarm) {
-            go(app, "machine.home", json!({}));
-        }
-        if btn(ui, "Go to origin", "Move to the work origin", ready) {
-            go(app, "machine.go_to_origin", json!({}));
-        }
-        if snap.state == LaserState::Alarm && family == Family::Grbl && btn(ui, "Unlock", "Clear the alarm lock without homing", true) {
-            go(app, "machine.unlock", json!({}));
-        }
-    });
+    if snap.state == LaserState::Alarm && family == Family::Grbl {
+        ui.horizontal_wrapped(|ui| {
+            if btn(ui, "Home", "Run the homing cycle", true) {
+                go(app, "job.home", json!({}));
+            }
+            if btn(ui, "Unlock", "Clear the alarm lock without homing", true) {
+                go(app, "machine.unlock", json!({}));
+            }
+        });
+    }
     // Fire [MOVE-15]: also here for convenience when the device allows it.
     if fire_allowed(app) {
         fire_button(ui, app, connected && ready);
@@ -183,7 +177,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     ui.label(RichText::new(mode_status(rot, cyl, dev.settings.dsp.u_axis || family == Family::Grbl)).size(t.font_small).color(t.text_dim));
 
     ui.add_space(t.space_6);
-    job_controls(ui);
+    crate::job_ui::laser_panel(ui, app);
 }
 
 /// What the Laser panel says about rotary and cylinder correction.
@@ -195,40 +189,6 @@ pub fn mode_status(rotary: bool, cylinder: bool, has_axis: bool) -> String {
         (false, true) => "Cylinder correction on: the design is stretched to suit a cylinder".into(),
         (true, true) => "Rotary and cylinder correction both on".into(),
     }
-}
-
-/// Controls that belong to the job builder (save, run and send G-code, start from, options). They
-/// stay disabled until it is wired in.
-pub fn job_controls(ui: &mut Ui) {
-    ui.add_enabled_ui(false, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for l in ["Save G-code", "Run G-code", "Send"] {
-                ui_kit::button(ui, l, Button::Small);
-            }
-        });
-        let mut i = 0;
-        ui_kit::row(ui, "Start from", |ui| {
-            ui_kit::dropdown(ui, "start_from", &mut i, &["Absolute coords", "Current position", "User origin"]);
-        });
-        for l in ["Cut selected graphics", "Use selection origin", "Show last position", "Optimize cut path"] {
-            let mut on = false;
-            ui_kit::checkbox(ui, l, &mut on);
-        }
-    });
-}
-
-/// The rectangle to frame in machine millimetres: the selection, else the whole design.
-pub fn frame_args(app: &DarkBurn) -> Option<Value> {
-    let ids = app.editor.selected();
-    let bbox = if ids.is_empty() {
-        app.editor.doc.bbox()
-    } else {
-        ids.iter().filter_map(|i| app.editor.doc.get(*i)).map(|s| s.bbox()).reduce(|a, b| a.union(b))
-    }?;
-    let dev = app.machine.active();
-    let a = machine_ui::design_to_machine(kurbo::Point::new(bbox.x0, bbox.y0), dev);
-    let b = machine_ui::design_to_machine(kurbo::Point::new(bbox.x1, bbox.y1), dev);
-    Some(json!({ "x": a.x.min(b.x), "y": a.y.min(b.y), "width": (a.x - b.x).abs(), "height": (a.y - b.y).abs(), "feed": 3000.0 }))
 }
 
 fn fire_allowed(app: &DarkBurn) -> bool {

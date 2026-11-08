@@ -134,18 +134,31 @@ pub const COMMANDS: &[Cmd] = &[
 
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
-    id.starts_with("machine.")
+    crate::machine_job::handles(id)
+        || id.starts_with("machine.")
         || id.starts_with("device.")
         || matches!(id, "laser.devices" | "laser.controller_info" | "edit.device_settings" | "edit.machine_settings")
 }
 
 /// The commands here that do not touch a machine (and so are not flagged hardware).
 pub fn is_hardware(id: &str) -> bool {
-    id.starts_with("machine.") || matches!(id, "laser.devices" | "laser.controller_info" | "edit.device_settings" | "edit.machine_settings")
+    crate::machine_job::handles(id)
+        || id.starts_with("machine.")
+        || matches!(id, "laser.devices" | "laser.controller_info" | "edit.device_settings" | "edit.machine_settings")
 }
 
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
+        "job.start" => &["LASER-03", "LASER-24"],
+        "job.pause" | "job.stop" => &["LASER-03"],
+        "job.frame" => &["LASER-04"],
+        "job.frame_rubber" => &["LASER-05"],
+        "job.frame_selection" => &["LASER-04", "LASER-14"],
+        "job.send" => &["LASER-08"],
+        "job.run_gcode" => &["LASER-07"],
+        "job.home" => &["LASER-09"],
+        "job.go_origin" => &["LASER-10"],
+        "job.preview_run_from_here" | "job.preview_send_from_here" => &["PREV-09"],
         "machine.connect" | "machine.disconnect" | "machine.reset_connection" | "laser.devices" => &["LASER-01", "LASER-17"],
         "machine.start" | "machine.pause" | "machine.resume" | "machine.stop" => &["LASER-03", "RUIDA-03"],
         "machine.frame" => &["LASER-04", "LASER-05"],
@@ -281,6 +294,8 @@ pub struct MachineUi {
     pub job_log: Vec<String>,
     /// The device whose state is applied to the app, to notice a switch.
     applied_device: Option<u64>,
+    /// What the job builder was last given from the active device (see [`sync_job_state`]).
+    job_synced: Option<(u64, crate::job_build::DeviceGcodeSettings, crate::job_build::AdditionalSettings, crate::scan_offsets::ScanTuning)>,
 }
 
 impl Default for MachineUi {
@@ -313,6 +328,7 @@ impl MachineUi {
             last_events: Vec::new(),
             job_log: Vec::new(),
             applied_device: None,
+            job_synced: None,
         }
     }
 
@@ -549,6 +565,7 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     }
     // Keep the state fresh before acting on it.
     app.machine.tick();
+    crate::machine_job::update_head(app);
     if src == Source::Api && is_hardware(id) && app.machine.handle.is_real_machine() {
         return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
     }
@@ -571,7 +588,92 @@ fn index_of(a: &Value, k: &str) -> Result<u16, String> {
     a.get(k).and_then(Value::as_u64).and_then(|v| u16::try_from(v).ok()).ok_or_else(|| format!("argument {k} must be a whole number"))
 }
 
+/// The job commands and the origin commands, which need the job state as well as the machine.
+fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<Result<Value, String>> {
+    use crate::machine_job::{self as mj, Action};
+    let op = |a: &Value| a.get("op_index").and_then(Value::as_u64).map(|v| v as usize);
+    let start = |app: &mut DarkBurn, action: Action| match src {
+        Source::Ui => mj::start_later(app, action),
+        Source::Api => mj::start_now(app, action, a.get("allow_out_of_bounds").and_then(Value::as_bool).unwrap_or(false)),
+    };
+    Some(match id {
+        "job.start" | "machine.start" => {
+            let from_op = op(a).or(app.job.start_op);
+            start(app, Action::Start { from_op })
+        }
+        "job.preview_run_from_here" => match op(a) {
+            Some(n) => start(app, Action::Start { from_op: Some(n) }),
+            None => Err("argument op_index must be a whole number".into()),
+        },
+        "job.send" => {
+            let from_op = app.job.start_op;
+            start(app, Action::Send { from_op })
+        }
+        "job.preview_send_from_here" => match op(a) {
+            Some(n) => start(app, Action::Send { from_op: Some(n) }),
+            None => Err("argument op_index must be a whole number".into()),
+        },
+        "job.pause" => {
+            if app.machine.handle.snapshot().state == LaserState::Paused {
+                mach(app.machine.handle.resume())
+            } else {
+                mach(app.machine.handle.pause())
+            }
+        }
+        "job.stop" => mach(app.machine.handle.stop()),
+        "job.frame" | "machine.frame_job" => mj::frame(app, crate::job_build::FrameKind::Rectangle),
+        "job.frame_rubber" => mj::frame(app, crate::job_build::FrameKind::RubberBand),
+        "job.frame_selection" => mj::frame(app, crate::job_build::FrameKind::Selection),
+        "job.home" => mach(app.machine.handle.home()),
+        "job.go_origin" => mach(app.machine.handle.go_to_origin()),
+        "job.run_gcode" => run_gcode_file(app, a, src),
+        "machine.set_origin" => {
+            let r = mach(app.machine.handle.set_user_origin());
+            if r.is_ok() {
+                mj::origin_changed(app, true);
+            }
+            r
+        }
+        "machine.clear_origin" => {
+            let r = mach(app.machine.handle.clear_user_origin());
+            if r.is_ok() {
+                mj::origin_changed(app, false);
+            }
+            r
+        }
+        _ => return None,
+    })
+}
+
+/// Run a saved G-code file on a G-code machine [LASER-07].
+fn run_gcode_file(app: &mut DarkBurn, a: &Value, src: Source) -> Result<Value, String> {
+    if !app.machine.handle.is_connected() {
+        return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
+    }
+    let path = match (a.get("path").and_then(Value::as_str), src) {
+        (Some(p), _) => std::path::PathBuf::from(p),
+        (None, Source::Ui) => match rfd::FileDialog::new().add_filter("G-code", crate::job_build::GCODE_EXTENSIONS).pick_file() {
+            Some(p) => p,
+            None => return Ok(json!({ "ok": true, "cancelled": true })),
+        },
+        (None, Source::Api) => return Err("argument path must be text".into()),
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+    let mut job = JobRequest::gcode(text.lines().map(str::to_owned).collect());
+    job.name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "gcode".into());
+    if app.machine.handle.snapshot().family != Family::Grbl {
+        return Err("Run G-code is for G-code machines.".into());
+    }
+    match app.machine.begin_start(job)? {
+        StartOutcome::Started => Ok(json!({ "ok": true })),
+        StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
+    }
+}
+
 fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<Value, String> {
+    if let Some(r) = run_job_command(app, id, a, src) {
+        return r;
+    }
     let m = &mut app.machine;
     match id {
         // ----- dialogs
@@ -624,14 +726,6 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "machine.status" => Ok(status_json(m)),
         // ----- job
-        "machine.start" => {
-            let job = make_job(app)?;
-            let m = &mut app.machine;
-            match m.begin_start(job)? {
-                StartOutcome::Started => Ok(json!({ "ok": true })),
-                StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
-            }
-        }
         "machine.pause" => mach(m.handle.pause()),
         "machine.resume" => mach(m.handle.resume()),
         "machine.stop" => mach(m.handle.stop()),
@@ -673,8 +767,6 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             };
             mach(m.handle.move_to(spec))
         }
-        "machine.set_origin" => mach(m.handle.set_user_origin()),
-        "machine.clear_origin" => mach(m.handle.clear_user_origin()),
         "machine.get_position" => mach(m.handle.get_position()),
         "machine.fire" => {
             let percent = num(a, "percent").unwrap_or(m.fire_percent);
@@ -789,19 +881,6 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
     }
 }
 
-/// The job to run. Until the job builder is wired in this makes a small square for the
-/// simulators and refuses everything else, so a real machine is never fed a made-up job.
-/// This is the seam: replace the body with `job_build` + `job_cmds`.
-pub fn make_job(app: &DarkBurn) -> Result<JobRequest, String> {
-    let m = &app.machine;
-    if !m.handle.is_simulator() {
-        return Err("Real machines get their jobs from the job builder, which is not wired into this build yet.".into());
-    }
-    let mut job = crate::machine_api::simulator_square(m.handle.snapshot().family, 20.0);
-    job.stop_on_error = true;
-    Ok(job)
-}
-
 pub fn status_json(m: &MachineUi) -> Value {
     let s = m.handle.snapshot();
     json!({
@@ -860,6 +939,8 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
         // What the user changes while on a device is the device's from now on.
         capture_device_state(app, id);
     }
+    sync_job_state(app);
+    crate::machine_job::update_head(app);
     let events = app.machine.tick();
     if !events.is_empty() || app.machine.handle.snapshot().state.is_working() || app.machine.handle.snapshot().state == LaserState::Connecting {
         ctx.request_repaint();
@@ -920,6 +1001,8 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
         }
     }
     p.sanitise();
+    // Each device keeps its own material and cut library [LIB-09, LAYER-10].
+    app.extras.library.switch_device(&dev.name, &app.prefs);
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
@@ -978,4 +1061,55 @@ pub fn design_to_machine(p: Point, dev: &Device) -> Point {
 pub fn family_of(m: &MachineUi) -> Family {
     let s = m.handle.snapshot();
     if m.handle.is_connected() || s.state == LaserState::Connecting { s.family } else { m.active().family() }
+}
+
+/// The selected device profile is the source of truth for what the job builder uses: bed, origin
+/// corner, G-code settings, motion numbers and scan offsets flow from it into `app.job`. Edits made
+/// in the job builder's own G-code window or the images window flow back into the profile.
+pub fn sync_job_state(app: &mut DarkBurn) {
+    let Some(active) = app.machine.devices.active else { return };
+    let scan_now = crate::scan_offsets::current();
+    let same_device = app.machine.job_synced.as_ref().is_some_and(|s| s.0 == active);
+    if same_device {
+        let (_, g, ad, sc) = app.machine.job_synced.clone().unwrap_or_else(|| unreachable!());
+        let job_changed = app.job.gcode != g || app.job.additional != ad || scan_now != sc;
+        if job_changed && let Some(dev) = app.machine.devices.get_mut(active) {
+            dev.settings.gcode = app.job.gcode.clone();
+            dev.settings.additional = app.job.additional;
+            dev.settings.scan = scan_now.clone();
+        }
+    }
+    let Some(dev) = app.machine.devices.get(active) else { return };
+    let (g, ad, sc) = (dev.settings.gcode.clone(), dev.settings.additional, dev.settings.scan.clone());
+    let jd = dev.job_device();
+    if app.job.gcode != g {
+        app.job.gcode = g.clone();
+    }
+    if app.job.additional != ad {
+        app.job.additional = ad;
+    }
+    if scan_now != sc {
+        crate::scan_offsets::set(sc.clone());
+    }
+    app.job.device = jd;
+    app.machine.job_synced = Some((active, g, ad, sc));
+}
+
+/// A `.dbdev` file was opened or dropped: add it to the device list and show it [DEV-05].
+pub fn import_profile_file(app: &mut DarkBurn, path: &Path) {
+    match std::fs::read_to_string(path)
+        .map_err(|e| format!("Could not read {}: {e}", path.display()))
+        .and_then(|t| app.machine.devices.import_profile(&t))
+    {
+        Ok(id) => {
+            app.machine.dlg.devices = true;
+            app.machine.dlg.devices_sel = Some(id);
+            let name = app.machine.devices.get(id).map(|d| d.name.clone()).unwrap_or_default();
+            app.machine.say(format!("Added the device {name}"));
+        }
+        Err(e) => {
+            app.machine.dlg.devices = true;
+            app.machine.dlg.message = Some(e);
+        }
+    }
 }

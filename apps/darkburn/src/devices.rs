@@ -3,9 +3,8 @@
 //! Laser only reads the port list it is given, and a profile only becomes a connection when the
 //! user clicks Connect in the app.
 //!
-//! Overlap to settle at integration: [`DeviceGcodeSettings`] and [`AdditionalSettings`] have the
-//! same fields as the structs of the same name in the job builder's `job_build.rs`. Keep one of
-//! them (theirs, if it has landed) and delete this copy; the serde field names match.
+//! The G-code and motion settings are the job builder's own structs (`job_build.rs`); a device
+//! profile holds them and `machine_ui::sync_job_state` hands them to the job builder.
 
 #![allow(dead_code, reason = "wired into the dialogs and panels in machine_ui.rs and devices_ui.rs")]
 
@@ -13,10 +12,10 @@ use std::path::Path;
 
 use darkburn_grbl::PortInfo;
 use darkburn_job::Corner;
-use darkburn_job::MotionSettings;
-use darkburn_job::gcode::{AirCommand, Flavor, MarlinPower};
+use darkburn_job::gcode::Flavor;
 use serde::{Deserialize, Serialize};
 
+use crate::job_build::{AdditionalSettings, DeviceGcodeSettings, JobDevice, Transfer};
 use crate::machine_api::{ConnectConfig, ConnectSpec, Family, Link};
 
 /// What the user picks first in the wizard.
@@ -112,113 +111,6 @@ impl ConnectionKind {
 /// How a serial port is chosen when connecting [LASER-18].
 pub const AUTO_PORT: &str = "";
 
-/// Transfer mode for G-code devices (DS-13).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Transfer {
-    #[default]
-    Buffered,
-    Synchronous,
-}
-
-/// G-code device settings (DS-09 to DS-15).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DeviceGcodeSettings {
-    pub flavor: Flavor,
-    /// S value at 100 % power (DS-12).
-    pub s_max: f64,
-    pub air: AirCommand,
-    pub baud_rate: u32,
-    /// DS-09
-    pub auto_home: bool,
-    pub swap_xy: bool,
-    /// DS-10
-    pub fast_whitespace_scan: bool,
-    pub fast_whitespace_speed: f64,
-    /// DS-11
-    pub jog_with_dollar_j: bool,
-    pub dtr: bool,
-    pub fire_button: bool,
-    pub laser_on_when_framing: bool,
-    /// DS-13
-    pub transfer: Transfer,
-    /// DS-14: lines written before and after the job.
-    pub start_script: String,
-    pub end_script: String,
-    /// DS-15
-    pub overscan_as_g0: bool,
-    pub s_every_g1: bool,
-    pub marlin_power: MarlinPower,
-    pub tool_index: Option<u8>,
-    pub return_to_finish: bool,
-}
-
-impl Default for DeviceGcodeSettings {
-    fn default() -> Self {
-        DeviceGcodeSettings {
-            flavor: Flavor::Grbl,
-            s_max: 1000.0,
-            air: AirCommand::M8,
-            baud_rate: 115_200,
-            auto_home: false,
-            swap_xy: false,
-            fast_whitespace_scan: false,
-            fast_whitespace_speed: 100.0,
-            jog_with_dollar_j: true,
-            dtr: false,
-            fire_button: false,
-            laser_on_when_framing: false,
-            transfer: Transfer::Buffered,
-            start_script: String::new(),
-            end_script: String::new(),
-            overscan_as_g0: false,
-            s_every_g1: false,
-            marlin_power: MarlinPower::Inline,
-            tool_index: None,
-            return_to_finish: false,
-        }
-    }
-}
-
-/// Acceleration and speed numbers for the time estimate (DS-19).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AdditionalSettings {
-    pub accel: f64,
-    pub engrave_accel: f64,
-    pub rapid_speed: f64,
-    pub max_speed: f64,
-    pub junction_deviation: f64,
-    pub z_speed: f64,
-}
-
-impl Default for AdditionalSettings {
-    fn default() -> Self {
-        let m = MotionSettings::default();
-        AdditionalSettings {
-            accel: m.accel,
-            engrave_accel: m.engrave_accel,
-            rapid_speed: m.rapid_speed,
-            max_speed: m.max_speed,
-            junction_deviation: m.junction_deviation,
-            z_speed: m.z_speed,
-        }
-    }
-}
-
-impl AdditionalSettings {
-    pub fn motion(&self) -> MotionSettings {
-        MotionSettings {
-            accel: self.accel.max(1.0),
-            engrave_accel: self.engrave_accel.max(1.0),
-            rapid_speed: self.rapid_speed.max(1.0),
-            max_speed: self.max_speed.max(1.0),
-            junction_deviation: self.junction_deviation.max(1e-4),
-            z_speed: self.z_speed.max(0.1),
-        }
-    }
-}
-
 /// DSP-only settings (DS-16, DS-17).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -246,14 +138,6 @@ impl Default for DspSettings {
     }
 }
 
-/// One row of the scanning offset table (DS-08): at `speed` mm/s the return pass is shifted by
-/// `offset` mm.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ScanOffset {
-    pub speed: f64,
-    pub offset: f64,
-}
-
 /// What every device has (DS-01..DS-08, DS-19).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -276,7 +160,7 @@ pub struct DeviceSettings {
     /// DS-07
     pub overwrite_files: bool,
     /// DS-08
-    pub scan_offsets: Vec<ScanOffset>,
+    pub scan: crate::scan_offsets::ScanTuning,
     /// The most the Fire button may use, percent.
     pub fire_max_percent: f64,
     pub gcode: DeviceGcodeSettings,
@@ -302,7 +186,7 @@ impl Default for DeviceSettings {
                 "Lid is closed and the area is clear".into(),
             ],
             overwrite_files: false,
-            scan_offsets: Vec::new(),
+            scan: crate::scan_offsets::ScanTuning::default(),
             fire_max_percent: 10.0,
             gcode: DeviceGcodeSettings::default(),
             dsp: DspSettings::default(),
@@ -426,6 +310,19 @@ impl Device {
 
     pub fn family(&self) -> Family {
         self.kind.family()
+    }
+
+    /// What the job builder needs to know about this machine: bed, origin corner, negative
+    /// coordinates, swapped axes and Z.
+    pub fn job_device(&self) -> JobDevice {
+        JobDevice {
+            bed_w: self.width_mm,
+            bed_h: self.height_mm,
+            origin: self.origin,
+            negative_coords: self.settings.negative_coords,
+            swap_xy: self.settings.gcode.swap_xy,
+            z_enabled: self.settings.z_enabled,
+        }
     }
     pub fn is_simulator(&self) -> bool {
         self.kind.is_simulator()

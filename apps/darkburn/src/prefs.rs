@@ -81,6 +81,14 @@ pub struct Prefs {
     pub lock_aspect: bool,
     /// The Cut Settings Editor hides its Advanced tab.
     pub cut_beginner: bool,
+    /// Everything in the Settings window that is not layout (options.rs).
+    pub opts: crate::options::Options,
+    /// Changes to the default keys: command id to key text, empty for no key (keymap.rs).
+    pub hotkeys: crate::keymap::Overrides,
+    /// The cut library file each device last used (empty key: no device).
+    pub library_paths: BTreeMap<String, String>,
+    /// Import, export and file preferences (formats.rs).
+    pub files: crate::formats::FilePrefs,
 }
 
 impl Default for Prefs {
@@ -117,6 +125,10 @@ impl Default for Prefs {
             anchor: darkburn_core::arrange::Anchor::Centre,
             lock_aspect: true,
             cut_beginner: false,
+            opts: crate::options::Options::default(),
+            hotkeys: Default::default(),
+            library_paths: BTreeMap::new(),
+            files: Default::default(),
         }
     }
 }
@@ -158,7 +170,12 @@ impl Prefs {
             self.autosave_minutes = d.autosave_minutes;
         }
         self.autosave_minutes = self.autosave_minutes.clamp(0.0, 240.0);
+        self.opts.sanitise();
+        self.hotkeys.retain(|id, key| {
+            crate::keymap::bindable().iter().any(|(i, _, _)| i == id) && (key.is_empty() || crate::commands::parse_key(key).is_some())
+        });
         self.recent.truncate(crate::files::RECENT_MAX);
+        self.files.sanitise();
         for (id, state) in d.panels {
             self.panels.entry(id).or_insert(state);
         }

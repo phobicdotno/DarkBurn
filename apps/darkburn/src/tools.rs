@@ -28,6 +28,19 @@ pub enum Tool {
     Rect,
     Ellipse,
     Polygon,
+    /// Edit nodes (node_tool.rs).
+    Nodes,
+    /// Place tabs by hand.
+    Tabs,
+    Measure,
+    Warp,
+    Deform,
+    StartPoints,
+    RoundCorners,
+    /// Pick the two points of a mirror line.
+    Mirror,
+    /// Pick the two point pairs of a two-point rotate and scale.
+    TwoPoint,
 }
 
 impl Tool {
@@ -39,6 +52,15 @@ impl Tool {
             Tool::Rect => "tools.rect",
             Tool::Ellipse => "tools.ellipse",
             Tool::Polygon => "tools.polygon",
+            Tool::Nodes => "tools.nodes",
+            Tool::Tabs => "tools.tabs",
+            Tool::Measure => "tools.measure",
+            Tool::Warp => "tools.warp",
+            Tool::Deform => "tools.deform",
+            Tool::StartPoints => "tools.start_points",
+            Tool::RoundCorners => "tools.round_corners",
+            Tool::Mirror => "arrange.mirror",
+            Tool::TwoPoint => "arrange.two_point",
         }
     }
 
@@ -52,6 +74,7 @@ impl Tool {
             Tool::Rect => "Drag a rectangle. Ctrl: square, Shift: from the centre.",
             Tool::Ellipse => "Drag an ellipse. Ctrl: circle, Shift: from the centre.",
             Tool::Polygon => "Drag a polygon from its centre. Shift keeps a corner on top.",
+            other => crate::node_tool::hint(other),
         }
     }
 }
@@ -61,12 +84,7 @@ pub const POLYGON_SIDES: u32 = 6;
 
 /// The arrow-key nudge distance in mm for the held modifiers.
 pub fn nudge_step(shift: bool, ctrl: bool) -> f64 {
-    match (ctrl, shift) {
-        (true, true) => 0.01,
-        (true, false) => 0.1,
-        (false, true) => 10.0,
-        (false, false) => 1.0,
-    }
+    crate::options::get().nudge_step(shift, ctrl)
 }
 
 /// The rectangle a drag from `a` to `b` draws: a square when `square`, centred on `a` when

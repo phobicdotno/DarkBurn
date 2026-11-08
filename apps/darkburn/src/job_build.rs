@@ -1,0 +1,1278 @@
+#![allow(dead_code, reason = "the public API is for the machine side, wired when it lands")]
+//! Turns the document into a job: maps layers, shapes and images into the job engine's input,
+//! runs the planner and returns the toolpath. Nothing here needs a window.
+//!
+//! The machine side starts a job with these functions:
+//!
+//! - [`BuildInput`] gathers everything a job depends on (document, selection, project job
+//!   settings, device, user origin). `job_cmds::build_input(&app)` fills it from the app.
+//! - [`build_job`] runs on any thread with a cancel flag and a progress callback and returns a
+//!   [`BuiltJob`]: `toolpath` in machine coordinates (what to send), `design` in design
+//!   coordinates (what the preview draws), warnings and the work-area check.
+//! - [`spawn_build`] does the same on a worker thread ([`BuildTask`]: poll, cancel, progress).
+//! - [`BuiltJob::toolpath_from`] slices the job for "start from here".
+//! - [`gcode_text`] / [`gcode_lines`] write G-code with the device's [`DeviceGcodeSettings`].
+//! - [`build_frame`] makes the toolpath for framing (rectangle or rubber band).
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{Receiver, channel};
+
+use darkburn_core::kurbo::{Affine, BezPath, PathEl, Point, Rect};
+use darkburn_core::layer::{self, CutSetting, LaserSelect, Layer, Mode};
+use darkburn_core::{Document, ImageShape, Shape, ShapeId, ShapeKind};
+use darkburn_job as job;
+use darkburn_job::gcode::{AirCommand, Flavor, GcodeSettings, MarlinPower};
+use darkburn_job::{
+    BoundsReport, Corner, CutMode, FinishPosition, JobAnchor, JobError, JobInput, JobOptions, LayerInput, MachineGeometry, MotionSettings, Op,
+    OriginSettings, PlannerSettings, Progress, ShapeInput, StartFrom, Toolpath, check_bounds,
+};
+use serde::{Deserialize, Serialize};
+
+/// Curve flattening tolerance for jobs, mm.
+pub const TOLERANCE: f64 = 0.01;
+/// The version of the job settings saved in projects.
+pub const SETTINGS_VERSION: u32 = 1;
+
+// ----- Device ---------------------------------------------------------------------------------
+
+/// The parts of a device the job depends on. The device profiles will convert into this.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JobDevice {
+    pub bed_w: f64,
+    pub bed_h: f64,
+    /// Where the machine's 0,0 is (ORIG-07).
+    pub origin: Corner,
+    /// CNC style negative coordinates (ORIG-08).
+    pub negative_coords: bool,
+    /// Swap X and Y (ORIG-09).
+    pub swap_xy: bool,
+    /// The machine has a Z axis: Z offset and step per pass are written.
+    pub z_enabled: bool,
+}
+
+impl Default for JobDevice {
+    fn default() -> Self {
+        JobDevice { bed_w: 400.0, bed_h: 400.0, origin: Corner::BottomLeft, negative_coords: false, swap_xy: false, z_enabled: false }
+    }
+}
+
+impl JobDevice {
+    pub fn new(bed_w: f64, bed_h: f64) -> JobDevice {
+        JobDevice { bed_w, bed_h, ..Default::default() }
+    }
+
+    pub fn geometry(&self) -> MachineGeometry {
+        MachineGeometry { width: self.bed_w, height: self.bed_h, origin: self.origin, negative_coords: self.negative_coords, swap_xy: self.swap_xy }
+    }
+
+    /// The work area in design coordinates.
+    pub fn area(&self) -> Rect {
+        Rect::new(0.0, 0.0, self.bed_w, self.bed_h)
+    }
+}
+
+/// Transfer mode for G-code devices (DS-13).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Transfer {
+    #[default]
+    Buffered,
+    Synchronous,
+}
+
+/// G-code device settings (DS-09 to DS-15). The Devices dialog reuses [`gcode_settings_editor`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeviceGcodeSettings {
+    pub flavor: Flavor,
+    /// S value at 100 % power (DS-12).
+    pub s_max: f64,
+    pub air: AirCommand,
+    pub baud_rate: u32,
+    /// DS-09
+    pub auto_home: bool,
+    pub swap_xy: bool,
+    /// DS-10
+    pub fast_whitespace_scan: bool,
+    pub fast_whitespace_speed: f64,
+    /// DS-11
+    pub jog_with_dollar_j: bool,
+    pub dtr: bool,
+    pub fire_button: bool,
+    pub laser_on_when_framing: bool,
+    /// DS-13
+    pub transfer: Transfer,
+    /// DS-14: lines written before and after the job.
+    pub start_script: String,
+    pub end_script: String,
+    /// DS-15
+    pub overscan_as_g0: bool,
+    pub s_every_g1: bool,
+    pub marlin_power: MarlinPower,
+    pub tool_index: Option<u8>,
+    /// Go back to the start (or origin) when the job ends (ORIG-10).
+    pub return_to_finish: bool,
+}
+
+impl Default for DeviceGcodeSettings {
+    fn default() -> Self {
+        DeviceGcodeSettings {
+            flavor: Flavor::Grbl,
+            s_max: 1000.0,
+            air: AirCommand::M8,
+            baud_rate: 115_200,
+            auto_home: false,
+            swap_xy: false,
+            fast_whitespace_scan: false,
+            fast_whitespace_speed: 100.0,
+            jog_with_dollar_j: true,
+            dtr: false,
+            fire_button: false,
+            laser_on_when_framing: false,
+            transfer: Transfer::Buffered,
+            start_script: String::new(),
+            end_script: String::new(),
+            overscan_as_g0: false,
+            s_every_g1: false,
+            marlin_power: MarlinPower::Inline,
+            tool_index: None,
+            return_to_finish: false,
+        }
+    }
+}
+
+impl DeviceGcodeSettings {
+    /// The writer settings for `darkburn_job::gcode`.
+    pub fn to_gcode(&self) -> GcodeSettings {
+        let mut g = GcodeSettings::new(self.flavor);
+        g.s_max = self.s_max;
+        g.air = self.air;
+        g.overscan_as_g0 = self.overscan_as_g0;
+        g.s_every_g1 = self.s_every_g1;
+        g.marlin_power = self.marlin_power;
+        g.tool_index = self.tool_index;
+        g.start_script = self.start_script.clone();
+        if self.auto_home && matches!(self.flavor, Flavor::Grbl | Flavor::GrblHal | Flavor::FluidNc) {
+            g.start_script = format!("$H\n{}", g.start_script);
+        }
+        g.end_script = self.end_script.clone();
+        g
+    }
+
+    pub fn flavor_names() -> [&'static str; 6] {
+        ["GRBL", "grblHAL", "FluidNC", "Marlin", "Smoothieware", "LinuxCNC"]
+    }
+
+    pub fn flavor_index(&self) -> usize {
+        match self.flavor {
+            Flavor::Grbl => 0,
+            Flavor::GrblHal => 1,
+            Flavor::FluidNc => 2,
+            Flavor::Marlin => 3,
+            Flavor::Smoothieware => 4,
+            Flavor::LinuxCnc => 5,
+        }
+    }
+
+    /// Pick a flavor by index; S max follows the flavor's usual value.
+    pub fn set_flavor_index(&mut self, i: usize) {
+        self.flavor = [Flavor::Grbl, Flavor::GrblHal, Flavor::FluidNc, Flavor::Marlin, Flavor::Smoothieware, Flavor::LinuxCnc][i.min(5)];
+        self.s_max = GcodeSettings::new(self.flavor).s_max;
+    }
+}
+
+/// The acceleration and speed numbers the time estimate and the preview use (DS-19, PREV-11).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdditionalSettings {
+    /// Cutting acceleration, mm/s².
+    pub accel: f64,
+    /// Acceleration for fill and image, mm/s².
+    pub engrave_accel: f64,
+    pub rapid_speed: f64,
+    pub max_speed: f64,
+    pub junction_deviation: f64,
+    pub z_speed: f64,
+}
+
+impl Default for AdditionalSettings {
+    fn default() -> Self {
+        let m = MotionSettings::default();
+        AdditionalSettings {
+            accel: m.accel,
+            engrave_accel: m.engrave_accel,
+            rapid_speed: m.rapid_speed,
+            max_speed: m.max_speed,
+            junction_deviation: m.junction_deviation,
+            z_speed: m.z_speed,
+        }
+    }
+}
+
+impl AdditionalSettings {
+    pub fn motion(&self) -> MotionSettings {
+        MotionSettings {
+            accel: self.accel.max(1.0),
+            engrave_accel: self.engrave_accel.max(1.0),
+            rapid_speed: self.rapid_speed.max(1.0),
+            max_speed: self.max_speed.max(1.0),
+            junction_deviation: self.junction_deviation.max(1e-4),
+            z_speed: self.z_speed.max(0.1),
+        }
+    }
+}
+
+// ----- Settings saved with the project ----------------------------------------------------------
+
+/// Where the job lands (LASER-11, ORIG-01 to ORIG-03).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StartMode {
+    /// Design coordinates are bed coordinates.
+    #[default]
+    Absolute,
+    CurrentPosition,
+    UserOrigin,
+}
+
+impl StartMode {
+    pub const ALL: [StartMode; 3] = [StartMode::Absolute, StartMode::CurrentPosition, StartMode::UserOrigin];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StartMode::Absolute => "Absolute coords",
+            StartMode::CurrentPosition => "Current position",
+            StartMode::UserOrigin => "User origin",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<StartMode> {
+        Some(match name {
+            "absolute" => StartMode::Absolute,
+            "current_position" | "current" => StartMode::CurrentPosition,
+            "user_origin" | "user" => StartMode::UserOrigin,
+            _ => return None,
+        })
+    }
+}
+
+/// Job settings that travel with the project (PLAN-12).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JobProjectSettings {
+    pub version: u32,
+    /// Optimization settings (PLAN-01 to PLAN-10).
+    pub planner: PlannerSettings,
+    pub start_from: StartMode,
+    /// The 9-point job origin (ORIG-04).
+    pub anchor: JobAnchor,
+    /// Anchor on the selection instead of the whole job (ORIG-05).
+    pub use_selection_origin: bool,
+    /// Cut selected graphics only (LASER-13).
+    pub cut_selected: bool,
+    /// Drop shapes that are not inside the work area (LASER-27).
+    pub discard_out_of_bounds: bool,
+    /// Show the last job's position on the canvas (LASER-15).
+    pub show_last_position: bool,
+    pub finish: FinishPosition,
+}
+
+impl Default for JobProjectSettings {
+    fn default() -> Self {
+        JobProjectSettings {
+            version: SETTINGS_VERSION,
+            planner: PlannerSettings::default(),
+            start_from: StartMode::Absolute,
+            anchor: JobAnchor::BottomLeft,
+            use_selection_origin: false,
+            cut_selected: false,
+            discard_out_of_bounds: false,
+            show_last_position: false,
+            finish: FinishPosition::Stay,
+        }
+    }
+}
+
+impl JobProjectSettings {
+    /// The settings saved in `doc`; `fallback` planner settings (the user's defaults) when the
+    /// project has none or they cannot be read.
+    pub fn from_doc(doc: &Document, fallback: &PlannerSettings) -> JobProjectSettings {
+        match doc.job_settings.as_ref().and_then(|v| serde_json::from_value::<JobProjectSettings>(v.clone()).ok()) {
+            Some(s) => s,
+            None => JobProjectSettings { planner: fallback.clone(), ..Default::default() },
+        }
+    }
+
+    /// Store in `doc` (the caller wraps this in an undo step).
+    pub fn store(&self, doc: &mut Document) {
+        doc.job_settings = serde_json::to_value(self).ok();
+    }
+}
+
+// ----- Building -------------------------------------------------------------------------------
+
+/// Everything a job depends on.
+#[derive(Clone)]
+pub struct BuildInput {
+    pub doc: Document,
+    pub selection: Vec<ShapeId>,
+    pub settings: JobProjectSettings,
+    pub device: JobDevice,
+    /// The user origin in machine coordinates, if set.
+    pub user_origin: Option<Point>,
+    /// Where the head is now, machine coordinates (used for the work-area check when the job
+    /// starts from the current position).
+    pub head: Option<Point>,
+    pub motion: AdditionalSettings,
+}
+
+/// Why no job was built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BuildError {
+    Cancelled,
+    NothingToBurn,
+    NothingSelected,
+    NoUserOrigin,
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BuildError::Cancelled => "job generation was cancelled",
+            BuildError::NothingToBurn => "there is nothing to burn: no shapes on layers that output",
+            BuildError::NothingSelected => "Cut selected graphics is on and nothing is selected",
+            BuildError::NoUserOrigin => "Start from is User origin, but no user origin is set",
+        })
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+/// A built job.
+#[derive(Clone, Debug)]
+pub struct BuiltJob {
+    /// Machine coordinates (or relative to the start): what is sent or written.
+    pub toolpath: Toolpath,
+    /// The same operations in design coordinates, for the preview. Operation `i` is operation
+    /// `i` of `toolpath`.
+    pub design: Toolpath,
+    /// Bounds of the burn in design coordinates.
+    pub bounds: Rect,
+    pub origin: OriginSettings,
+    pub warnings: Vec<String>,
+    /// The work-area check (empty when the job fits or cannot be checked).
+    pub bounds_report: BoundsReport,
+    /// Shapes left out because they were outside the work area.
+    pub dropped_shapes: usize,
+}
+
+impl BuiltJob {
+    pub fn out_of_bounds(&self) -> bool {
+        !self.bounds_report.is_ok()
+    }
+
+    /// The job from operation `op` on ("Start here" and "Save from here").
+    pub fn toolpath_from(&self, op: usize) -> Toolpath {
+        self.toolpath.slice_from(op)
+    }
+
+    /// Time estimate and simulation in design coordinates.
+    pub fn simulate(&self, motion: &AdditionalSettings) -> job::Simulation {
+        job::sim::simulate(&self.design, &motion.motion())
+    }
+}
+
+struct Collected {
+    job: JobInput,
+    bounds: Option<Rect>,
+    selection_bounds: Option<Rect>,
+    frame_paths: Vec<BezPath>,
+    warnings: Vec<String>,
+    dropped: usize,
+}
+
+fn cut_mode(m: Mode) -> CutMode {
+    match m {
+        Mode::Line => CutMode::Line,
+        Mode::Fill => CutMode::Fill,
+        Mode::FillLine => CutMode::FillLine,
+        Mode::OffsetFill => CutMode::OffsetFill,
+        Mode::Image => CutMode::Image,
+    }
+}
+
+fn overscan(s: &CutSetting) -> job::Overscan {
+    if s.overscan <= 0.0 {
+        job::Overscan::None
+    } else if s.overscan_percent {
+        job::Overscan::Percent(s.overscan)
+    } else {
+        job::Overscan::Distance(s.overscan)
+    }
+}
+
+/// Map one cut setting (a layer's main settings or a sub-layer) to the job engine's.
+pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutSettings {
+    let lead = |l: &layer::Lead| {
+        l.enabled.then_some(job::Lead {
+            length: l.length.max(0.0),
+            angle_deg: l.angle,
+            style: match l.style {
+                layer::LeadStyle::Line => job::LeadStyle::Line,
+                layer::LeadStyle::Arc => job::LeadStyle::Arc,
+            },
+        })
+    };
+    let mut c = job::CutSettings {
+        enabled: s.enabled,
+        mode: cut_mode(s.mode),
+        speed: s.speed.max(0.01),
+        max_power: s.max_power.clamp(0.0, 100.0),
+        min_power: s.min_power.clamp(0.0, 100.0),
+        passes: s.passes.max(1),
+        air: layer.air,
+        laser: if s.laser == LaserSelect::Laser2 { 2 } else { 1 },
+        constant_power: s.constant_power,
+        z: job::ZSettings { enabled: z_enabled && (s.z_offset != 0.0 || s.z_step != 0.0), offset: s.z_offset, step_per_pass: s.z_step },
+        ..job::CutSettings::default()
+    };
+    c.line = job::LineSettings {
+        perforation: s.perforation.then_some(job::Perforation { cut: s.perf_cut.max(0.01), skip: s.perf_skip.max(0.0) }),
+        tabs: job::TabSettings {
+            enabled: s.tabs.enabled && s.tabs.auto_spacing,
+            spacing: s.tabs.spacing.max(0.1),
+            min_count: s.tabs.min_count,
+            max_count: s.tabs.max_count.max(s.tabs.min_count),
+            size: s.tabs.size.max(0.0),
+            tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
+            skip_inner: s.tabs.skip_inner,
+        },
+        start_pause_ms: s.start_pause_ms.max(0.0),
+        end_pause_ms: s.end_pause_ms.max(0.0),
+        cut_through_start: s.cut_through_start,
+        cut_through_end: s.cut_through_end,
+        pause_power: s.cut_through_power.clamp(0.0, 100.0),
+        overcut: s.overcut.max(0.0),
+        lead_in: lead(&s.lead_in),
+        lead_out: lead(&s.lead_out),
+        dot_mode: s.dot_mode.then_some(job::DotMode { time_ms: s.dot_time_ms.max(0.0), spacing: s.dot_spacing.max(0.01) }),
+    };
+    c.fill = job::FillSettings {
+        interval: s.interval.max(0.001),
+        angle_deg: s.scan_angle,
+        angle_step_per_pass: s.angle_increment,
+        bidirectional: s.bidirectional,
+        cross_hatch: s.cross_hatch,
+        overscan: overscan(s),
+        fill_rule: job::FillRule::EvenOdd,
+        grouping: match s.fill_grouping {
+            layer::FillGrouping::AllAtOnce => job::FillGrouping::AllAtOnce,
+            layer::FillGrouping::GroupsTogether => job::FillGrouping::GroupsTogether,
+            layer::FillGrouping::Individually => job::FillGrouping::Individually,
+        },
+        flood_fill: s.flood_fill,
+        ramp_length: s.ramp_length.max(0.0),
+        ramp_outer_edge: s.ramp_outer,
+        ..job::FillSettings::default()
+    };
+    c.image = job::ImageSettings { bidirectional: s.bidirectional, overscan: overscan(s), skip_blanks: true, rapid_gap: 10.0 };
+    c
+}
+
+fn raster_mode(s: &CutSetting) -> darkburn_raster::ImageMode {
+    use darkburn_core::layer::ImageMode as M;
+    use darkburn_raster::ImageMode as R;
+    if s.pass_through {
+        return R::PassThrough;
+    }
+    match s.image_mode {
+        M::Threshold => R::Threshold { threshold: 0.5, ramp_length_mm: s.threshold_ramp.max(0.0) },
+        M::Ordered => R::Ordered,
+        M::Atkinson => R::Atkinson,
+        M::Dither => R::FloydSteinberg,
+        M::Stucki => R::Stucki,
+        M::Jarvis => R::Jarvis,
+        M::Newsprint => R::Newsprint,
+        M::Halftone => R::Halftone { cells_per_inch: s.halftone_cells.max(1.0), angle_deg: s.halftone_angle },
+        M::Sketch => R::Sketch { radius_px: 2.0, gain: 1.5 },
+        M::Grayscale => R::Grayscale,
+    }
+}
+
+fn adjustments(a: &darkburn_core::ImageAdjust) -> darkburn_raster::Adjustments {
+    darkburn_raster::Adjustments {
+        brightness: a.brightness as f32,
+        contrast: a.contrast as f32,
+        gamma: a.gamma.clamp(0.1, 10.0) as f32,
+        enhance_amount: (a.enhance_amount / 100.0).max(0.0) as f32,
+        enhance_radius: if a.enhance_radius > 0.0 { a.enhance_radius as f32 } else { 1.0 },
+        enhance_denoise: (a.enhance_denoise / 10.0).clamp(0.0, 1.0) as f32,
+        negative: false,
+    }
+}
+
+/// Pixels to the shape's local millimetres: the image is centred on the local origin, y up.
+fn pixel_to_local(img: &ImageShape, px_w: u32, px_h: u32) -> Affine {
+    let sx = img.width / f64::from(px_w.max(1));
+    let sy = img.height / f64::from(px_h.max(1));
+    Affine::new([sx, 0.0, 0.0, -sy, -img.width / 2.0, img.height / 2.0])
+}
+
+/// Scan lines of the images of one layer, using the layer's image settings.
+fn image_inputs(
+    doc: &Document,
+    leaves: &[(&Shape, Option<u32>)],
+    s: &CutSetting,
+    cache: &mut HashMap<String, Arc<darkburn_raster::GrayF>>,
+) -> Vec<job::ImageInput> {
+    let settings = darkburn_raster::ImageSettings {
+        mode: raster_mode(s),
+        line_interval_mm: s.interval.max(0.001),
+        scan_angle_deg: s.scan_angle,
+        negative: s.negative,
+        linear_light: true,
+    };
+    let scan = darkburn_raster::ScanSettings {
+        bidirectional: true,
+        overscan_mm: 0.0,
+        blank_skip_mm: None,
+        dot_width_mm: s.dot_width_correction.max(0.0),
+        min_power: 0.4,
+        max_power: 100.0,
+    };
+    let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64)> = Vec::new();
+    for (shape, group) in leaves {
+        let ShapeKind::Image(img) = &shape.kind else { continue };
+        let Some(data) = doc.images.get(&img.image) else { continue };
+        let gray = match cache.get(&img.image) {
+            Some(g) => g.clone(),
+            None => {
+                let Ok(decoded) = image::load_from_memory(&data.bytes) else { continue };
+                let g = Arc::new(darkburn_raster::GrayF::from_dynamic(&decoded));
+                cache.insert(img.image.clone(), g.clone());
+                g
+            }
+        };
+        let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
+        let p = darkburn_raster::process_image(&gray, to_mm, &adjustments(&img.adjust), &settings);
+        processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
+    }
+    let mut out = Vec::new();
+    let build = |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
+        for plan in plans {
+            let lines = plan
+                .lines
+                .iter()
+                .map(|l| {
+                    let mut runs: Vec<(f64, f64, f64)> =
+                        l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
+                    runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    job::Scanline { y: l.y, runs }
+                })
+                .collect();
+            let mut input = job::ImageInput::new(lines);
+            input.transform = plan.scan_to_mm();
+            input.group = group;
+            input.priority = priority;
+            out.push(input);
+        }
+    };
+    if s.merge_images && processed.iter().all(|p| (p.3 - processed[0].3).abs() < 1e-9) && !processed.is_empty() {
+        let refs: Vec<&darkburn_raster::ProcessedImage> = processed.iter().map(|p| &p.0).collect();
+        let group = processed[0].1;
+        let prio = processed.iter().map(|p| p.2).min().unwrap_or(0);
+        build(darkburn_raster::scan_plans(&refs, &scan), group, prio, processed[0].3, &mut out);
+    } else {
+        for p in &processed {
+            build(darkburn_raster::scan_plans(&[&p.0], &scan), p.1, p.2, p.3, &mut out);
+        }
+    }
+    out
+}
+
+fn kerf_of(layer: &Layer) -> (f64, bool) {
+    let kerfs: Vec<f64> =
+        layer.settings.iter().filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine) && s.kerf != 0.0).map(|s| s.kerf).collect();
+    match kerfs.first() {
+        Some(&k) => (k, kerfs.iter().any(|x| (x - k).abs() > 1e-9)),
+        None => (0.0, false),
+    }
+}
+
+fn is_outside(bbox: Rect, area: Rect) -> bool {
+    let tol = 1e-6;
+    bbox.x0 < area.x0 - tol || bbox.y0 < area.y0 - tol || bbox.x1 > area.x1 + tol || bbox.y1 > area.y1 + tol
+}
+
+fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {
+    let doc = &input.doc;
+    let st = &input.settings;
+    if st.cut_selected && input.selection.is_empty() {
+        return Err(BuildError::NothingSelected);
+    }
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
+    let mut warnings = Vec::new();
+    let mut dropped = 0usize;
+    let area = input.device.area();
+    let order_pos: HashMap<usize, usize> = doc.layer_order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
+
+    // Selection bounds for "use selection origin" (all selected shapes, burning or not).
+    let selection_bounds = input.selection.iter().filter_map(|id| doc.get(*id)).map(|s| s.bbox()).reduce(|a, b| a.union(b));
+
+    let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
+    let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+    let mut frame_paths = Vec::new();
+    let mut kerf_note = [false; layer::LAYER_COUNT];
+
+    let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
+    let total = tops.len().max(1);
+    for (n, top) in tops.iter().enumerate() {
+        if cancelled() {
+            return Err(BuildError::Cancelled);
+        }
+        report(0.25 * n as f32 / total as f32);
+        let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
+        for leaf in top.leaves() {
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if !l.outputs() {
+                continue;
+            }
+            let bbox = leaf.bbox();
+            if st.discard_out_of_bounds && is_outside(bbox, area) {
+                dropped += 1;
+                continue;
+            }
+            if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
+                warnings.push(format!(
+                    "Text \"{}\" has no outline yet and was left out.",
+                    match &leaf.kind {
+                        ShapeKind::Text(t) => t.text.as_str(),
+                        _ => "",
+                    }
+                ));
+                continue;
+            }
+            let entry = layers[li].get_or_insert_with(|| {
+                let settings = l.settings.iter().map(|s| map_settings(s, l, input.device.z_enabled)).collect();
+                LayerInput {
+                    index: li,
+                    name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
+                    priority: order_pos.get(&li).copied().unwrap_or(li) as i32,
+                    output: true,
+                    settings,
+                    shapes: Vec::new(),
+                    images: Vec::new(),
+                }
+            });
+            if leaf.is_image() {
+                frame_paths.push(leaf.outline());
+                leaves_by_layer[li].push((leaf, group));
+                continue;
+            }
+            let mut path = leaf.outline();
+            if path.elements().is_empty() {
+                continue;
+            }
+            let (kerf, differ) = kerf_of(l);
+            if kerf != 0.0 {
+                path = darkburn_geom::offset::kerf_offset(&path, kerf, TOLERANCE);
+                kerf_note[li] |= differ;
+            }
+            frame_paths.push(path.clone());
+            let mut si = ShapeInput::new(path);
+            si.group = group;
+            si.priority = leaf.priority;
+            si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
+            entry.shapes.push(si);
+        }
+    }
+    for (li, differ) in kerf_note.iter().enumerate() {
+        if *differ {
+            warnings.push(format!("Layer {} has different kerf offsets on its sub-layers; the first one is used.", layer::layer_label(li)));
+        }
+    }
+
+    // Images, layer by layer.
+    let mut cache = HashMap::new();
+    for li in 0..layer::LAYER_COUNT {
+        if leaves_by_layer[li].is_empty() {
+            continue;
+        }
+        if cancelled() {
+            return Err(BuildError::Cancelled);
+        }
+        report(0.25 + 0.05 * li as f32 / layer::LAYER_COUNT as f32);
+        let l = doc.layer(li);
+        let Some(entry) = layers[li].as_mut() else { continue };
+        let image_setting = l.settings.iter().find(|s| s.enabled && s.mode == Mode::Image);
+        match image_setting {
+            Some(s) => {
+                let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
+                entry.images = image_inputs(doc, &refs, s, &mut cache);
+            }
+            None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
+        }
+    }
+
+    // Layers in output order.
+    let mut list: Vec<LayerInput> = layers.into_iter().flatten().filter(|l| !l.shapes.is_empty() || !l.images.is_empty()).collect();
+    list.sort_by_key(|l| (l.priority, l.index));
+
+    // Bounds of what burns, flattened the way the engine does it.
+    let mut bounds: Option<Rect> = None;
+    let mut add = |p: Point| bounds = Some(bounds.map_or(Rect::from_points(p, p), |r| r.union_pt(p)));
+    for l in &list {
+        for s in &l.shapes {
+            for poly in job::geom::flatten(&s.path, TOLERANCE) {
+                poly.pts.iter().for_each(|p| add(*p));
+            }
+        }
+        for img in &l.images {
+            for sl in &img.scanlines {
+                for &(x0, x1, _) in &sl.runs {
+                    add(img.transform * Point::new(x0, sl.y));
+                    add(img.transform * Point::new(x1, sl.y));
+                }
+            }
+        }
+    }
+    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, warnings, dropped })
+}
+
+/// The origin settings of a build, given the selection bounds.
+fn origin_for(input: &BuildInput, selection_bounds: Option<Rect>) -> Result<OriginSettings, BuildError> {
+    let st = &input.settings;
+    let start_from = match st.start_from {
+        StartMode::Absolute => StartFrom::Absolute,
+        StartMode::CurrentPosition => StartFrom::CurrentPosition,
+        StartMode::UserOrigin => StartFrom::UserOrigin(input.user_origin.ok_or(BuildError::NoUserOrigin)?),
+    };
+    Ok(OriginSettings {
+        machine: input.device.geometry(),
+        start_from,
+        anchor: st.anchor,
+        selection_bounds: if st.use_selection_origin { selection_bounds } else { None },
+        finish: st.finish,
+    })
+}
+
+fn inverse_ops(tp: &Toolpath, t: Affine) -> Toolpath {
+    let inv = t.inverse();
+    let flip = t.determinant() < 0.0;
+    let ops = tp
+        .ops
+        .iter()
+        .map(|op| match op.clone() {
+            Op::Rapid { to } => Op::Rapid { to: inv * to },
+            Op::Cut { to, speed, power } => Op::Cut { to: inv * to, speed, power },
+            Op::Overscan { to, speed } => Op::Overscan { to: inv * to, speed },
+            Op::Arc { to, center, clockwise, speed, power } => {
+                Op::Arc { to: inv * to, center: inv * center, clockwise: clockwise ^ flip, speed, power }
+            }
+            other => other,
+        })
+        .collect();
+    Toolpath { space: job::CoordSpace::Design, layers: tp.layers.clone(), ops, start: inv * tp.start }
+}
+
+/// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
+pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
+    let c = collect(input, cancel, report)?;
+    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let origin = origin_for(input, c.selection_bounds)?;
+    let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: TOLERANCE, comments: true };
+    let mut scaled = |f: f32| report(0.3 + 0.7 * f);
+    let mut progress = Progress::new(cancel, Some(&mut scaled));
+    let toolpath = match job::generate(&c.job, &opts, &mut progress) {
+        Ok(tp) => tp,
+        Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
+        Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
+    };
+    let design = inverse_ops(&toolpath, origin.transform(bounds));
+    let mut warnings = c.warnings;
+    if c.dropped > 0 {
+        warnings.push(format!("{} shape(s) outside the work area were left out.", c.dropped));
+    }
+    let bounds_report = check_work_area(input, &toolpath);
+    if !bounds_report.is_ok() {
+        let burning = bounds_report.violations.iter().filter(|v| v.burning).count();
+        warnings.push(format!("The job leaves the work area ({} moves, {burning} of them burning).", bounds_report.violations.len()));
+    }
+    Ok(BuiltJob { toolpath, design, bounds, origin, warnings, bounds_report, dropped_shapes: c.dropped })
+}
+
+/// The work-area check in the toolpath's own coordinates; empty when it cannot be checked.
+fn check_work_area(input: &BuildInput, tp: &Toolpath) -> BoundsReport {
+    let machine_area = input.device.geometry().work_area();
+    match tp.space {
+        job::CoordSpace::MachineAbsolute => check_bounds(tp, machine_area),
+        job::CoordSpace::RelativeToStart => match input.head {
+            Some(h) => check_bounds(tp, machine_area.with_origin(Point::new(machine_area.x0 - h.x, machine_area.y0 - h.y))),
+            None => BoundsReport::default(),
+        },
+        job::CoordSpace::Design => check_bounds(tp, input.device.area()),
+    }
+}
+
+/// Build with no progress or cancel (tests, scripts).
+pub fn build_job_simple(input: &BuildInput) -> Result<BuiltJob, BuildError> {
+    build_job(input, None, &mut |_| {})
+}
+
+/// A job being built on a worker thread (PLAN-14: progress and cancel).
+pub struct BuildTask {
+    rx: Receiver<Result<BuiltJob, BuildError>>,
+    cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicU32>,
+    done: Option<Result<Arc<BuiltJob>, BuildError>>,
+}
+
+/// Start building on a worker thread.
+pub fn spawn_build(input: BuildInput) -> BuildTask {
+    let (tx, rx) = channel();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let progress = Arc::new(AtomicU32::new(0));
+    let (c2, p2) = (cancel.clone(), progress.clone());
+    std::thread::spawn(move || {
+        let mut report = |f: f32| p2.store(f.to_bits(), Ordering::Relaxed);
+        let r = build_job(&input, Some(&c2), &mut report);
+        let _ = tx.send(r);
+    });
+    BuildTask { rx, cancel, progress, done: None }
+}
+
+impl BuildTask {
+    /// 0..1.
+    pub fn progress(&self) -> f32 {
+        f32::from_bits(self.progress.load(Ordering::Relaxed))
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    /// The result once the worker is done (None while it runs). Safe to call again after.
+    pub fn poll(&mut self) -> Option<&Result<Arc<BuiltJob>, BuildError>> {
+        if self.done.is_none()
+            && let Ok(r) = self.rx.try_recv()
+        {
+            self.done = Some(r.map(Arc::new));
+        }
+        self.done.as_ref()
+    }
+
+    /// Wait for the result.
+    pub fn wait(mut self) -> Result<Arc<BuiltJob>, BuildError> {
+        if self.done.is_none() {
+            self.done = Some(self.rx.recv().unwrap_or(Err(BuildError::Cancelled)).map(Arc::new));
+        }
+        self.done.take().unwrap_or(Err(BuildError::Cancelled))
+    }
+}
+
+// ----- G-code ---------------------------------------------------------------------------------
+
+/// G-code for the job, or for the job from operation `from_op` on.
+pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings) -> String {
+    let settings = dev.to_gcode();
+    match from_op {
+        Some(op) => job::gcode::emit(&job.toolpath_from(op), &settings),
+        None => job::gcode::emit(&job.toolpath, &settings),
+    }
+}
+
+/// G-code lines to stream to a controller.
+pub fn gcode_lines(tp: &Toolpath, dev: &DeviceGcodeSettings) -> Vec<String> {
+    job::gcode::lines(tp, &dev.to_gcode()).collect()
+}
+
+/// File extensions the G-code save offers (EXP-06).
+pub const GCODE_EXTENSIONS: &[&str] = &["gc", "gcode", "nc", "txt"];
+
+// ----- Framing --------------------------------------------------------------------------------
+
+/// What to frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameKind {
+    /// The bounding rectangle of the job (LASER-04).
+    Rectangle,
+    /// The rubber-band outline of the job (LASER-05).
+    RubberBand,
+    /// The bounding rectangle of the selection.
+    Selection,
+}
+
+/// The closed rectangle `bounds` as five points.
+pub fn frame_rect_points(bounds: Rect) -> Vec<Point> {
+    vec![
+        Point::new(bounds.x0, bounds.y0),
+        Point::new(bounds.x1, bounds.y0),
+        Point::new(bounds.x1, bounds.y1),
+        Point::new(bounds.x0, bounds.y1),
+        Point::new(bounds.x0, bounds.y0),
+    ]
+}
+
+/// The rubber-band outline of `paths` as a closed run of points.
+pub fn frame_rubber_points(paths: &[BezPath], tol: f64) -> Vec<Point> {
+    let hull = darkburn_geom::hull::rubber_band_outline(paths, tol);
+    let mut pts: Vec<Point> = Vec::new();
+    for el in hull.elements() {
+        match el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) => pts.push(*p),
+            PathEl::ClosePath => {
+                if let Some(first) = pts.first().copied() {
+                    pts.push(first);
+                }
+            }
+            PathEl::QuadTo(_, p) => pts.push(*p),
+            PathEl::CurveTo(_, _, p) => pts.push(*p),
+        }
+    }
+    if pts.len() > 1 && pts.first() != pts.last() {
+        pts.push(pts[0]);
+    }
+    pts
+}
+
+/// A toolpath that walks `points` (design coordinates), laser off unless `power` is given,
+/// mapped to the machine the way the job is. The machine side sends this to frame.
+pub fn frame_toolpath(points: &[Point], origin: &OriginSettings, job_bounds: Rect, speed: f64, power: Option<f64>) -> Toolpath {
+    let mut tp = Toolpath { space: job::CoordSpace::Design, layers: Vec::new(), ops: Vec::new(), start: origin.design_start(job_bounds) };
+    if let Some((first, rest)) = points.split_first() {
+        tp.ops.push(Op::Rapid { to: *first });
+        for p in rest {
+            tp.ops.push(Op::Cut { to: *p, speed, power: power.unwrap_or(0.0) });
+        }
+    }
+    let mut o = *origin;
+    o.finish = FinishPosition::Stay;
+    o.apply(&tp, job_bounds)
+}
+
+/// Frame toolpath for the current document and settings.
+pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Option<f64>) -> Result<Toolpath, BuildError> {
+    let c = collect(input, None, &mut |_| {})?;
+    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let origin = origin_for(input, c.selection_bounds)?;
+    let points = match kind {
+        FrameKind::Rectangle => frame_rect_points(bounds),
+        FrameKind::RubberBand => frame_rubber_points(&c.frame_paths, TOLERANCE),
+        FrameKind::Selection => {
+            if input.selection.is_empty() {
+                return Err(BuildError::NothingSelected);
+            }
+            frame_rect_points(c.selection_bounds.ok_or(BuildError::NothingSelected)?)
+        }
+    };
+    Ok(frame_toolpath(&points, &origin, bounds, speed, power))
+}
+
+/// Summary numbers of a simulated job.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct JobStats {
+    pub seconds: f64,
+    pub cut_mm: f64,
+    pub travel_mm: f64,
+    pub scan_mm: f64,
+    pub ops: usize,
+}
+
+impl JobStats {
+    pub fn of(job: &BuiltJob, sim: &job::Simulation) -> JobStats {
+        JobStats {
+            seconds: sim.total_time,
+            cut_mm: sim.cut_distance,
+            travel_mm: sim.rapid_distance,
+            scan_mm: sim.scan_distance,
+            ops: job.toolpath.ops.len(),
+        }
+    }
+}
+
+/// "1h 02m 03s" style time.
+pub fn format_time(seconds: f64) -> String {
+    let s = seconds.max(0.0).round() as u64;
+    if s >= 3600 {
+        format!("{}h {:02}m {:02}s", s / 3600, (s / 60) % 60, s % 60)
+    } else if s >= 60 {
+        format!("{}m {:02}s", s / 60, s % 60)
+    } else {
+        format!("{s}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use darkburn_core::kurbo::Rect;
+
+    fn input(doc: Document) -> BuildInput {
+        BuildInput {
+            doc,
+            selection: Vec::new(),
+            settings: JobProjectSettings::default(),
+            device: JobDevice::new(200.0, 200.0),
+            user_origin: None,
+            head: None,
+            motion: AdditionalSettings::default(),
+        }
+    }
+
+    fn line_layer(doc: &mut Document, l: usize, speed: f64, power: f64) {
+        let s = doc.layer_mut(l).main_mut();
+        s.mode = Mode::Line;
+        s.speed = speed;
+        s.max_power = power;
+    }
+
+    fn square_doc() -> Document {
+        let mut d = Document::new();
+        line_layer(&mut d, 0, 20.0, 50.0);
+        d.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+        d
+    }
+
+    #[test]
+    fn square_makes_a_square_toolpath_and_gcode() {
+        let b = build_job_simple(&input(square_doc())).unwrap();
+        assert!((b.bounds.width() - 20.0).abs() < 1e-6 && (b.bounds.x0 - 10.0).abs() < 1e-6);
+        let burns = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)).count();
+        assert_eq!(burns, 4);
+        let g = gcode_text(&b, None, &DeviceGcodeSettings::default());
+        assert!(g.contains("G21") || g.contains("G1"), "{g}");
+        assert!(g.contains("S500"), "50 % of 1000: {g}");
+        assert!(g.contains("F1200"), "20 mm/s is 1200 mm/min: {g}");
+        assert!(b.bounds_report.is_ok());
+        // The design toolpath has the same shape at the same indices.
+        assert_eq!(b.design.ops.len(), b.toolpath.ops.len());
+    }
+
+    #[test]
+    fn origin_corner_flips_machine_coordinates_but_not_the_preview() {
+        let mut i = input(square_doc());
+        i.device.origin = Corner::BottomRight;
+        let b = build_job_simple(&i).unwrap();
+        let (m, d): (Vec<Point>, Vec<Point>) =
+            (b.toolpath.ops.iter().filter_map(Op::target).collect(), b.design.ops.iter().filter_map(Op::target).collect());
+        assert!(m.iter().all(|p| p.x >= 200.0 - 30.0 - 1e-6 && p.x <= 200.0 - 10.0 + 1e-6), "machine x is mirrored: {m:?}");
+        assert!(d.iter().all(|p| p.x >= 10.0 - 1e-6 && p.x <= 30.0 + 1e-6), "design x is as drawn: {d:?}");
+    }
+
+    #[test]
+    fn current_position_is_relative_and_anchored() {
+        let mut i = input(square_doc());
+        i.settings.start_from = StartMode::CurrentPosition;
+        i.settings.anchor = JobAnchor::Center;
+        let b = build_job_simple(&i).unwrap();
+        assert_eq!(b.toolpath.space, job::CoordSpace::RelativeToStart);
+        let pts: Vec<Point> = b.toolpath.ops.iter().filter_map(Op::target).collect();
+        assert!(pts.iter().all(|p| p.x.abs() <= 10.0 + 1e-6 && p.y.abs() <= 10.0 + 1e-6), "{pts:?}");
+        // No head position known: the work area cannot be checked.
+        assert!(b.bounds_report.is_ok());
+    }
+
+    #[test]
+    fn user_origin_needs_one_and_places_the_anchor_there() {
+        let mut i = input(square_doc());
+        i.settings.start_from = StartMode::UserOrigin;
+        assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NoUserOrigin);
+        i.user_origin = Some(Point::new(100.0, 100.0));
+        let b = build_job_simple(&i).unwrap();
+        let r = b.toolpath.ops.iter().filter_map(Op::target).fold(None::<Rect>, |r, p| Some(r.map_or(Rect::from_points(p, p), |r| r.union_pt(p))));
+        let r = r.unwrap();
+        assert!((r.x0 - 100.0).abs() < 1e-6 && (r.y0 - 100.0).abs() < 1e-6, "{r:?}");
+    }
+
+    #[test]
+    fn use_selection_origin_anchors_on_the_selection() {
+        let mut d = square_doc();
+        let other = d.add(Shape::rect(Rect::new(100.0, 100.0, 120.0, 120.0), 0.0, 0));
+        let mut i = input(d);
+        i.selection = vec![other];
+        i.settings.start_from = StartMode::UserOrigin;
+        i.user_origin = Some(Point::new(0.0, 0.0));
+        i.settings.use_selection_origin = true;
+        let b = build_job_simple(&i).unwrap();
+        // The selection's bottom-left lands on the user origin, the other square sits before it.
+        let r = b
+            .toolpath
+            .ops
+            .iter()
+            .filter_map(Op::target)
+            .fold(None::<Rect>, |r, p| Some(r.map_or(Rect::from_points(p, p), |r| r.union_pt(p))))
+            .unwrap();
+        assert!((r.x1 - 20.0).abs() < 1e-6 && (r.y1 - 20.0).abs() < 1e-6, "{r:?}");
+    }
+
+    #[test]
+    fn cut_selected_only_burns_the_selection() {
+        let mut d = square_doc();
+        let b2 = d.add(Shape::rect(Rect::new(100.0, 100.0, 110.0, 110.0), 0.0, 0));
+        let mut i = input(d);
+        i.settings.cut_selected = true;
+        assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NothingSelected);
+        i.selection = vec![b2];
+        let b = build_job_simple(&i).unwrap();
+        assert!((b.bounds.x0 - 100.0).abs() < 1e-6 && (b.bounds.width() - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn circle_with_tabs_leaves_gaps() {
+        let mut d = Document::new();
+        line_layer(&mut d, 1, 10.0, 80.0);
+        {
+            let s = d.layer_mut(1).main_mut();
+            s.tabs.enabled = true;
+            s.tabs.auto_spacing = true;
+            s.tabs.spacing = 30.0;
+            s.tabs.size = 2.0;
+            s.tabs.min_count = 4;
+            s.tabs.max_count = 4;
+        }
+        d.add(Shape::ellipse(Rect::new(20.0, 20.0, 60.0, 60.0), 1));
+        let b = build_job_simple(&input(d)).unwrap();
+        let off: f64 = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } | Op::Arc { power, .. } if *power == 0.0)).count() as f64;
+        assert!(off >= 3.0, "tabs make laser-off moves: {off}");
+        let sim = b.simulate(&AdditionalSettings::default());
+        assert!(sim.total_time > 0.0 && sim.scan_distance > 0.0, "{sim:?}");
+    }
+
+    #[test]
+    fn fill_layer_scans_lines() {
+        let mut d = Document::new();
+        {
+            let s = d.layer_mut(2).main_mut();
+            s.mode = Mode::Fill;
+            s.interval = 1.0;
+            s.speed = 100.0;
+            s.max_power = 30.0;
+        }
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 2));
+        let b = build_job_simple(&input(d)).unwrap();
+        let burns = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)).count();
+        assert!((9..=11).contains(&burns), "about 10 scan lines: {burns}");
+    }
+
+    #[test]
+    fn kerf_grows_closed_shapes() {
+        let mut d = square_doc();
+        d.layer_mut(0).main_mut().kerf = 1.0;
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!((b.bounds.width() - 22.0).abs() < 0.05, "{:?}", b.bounds);
+    }
+
+    #[test]
+    fn image_layer_makes_scanlines() {
+        let mut d = Document::new();
+        {
+            let s = d.layer_mut(3).main_mut();
+            s.mode = Mode::Image;
+            s.interval = 0.5;
+            s.image_mode = darkburn_core::layer::ImageMode::Threshold;
+            s.speed = 200.0;
+        }
+        // A 4 x 4 pixel black PNG placed as 10 x 10 mm at (5, 5) to (15, 15).
+        let img = image::RgbImage::from_pixel(4, 4, image::Rgb([0, 0, 0]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let key = d.add_image(darkburn_core::ImageData { format: "png".into(), bytes: Arc::from(png), px_width: 4, px_height: 4 });
+        let shape = Shape::new(
+            ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, ..Default::default() }),
+            Affine::translate((10.0, 10.0)),
+            3,
+        );
+        d.add(shape);
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!((b.bounds.x0 - 5.0).abs() < 0.6 && (b.bounds.x1 - 15.0).abs() < 0.6, "{:?}", b.bounds);
+        let burns = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)).count();
+        assert!(burns >= 15, "20 scan lines of 10 mm: {burns}");
+    }
+
+    #[test]
+    fn out_of_bounds_is_reported_and_can_be_dropped() {
+        let mut d = square_doc();
+        d.add(Shape::rect(Rect::new(190.0, 190.0, 230.0, 230.0), 0.0, 0));
+        let mut i = input(d);
+        let b = build_job_simple(&i).unwrap();
+        assert!(b.out_of_bounds());
+        assert!(b.warnings.iter().any(|w| w.contains("work area")));
+        i.settings.discard_out_of_bounds = true;
+        let b = build_job_simple(&i).unwrap();
+        assert!(!b.out_of_bounds());
+        assert_eq!(b.dropped_shapes, 1);
+    }
+
+    #[test]
+    fn start_here_slices_the_job() {
+        let mut d = square_doc();
+        d.add(Shape::rect(Rect::new(50.0, 50.0, 60.0, 60.0), 0.0, 0));
+        let b = build_job_simple(&input(d)).unwrap();
+        let total = b.toolpath.ops.len();
+        let sliced = b.toolpath_from(total / 2);
+        assert!(sliced.ops.len() < total + 6);
+        let text = gcode_text(&b, Some(total / 2), &DeviceGcodeSettings::default());
+        assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn optimization_settings_reach_the_planner_and_the_project() {
+        let mut d = Document::new();
+        line_layer(&mut d, 0, 20.0, 10.0);
+        for i in 0..4 {
+            d.add(Shape::rect(Rect::new(i as f64 * 30.0, 0.0, i as f64 * 30.0 + 10.0, 10.0), 0.0, 0));
+        }
+        let mut st = JobProjectSettings::default();
+        st.planner.optimize = false;
+        st.store(&mut d);
+        let back = JobProjectSettings::from_doc(&d, &PlannerSettings::default());
+        assert!(!back.planner.optimize);
+        assert_eq!(back, st);
+        let mut i = input(d);
+        i.settings = back;
+        assert!(build_job_simple(&i).is_ok());
+        // A project without saved settings takes the user's defaults.
+        let fallback = PlannerSettings { inner_first: false, ..Default::default() };
+        assert!(!JobProjectSettings::from_doc(&Document::new(), &fallback).planner.inner_first);
+    }
+
+    #[test]
+    fn cancel_and_progress_work_off_the_ui_thread() {
+        let task = spawn_build(input(square_doc()));
+        let r = task.wait().unwrap();
+        assert!(!r.toolpath.ops.is_empty());
+        let t = spawn_build(input(square_doc()));
+        t.cancel();
+        // Either it was already done or it reports the cancel; it never hangs.
+        let _ = t.wait();
+        let mut empty = input(Document::new());
+        empty.settings.cut_selected = false;
+        assert_eq!(build_job_simple(&empty).unwrap_err(), BuildError::NothingToBurn);
+    }
+
+    #[test]
+    fn frames_follow_the_job() {
+        let i = input(square_doc());
+        let tp = build_frame(&i, FrameKind::Rectangle, 100.0, None).unwrap();
+        assert_eq!(tp.ops.len(), 5);
+        assert!(matches!(tp.ops[0], Op::Rapid { .. }));
+        let rb = build_frame(&i, FrameKind::RubberBand, 100.0, Some(2.0)).unwrap();
+        assert!(rb.ops.len() >= 4);
+        assert!(rb.ops.iter().any(|o| matches!(o, Op::Cut { power, .. } if *power == 2.0)));
+        assert!(build_frame(&i, FrameKind::Selection, 100.0, None).is_err());
+        assert_eq!(frame_rect_points(Rect::new(0.0, 0.0, 2.0, 1.0)).len(), 5);
+    }
+
+    #[test]
+    fn gcode_settings_scripts_and_flavor() {
+        let mut g = DeviceGcodeSettings { start_script: "G54".into(), end_script: "M5".into(), auto_home: true, ..Default::default() };
+        let b = build_job_simple(&input(square_doc())).unwrap();
+        let text = gcode_text(&b, None, &g);
+        assert!(text.contains("$H") && text.contains("G54"), "{text}");
+        g.set_flavor_index(3);
+        assert_eq!(g.s_max, 255.0);
+        assert_eq!(format_time(3723.0), "1h 02m 03s");
+    }
+}

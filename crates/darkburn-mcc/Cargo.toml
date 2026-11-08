@@ -1,0 +1,25 @@
+[package]
+name = "darkburn-mcc"
+description = "Gweike M3 Ultra / Au3tech MCC100 motion card: frame codec, register map, FIFO planner dry run, .chf craft files, craft parameters and an in-memory card simulator. No transport."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Chinese text in .chf files (code page 936 / GBK). Off by default because it pulls in
+# `encoding_rs`, whose generated tables carry an extra BSD-3-Clause notice. Without the
+# feature, text must be ASCII; raw bytes always round-trip.
+cp936 = ["dep:encoding_rs"]
+
+[dependencies]
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { workspace = true }
+encoding_rs = { version = "0.8", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

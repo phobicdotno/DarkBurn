@@ -10,6 +10,10 @@ mod cut_settings;
 mod cuts_panel;
 mod files;
 mod import;
+mod job_build;
+mod job_cmds;
+mod job_ui;
+mod material_test;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod numeric;
@@ -17,6 +21,7 @@ mod numeric_edits;
 mod palette;
 mod panels;
 mod prefs;
+mod preview;
 mod render;
 mod ribbon;
 mod settings;

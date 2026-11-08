@@ -379,7 +379,8 @@ pub fn works(id: &str) -> bool {
             | "view.filled_smooth"
             | "view.toggle_filled"
             | "help.about"
-    ) || id.starts_with("panel.")
+    ) || crate::job_cmds::works(id)
+        || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
         || id.starts_with("file.recent.")
@@ -439,7 +440,7 @@ pub fn parse_key(text: &str) -> Option<egui::KeyboardShortcut> {
 pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
     static TABLE: std::sync::OnceLock<Vec<(egui::KeyboardShortcut, &'static str)>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
-        let mut v: Vec<_> = COMMANDS.iter().filter_map(|c| parse_key(c.key).map(|k| (k, c.id))).collect();
+        let mut v: Vec<_> = COMMANDS.iter().chain(crate::job_cmds::COMMANDS).filter_map(|c| parse_key(c.key).map(|k| (k, c.id))).collect();
         let weight = |k: &egui::KeyboardShortcut| k.modifiers.command as u8 + k.modifiers.shift as u8 + k.modifiers.alt as u8;
         v.sort_by_key(|(k, _)| std::cmp::Reverse(weight(k)));
         v
@@ -453,9 +454,11 @@ pub fn find(id: &str) -> Option<&'static Cmd> {
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
 /// device. An agent must ask before running one; none is implemented yet.
 pub fn hardware(id: &str) -> bool {
-    id.starts_with("laser.")
+    (id.starts_with("laser.")
         || id.starts_with("arrange.laser_")
-        || matches!(id, "file.save_gcode" | "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
+        || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
+        || crate::job_cmds::hardware(id))
+        && !crate::job_cmds::not_hardware(id)
 }
 
 /// The checklist items a command implements (the ones that work today).
@@ -529,7 +532,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_page" => &["WIN-03"],
         _ if id.starts_with("file.recent.") => &["FILE-03"],
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
-        _ => &[],
+        _ => crate::job_cmds::checklist(id),
     }
 }
 
@@ -557,6 +560,7 @@ pub fn registry() -> &'static [Cmd] {
     ALL.get_or_init(|| {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
+        v.extend_from_slice(crate::job_cmds::COMMANDS);
         for p in crate::panels::PANELS {
             v.push(c(leak(format!("panel.{}", p.id)), leak(format!("Show or Hide {}", p.title)), "", ""));
         }
@@ -1052,10 +1056,10 @@ mod tests {
 
     #[test]
     fn working_commands_are_few_and_known() {
-        for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout"] {
+        for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["file.save_gcode", "tools.offset", "arrange.grid_array"] {
+        for id in ["tools.offset", "arrange.grid_array", "job.start"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

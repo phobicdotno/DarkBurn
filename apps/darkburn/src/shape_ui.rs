@@ -1599,6 +1599,74 @@ mod tests {
         assert!(n.get("width").is_some() && NestForm::default().args().get("width").is_none());
     }
 
+    /// Press OK in a dialog: the form's arguments go through the command registry like the real button.
+    fn press_ok(app: &mut DarkBurn, ctx: &Context, id: &'static str, args: Value) {
+        app.shape_ui.open_dialog(id);
+        frame(ctx, app);
+        assert_eq!(app.shape_ui.open, Some(id), "{id} opens");
+        finish(app, ctx, id, Act::Ok, args, true);
+        assert!(app.shape_ui.open.is_none(), "{id} closed after OK: {:?}", app.shape_ui.error);
+    }
+
+    fn area(app: &DarkBurn) -> f64 {
+        app.editor.doc.iter().map(|s| darkburn_geom::path::area(&s.outline(), darkburn_geom::path::FillRule::NonZero, 0.01).abs()).sum()
+    }
+
+    #[test]
+    fn ok_in_each_dialog_changes_the_document_and_closes_it() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        let mut ids = Vec::new();
+        app.editor.edit("add", |d, sel| {
+            ids.push(d.add(Shape::rect(KRect::new(10.0, 10.0, 30.0, 30.0), 0.0, 1)));
+            ids.push(d.add(Shape::rect(KRect::new(20.0, 20.0, 50.0, 40.0), 0.0, 1)));
+            sel.set([ids[0]]);
+            true
+        });
+        // Offset.
+        let a0 = area(&app);
+        let f = OffsetForm { distance: 2.0, delete_original: true, ..Default::default() };
+        press_ok(&mut app, &ctx, "tools.offset", f.args());
+        assert!(area(&app) > a0 + 10.0, "the offset grew the shape");
+        assert_eq!(app.editor.doc.len(), 2, "the original was replaced");
+        // Boolean assistant: A minus B.
+        let sel: Vec<ShapeId> = app.editor.doc.iter().map(|s| s.id).collect();
+        let f = BoolForm { a: vec![sel[1]], b: vec![sel[0]], op: 3, keep: false };
+        press_ok(&mut app, &ctx, "tools.boolean_assistant", f.args());
+        assert_eq!(app.editor.doc.len(), 1, "two shapes became their intersection");
+        // Close with tolerance.
+        let mut open = BezPath::new();
+        open.move_to((100.0, 100.0));
+        open.line_to((120.0, 100.0));
+        open.line_to((120.0, 120.0));
+        open.line_to((100.0, 100.4));
+        let line = app.editor.edit("open", |d, sel| {
+            let id = d.add(Shape::path(open.clone(), 2));
+            sel.set([id]);
+            true
+        });
+        assert!(line);
+        press_ok(&mut app, &ctx, "edit.close_tolerance", json!({ "tolerance": 1.0 }));
+        let closed = app.editor.doc.iter().filter(|s| s.layer == 2).all(|s| s.is_closed());
+        assert!(closed, "the path was closed within the tolerance");
+        // Grid array (real copies), circular array and nesting.
+        let one = app.editor.doc.iter().next().unwrap().id;
+        app.editor.selection.set([one]);
+        let n0 = app.editor.doc.len();
+        let g = GridForm { rows: 2.0, cols: 3.0, virtual_array: false, ..Default::default() };
+        press_ok(&mut app, &ctx, "arrange.grid_array", g.args());
+        assert_eq!(app.editor.doc.len(), n0 + 5, "a 2 x 3 grid adds five copies");
+        let sel = app.editor.selected();
+        assert_eq!(sel.len(), 6, "the grid is selected afterwards");
+        let c = CircForm { count: 4.0, ..Default::default() };
+        press_ok(&mut app, &ctx, "arrange.circular_array", c.args());
+        let ok = app.editor.doc.iter().any(|s| s.array.is_some());
+        assert!(ok, "the circular array is a virtual array");
+        app.editor.selection.set(app.editor.doc.iter().map(|s| s.id));
+        press_ok(&mut app, &ctx, "arrange.nest", NestForm::default().args());
+        assert!(app.shape_ui.note.as_deref().is_some_and(|n| n.starts_with("Placed")), "{:?}", app.shape_ui.note);
+    }
+
     #[test]
     fn alignment_helper_chooses_commands() {
         let mut f = AlignForm { reference: 1, h: Some(0), v: Some(2) };

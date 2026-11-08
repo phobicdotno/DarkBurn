@@ -6,6 +6,7 @@ mod canvas;
 mod commands;
 mod cut_settings;
 mod files;
+mod import;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod palette;
@@ -15,6 +16,7 @@ mod ribbon;
 mod settings;
 mod shell;
 mod startup;
+mod thumbnail;
 mod tools;
 mod view;
 #[cfg(any(target_os = "windows", test))]

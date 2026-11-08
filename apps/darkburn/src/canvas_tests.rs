@@ -36,8 +36,9 @@ impl Rig {
         rig
     }
 
-    fn frame(&mut self, events: Vec<Event>, _modifiers: Modifiers) {
+    fn frame(&mut self, mut events: Vec<Event>, modifiers: Modifiers) {
         self.time += 0.016;
+        events.insert(0, Event::ModifiersChanged(modifiers));
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
             time: Some(self.time),
@@ -66,11 +67,37 @@ impl Rig {
     }
 
     fn mv(&mut self, to: Pos2) {
-        self.frame(vec![Event::PointerMoved(to)], Modifiers::NONE);
+        self.mv_with(to, Modifiers::NONE);
+    }
+
+    fn mv_with(&mut self, to: Pos2, m: Modifiers) {
+        self.frame(vec![Event::PointerMoved(to)], m);
     }
 
     fn button(&mut self, at: Pos2, b: PointerButton, pressed: bool) {
-        self.frame(vec![Event::PointerButton { pos: at, button: b, pressed, modifiers: Modifiers::NONE }], Modifiers::NONE);
+        self.button_with(at, b, pressed, Modifiers::NONE);
+    }
+
+    fn button_with(&mut self, at: Pos2, b: PointerButton, pressed: bool, m: Modifiers) {
+        self.frame(vec![Event::PointerButton { pos: at, button: b, pressed, modifiers: m }], m);
+    }
+
+    /// A drag with the primary button from `from` to `to` (document mm), in a few steps.
+    fn drag_mm(&mut self, from: Point, to: Point, m: Modifiers) {
+        let (a, b) = (self.screen(from), self.screen(to));
+        self.mv_with(a, m);
+        self.button_with(a, PointerButton::Primary, true, m);
+        for k in 1..=6 {
+            let p = a + (b - a) * (k as f32 / 6.0);
+            self.mv_with(p, m);
+        }
+        self.mv_with(b, m);
+        self.button_with(b, PointerButton::Primary, false, m);
+        self.frame(vec![], m);
+    }
+
+    fn shape_nodes(&self, id: ShapeId) -> usize {
+        darkburn_geom::cleanup::node_count(&self.app.editor.doc.get(id).unwrap().outline())
     }
 
     fn key(&mut self, key: Key, m: Modifiers) {
@@ -281,4 +308,65 @@ fn click_tolerance_decides_how_close_a_line_must_be() {
     let id = doc.add(Shape::path(path, 0));
     assert_eq!(darkburn_core::select::hit(&doc, Point::new(25.0, 0.4), 0.5), Some(id));
     assert_eq!(darkburn_core::select::hit(&doc, Point::new(25.0, 0.4), 0.2), None);
+}
+
+fn node_rig() -> (Rig, ShapeId) {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 160.0, 140.0), 0);
+    rig.app.set_tool(crate::tools::Tool::Nodes);
+    rig.frame(vec![], Modifiers::NONE);
+    (rig, id)
+}
+
+#[test]
+fn nodes_can_be_dragged_and_shift_constrains_the_drag() {
+    let (mut rig, id) = node_rig();
+    rig.drag_mm(Point::new(160.0, 140.0), Point::new(170.0, 150.0), Modifiers::NONE);
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!((bb.x1 - 170.0).abs() < 0.6 && (bb.y1 - 150.0).abs() < 0.6, "the corner followed the pointer (snapped to the grid): {bb:?}");
+    // Shift keeps the move on one axis: a diagonal drag moves only along the longer one.
+    let (mut rig, id) = node_rig();
+    rig.drag_mm(Point::new(160.0, 140.0), Point::new(175.0, 143.0), Modifiers::SHIFT);
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!((bb.x1 - 175.0).abs() < 0.6 && (bb.y1 - 140.0).abs() < 0.6, "constrained to the X axis: {bb:?}");
+    // One undo puts it back.
+    rig.app.editor.undo();
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!((bb.x1 - 160.0).abs() < 1e-6 && (bb.y1 - 140.0).abs() < 1e-6, "{bb:?}");
+}
+
+#[test]
+fn dragging_a_line_bends_it_into_a_curve_and_ctrl_click_adds_a_node() {
+    let (mut rig, id) = node_rig();
+    rig.drag_mm(Point::new(130.0, 100.0), Point::new(130.0, 90.0), Modifiers::NONE);
+    let path = rig.app.editor.doc.get(id).unwrap().outline();
+    assert!(path.elements().iter().any(|e| matches!(e, kurbo::PathEl::CurveTo(..))), "the line became a curve");
+
+    let (mut rig, id) = node_rig();
+    let n = rig.shape_nodes(id);
+    let at = rig.screen(Point::new(130.0, 100.0));
+    rig.mv_with(at, Modifiers::COMMAND);
+    rig.button_with(at, PointerButton::Primary, true, Modifiers::COMMAND);
+    rig.button_with(at, PointerButton::Primary, false, Modifiers::COMMAND);
+    rig.frame(vec![], Modifiers::NONE);
+    assert_eq!(rig.shape_nodes(id), n + 1, "Ctrl+click inserted a node");
+}
+
+#[test]
+fn a_box_selects_several_nodes_and_they_move_together() {
+    let (mut rig, id) = node_rig();
+    // Box around the two right-hand corners (empty space outside the outline to start).
+    let a = rig.screen(Point::new(150.0, 150.0));
+    let b = rig.screen(Point::new(170.0, 95.0));
+    rig.mv(a);
+    rig.button(a, PointerButton::Primary, true);
+    for k in 1..=5 {
+        rig.mv(a + (b - a) * (k as f32 / 5.0));
+    }
+    rig.button(b, PointerButton::Primary, false);
+    rig.frame(vec![], Modifiers::NONE);
+    // Nudge them with an arrow key: both right-hand corners move, the left ones stay.
+    rig.key(Key::ArrowRight, Modifiers::NONE);
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!(bb.x0 < 100.5 && bb.x1 > 160.5, "only the selected nodes moved: {bb:?}");
 }

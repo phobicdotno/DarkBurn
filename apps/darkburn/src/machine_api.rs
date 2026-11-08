@@ -1401,7 +1401,8 @@ impl RuidaAdapter {
     }
 
     fn bed(&self) -> Option<(f64, f64)> {
-        self.snap.bed.or_else(|| self.snap.ruida.settings.as_ref().and_then(|s| s.bed_size_mm()))
+        // One axis may have been read before the other: a half-known bed is no bed.
+        self.snap.bed.filter(|(w, h)| *w > 0.0 && *h > 0.0).or_else(|| self.snap.ruida.settings.as_ref().and_then(|s| s.bed_size_mm()))
     }
 
     fn finish_job(&mut self) {

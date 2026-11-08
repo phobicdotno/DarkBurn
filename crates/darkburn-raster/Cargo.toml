@@ -1,0 +1,17 @@
+[package]
+name = "darkburn-raster"
+description = "DarkBurn image engraving: adjustments, dithering, scanlines, tracing and rasterising"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+kurbo = { version = "0.13", features = ["serde"] }
+tiny-skia = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

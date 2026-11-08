@@ -639,7 +639,7 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).find(|c| c.id == id)
+    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
@@ -651,6 +651,7 @@ pub fn hardware(id: &str) -> bool {
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
         || crate::job_cmds::hardware(id))
         && !crate::job_cmds::not_hardware(id)
+        && !crate::machine_ext::not_hardware(id)
         && !crate::vision_cmds::not_hardware(id)
 }
 
@@ -797,6 +798,7 @@ pub fn registry() -> &'static [Cmd] {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::machine_ui::COMMANDS);
+        v.extend_from_slice(crate::machine_ext::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         for c in &mut v {
@@ -943,6 +945,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("file.export"),
             C("file.export_gweike_dxf"),
             C("file.export_gweike_nc"),
+            C("gweike.open"),
             S,
             C("file.print"),
             C("file.print_colour"),
@@ -1316,9 +1319,8 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["laser.repeat_marking", "laser.lens_test"] {
-            assert!(!works(id), "{id} arrives in a later phase");
-        }
+        assert!(!works("laser.material_test_galvo"), "the galvo material test arrives in a later phase");
+        assert!(works("laser.repeat_marking") && works("laser.lens_test"));
     }
 
     #[test]

@@ -151,7 +151,7 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             if send_only {
                 return Err("A G-code machine runs a job as it streams it. Use Start (or Save G-code).".into());
             }
-            JobRequest::gcode(job_build::gcode_lines(&tp, &app.job.gcode))
+            JobRequest::gcode(crate::gcode_machines::job_lines(app.machine.active(), &tp, &app.job.gcode))
         }
         Family::Ruida => {
             let shift = if tp.space == CoordSpace::RelativeToStart {
@@ -169,6 +169,13 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             }
         }
         Family::DesignOnly => return Err("This device is design only; there is no laser to run a job on.".into()),
+        Family::FileOnly => return Err("This device is a file workflow; use the Gweike window to export files.".into()),
+        Family::Galvo => {
+            if send_only {
+                return Err("A galvo marks as it is sent. Use Start.".into());
+            }
+            crate::galvo_job::request(&app.editor.doc, app.machine.active(), false, false)?.0
+        }
     };
     req.name = name;
     req.estimated = estimated;
@@ -214,6 +221,9 @@ pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> 
     if !app.machine.handle.is_connected() {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
+    if app.machine.handle.snapshot().family == Family::Galvo {
+        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+    }
     job_cmds::start_build(app, After::Machine(action));
     Ok(json!({ "ok": true, "building": true }))
 }
@@ -221,6 +231,9 @@ pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> 
 /// Headless flow: build now and act.
 pub fn start_now(app: &mut DarkBurn, action: Action, allow_out_of_bounds: bool) -> Result<Value, String> {
     need_connection(app)?;
+    if app.machine.handle.snapshot().family == Family::Galvo {
+        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+    }
     let job = job_cmds::build_now(app)?;
     if job.out_of_bounds() && !allow_out_of_bounds {
         return Err(format!(
@@ -236,6 +249,11 @@ pub fn start_now(app: &mut DarkBurn, action: Action, allow_out_of_bounds: bool) 
 /// Frame the job outline: rectangle, rubber band or the selection.
 pub fn frame(app: &mut DarkBurn, kind: FrameKind) -> Result<Value, String> {
     need_connection(app)?;
+    if app.machine.handle.snapshot().family == Family::Galvo {
+        // The galvo frames with the red light, one lap, laser off.
+        return crate::machine_ext::run(app, "machine.galvo_frame", &json!({ "repeat": false }), crate::machine_ui::Source::Api)
+            .unwrap_or_else(|| Err("no galvo frame".into()));
+    }
     let input = job_cmds::build_input(app);
     let tp = job_build::build_frame(&input, kind, 100.0, None).map_err(|e| e.to_string())?;
     let points = work_points(app, &tp);

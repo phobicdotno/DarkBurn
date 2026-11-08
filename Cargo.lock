@@ -1065,10 +1065,13 @@ version = "0.0.24"
 dependencies = [
  "arboard",
  "darkburn-core",
+ "darkburn-galvo",
+ "darkburn-gcodebots",
  "darkburn-geom",
  "darkburn-grbl",
  "darkburn-import",
  "darkburn-job",
+ "darkburn-mcc",
  "darkburn-raster",
  "darkburn-ruida",
  "darkburn-ui",

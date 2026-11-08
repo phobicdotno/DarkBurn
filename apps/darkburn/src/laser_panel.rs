@@ -116,6 +116,9 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     }
+    if family == Family::Galvo {
+        crate::galvo_ui::panel(ui, app);
+    }
     // Fire [MOVE-15]: also here for convenience when the device allows it.
     if fire_allowed(app) {
         fire_button(ui, app, connected && ready);
@@ -196,7 +199,7 @@ fn fire_allowed(app: &DarkBurn) -> bool {
     match d.family() {
         Family::Grbl => d.settings.gcode.fire_button,
         Family::Ruida => true,
-        Family::DesignOnly => false,
+        Family::DesignOnly | Family::Galvo | Family::FileOnly => false,
     }
 }
 

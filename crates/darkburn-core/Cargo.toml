@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+darkburn-geom = { workspace = true }
 kurbo = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

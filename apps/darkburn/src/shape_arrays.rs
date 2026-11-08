@@ -193,8 +193,8 @@ fn place_array(e: &mut Editor, ids: &[ShapeId], def: ArrayDef, virtual_array: bo
                     let mut c = s.clone();
                     c.transform = *t * c.transform;
                     c.array = None;
+                    varray::advance_text(&mut c, i as i64);
                     out.push(d.add(c));
-                    let _ = i;
                 }
             }
         }

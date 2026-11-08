@@ -277,6 +277,23 @@ fn variable_text_works_inside_arrays() {
 }
 
 #[test]
+fn variable_text_counts_up_in_real_arrays_too() {
+    for (cmd, args) in [
+        ("arrange.grid_array", json!({ "rows": 1, "cols": 3, "dx": 5, "dy": 5 })),
+        ("arrange.circular_array", json!({ "count": 3, "cx": 50, "cy": 50 })),
+    ] {
+        let mut a = app();
+        let id = add(&mut a, "{serial:2}", json!({ "variable": "serial", "x": 0, "y": 0 }));
+        select(&mut a, &[id]);
+        run(&mut a, cmd, args).unwrap();
+        let mut offsets: Vec<i64> =
+            a.editor.doc.iter().filter_map(|s| if let ShapeKind::Text(t) = &s.kind { Some(t.offset) } else { None }).collect();
+        offsets.sort();
+        assert_eq!(offsets, [0, 1, 2], "{cmd}: each copy has its own index");
+    }
+}
+
+#[test]
 fn date_time_text_is_evaluated_for_output() {
     let mut a = app();
     let id = add(&mut a, "%Y", json!({ "variable": "date_time" }));

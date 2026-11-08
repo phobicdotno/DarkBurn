@@ -11,6 +11,18 @@ use crate::shell::DarkBurn;
 
 const SCREEN: (f32, f32) = (1200.0, 900.0);
 
+#[derive(Debug)]
+struct Dropped(std::path::PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
 struct Rig {
     ctx: egui::Context,
     app: DarkBurn,
@@ -24,7 +36,7 @@ impl Rig {
         rig
     }
 
-    fn frame(&mut self, events: Vec<Event>, modifiers: Modifiers) {
+    fn frame(&mut self, events: Vec<Event>, _modifiers: Modifiers) {
         self.time += 0.016;
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
@@ -192,6 +204,45 @@ fn locked_and_hidden_shapes_cannot_be_picked_by_clicking() {
     rig.app.editor.doc.layer_mut(3).show = false;
     click(&mut rig, at);
     assert!(rig.app.editor.selected().is_empty(), "shapes on hidden layers are not selectable");
+}
+
+#[test]
+fn dropping_a_device_profile_and_an_image_on_the_window_adds_them() {
+    let dir = std::env::temp_dir().join(format!("darkburn-drop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut rig = Rig::new();
+    // A real profile exported from the active device.
+    let id = rig.app.machine.devices.active().unwrap().id;
+    let text = rig.app.machine.devices.export_profile(id).unwrap();
+    let profile = dir.join("other.dbdev");
+    std::fs::write(&profile, text).unwrap();
+    let svg = dir.join("box.svg");
+    std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm"><rect width="20" height="10"/></svg>"#).unwrap();
+    let devices_before = rig.app.machine.devices.devices.len();
+    let shapes_before = rig.app.editor.doc.len();
+    let files = [profile, svg]
+        .into_iter()
+        .map(|p| std::sync::Arc::new(Dropped(p)) as egui::DroppedFileHandle)
+        .collect::<Vec<_>>();
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
+        dropped_files: files,
+        ..Default::default()
+    };
+    let app = &mut rig.app;
+    let mut out = rig.ctx.run_ui(input, |ui| crate::files::frame(ui.ctx(), app));
+    out.textures_delta.clear();
+    // The import runs on a worker thread.
+    for _ in 0..200 {
+        crate::file_io::frame(&rig.ctx, &mut rig.app);
+        if rig.app.editor.doc.len() > shapes_before {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(rig.app.machine.devices.devices.len(), devices_before + 1, "the profile was added");
+    assert!(rig.app.editor.doc.len() > shapes_before, "the artwork was imported");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

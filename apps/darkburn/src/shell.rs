@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use darkburn_ui::ui_kit::{self, BackingTooltipExt as _, Container, Edge, Menu, MenuItem, Surface};
 use darkburn_ui::{fonts, icons, titlebar};
-use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use solidcraft_theme::Tokens;
 
 use crate::canvas::{self, ViewCmd};
@@ -13,6 +13,8 @@ use crate::commands::{self, Entry};
 use crate::panels::{self, Area, PANELS};
 use crate::prefs::{Prefs, TOOLBARS};
 use crate::ribbon;
+use crate::tools::Tool;
+use darkburn_core::Editor;
 
 pub const APP_BAR_HEIGHT: f32 = 34.0;
 pub const STATUS_BAR_HEIGHT: f32 = 24.0;
@@ -40,6 +42,26 @@ pub struct DarkBurn {
     pub custom_titlebar: bool,
     /// Windows answers the resize border itself (native_frame.rs); else egui edge zones.
     pub native_resize_border: bool,
+    /// The open project.
+    pub editor: Editor,
+    /// Where the open project is saved (None: not saved yet).
+    pub project_path: Option<PathBuf>,
+    pub tool: Tool,
+    /// Status bar locks: move, size, rotate, shear.
+    pub locks: [bool; 4],
+    /// Help text for the control under the pointer, set each frame by whoever draws it.
+    pub hint: Option<String>,
+    /// Auto-save state for the status bar.
+    pub autosave_status: String,
+    /// A copy was made: put it on the system clipboard too.
+    pub clipboard_out: bool,
+    /// Where the canvas context menu was opened (document mm), for paste at cursor.
+    pub context_point: Option<darkburn_core::kurbo::Point>,
+    /// Padding for distribute and docking, in mm.
+    pub padding: f64,
+    /// The layer whose cut settings are being edited, if the editor is open.
+    pub cut_settings_open: Option<usize>,
+    pub notes_open: bool,
 }
 
 impl DarkBurn {
@@ -57,6 +79,53 @@ impl DarkBurn {
             note: None,
             custom_titlebar: true,
             native_resize_border: false,
+            editor: Editor::new(),
+            project_path: None,
+            tool: Tool::Select,
+            locks: [false; 4],
+            hint: None,
+            autosave_status: "Auto-save off".into(),
+            clipboard_out: false,
+            context_point: None,
+            padding: 2.0,
+            cut_settings_open: None,
+            notes_open: false,
+        }
+    }
+
+    /// Pick a drawing tool (the pan tool goes off).
+    pub fn set_tool(&mut self, tool: Tool) {
+        self.pan_tool = false;
+        self.tool = tool;
+    }
+
+    /// Whether command `id` has something to act on now (menus grey out the rest).
+    pub fn can_run(&self, id: &str) -> bool {
+        let sel = self.editor.selection.len();
+        match id {
+            "edit.undo" => self.editor.history.can_undo(),
+            "edit.redo" => self.editor.history.can_redo(),
+            "edit.cut"
+            | "edit.copy"
+            | "edit.duplicate"
+            | "edit.delete"
+            | "arrange.flip_h"
+            | "arrange.flip_v"
+            | "arrange.rotate_cw"
+            | "arrange.rotate_ccw"
+            | "arrange.lock"
+            | "arrange.forward"
+            | "arrange.backward"
+            | "arrange.front"
+            | "arrange.back"
+            | "view.frame_selection"
+            | "edit.select_contained"
+            | "arrange.ungroup" => sel > 0,
+            "arrange.group" | "arrange.same_width" | "arrange.same_height" => sel > 1,
+            "edit.paste" | "edit.paste_in_place" => true,
+            _ if id.starts_with("arrange.align_") || id.starts_with("arrange.distribute_") || id.starts_with("arrange.move_") => sel > 1,
+            _ if id.starts_with("arrange.page_") => sel > 0,
+            _ => true,
         }
     }
 
@@ -86,6 +155,9 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
+        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) {
+            return;
+        }
         match id {
             "file.exit" => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             "file.prefs_folder" => {
@@ -96,7 +168,6 @@ impl DarkBurn {
             }
             "edit.settings" => self.settings_open = true,
             "help.about" => self.about_open = true,
-            "tools.select" => self.pan_tool = false,
             "view.pan" => self.pan_tool = !self.pan_tool,
             "view.zoom_in" => self.view_cmd = Some(ViewCmd::ZoomIn),
             "view.zoom_out" => self.view_cmd = Some(ViewCmd::ZoomOut),
@@ -128,24 +199,28 @@ impl DarkBurn {
         }
     }
 
-    /// Keyboard shortcuts of the commands that work, and the canvas keys.
+    /// Keyboard shortcuts of the commands that work (from the keys their menu items show).
     pub fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if ctx.memory(|m| m.focused().is_some()) {
             return;
         }
-        let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
         let mut run = None;
-        if pressed(Modifiers::COMMAND, Key::Q) {
-            run = Some("file.exit");
-        } else if pressed(Modifiers::COMMAND, Key::Num0) {
-            run = Some("view.zoom_page");
-        } else if pressed(Modifiers::COMMAND, Key::Equals) || pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) {
-            run = Some("view.zoom_in");
-        } else if pressed(Modifiers::COMMAND, Key::Minus) || pressed(Modifiers::NONE, Key::Minus) {
-            run = Some("view.zoom_out");
-        } else if pressed(Modifiers::NONE, Key::Escape) && self.pan_tool {
-            run = Some("tools.select");
+        for (shortcut, id) in commands::shortcut_table() {
+            if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
+                run = Some(*id);
+                break;
+            }
+        }
+        let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
+        if run.is_none() {
+            if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) || pressed(Modifiers::NONE, Key::Equals) {
+                run = Some("view.zoom_in");
+            } else if pressed(Modifiers::NONE, Key::Minus) {
+                run = Some("view.zoom_out");
+            } else if pressed(Modifiers::NONE, Key::Backspace) {
+                run = Some("edit.delete");
+            }
         }
         if let Some(id) = run {
             self.run(ctx, id);
@@ -155,30 +230,32 @@ impl DarkBurn {
     /// The whole window for one frame.
     pub fn ui(&mut self, ui: &mut Ui) {
         let mut clicked: Option<String> = None;
+        self.hint = None;
+        crate::files::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
-        ribbon::show(ui, &mut self.prefs, self.pan_tool, &mut clicked);
+        ribbon::show(ui, self, &mut clicked);
         if self.prefs.status_bar {
             self.status_bar(ui);
         }
         if self.prefs.toolbar("palette") {
-            cut_palette(ui);
+            crate::palette::show(ui, self);
         }
         self.dock(ui, Area::Bottom);
         if self.prefs.toolbar("tools") {
-            tools_column(ui, self.pan_tool, &mut clicked);
+            tools_column(ui, self.pan_tool, self.tool, &mut self.hint, &mut clicked);
         }
         self.dock(ui, Area::Left);
         self.right_docks(ui);
         let cmd = self.view_cmd.take();
         let frame = egui::Frame::NONE.fill(Tokens::get().viewport_bottom);
-        let pan_tool = self.pan_tool;
-        let prefs = &mut self.prefs;
         let mut cursor = None;
         Container::new(ui.ctx(), Surface::Viewport).central().frame(frame).show(ui, |ui| {
-            cursor = canvas::show(ui, prefs, pan_tool, cmd).cursor;
+            cursor = canvas::show(ui, self, cmd).cursor;
         });
         self.cursor = cursor;
         self.dialogs(ui.ctx());
+        crate::cut_settings::dialog(ui.ctx(), self);
+        crate::files::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }
@@ -276,7 +353,7 @@ impl DarkBurn {
                     };
                     let mut item = MenuItem::new(c.id, c.label, c.icon);
                     item.shortcut = c.key;
-                    item.enabled = commands::works(id);
+                    item.enabled = commands::works(id) && self.can_run(id);
                     if id == "view.pan" {
                         item.checked = Some(self.pan_tool);
                     }
@@ -297,10 +374,27 @@ impl DarkBurn {
                     );
                 }
                 Entry::Dynamic("recent") => {
+                    let recent = self.prefs.recent.clone();
                     let mut row = MenuItem::new("file.recent", "Recent Projects", "");
                     row.submenu = true;
-                    row.enabled = false;
-                    row.show(ui);
+                    row.enabled = !recent.is_empty();
+                    if recent.is_empty() {
+                        row.show(ui);
+                    } else {
+                        Menu::button_with(
+                            ui,
+                            |ui, _| row.show(ui),
+                            |ui| {
+                                ui.set_min_width(ui_kit::LIST_W * 1.6);
+                                for (i, path) in recent.iter().enumerate() {
+                                    let id = format!("file.recent.{i}");
+                                    if MenuItem::new(&id, path, "").show(ui).clicked() {
+                                        *clicked = Some(id);
+                                    }
+                                }
+                            },
+                        );
+                    }
                 }
                 Entry::Dynamic("panels") => {
                     Menu::heading(ui, "Panels");
@@ -340,24 +434,37 @@ impl DarkBurn {
         }
     }
 
-    fn status_bar(&self, ui: &mut Ui) {
+    fn status_bar(&mut self, ui: &mut Ui) {
         let t = Tokens::get();
         let host = Container::new(ui.ctx(), Surface::ApplicationBar);
         let panel = host.edge("db_status", Edge::Bottom).exact_size(STATUS_BAR_HEIGHT).show_separator_line(false);
         let frame = host.edge_frame(t.app_bar);
+        let selection = self.editor.doc.bbox_of(&self.editor.selected()).map(|r| (r, self.editor.selection.len()));
         host.show_edge(ui, panel, frame, |ui| {
             let r = ui.max_rect();
             let font = FontId::proportional(t.font_small);
             let ink = t.app_bar_text;
             let dim = t.app_bar_text.gamma_multiply(0.45);
             let mut x = r.left() + 10.0;
-            for lock in ["Move", "Size", "Rotate", "Shear"] {
-                let g = ui.painter().layout_no_wrap(lock.to_string(), font.clone(), dim);
+            for (i, lock) in ["Move", "Size", "Rotate", "Shear"].into_iter().enumerate() {
+                let on = self.locks[i];
+                let g = ui.painter().layout_no_wrap(lock.to_string(), font.clone(), if on { t.app_bar_text } else { dim });
                 let br = Rect::from_min_size(pos2(x, r.top() + 3.0), vec2(g.size().x + 12.0, r.height() - 6.0));
-                ui.painter().rect_stroke(br, t.radius_sm, Stroke::new(1.0, dim), egui::StrokeKind::Inside);
-                ui.painter().galley(pos2(br.left() + 6.0, br.center().y - g.size().y / 2.0), g, dim);
-                ui.interact(br, ui.scope_id().with(("lock", lock)), Sense::hover())
-                    .backing_on_hover_text(format!("{lock} lock (arrives with editing)"));
+                let resp = ui.interact(br, ui.scope_id().with(("lock", lock)), Sense::click());
+                if on {
+                    ui.painter().rect(br, t.radius_sm, t.accent_soft, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+                } else {
+                    ui.painter().rect_stroke(br, t.radius_sm, Stroke::new(1.0, dim), egui::StrokeKind::Inside);
+                }
+                ui.painter().galley(pos2(br.left() + 6.0, br.center().y - g.size().y / 2.0), g, if on { t.selected_ink } else { dim });
+                solidcraft_ui_registry::publish_target(&format!("status:lock:{}", lock.to_lowercase()), br);
+                let tip = format!("{lock} lock: when on, the selection cannot be {}", ["moved", "resized", "rotated", "sheared"][i]);
+                if resp.hovered() {
+                    self.hint = Some(tip.clone());
+                }
+                if resp.backing_on_hover_text(tip).clicked() {
+                    self.locks[i] = !on;
+                }
                 x = br.right() + 4.0;
             }
             x += 12.0;
@@ -369,13 +476,35 @@ impl DarkBurn {
             ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, ink);
             solidcraft_ui_registry::publish_rect("status:cursor", Rect::from_min_size(pos2(x, r.top()), vec2(220.0, r.height())));
             x += 230.0;
-            ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, "No selection", font.clone(), dim);
-            x += 110.0;
-            let tip = self.note.clone().unwrap_or_else(|| if self.pan_tool { "Drag to pan the view".into() } else { String::new() });
-            ui.painter().text(pos2(x, r.center().y), Align2::LEFT_CENTER, tip, font.clone(), ink);
+            let sel_text = match selection {
+                Some((b, n)) => format!(
+                    "Min {:.2}, {:.2}  Max {:.2}, {:.2}  ({:.2} × {:.2} mm)  {n} object{}",
+                    b.x0,
+                    b.y0,
+                    b.x1,
+                    b.y1,
+                    b.width(),
+                    b.height(),
+                    if n == 1 { "" } else { "s" }
+                ),
+                None => "No selection".into(),
+            };
+            let g = ui.painter().layout_no_wrap(sel_text, FontId::monospace(t.font_small), if selection.is_some() { ink } else { dim });
+            let w = g.size().x;
+            ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, ink);
+            solidcraft_ui_registry::publish_rect("status:selection", Rect::from_min_size(pos2(x, r.top()), vec2(w, r.height())));
+            x += w.max(100.0) + 16.0;
+            let tip = self
+                .note
+                .clone()
+                .or_else(|| self.hint.clone())
+                .unwrap_or_else(|| if self.pan_tool { "Drag to pan the view".into() } else { String::new() });
+            let right_edge = r.right() - 200.0;
+            let clip = ui.painter().with_clip_rect(Rect::from_min_max(pos2(x, r.top()), pos2(right_edge, r.bottom())));
+            clip.text(pos2(x, r.center().y), Align2::LEFT_CENTER, tip, font.clone(), ink);
             let right = format!("{:.0} %", self.prefs.view.percent());
-            ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, "Auto-save off", font.clone(), dim);
-            ui.painter().text(pos2(r.right() - 110.0, r.center().y), Align2::RIGHT_CENTER, right, font, ink);
+            ui.painter().text(pos2(r.right() - 10.0, r.center().y), Align2::RIGHT_CENTER, &self.autosave_status, font.clone(), dim);
+            ui.painter().text(pos2(r.right() - 130.0, r.center().y), Align2::RIGHT_CENTER, right, font, ink);
         });
     }
 
@@ -483,7 +612,7 @@ impl DarkBurn {
         let id = active.clone();
         ui.scope_builder(egui::UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))), |ui| {
             egui::ScrollArea::vertical().id_salt(("panel_body", area)).auto_shrink([false, false]).show(ui, |ui| {
-                panels::contents(ui, &id);
+                panels::contents(ui, &id, self);
             });
         });
         if let Some((id, to)) = action
@@ -508,7 +637,7 @@ impl DarkBurn {
                 ui.add_space(t.space_8);
                 ui.label(egui::RichText::new("Licensed under the MIT License or the Apache License 2.0.").color(t.text_dim));
                 ui.label(
-                    egui::RichText::new("Look and feel, widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.")
+                    egui::RichText::new("Widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.")
                         .color(t.text_dim),
                 );
             });
@@ -564,7 +693,7 @@ const TOOLS: &[&str] = &[
     "tools.qr",
 ];
 
-fn tools_column(ui: &mut Ui, pan_tool: bool, clicked: &mut Option<String>) {
+fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<String>, clicked: &mut Option<String>) {
     let t = Tokens::get();
     let host = Container::new(ui.ctx(), Surface::Chrome);
     let panel = host.edge("db_tools", Edge::Left).exact_size(TOOLS_WIDTH).resizable(false);
@@ -580,7 +709,7 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, clicked: &mut Option<String>) {
             y += 36.0;
             let enabled = commands::works(id);
             let resp = ui.interact(br, ui.scope_id().with(("tool", *id)), if enabled { Sense::click() } else { Sense::hover() });
-            let active = *id == "tools.select" && !pan_tool;
+            let active = *id == tool.command() && !pan_tool;
             if active {
                 ui.painter().rect(br, t.radius_sm, t.accent_soft, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
             } else if enabled && resp.hovered() {
@@ -589,6 +718,9 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, clicked: &mut Option<String>) {
             icons::paint_icon(ui.painter(), br.shrink(6.0), c.icon, if enabled { 1.0 } else { 0.5 });
             solidcraft_ui_registry::publish_target(&format!("tool:{id}"), br);
             let tip = if c.key.is_empty() { c.label.to_string() } else { format!("{} ({})", c.label, c.key) };
+            if resp.hovered() {
+                *hint = Some(tip.clone());
+            }
             if resp.backing_on_hover_text(tip).clicked() && enabled {
                 *clicked = Some(id.to_string());
             }
@@ -596,74 +728,9 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, clicked: &mut Option<String>) {
     });
 }
 
-/// The 30 colour layers and 2 tool layers along the bottom. Layers arrive with drawing.
-fn cut_palette(ui: &mut Ui) {
-    let t = Tokens::get();
-    let host = Container::new(ui.ctx(), Surface::Chrome);
-    let panel = host.edge("db_palette", Edge::Bottom).exact_size(PALETTE_HEIGHT).show_separator_line(false);
-    let frame = host.edge_frame(t.toolbar);
-    host.show_edge(ui, panel, frame, |ui| {
-        let r = ui.max_rect();
-        let size = 20.0;
-        let mut x = r.left() + 8.0;
-        for i in 0..32 {
-            let br = Rect::from_center_size(pos2(x + size / 2.0, r.center().y), vec2(size, size));
-            x += size + 3.0;
-            let (fill, label) = if i < 30 { (layer_colour(i), format!("{i:02}")) } else { (t.control_fill, format!("T{}", i - 29)) };
-            let p = ui.painter();
-            p.rect(br, t.radius_sm, fill.gamma_multiply(0.55), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-            if i >= 30 {
-                p.text(br.center(), Align2::CENTER_CENTER, label.clone(), FontId::proportional(t.font_micro), t.text_dim);
-            }
-            ui.interact(br, ui.scope_id().with(("layer", i)), Sense::hover()).backing_on_hover_text(format!("Layer {label} (arrives with drawing)"));
-        }
-    });
-}
-
-/// DarkBurn's own layer colours: 30 well-separated hues and greys, picked for contrast.
-pub fn layer_colour(i: usize) -> Color32 {
-    match i {
-        0 => Color32::from_rgb(20, 20, 20),
-        27 => Color32::from_rgb(110, 110, 110),
-        28 => Color32::from_rgb(170, 170, 170),
-        29 => Color32::from_rgb(230, 230, 230),
-        _ => {
-            let h = ((i - 1) as f32 * 137.508) % 360.0;
-            let l = if i.is_multiple_of(2) { 0.45 } else { 0.6 };
-            hsl(h, 0.75, l)
-        }
-    }
-}
-
-fn hsl(h: f32, s: f32, l: f32) -> Color32 {
-    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = l - c / 2.0;
-    let (r, g, b) = match (h / 60.0) as u32 {
-        0 => (c, x, 0.0),
-        1 => (x, c, 0.0),
-        2 => (0.0, c, x),
-        3 => (0.0, x, c),
-        4 => (x, 0.0, c),
-        _ => (c, 0.0, x),
-    };
-    let f = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
-    Color32::from_rgb(f(r), f(g), f(b))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn layer_colours_are_distinct() {
-        let colours: Vec<_> = (0..30).map(layer_colour).collect();
-        for (i, a) in colours.iter().enumerate() {
-            for b in &colours[i + 1..] {
-                assert_ne!(a, b);
-            }
-        }
-    }
 
     #[test]
     fn commands_toggle_panels_and_toolbars() {

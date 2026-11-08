@@ -124,7 +124,10 @@ fn tab_visible(prefs: &Prefs, groups: &[Group]) -> bool {
 }
 
 /// The ribbon, docked at the top under the application bar.
-pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, clicked: &mut Option<String>) {
+pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<String>) {
+    let pan_tool = app.pan_tool;
+    let hint = &mut app.hint;
+    let prefs = &mut app.prefs;
     let tabs: Vec<_> = TABS.iter().filter(|(_, _, groups)| tab_visible(prefs, groups)).collect();
     if tabs.is_empty() {
         return;
@@ -171,7 +174,7 @@ pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, clicked: &mut Option
             let start = gx;
             gx += GROUP_PAD;
             for item in group.items {
-                gx = item_at(ui, *item, gx, row, pan_tool, clicked) + BUTTON_GAP;
+                gx = item_at(ui, *item, gx, row, pan_tool, hint, clicked) + BUTTON_GAP;
             }
             gx += GROUP_PAD - BUTTON_GAP;
             let caption = Rect::from_min_max(pos2(start, row.bottom() - CAPTION_HEIGHT), pos2(gx, row.bottom()));
@@ -184,7 +187,7 @@ pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, clicked: &mut Option
 }
 
 /// Lay out one item from `x` in the group row `row`; returns its right edge.
-fn item_at(ui: &mut Ui, item: Item, x: f32, row: Rect, pan_tool: bool, clicked: &mut Option<String>) -> f32 {
+fn item_at(ui: &mut Ui, item: Item, x: f32, row: Rect, pan_tool: bool, hint: &mut Option<String>, clicked: &mut Option<String>) -> f32 {
     let t = Tokens::get();
     let top = row.top() + 4.0;
     match item {
@@ -220,6 +223,9 @@ fn item_at(ui: &mut Ui, item: Item, x: f32, row: Rect, pan_tool: bool, clicked: 
                 (false, true) => format!("{} ({})", c.label, c.key),
                 (_, false) => format!("{} — arrives in a later version", c.label),
             };
+            if resp.hovered() {
+                *hint = Some(tip.clone());
+            }
             if resp.backing_on_hover_text(tip).clicked() && enabled {
                 *clicked = Some(id.to_string());
             }

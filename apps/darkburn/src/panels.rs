@@ -96,7 +96,7 @@ fn choice(ui: &mut Ui, label: &str, id: &str, options: &[&str]) {
 }
 
 /// The contents of panel `id`. Everything is disabled until the panel's phase.
-pub fn contents(ui: &mut Ui, id: &str) {
+pub fn contents(ui: &mut Ui, id: &str, _app: &mut crate::shell::DarkBurn) {
     let t = Tokens::get();
     ui.spacing_mut().item_spacing.y = t.form_gap_y;
     ui.add_enabled_ui(false, |ui| match id {

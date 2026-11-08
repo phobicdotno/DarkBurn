@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use solidcraft_theme::Tokens;
 
 use crate::prefs::Prefs;
+use crate::shell::DarkBurn;
 use crate::view::{self, View};
 
 /// Width of the rulers along the top and left edges.
@@ -41,11 +42,12 @@ impl Backdrop {
 
 /// A view change asked for from a menu, button or key.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[allow(clippy::enum_variant_names, reason = "named as the menu items are")]
 pub enum ViewCmd {
     ZoomIn,
     ZoomOut,
     ZoomPage,
+    /// Fit this document rectangle (mm, Y up) in the view.
+    Frame(darkburn_core::kurbo::Rect),
 }
 
 /// What the canvas reports back each frame.
@@ -62,7 +64,9 @@ fn mix(a: Color32, b: Color32, k: f32) -> Color32 {
 }
 
 /// Draw the canvas in `ui`'s whole rect and handle zoom and pan.
-pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, cmd: Option<ViewCmd>) -> Output {
+pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
+    let pan_tool = app.pan_tool;
+    let prefs = &mut app.prefs;
     let full = ui.max_rect();
     let canvas = Rect::from_min_max(full.min + vec2(RULER, RULER), full.max);
     let page = prefs.page();
@@ -107,6 +111,11 @@ pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, cmd: Option<ViewCmd>
         Some(ViewCmd::ZoomIn) => view.zoom_about(canvas, canvas.center(), view::ZOOM_STEP),
         Some(ViewCmd::ZoomOut) => view.zoom_about(canvas, canvas.center(), 1.0 / view::ZOOM_STEP),
         Some(ViewCmd::ZoomPage) => view.zoom_to_page(canvas, page),
+        Some(ViewCmd::Frame(r)) => {
+            // Document Y is up, page v is down.
+            let min = pos2(r.x0 as f32, page.y - r.y1 as f32);
+            view.zoom_to_rect(canvas, Rect::from_min_size(min, vec2(r.width() as f32, r.height() as f32)));
+        }
         None => {}
     }
 

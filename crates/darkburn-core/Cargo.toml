@@ -1,0 +1,16 @@
+[package]
+name = "darkburn-core"
+description = "DarkBurn's document model: shapes, layers and cut settings, selection, undo, clipboard and the project file"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }

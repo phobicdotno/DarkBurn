@@ -20,6 +20,8 @@ neg_cmp_op_on_partial_ord = "allow"
 
 [dependencies]
 darkburn-ui = { workspace = true }
+darkburn-core = { workspace = true }
+kurbo = { workspace = true }
 solidcraft-theme = { workspace = true }
 solidcraft-ui-text = { workspace = true }
 solidcraft-ui-registry = { workspace = true }

@@ -55,6 +55,14 @@ pub struct Prefs {
     pub status_bar: bool,
     pub view: View,
     pub language: String,
+    /// Shapes on fill layers drawn filled.
+    pub filled: bool,
+    /// Curves drawn finely (smooth) or coarsely (fast).
+    pub smooth: bool,
+    /// Recent projects, newest first (at most 24).
+    pub recent: Vec<String>,
+    /// Auto-save interval in minutes (0 = off).
+    pub autosave_minutes: f32,
 }
 
 impl Default for Prefs {
@@ -78,6 +86,10 @@ impl Default for Prefs {
             status_bar: true,
             view: View::default(),
             language: "en".into(),
+            filled: true,
+            smooth: true,
+            recent: Vec::new(),
+            autosave_minutes: 5.0,
         }
     }
 }

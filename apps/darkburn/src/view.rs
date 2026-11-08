@@ -122,6 +122,15 @@ impl View {
         self.placed = true;
     }
 
+    /// Fit the page rectangle `r` (mm) in the canvas `rect`, centred, with a margin.
+    pub fn zoom_to_rect(&mut self, rect: Rect, r: Rect) {
+        let size = r.size().max(Vec2::splat(1.0));
+        let room = rect.size() * (1.0 - 4.0 * PAGE_MARGIN);
+        self.zoom = (room.x / size.x).min(room.y / size.y).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.offset = rect.size() / 2.0 - r.center().to_vec2() * self.zoom;
+        self.placed = true;
+    }
+
     /// The zoom as a percentage, where 100 % shows a millimetre at its real size on a 96 DPI screen.
     pub fn percent(&self) -> f32 {
         self.zoom / POINTS_PER_MM * 100.0

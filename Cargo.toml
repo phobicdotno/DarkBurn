@@ -17,6 +17,7 @@ solidcraft-ui-text     = { path = "../solidcraft/crates/ui-text" }
 solidcraft-ui-registry = { path = "../solidcraft/crates/ui-registry" }
 solidcraft-color       = { path = "../solidcraft/crates/color" }
 darkburn-ui = { path = "crates/darkburn-ui" }
+darkburn-core = { path = "crates/darkburn-core" }
 
 # Pinned to SolidCraft's versions (one egui in the graph)
 egui      = { version = "=0.37.0", features = ["default_fonts"] }
@@ -31,6 +32,10 @@ log = "0.4"
 web-time = "1"
 ron = "0.12"
 toml = "1"
+
+# Geometry at crate boundaries: millimetres, Y up
+kurbo = "0.13.1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -218,18 +218,119 @@ pub fn works(id: &str) -> bool {
     matches!(
         id,
         "file.exit"
+            | "file.new"
+            | "file.open"
+            | "file.import"
+            | "file.notes"
+            | "file.save"
+            | "file.save_as"
             | "file.prefs_folder"
             | "edit.settings"
+            | "edit.undo"
+            | "edit.redo"
+            | "edit.select_all"
+            | "edit.invert_selection"
+            | "edit.cut"
+            | "edit.copy"
+            | "edit.duplicate"
+            | "edit.paste"
+            | "edit.paste_in_place"
+            | "edit.delete"
+            | "edit.select_open"
+            | "edit.select_open_fill"
+            | "edit.select_layer"
+            | "edit.select_contained"
             | "tools.select"
+            | "tools.line"
+            | "tools.rect"
+            | "tools.ellipse"
+            | "tools.polygon"
+            | "arrange.group"
+            | "arrange.ungroup"
+            | "arrange.flip_h"
+            | "arrange.flip_v"
+            | "arrange.rotate_cw"
+            | "arrange.rotate_ccw"
+            | "arrange.same_width"
+            | "arrange.same_height"
+            | "arrange.forward"
+            | "arrange.backward"
+            | "arrange.front"
+            | "arrange.back"
+            | "arrange.lock"
+            | "arrange.unlock"
             | "window.reset_layout"
             | "view.zoom_page"
             | "view.zoom_in"
             | "view.zoom_out"
+            | "view.frame_selection"
             | "view.pan"
+            | "view.wire_coarse"
+            | "view.wire_smooth"
+            | "view.filled_coarse"
+            | "view.filled_smooth"
+            | "view.toggle_filled"
             | "help.about"
     ) || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
+        || id.starts_with("file.recent.")
+        || id.starts_with("arrange.align_")
+        || id.starts_with("arrange.distribute_")
+        || id.starts_with("arrange.move_h_")
+        || id.starts_with("arrange.move_v_")
+        || (id.starts_with("arrange.page_"))
+}
+
+/// The keyboard shortcut a menu label like "Ctrl+Shift+Z" names.
+pub fn parse_key(text: &str) -> Option<egui::KeyboardShortcut> {
+    use egui::{Key, Modifiers};
+    if text.is_empty() {
+        return None;
+    }
+    let (mods, key) = if let Some(rest) = text.strip_suffix("++") {
+        (rest, "+")
+    } else {
+        match text.rfind('+') {
+            Some(i) => (&text[..i], &text[i + 1..]),
+            None => ("", text),
+        }
+    };
+    let mut m = Modifiers::NONE;
+    for part in mods.split('+').filter(|p| !p.is_empty()) {
+        match part {
+            "Ctrl" => m |= Modifiers::COMMAND,
+            "Shift" => m |= Modifiers::SHIFT,
+            "Alt" => m |= Modifiers::ALT,
+            _ => return None,
+        }
+    }
+    let key = match key {
+        "Del" => Key::Delete,
+        "PgUp" => Key::PageUp,
+        "PgDn" => Key::PageDown,
+        "." => Key::Period,
+        "," => Key::Comma,
+        "=" => Key::Equals,
+        "-" => Key::Minus,
+        "+" => Key::Plus,
+        "`" => Key::Backtick,
+        "Tab" => Key::Tab,
+        other => Key::from_name(other)?,
+    };
+    Some(egui::KeyboardShortcut::new(m, key))
+}
+
+/// Every command shortcut, those with more modifier keys first so Ctrl+Shift+Z is not taken
+/// for Ctrl+Z.
+pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
+    static TABLE: std::sync::OnceLock<Vec<(egui::KeyboardShortcut, &'static str)>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut v: Vec<_> = COMMANDS.iter().filter_map(|c| parse_key(c.key).map(|k| (k, c.id))).collect();
+        let weight = |k: &egui::KeyboardShortcut| k.modifiers.command as u8 + k.modifiers.shift as u8 + k.modifiers.alt as u8;
+        v.sort_by_key(|(k, _)| std::cmp::Reverse(weight(k)));
+        v
+    })
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
@@ -599,8 +700,24 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout"] {
             assert!(works(id));
         }
-        for id in ["file.open", "edit.undo", "tools.line", "arrange.group"] {
+        for id in ["file.save_gcode", "tools.offset", "arrange.grid_array"] {
             assert!(!works(id), "{id} arrives in a later phase");
+        }
+    }
+
+    #[test]
+    fn shortcuts_parse_from_menu_labels() {
+        use egui::{Key, Modifiers};
+        assert_eq!(parse_key("Ctrl+Shift+Z"), Some(egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)));
+        assert_eq!(parse_key("Alt++"), Some(egui::KeyboardShortcut::new(Modifiers::ALT, Key::Plus)));
+        assert_eq!(parse_key("PgUp").map(|k| k.logical_key), Some(Key::PageUp));
+        assert_eq!(parse_key(""), None);
+        let table = shortcut_table();
+        let undo = table.iter().position(|(_, id)| *id == "edit.undo").unwrap();
+        let redo = table.iter().position(|(_, id)| *id == "edit.redo").unwrap();
+        assert!(redo < undo, "Ctrl+Shift+Z is tried before Ctrl+Z");
+        for c in COMMANDS.iter().filter(|c| !c.key.is_empty() && c.key != "Alt+*") {
+            assert!(parse_key(c.key).is_some(), "{} does not parse", c.key);
         }
     }
 }

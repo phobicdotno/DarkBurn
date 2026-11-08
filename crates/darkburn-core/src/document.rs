@@ -49,6 +49,9 @@ pub struct Document {
     pub notes: String,
     /// Open the notes when the project is opened.
     pub show_notes_on_load: bool,
+    /// Job settings saved with the project (optimization, job origin): an opaque, versioned JSON
+    /// value owned by the app. None until the user changes them.
+    pub job_settings: Option<serde_json::Value>,
     next_id: u64,
 }
 
@@ -73,6 +76,7 @@ impl Document {
             images: ImageStore::new(),
             notes: String::new(),
             show_notes_on_load: false,
+            job_settings: None,
             next_id: 1,
         }
     }

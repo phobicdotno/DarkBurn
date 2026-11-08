@@ -42,7 +42,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-06 Show project notes
 - [x] FILE-07 Save
 - [x] FILE-08 Save As
-- [ ] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
+- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
 - [ ] FILE-10 Export
 - [ ] FILE-11 Print, black only
 - [ ] FILE-12 Print, keep colours
@@ -171,7 +171,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LT-09 Rotary setup
 - [ ] LT-10 Focus test
 - [ ] LT-11 Interval test
-- [ ] LT-12 Material test
+- [x] LT-12 Material test
 - [ ] LT-13 Centre finder
 - [ ] LT-14 Feeder setup
 - [ ] LT-15 Cylinder correction
@@ -182,7 +182,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Window
 - [x] WIN-01 Reset to default layout
-- [ ] WIN-02 Preview
+- [x] WIN-02 Preview
 - [x] WIN-03 Zoom to page
 - [x] WIN-04 Zoom in
 - [x] WIN-05 Zoom out
@@ -263,19 +263,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-01 Connection status: disconnected, ready, busy, framing, no laser
 - [ ] LASER-02 Job progress bar with elapsed and remaining time
 - [ ] LASER-03 Start, pause, stop
-- [ ] LASER-04 Frame as rectangle
-- [ ] LASER-05 Frame as rubber-band outline, optionally with laser on
-- [ ] LASER-06 Save machine file
+- [~] LASER-04 Frame as rectangle
+- [~] LASER-05 Frame as rubber-band outline, optionally with laser on
+- [~] LASER-06 Save machine file
 - [ ] LASER-07 Run a saved G-code file
 - [ ] LASER-08 Send file to controller, optionally start at once
 - [ ] LASER-09 Home
 - [ ] LASER-10 Go to origin
-- [ ] LASER-11 Start from: current position, user origin, absolute coordinates
-- [ ] LASER-12 Job origin 9-point picker
-- [ ] LASER-13 Cut selected graphics only
-- [ ] LASER-14 Use selection origin
-- [ ] LASER-15 Show last position
-- [ ] LASER-16 Optimize cut path toggle and optimization settings button
+- [x] LASER-11 Start from: current position, user origin, absolute coordinates
+- [x] LASER-12 Job origin 9-point picker
+- [x] LASER-13 Cut selected graphics only
+- [x] LASER-14 Use selection origin
+- [x] LASER-15 Show last position
+- [x] LASER-16 Optimize cut path toggle and optimization settings button
 - [ ] LASER-17 Devices button; right-click resets connection
 - [ ] LASER-18 Port picker with auto choice, remembered port, excluded ports
 - [ ] LASER-19 Device profile picker
@@ -286,7 +286,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-24 Pre-job checklist before start
 - [ ] LASER-25 Sounds on job finished and on error
 - [ ] LASER-26 Job log saved as CSV
-- [ ] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
+- [x] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
 - [ ] LASER-28 Warning when closing during a running job
 
 ### Library (materials)
@@ -586,13 +586,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CSE-08 Z settings greyed out unless the device has Z
 
 ### Material test
-- [ ] MT-01 Grid of speed × power cells
-- [ ] MT-02 Alternative axes: interval, frequency, Q-pulse
-- [ ] MT-03 Min and max, rows and columns, labels and units
-- [ ] MT-04 Label layer settings
-- [ ] MT-05 Presets: save, load, import, export
-- [ ] MT-06 Frame the test before running
-- [ ] MT-07 Works on G-code, DSP and galvo devices
+- [x] MT-01 Grid of speed × power cells
+- [x] MT-02 Alternative axes: interval, frequency, Q-pulse
+- [~] MT-03 Min and max, rows and columns, labels and units
+- [x] MT-04 Label layer settings
+- [x] MT-05 Presets: save, load, import, export
+- [~] MT-06 Frame the test before running
+- [x] MT-07 Works on G-code, DSP and galvo devices
 
 ---
 
@@ -628,47 +628,47 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 12. Preview and simulation
 
-- [ ] PREV-01 Play, pause, slider and playback speed
-- [ ] PREV-02 Shade by power
-- [ ] PREV-03 Show travel moves
-- [ ] PREV-04 Invert view
-- [ ] PREV-05 Cut distance, travel distance and estimated time
-- [ ] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
-- [ ] PREV-07 Zoom, pan, maximise
-- [ ] PREV-08 Save preview image, optionally transparent
-- [ ] PREV-09 Start here: run, send or save from any point in the job
-- [ ] PREV-10 Layer and pass readout
+- [x] PREV-01 Play, pause, slider and playback speed
+- [x] PREV-02 Shade by power
+- [x] PREV-03 Show travel moves
+- [x] PREV-04 Invert view
+- [x] PREV-05 Cut distance, travel distance and estimated time
+- [x] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
+- [x] PREV-07 Zoom, pan, maximise
+- [x] PREV-08 Save preview image, optionally transparent
+- [~] PREV-09 Start here: run, send or save from any point in the job
+- [x] PREV-10 Layer and pass readout
 - [ ] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 
 ## 13. Job origin and coordinates
 
-- [ ] ORIG-01 Absolute coordinates
-- [ ] ORIG-02 Current position
-- [ ] ORIG-03 User origin: set and clear
-- [ ] ORIG-04 Job origin at 9 positions
-- [ ] ORIG-05 Use selection origin
+- [x] ORIG-01 Absolute coordinates
+- [x] ORIG-02 Current position
+- [~] ORIG-03 User origin: set and clear
+- [x] ORIG-04 Job origin at 9 positions
+- [x] ORIG-05 Use selection origin
 - [ ] ORIG-06 Red-dot pointer offset
-- [ ] ORIG-07 Machine origin corner per device
+- [~] ORIG-07 Machine origin corner per device
 - [ ] ORIG-08 Negative-coordinate (CNC) machine mode
 - [ ] ORIG-09 Swap X and Y
-- [ ] ORIG-10 Return to finish position
+- [~] ORIG-10 Return to finish position
 
 ## 14. Cut planner
 
-- [ ] PLAN-01 Optimize cut path on or off
-- [ ] PLAN-02 Order by layer, group and priority, sortable
-- [ ] PLAN-03 Cut inner shapes first
-- [ ] PLAN-04 Cut in direction order
-- [ ] PLAN-05 Reduce travel moves
-- [ ] PLAN-06 Hide backlash
-- [ ] PLAN-07 Reduce direction changes
-- [ ] PLAN-08 Choose best starting point, prefer corners
-- [ ] PLAN-09 Choose best direction
-- [ ] PLAN-10 Remove overlapping lines with distance
-- [ ] PLAN-11 Set as default and reset
-- [ ] PLAN-12 Saved in the project
-- [ ] PLAN-13 Manual cut order and forced start points respected
-- [ ] PLAN-14 Progress and cancel
+- [x] PLAN-01 Optimize cut path on or off
+- [x] PLAN-02 Order by layer, group and priority, sortable
+- [x] PLAN-03 Cut inner shapes first
+- [x] PLAN-04 Cut in direction order
+- [x] PLAN-05 Reduce travel moves
+- [x] PLAN-06 Hide backlash
+- [x] PLAN-07 Reduce direction changes
+- [x] PLAN-08 Choose best starting point, prefer corners
+- [x] PLAN-09 Choose best direction
+- [x] PLAN-10 Remove overlapping lines with distance
+- [x] PLAN-11 Set as default and reset
+- [x] PLAN-12 Saved in the project
+- [~] PLAN-13 Manual cut order and forced start points respected
+- [x] PLAN-14 Progress and cancel
 
 ---
 
@@ -793,7 +793,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EXP-03 DXF with arcs or segments
 - [ ] EXP-04 PNG, JPG, BMP when the selection is a bitmap
 - [ ] EXP-05 Export selection or everything
-- [ ] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
+- [x] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
 - [ ] EXP-07 RD, OUT and UD5 machine files
 
 ### Other files
@@ -926,17 +926,17 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] DS-06 Job checklist on and editor
 - [ ] DS-07 Overwrite files by default
 - [ ] DS-08 Scanning offset table
-- [ ] DS-09 G-code: auto-home on start, swap X/Y
-- [ ] DS-10 G-code: fast whitespace scan and its speed
-- [ ] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
-- [ ] DS-12 G-code: air assist commands, S-value max, baud rate
-- [ ] DS-13 G-code: buffered or synchronous transfer
-- [ ] DS-14 G-code: start and end scripts
-- [ ] DS-15 G-code: G0 for overscan, S with every G1
+- [~] DS-09 G-code: auto-home on start, swap X/Y
+- [~] DS-10 G-code: fast whitespace scan and its speed
+- [~] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
+- [~] DS-12 G-code: air assist commands, S-value max, baud rate
+- [~] DS-13 G-code: buffered or synchronous transfer
+- [~] DS-14 G-code: start and end scripts
+- [~] DS-15 G-code: G0 for overscan, S with every G1
 - [ ] DS-16 DSP: U axis, laser 2, filename increment, disable start
 - [ ] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
 - [ ] DS-18 Galvo: all galvo settings from section 15
-- [ ] DS-19 Simulation: acceleration and speed values for the time estimate
+- [~] DS-19 Simulation: acceleration and speed values for the time estimate
 - [ ] DS-20 Frame continuously *(later)*
 
 ## 24. Keyboard

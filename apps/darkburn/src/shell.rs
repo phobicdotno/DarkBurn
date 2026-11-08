@@ -62,6 +62,8 @@ pub struct DarkBurn {
     /// The layer whose cut settings are being edited, if the editor is open.
     pub cut_settings_open: Option<usize>,
     pub notes_open: bool,
+    /// A layer whose shapes flash on the canvas, and when the flash began (egui time, seconds).
+    pub flash_layer: Option<(usize, f64)>,
 }
 
 impl DarkBurn {
@@ -90,6 +92,7 @@ impl DarkBurn {
             padding: 2.0,
             cut_settings_open: None,
             notes_open: false,
+            flash_layer: None,
         }
     }
 

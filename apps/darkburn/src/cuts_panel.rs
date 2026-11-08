@@ -228,11 +228,12 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     ui.add_space(t.space_6);
 
     // Column layout.
-    let width = ui.available_width().max(200.0);
+    let width = (ui.available_width() - 14.0).max(200.0);
     // Narrow panels shrink the fixed columns before the name column runs out.
     let full = [22.0f32, 0.0, 86.0, 60.0, 44.0, 36.0, 30.0];
-    let squeeze = ((width - 64.0) / full.iter().sum::<f32>()).clamp(0.6, 1.0);
-    let fixed = full.map(|w| w * squeeze);
+    let squeeze = ((width - 64.0) / full.iter().sum::<f32>()).clamp(0.5, 1.0);
+    let mut fixed = full.map(|w| w * squeeze);
+    fixed[2] = fixed[2].max(80.0);
     let name_w = (width - fixed.iter().sum::<f32>()).max(40.0);
     let mut widths = fixed;
     widths[1] = name_w;

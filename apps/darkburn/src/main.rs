@@ -246,6 +246,11 @@ fn main() -> eframe::Result {
                 }
                 app.native_resize_border = custom_titlebar && native_frame::install(cc);
             }
+            if let Some(path) = args.iter().find(|a| !a.starts_with('-'))
+                && let Err(e) = files::open_path(&mut app, std::path::Path::new(path))
+            {
+                app.note = Some(e);
+            }
             app.apply_theme(&cc.egui_ctx);
             let writer = PrefsWriter::read(app.prefs.to_json());
             Ok(Box::new(App { app, writer, frames: 0 }))

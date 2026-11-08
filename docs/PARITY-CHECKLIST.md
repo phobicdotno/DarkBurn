@@ -9,7 +9,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 28 of 785 done (5 partly).
+**Progress:** 175 of 785 done (56 partly).
 
 ---
 
@@ -34,14 +34,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 1. Menus
 
 ### File
-- [ ] FILE-01 New
+- [x] FILE-01 New
 - [ ] FILE-02 New window (second instance)
-- [ ] FILE-03 Recent projects list (24 entries)
-- [ ] FILE-04 Open
-- [ ] FILE-05 Import
-- [ ] FILE-06 Show project notes
-- [ ] FILE-07 Save
-- [ ] FILE-08 Save As
+- [x] FILE-03 Recent projects list (24 entries)
+- [x] FILE-04 Open
+- [x] FILE-05 Import
+- [x] FILE-06 Show project notes
+- [x] FILE-07 Save
+- [x] FILE-08 Save As
 - [ ] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
 - [ ] FILE-10 Export
 - [ ] FILE-11 Print, black only
@@ -56,16 +56,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-20 Exit
 
 ### Edit
-- [ ] EDIT-01 Undo
-- [ ] EDIT-02 Redo
-- [ ] EDIT-03 Select all
-- [ ] EDIT-04 Invert selection
-- [ ] EDIT-05 Cut
-- [ ] EDIT-06 Copy
-- [ ] EDIT-07 Duplicate
-- [ ] EDIT-08 Paste
-- [ ] EDIT-09 Paste in place
-- [ ] EDIT-10 Delete
+- [x] EDIT-01 Undo
+- [x] EDIT-02 Redo
+- [x] EDIT-03 Select all
+- [x] EDIT-04 Invert selection
+- [x] EDIT-05 Cut
+- [x] EDIT-06 Copy
+- [x] EDIT-07 Duplicate
+- [x] EDIT-08 Paste
+- [x] EDIT-09 Paste in place
+- [x] EDIT-10 Delete
 - [ ] EDIT-11 Convert to path
 - [ ] EDIT-12 Convert to bitmap
 - [ ] EDIT-13 Close path
@@ -73,10 +73,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EDIT-15 Auto-join selected shapes
 - [ ] EDIT-16 Optimize selected shapes
 - [ ] EDIT-17 Delete duplicates
-- [ ] EDIT-18 Select open shapes
-- [ ] EDIT-19 Select open shapes set to fill
-- [ ] EDIT-20 Select all shapes in current layer
-- [ ] EDIT-21 Select contained shapes
+- [x] EDIT-18 Select open shapes
+- [x] EDIT-19 Select open shapes set to fill
+- [x] EDIT-20 Select all shapes in current layer
+- [x] EDIT-21 Select contained shapes
 - [ ] EDIT-22 Image options: replace image
 - [ ] EDIT-23 Image options: replace image to fit
 - [ ] EDIT-24 Image options: refresh image
@@ -89,11 +89,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EDIT-31 Machine settings
 
 ### Tools
-- [ ] TOOLS-01 Select
-- [ ] TOOLS-02 Draw lines
-- [ ] TOOLS-03 Rectangle
-- [ ] TOOLS-04 Ellipse
-- [ ] TOOLS-05 Polygon
+- [x] TOOLS-01 Select
+- [x] TOOLS-02 Draw lines
+- [x] TOOLS-03 Rectangle
+- [x] TOOLS-04 Ellipse
+- [x] TOOLS-05 Polygon
 - [ ] TOOLS-06 Edit nodes
 - [ ] TOOLS-07 Add tabs
 - [ ] TOOLS-08 Edit text
@@ -117,33 +117,33 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] TOOLS-26 Deform selection (16 points)
 
 ### Arrange
-- [ ] ARR-01 Group
-- [ ] ARR-02 Ungroup
+- [x] ARR-01 Group
+- [x] ARR-02 Ungroup
 - [ ] ARR-03 Auto-group
-- [ ] ARR-04 Flip horizontal
-- [ ] ARR-05 Flip vertical
+- [x] ARR-04 Flip horizontal
+- [x] ARR-05 Flip vertical
 - [ ] ARR-06 Mirror across line
-- [ ] ARR-07 Rotate 90° clockwise
-- [ ] ARR-08 Rotate 90° counter-clockwise
+- [x] ARR-07 Rotate 90° clockwise
+- [x] ARR-08 Rotate 90° counter-clockwise
 - [ ] ARR-09 Two-point rotate and scale
-- [ ] ARR-10 Align left
-- [ ] ARR-11 Align right
-- [ ] ARR-12 Align top
-- [ ] ARR-13 Align bottom
-- [ ] ARR-14 Align horizontal centres
-- [ ] ARR-15 Align vertical centres
-- [ ] ARR-16 Align centres
-- [ ] ARR-17 Distribute horizontally
-- [ ] ARR-18 Distribute vertically
-- [ ] ARR-19 Distribute horizontal centres
-- [ ] ARR-20 Distribute vertical centres
-- [ ] ARR-21 Distribute horizontal spacing with padding
-- [ ] ARR-22 Distribute vertical spacing with padding
-- [ ] ARR-23 Move horizontally together
-- [ ] ARR-24 Move vertically together
+- [x] ARR-10 Align left
+- [x] ARR-11 Align right
+- [x] ARR-12 Align top
+- [x] ARR-13 Align bottom
+- [x] ARR-14 Align horizontal centres
+- [x] ARR-15 Align vertical centres
+- [x] ARR-16 Align centres
+- [x] ARR-17 Distribute horizontally
+- [x] ARR-18 Distribute vertically
+- [x] ARR-19 Distribute horizontal centres
+- [x] ARR-20 Distribute vertical centres
+- [x] ARR-21 Distribute horizontal spacing with padding
+- [x] ARR-22 Distribute vertical spacing with padding
+- [x] ARR-23 Move horizontally together
+- [x] ARR-24 Move vertically together
 - [ ] ARR-25 Nest selected
 - [ ] ARR-26 Dock left, right, up, down
-- [ ] ARR-27 Move selection to one of 9 page positions
+- [x] ARR-27 Move selection to one of 9 page positions
 - [ ] ARR-28 Move selection to laser position
 - [ ] ARR-29 Move laser to one of 9 selection positions
 - [ ] ARR-30 Grid array
@@ -151,12 +151,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] ARR-32 Copy along path
 - [ ] ARR-33 Create rubber-band outline
 - [ ] ARR-34 Break apart
-- [ ] ARR-35 Push forward in draw order
-- [ ] ARR-36 Push backward in draw order
-- [ ] ARR-37 Push to front
-- [ ] ARR-38 Push to back
-- [ ] ARR-39 Lock selected shapes
-- [ ] ARR-40 Unlock selected shapes
+- [x] ARR-35 Push forward in draw order
+- [x] ARR-36 Push backward in draw order
+- [x] ARR-37 Push to front
+- [x] ARR-38 Push to back
+- [x] ARR-39 Lock selected shapes
+- [x] ARR-40 Unlock selected shapes
 - [ ] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
@@ -186,9 +186,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] WIN-03 Zoom to page
 - [x] WIN-04 Zoom in
 - [x] WIN-05 Zoom out
-- [ ] WIN-06 Frame selection
-- [ ] WIN-07 View style: wireframe coarse, wireframe smooth, filled coarse, filled smooth
-- [ ] WIN-08 Toggle wireframe and filled
+- [x] WIN-06 Frame selection
+- [x] WIN-07 View style: wireframe coarse, wireframe smooth, filled coarse, filled smooth
+- [x] WIN-08 Toggle wireframe and filled
 - [x] WIN-09 Show or hide each panel and toolbar
 
 ### Language
@@ -207,57 +207,57 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 2. Toolbars
 
-- [ ] TB-01 Main: new, open, save, import, undo, redo, cut, copy, paste, delete
-- [~] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
+- [x] TB-01 Main: new, open, save, import, undo, redo, cut, copy, paste, delete
+- [x] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
 - [ ] TB-03 Main: capture camera image, preview, settings, device settings
 - [ ] TB-04 Main can split in two on narrow screens
-- [ ] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
-- [ ] TB-06 Arrange: make same width, make same height, move selection pop-up
+- [~] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
+- [~] TB-06 Arrange: make same width, make same height, move selection pop-up
 - [ ] TB-07 Arrange long variant
-- [ ] TB-08 Tools (vertical, left edge): all creation tools
+- [~] TB-08 Tools (vertical, left edge): all creation tools
 - [ ] TB-09 Modifiers: offset, weld, union, difference, intersection
 - [ ] TB-10 Modifiers: grid array, circular array
 - [ ] TB-11 Modifiers: start points tool, round corners tool with radius field
-- [ ] TB-12 Numeric edits: X, Y, width, height, scale %, lock aspect
-- [ ] TB-13 Numeric edits: 9-point anchor picker
-- [ ] TB-14 Numeric edits: rotate field, mm or inch toggle
-- [ ] TB-15 Numeric fields accept equations and unit suffixes
+- [x] TB-12 Numeric edits: X, Y, width, height, scale %, lock aspect
+- [x] TB-13 Numeric edits: 9-point anchor picker
+- [x] TB-14 Numeric edits: rotate field, mm or inch toggle
+- [x] TB-15 Numeric fields accept equations and unit suffixes
 - [ ] TB-16 Text options: font picker with recent and favourite fonts and live preview
 - [ ] TB-17 Text options: height, bold, italic, upper case, distort, welded
 - [ ] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
 - [ ] TB-19 Text options: variable text type, offset
-- [ ] TB-20 Cut palette: 30 colour layers and 2 tool layers
-- [ ] TB-21 Cut palette: optional number labels on buttons
-- [ ] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
+- [x] TB-20 Cut palette: 30 colour layers and 2 tool layers
+- [x] TB-21 Cut palette: optional number labels on buttons
+- [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [ ] TB-23 Modes: rotary, print and cut, cylinder correction
 - [ ] TB-24 Docking: four directions, move as group, lock inner objects, padding
 - [~] TB-25 All toolbars can be shown, hidden, docked and floated
 
 ## 3. Status bar
 
-- [ ] SB-01 Move, size, rotate and shear lock toggles
+- [x] SB-01 Move, size, rotate and shear lock toggles
 - [x] SB-02 Cursor position in current units
-- [ ] SB-03 Selection bounds and object count
-- [ ] SB-04 Help text for the control under the mouse
+- [x] SB-03 Selection bounds and object count
+- [x] SB-04 Help text for the control under the mouse
 - [ ] SB-05 Layer and pass progress while a job runs
-- [ ] SB-06 Auto-save status
+- [x] SB-06 Auto-save status
 
 ---
 
 ## 4. Panels
 
 ### Cuts / Layers
-- [ ] CUTS-01 Layer list with number, name, mode, speed/power, output, show, air columns
-- [ ] CUTS-02 Edit layer name in place
-- [ ] CUTS-03 Move layer up and down in priority, drag to reorder
-- [ ] CUTS-04 Delete layer; delete layer with its shapes
-- [ ] CUTS-05 Copy and paste cut settings between layers
-- [ ] CUTS-06 Header menu: show all, hide all, enable all, disable all, invert, air on/off/invert
-- [ ] CUTS-07 Sort cuts last
-- [ ] CUTS-08 Quick settings box under the list (speed, power, min power, interval, passes)
-- [ ] CUTS-09 Laser 2 quick settings when dual tube is on
-- [ ] CUTS-10 Double-click opens the cut settings editor
-- [ ] CUTS-11 Mouse wheel does not change mode
+- [x] CUTS-01 Layer list with number, name, mode, speed/power, output, show, air columns
+- [x] CUTS-02 Edit layer name in place
+- [x] CUTS-03 Move layer up and down in priority, drag to reorder
+- [x] CUTS-04 Delete layer; delete layer with its shapes
+- [x] CUTS-05 Copy and paste cut settings between layers
+- [x] CUTS-06 Header menu: show all, hide all, enable all, disable all, invert, air on/off/invert
+- [x] CUTS-07 Sort cuts last
+- [x] CUTS-08 Quick settings box under the list (speed, power, min power, interval, passes)
+- [x] CUTS-09 Laser 2 quick settings when dual tube is on
+- [x] CUTS-10 Double-click opens the cut settings editor
+- [x] CUTS-11 Mouse wheel does not change mode
 
 ### Laser
 - [ ] LASER-01 Connection status: disconnected, ready, busy, framing, no laser
@@ -343,13 +343,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] VTP-05 CSV file browse and clear
 
 ### Shape Properties
-- [ ] SP-01 Property grid for the selected shape
-- [ ] SP-02 Rectangle corner radius, including inward corners
-- [ ] SP-03 Polygon side count, ellipse size
-- [ ] SP-04 Text properties
-- [ ] SP-05 Image brightness, contrast, gamma, enhance amount, radius, denoise
-- [ ] SP-06 Cut order priority, power scale, locked, name
-- [ ] SP-07 Edit several shapes at once
+- [x] SP-01 Property grid for the selected shape
+- [x] SP-02 Rectangle corner radius, including inward corners
+- [x] SP-03 Polygon side count, ellipse size
+- [x] SP-04 Text properties
+- [x] SP-05 Image brightness, contrast, gamma, enhance amount, radius, denoise
+- [x] SP-06 Cut order priority, power scale, locked, name
+- [x] SP-07 Edit several shapes at once
 
 ### Art Library
 - [ ] ART-01 Several art library files open at once
@@ -380,45 +380,45 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CANVAS-04 Work area centre cross
 - [ ] CANVAS-05 Full-screen crosshair cursor option
 - [x] CANVAS-06 Page outline sized from device; origin corner flips axes
-- [ ] CANVAS-07 Out-of-bounds and non-output shapes drawn faintly
+- [x] CANVAS-07 Out-of-bounds and non-output shapes drawn faintly
 - [x] CANVAS-08 Zoom by wheel, keys, zoom to page; option to invert wheel
 - [~] CANVAS-09 Pan with space-drag, middle mouse, pan tool, auto-pan while dragging
-- [ ] CANVAS-10 Double middle click frames content
-- [ ] CANVAS-11 Click select, click inside filled shapes
-- [ ] CANVAS-12 Box select: left-to-right encloses, right-to-left crosses, colour coded
-- [ ] CANVAS-13 Tab and Shift+Tab cycle through objects
-- [ ] CANVAS-14 Esc clears selection and returns to select tool
-- [ ] CANVAS-15 Click tolerance setting; hidden and locked shapes not selectable
-- [ ] CANVAS-16 Move, size, rotate and shear handles
-- [ ] CANVAS-17 Rotation snapping with modifier keys
-- [ ] CANVAS-18 Arrow-key nudge with three step sizes plus a fine step
-- [ ] CANVAS-19 Keyboard rotate and flip shortcuts
-- [ ] CANVAS-20 Grid snap that adapts to zoom
-- [ ] CANVAS-21 Object snap to nodes, centres, midpoints, intersections, along lines and curves
-- [ ] CANVAS-22 Snap modifiers: wider snap, show unsnapped, axis lock
-- [ ] CANVAS-23 Right-click menu: cut, copy, paste, duplicate, select all, group, ungroup, preview, properties
-- [ ] CANVAS-24 Paste at cursor
-- [ ] CANVAS-25 Wireframe and filled rendering, coarse and smooth
+- [x] CANVAS-10 Double middle click frames content
+- [x] CANVAS-11 Click select, click inside filled shapes
+- [x] CANVAS-12 Box select: left-to-right encloses, right-to-left crosses, colour coded
+- [x] CANVAS-13 Tab and Shift+Tab cycle through objects
+- [x] CANVAS-14 Esc clears selection and returns to select tool
+- [~] CANVAS-15 Click tolerance setting; hidden and locked shapes not selectable
+- [x] CANVAS-16 Move, size, rotate and shear handles
+- [x] CANVAS-17 Rotation snapping with modifier keys
+- [x] CANVAS-18 Arrow-key nudge with three step sizes plus a fine step
+- [~] CANVAS-19 Keyboard rotate and flip shortcuts
+- [x] CANVAS-20 Grid snap that adapts to zoom
+- [x] CANVAS-21 Object snap to nodes, centres, midpoints, intersections, along lines and curves
+- [x] CANVAS-22 Snap modifiers: wider snap, show unsnapped, axis lock
+- [x] CANVAS-23 Right-click menu: cut, copy, paste, duplicate, select all, group, ungroup, preview, properties
+- [x] CANVAS-24 Paste at cursor
+- [x] CANVAS-25 Wireframe and filled rendering, coarse and smooth
 - [ ] CANVAS-26 Antialiasing and curve quality settings
 - [ ] CANVAS-27 Reduce motion setting
-- [ ] CANVAS-28 Hidden layer dims its images; flashing highlight of layer shapes
-- [ ] CANVAS-29 Drag and drop project files, images and device profiles
-- [ ] CANVAS-30 System clipboard with SVG text, bitmaps and plain text detection
-- [ ] CANVAS-31 Copy and paste between running instances
-- [ ] CANVAS-32 Auto-save on an interval and restore after a crash
-- [ ] CANVAS-33 Modified tracking and warning on newer-version files
+- [x] CANVAS-28 Hidden layer dims its images; flashing highlight of layer shapes
+- [~] CANVAS-29 Drag and drop project files, images and device profiles
+- [x] CANVAS-30 System clipboard with SVG text, bitmaps and plain text detection
+- [x] CANVAS-31 Copy and paste between running instances
+- [x] CANVAS-32 Auto-save on an interval and restore after a crash
+- [x] CANVAS-33 Modified tracking and warning on newer-version files
 
 ---
 
 ## 6. Drawing tools
 
-- [ ] DRAW-01 Line tool: straight segments by click, curves by click-drag
-- [ ] DRAW-02 Line tool: 45° snap, length readout
+- [x] DRAW-01 Line tool: straight segments by click, curves by click-drag
+- [x] DRAW-02 Line tool: 45° snap, length readout
 - [ ] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
-- [ ] DRAW-04 Rectangle with corner radius, including inward corners
+- [x] DRAW-04 Rectangle with corner radius, including inward corners
 - [ ] DRAW-05 Remove rounded corners
-- [ ] DRAW-06 Ellipse
-- [ ] DRAW-07 Polygon with N sides
+- [x] DRAW-06 Ellipse
+- [x] DRAW-07 Polygon with N sides
 - [ ] DRAW-08 Text: multi-line, right-to-left, CJK input
 - [ ] DRAW-09 Text: double-click to edit, edit several text objects at once
 - [ ] DRAW-10 Text: edit text shapes dialog with zoom and pan
@@ -506,84 +506,84 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 10. Layers and cut settings
 
 ### Layer model
-- [ ] LAYER-01 30 colour layers and 2 tool layers that never output
-- [ ] LAYER-02 Tool layers can optionally be framed
-- [ ] LAYER-03 Per layer: name, mode, output, show, air, priority, speed, max power, min power, passes
-- [ ] LAYER-04 Sub-layers: up to 11 per layer with their own settings
-- [ ] LAYER-05 Sub-layers: add, duplicate, remove, reorder, enable, disable
-- [ ] LAYER-06 Layer list shows "Multi" when sub-layers exist
+- [x] LAYER-01 30 colour layers and 2 tool layers that never output
+- [~] LAYER-02 Tool layers can optionally be framed
+- [x] LAYER-03 Per layer: name, mode, output, show, air, priority, speed, max power, min power, passes
+- [x] LAYER-04 Sub-layers: up to 11 per layer with their own settings
+- [x] LAYER-05 Sub-layers: add, duplicate, remove, reorder, enable, disable
+- [x] LAYER-06 Layer list shows "Multi" when sub-layers exist
 - [ ] LAYER-07 Default layer settings per device: make default, make default for all, reset
 - [ ] LAYER-08 Load default layer settings on new project option
-- [ ] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
+- [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
 - [ ] LAYER-10 Layers linked to material library entries
 
 ### Modes
-- [ ] MODE-01 Line
-- [ ] MODE-02 Fill
-- [ ] MODE-03 Fill + Line
-- [ ] MODE-04 Offset fill
-- [ ] MODE-05 Image (bitmaps only)
+- [x] MODE-01 Line
+- [x] MODE-02 Fill
+- [x] MODE-03 Fill + Line
+- [x] MODE-04 Offset fill
+- [x] MODE-05 Image (bitmaps only)
 
 ### Shared settings
-- [ ] CUT-01 Speed in mm/s or mm/min
-- [ ] CUT-02 Max power and min power
-- [ ] CUT-03 Number of passes
-- [ ] CUT-04 Output on or off
-- [ ] CUT-05 Air assist, with DSP modes for by layer or with laser
-- [ ] CUT-06 Laser 1 and laser 2 choice and per-tube power
-- [ ] CUT-07 Constant power mode (GRBL M3)
-- [ ] CUT-08 Layer name
-- [ ] CUT-09 Warning for very high DPI
-- [ ] CUT-10 Equations in every number field
+- [~] CUT-01 Speed in mm/s or mm/min
+- [~] CUT-02 Max power and min power
+- [~] CUT-03 Number of passes
+- [x] CUT-04 Output on or off
+- [~] CUT-05 Air assist, with DSP modes for by layer or with laser
+- [~] CUT-06 Laser 1 and laser 2 choice and per-tube power
+- [~] CUT-07 Constant power mode (GRBL M3)
+- [x] CUT-08 Layer name
+- [x] CUT-09 Warning for very high DPI
+- [x] CUT-10 Equations in every number field
 
 ### Line mode
-- [ ] LINE-01 Z offset and Z step per pass
-- [ ] LINE-02 Kerf offset for closed shapes
-- [ ] LINE-03 Perforation mode with cut and skip lengths
-- [ ] LINE-04 Tabs: enable, even spacing with min and max count, tab size
-- [ ] LINE-05 Tabs: partly cut tabs with tab power, skip inner shapes
-- [ ] LINE-06 Tabs: manual placement with the add tabs tool
-- [ ] LINE-07 Start and end pause time
-- [ ] LINE-08 Cut-through start and end with pause power
-- [ ] LINE-09 Overcut distance
-- [ ] LINE-10 PWM frequency override (Ruida)
-- [ ] LINE-11 PPI mode (Trocen)
-- [ ] LINE-12 Lead in and lead out: length, angle, line or arc
-- [ ] LINE-13 Dot mode: time and spacing
-- [ ] LINE-14 U axis offset (Ruida)
+- [~] LINE-01 Z offset and Z step per pass
+- [~] LINE-02 Kerf offset for closed shapes
+- [~] LINE-03 Perforation mode with cut and skip lengths
+- [~] LINE-04 Tabs: enable, even spacing with min and max count, tab size
+- [~] LINE-05 Tabs: partly cut tabs with tab power, skip inner shapes
+- [~] LINE-06 Tabs: manual placement with the add tabs tool
+- [~] LINE-07 Start and end pause time
+- [~] LINE-08 Cut-through start and end with pause power
+- [~] LINE-09 Overcut distance
+- [~] LINE-10 PWM frequency override (Ruida)
+- [~] LINE-11 PPI mode (Trocen)
+- [~] LINE-12 Lead in and lead out: length, angle, line or arc
+- [~] LINE-13 Dot mode: time and spacing
+- [~] LINE-14 U axis offset (Ruida)
 
 ### Fill mode
-- [ ] FILL-01 Bi-directional fill
-- [ ] FILL-02 Cross-hatch
-- [ ] FILL-03 Overscan as % or distance, with distance readout
-- [ ] FILL-04 Line interval and lines per inch, linked
-- [ ] FILL-05 Scan angle, with angle increase per pass
-- [ ] FILL-06 Fill all shapes at once, fill groups together, fill shapes one by one
-- [ ] FILL-07 Ramp length and ramp outer edge
-- [ ] FILL-08 Flood fill
-- [ ] FILL-09 Offset fill specifics: spiral path, power scale respected
+- [~] FILL-01 Bi-directional fill
+- [~] FILL-02 Cross-hatch
+- [~] FILL-03 Overscan as % or distance, with distance readout
+- [~] FILL-04 Line interval and lines per inch, linked
+- [~] FILL-05 Scan angle, with angle increase per pass
+- [~] FILL-06 Fill all shapes at once, fill groups together, fill shapes one by one
+- [~] FILL-07 Ramp length and ramp outer edge
+- [~] FILL-08 Flood fill
+- [~] FILL-09 Offset fill specifics: spiral path, power scale respected
 
 ### Image mode
-- [ ] IMGL-01 Image mode picker
-- [ ] IMGL-02 Line interval and DPI, linked
-- [ ] IMGL-03 Scan angle, bi-directional, overscan
-- [ ] IMGL-04 Negative image
-- [ ] IMGL-05 Pass-through (image is already dithered)
-- [ ] IMGL-06 Dot width correction
-- [ ] IMGL-07 Halftone cells per inch and angle
-- [ ] IMGL-08 Ramp length for threshold mode
-- [ ] IMGL-09 Images on one layer merged into one scan
-- [ ] IMGL-10 Min power for grayscale
+- [~] IMGL-01 Image mode picker
+- [~] IMGL-02 Line interval and DPI, linked
+- [~] IMGL-03 Scan angle, bi-directional, overscan
+- [~] IMGL-04 Negative image
+- [~] IMGL-05 Pass-through (image is already dithered)
+- [~] IMGL-06 Dot width correction
+- [~] IMGL-07 Halftone cells per inch and angle
+- [~] IMGL-08 Ramp length for threshold mode
+- [~] IMGL-09 Images on one layer merged into one scan
+- [~] IMGL-10 Min power for grayscale
 
 ### Cut settings editor dialog
-- [ ] CSE-01 Layer list on the left to edit several layers in one go
-- [ ] CSE-02 Common and Advanced tabs
-- [ ] CSE-03 Pictures that explain scan patterns
-- [ ] CSE-04 Dither sample preview
-- [ ] CSE-05 Beginner mode hides advanced settings
-- [ ] CSE-06 Reset to default
-- [ ] CSE-07 Shows when a layer is linked to the library
-- [ ] CSE-08 Z settings greyed out unless the device has Z
+- [x] CSE-01 Layer list on the left to edit several layers in one go
+- [x] CSE-02 Common and Advanced tabs
+- [x] CSE-03 Pictures that explain scan patterns
+- [x] CSE-04 Dither sample preview
+- [x] CSE-05 Beginner mode hides advanced settings
+- [x] CSE-06 Reset to default
+- [x] CSE-07 Shows when a layer is linked to the library
+- [x] CSE-08 Z settings greyed out unless the device has Z
 
 ### Material test
 - [ ] MT-01 Grid of speed × power cells
@@ -765,27 +765,27 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 16. File formats
 
 ### Project
-- [ ] PROJ-01 DarkBurn project format
+- [x] PROJ-01 DarkBurn project format
 - [ ] PROJ-02 Open LightBurn `.lbrn2` projects
 - [ ] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
-- [ ] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
+- [x] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
 - [ ] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
 - [ ] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import
-- [ ] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
-- [ ] IMP-02 SVG: 72 or 96 DPI setting
+- [~] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
+- [x] IMP-02 SVG: 72 or 96 DPI setting
 - [ ] IMP-03 Adobe Illustrator files
 - [ ] IMP-04 PDF with page choice and embedded images
 - [ ] IMP-05 DXF: units, splines, blocks, text, layers, colours
 - [ ] IMP-06 PLT / HPGL
 - [ ] IMP-07 Ruida RD files
 - [ ] IMP-08 SignCut files
-- [ ] IMP-09 PNG, JPG, BMP, GIF, TIFF, WebP
-- [ ] IMP-10 Colour to layer mapping
-- [ ] IMP-11 Group and select imported shapes options
-- [ ] IMP-12 Import to tool layers option
-- [ ] IMP-13 Several files at once; drag and drop
+- [x] IMP-09 PNG, JPG, BMP, GIF, TIFF, WebP
+- [x] IMP-10 Colour to layer mapping
+- [x] IMP-11 Group and select imported shapes options
+- [x] IMP-12 Import to tool layers option
+- [x] IMP-13 Several files at once; drag and drop
 
 ### Export
 - [ ] EXP-01 SVG
@@ -877,15 +877,15 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] SET-03 Font size and toolbar icon size
 - [ ] SET-04 Cursor and node size
 - [ ] SET-05 Dark background, grid contrast, grid spacing
-- [ ] SET-06 Grid snap distance, object snap distance, snapping on or off
-- [ ] SET-07 Click tolerance
+- [~] SET-06 Grid snap distance, object snap distance, snapping on or off
+- [~] SET-07 Click tolerance
 - [ ] SET-08 Full-screen cursor, centre cross, palette labels
 - [ ] SET-09 Show rotary and cylinder toggles on main window
 - [ ] SET-10 Invert mouse wheel zoom
 
 ### Editor
 - [ ] SET-11 Beginner mode
-- [ ] SET-12 Auto-save interval
+- [~] SET-12 Auto-save interval
 - [ ] SET-13 Check for updates
 - [ ] SET-14 Open files in the running copy
 - [ ] SET-15 Default states for cut selected and use selection origin
@@ -898,19 +898,19 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] SET-22 Sounds on error and on job finished
 - [ ] SET-23 Save job log
 - [ ] SET-24 Use system clipboard
-- [ ] SET-25 Nudge distances for normal, Ctrl and Shift
+- [~] SET-25 Nudge distances for normal, Ctrl and Shift
 - [ ] SET-26 Default font, height, auto-weld
 - [ ] SET-27 Shared default preferences file for makerspaces
 - [ ] SET-28 Excluded serial ports
 
 ### Files
-- [ ] SET-29 SVG DPI
+- [x] SET-29 SVG DPI
 - [ ] SET-30 DXF import units, fallback units, auto-close tolerance
 - [ ] SET-31 DXF export arcs or lines
 - [ ] SET-32 HPGL precision
 - [ ] SET-33 Import hidden Illustrator layers
-- [ ] SET-34 Group and select imported shapes
-- [ ] SET-35 Allow import to tool layers
+- [x] SET-34 Group and select imported shapes
+- [x] SET-35 Allow import to tool layers
 - [ ] SET-36 Output curve tolerance
 
 ### Camera
@@ -946,7 +946,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] KEY-03 Numpad jogging
 - [ ] KEY-04 Node edit single-key commands
 - [ ] KEY-05 Align single-key commands
-- [ ] KEY-06 Space to pan, Tab to cycle, Esc to cancel
+- [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
 - [ ] KEY-07 F1 context help
 - [ ] KEY-08 All shortcuts remappable
 

@@ -35,6 +35,12 @@ pub struct IrLayer {
     pub laser: u8,
     /// Scanning layer (fill or image): uses engraving acceleration and raster decimals.
     pub raster: bool,
+    /// DSP-only settings (PWM frequency, PPI, U offset, laser 2 power, dot mode).
+    #[serde(default)]
+    pub dsp: crate::input::DspSettings,
+    /// Dot mode of a line layer: dwell time (ms) and spacing (mm).
+    #[serde(default)]
+    pub dot: Option<(f64, f64)>,
 }
 
 /// One machine operation. Powers are percent, speeds mm/s, times ms.

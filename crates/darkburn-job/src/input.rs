@@ -131,6 +131,9 @@ pub struct CutSettings {
     /// GRBL constant power (M3) instead of dynamic power (M4).
     pub constant_power: bool,
     pub z: ZSettings,
+    /// Settings only DSP controllers use; the G-code writer ignores them.
+    #[serde(default)]
+    pub dsp: DspSettings,
     pub line: LineSettings,
     pub fill: FillSettings,
     pub image: ImageSettings,
@@ -165,6 +168,7 @@ impl Default for CutSettings {
             laser: 1,
             constant_power: false,
             z: ZSettings::default(),
+            dsp: DspSettings::default(),
             line: LineSettings::default(),
             fill: FillSettings::default(),
             image: ImageSettings::default(),
@@ -180,6 +184,19 @@ pub struct ZSettings {
     pub offset: f64,
     /// Added to Z after every pass (negative moves the head down into the material).
     pub step_per_pass: f64,
+}
+
+/// Per-layer settings that only DSP controllers (Ruida, Trocen) have a place for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DspSettings {
+    /// PWM frequency override, Hz.
+    pub pwm_hz: Option<u32>,
+    /// Pulses per inch (Trocen PPI mode).
+    pub ppi: Option<f64>,
+    /// Offset of the U axis for this layer, mm.
+    pub u_offset: f64,
+    /// Min and max power of laser 2 (percent) on dual-tube machines.
+    pub power2: Option<[f64; 2]>,
 }
 
 /// Lead-in and lead-out style.
@@ -227,11 +244,18 @@ pub struct TabSettings {
     pub tab_power: Option<f64>,
     /// No tabs on shapes inside other shapes.
     pub skip_inner: bool,
+    /// Space tabs evenly on shapes without manual tabs. Off: only manually placed tabs count.
+    #[serde(default = "yes")]
+    pub auto: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for TabSettings {
     fn default() -> Self {
-        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false }
+        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false, auto: true }
     }
 }
 

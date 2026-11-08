@@ -352,14 +352,16 @@ pub fn build_input(app: &DarkBurn) -> BuildInput {
     // The selected device profile decides the bed, origin corner, axes and Z.
     let mut device = app.machine.active().job_device();
     device.swap_xy |= app.job.gcode.swap_xy;
+    device.tolerance = app.prefs.opts.output_tolerance.clamp(0.0001, 10.0);
     BuildInput {
         doc: app.editor.doc.clone(),
         selection: app.editor.selected(),
-        settings: current_settings(app),
+        settings: current_settings(app).with_device_finish(app.job.gcode.return_to_finish),
         device,
         user_origin: app.job.user_origin,
         head: app.job.head,
         motion: app.job.additional,
+        tuning: None,
     }
 }
 

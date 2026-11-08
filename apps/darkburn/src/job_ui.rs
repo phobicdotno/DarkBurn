@@ -838,6 +838,7 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ("Cut selected graphics", "cut_selected", s.cut_selected),
         ("Use selection origin", "use_selection_origin", s.use_selection_origin),
         ("Show last position", "show_last_position", s.show_last_position),
+        ("Return to start when done", "return_to_start", s.finish == darkburn_job::FinishPosition::StartPosition),
         ("Optimize cut path", "optimize", s.planner.optimize),
     ];
     for (label, key, on) in toggles.iter_mut() {

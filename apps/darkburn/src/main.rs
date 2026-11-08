@@ -25,6 +25,10 @@ mod import;
 mod instance;
 mod job_build;
 mod job_cmds;
+#[cfg(test)]
+mod job_device_tests;
+#[cfg(test)]
+mod job_field_tests;
 mod job_ui;
 mod keymap;
 mod laser_panel;
@@ -43,6 +47,7 @@ mod mcp_inspect;
 #[cfg(test)]
 mod mcp_tests;
 mod mcp_ui;
+mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;

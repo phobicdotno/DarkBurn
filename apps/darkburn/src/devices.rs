@@ -322,6 +322,9 @@ impl Device {
             negative_coords: self.settings.negative_coords,
             swap_xy: self.settings.gcode.swap_xy,
             z_enabled: self.settings.z_enabled,
+            z_reverse: self.settings.z_reverse,
+            pointer_offset: [self.settings.red_dot_x, self.settings.red_dot_y],
+            ..JobDevice::default()
         }
     }
     pub fn is_simulator(&self) -> bool {

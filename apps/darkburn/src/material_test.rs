@@ -390,6 +390,7 @@ mod tests {
             user_origin: None,
             head: None,
             motion: Default::default(),
+            tuning: None,
         };
         let b = crate::job_build::build_job_simple(&input).unwrap();
         assert!(b.toolpath.layers.len() >= 7, "six cells and the labels");

@@ -222,6 +222,7 @@ mod tests {
             user_origin: None,
             head: None,
             motion: Default::default(),
+            tuning: None,
         };
         let job = Arc::new(build_job_simple(&input).unwrap());
         PreviewData::new(job, &AdditionalSettings::default(), 0)

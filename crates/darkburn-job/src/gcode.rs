@@ -584,6 +584,8 @@ mod tests {
 
     fn layer(constant: bool, raster: bool) -> IrLayer {
         IrLayer {
+            dsp: Default::default(),
+            dot: None,
             layer_index: 0,
             sublayer: 0,
             name: "C00".into(),

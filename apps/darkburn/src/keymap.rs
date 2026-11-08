@@ -30,7 +30,27 @@ pub fn publish(o: &Overrides) {
 
 /// The key text now bound to command `c` (its default unless changed).
 pub fn key_for(c: &Cmd) -> String {
-    key_in(&CURRENT.read().map(|o| o.clone()).unwrap_or_default(), c.id, c.key)
+    key_in(&CURRENT.read().map(|o| o.clone()).unwrap_or_default(), c.id, default_key(c))
+}
+
+/// Keys of commands whose registry entry (in another module) has none: the laser keys that
+/// LightBurn has (Pause, Ctrl+Break) and the jog keys. egui cannot tell the numpad from the
+/// digit row, so the jog keys are Ctrl+Alt+arrows.
+const EXTRA_DEFAULTS: &[(&str, &str)] = &[
+    ("job.pause", "Pause"),
+    ("job.stop", "Ctrl+Pause"),
+    ("laser.jog_left", "Ctrl+Alt+Left"),
+    ("laser.jog_right", "Ctrl+Alt+Right"),
+    ("laser.jog_up", "Ctrl+Alt+Up"),
+    ("laser.jog_down", "Ctrl+Alt+Down"),
+];
+
+/// The default key of a command.
+pub fn default_key(c: &Cmd) -> &'static str {
+    if !c.key.is_empty() {
+        return c.key;
+    }
+    EXTRA_DEFAULTS.iter().find(|(id, _)| *id == c.id).map_or("", |(_, k)| k)
 }
 
 /// The key text for `id` given overrides and the default.
@@ -40,7 +60,7 @@ pub fn key_in(o: &Overrides, id: &str, default: &str) -> String {
 
 /// Every command that can have a key: id, label, default key.
 pub fn bindable() -> Vec<(&'static str, &'static str, &'static str)> {
-    commands::COMMANDS.iter().filter(|c| c.args.is_empty()).map(|c| (c.id, c.label, c.key)).collect()
+    commands::registry().iter().filter(|c| c.args.is_empty()).map(|c| (c.id, c.label, default_key(c))).collect()
 }
 
 /// The effective key of each bindable command (empty when it has none).

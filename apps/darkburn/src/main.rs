@@ -7,6 +7,8 @@ mod art_library;
 mod canvas;
 mod canvas_input;
 mod commands;
+#[cfg(test)]
+mod completion_ui_tests;
 mod cut_settings;
 mod cuts_panel;
 mod devices;
@@ -37,8 +39,12 @@ mod job_device_tests;
 #[cfg(test)]
 mod job_field_tests;
 mod job_ui;
+mod key_cmds;
 mod keymap;
+#[cfg(test)]
+mod keys_tests;
 mod laser_panel;
+mod layer_defaults;
 mod library;
 mod machine_api;
 #[cfg(test)]
@@ -73,6 +79,7 @@ mod prefs_files;
 mod preview;
 mod render;
 mod ribbon;
+mod rotary_read;
 mod scan_offsets;
 mod settings;
 mod settings_wiring;

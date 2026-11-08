@@ -184,6 +184,7 @@ enum Act {
     Copy,
     Paste,
     Header(HeaderCmd),
+    Run(&'static str),
 }
 
 fn rename_id() -> Id {
@@ -270,6 +271,17 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             }
             if MenuItem::new(label, label, "").show(ui).clicked() {
                 acts.push(Act::Header(*cmd));
+                ui.close();
+            }
+        }
+        Menu::separator(ui);
+        for (id, label) in [
+            ("layer.default_make", "Make these the default layers"),
+            ("layer.default_apply", "Load the default layers"),
+            ("layer.default_reset", "Reset the default layers"),
+        ] {
+            if MenuItem::new(label, label, "").show(ui).clicked() {
+                acts.push(Act::Run(id));
                 ui.close();
             }
         }
@@ -389,6 +401,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Apply what was done.
     let ctx = ui.ctx().clone();
+    let mut run_later: Vec<&'static str> = Vec::new();
     for act in acts {
         let e = &mut app.editor;
         match act {
@@ -449,7 +462,11 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             Act::Header(cmd) => {
                 e.edit("Layers", |d, _| header_command(d, cmd));
             }
+            Act::Run(id) => run_later.push(id),
         }
+    }
+    for id in run_later {
+        app.run(&ctx, id);
     }
 }
 

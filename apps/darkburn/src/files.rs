@@ -169,6 +169,7 @@ pub fn new_project(app: &mut DarkBurn) {
     app.project_path = None;
     app.notes_open = false;
     crate::settings_wiring::on_new_project(app);
+    crate::layer_defaults::on_new_project(app);
     discard_autosave(app);
 }
 

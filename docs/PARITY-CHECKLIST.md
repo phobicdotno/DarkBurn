@@ -173,7 +173,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-11 Interval test
 - [x] LT-12 Material test
 - [x] LT-13 Centre finder
-- [ ] LT-14 Feeder setup
+- [x] LT-14 Feeder setup
 - [x] LT-15 Cylinder correction
 - [x] LT-16 Get controller info
 - [x] LT-17 Repeat marking (galvo)
@@ -298,7 +298,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LIB-06 Link layer to entry; unlink when entry deleted
 - [x] LIB-07 Create entry from layer
 - [x] LIB-08 Edit cut, edit description, duplicate, delete
-- [~] LIB-09 Library chosen per device
+- [x] LIB-09 Library chosen per device
 
 ### Console
 - [x] CON-01 Scrolling log and command line
@@ -336,11 +336,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
-- [~] VTP-01 Start, end, current, advance by
-- [~] VTP-02 Previous and next
-- [~] VTP-03 Auto-advance
-- [~] VTP-04 Test, reset, bake
-- [~] VTP-05 CSV file browse and clear
+- [x] VTP-01 Start, end, current, advance by
+- [x] VTP-02 Previous and next
+- [x] VTP-03 Auto-advance
+- [x] VTP-04 Test, reset, bake
+- [x] VTP-05 CSV file browse and clear
 
 ### Shape Properties
 - [x] SP-01 Property grid for the selected shape
@@ -357,7 +357,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ART-03 Search
 - [x] ART-04 Drag in from the desktop; add selection
 - [x] ART-05 Rename; replace on duplicate
-- [~] ART-06 Shared between running instances
+- [x] ART-06 Shared between running instances
 
 ### File List (DSP controllers)
 - [x] FL-01 List files on controller
@@ -512,10 +512,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LAYER-04 Sub-layers: up to 11 per layer with their own settings
 - [x] LAYER-05 Sub-layers: add, duplicate, remove, reorder, enable, disable
 - [x] LAYER-06 Layer list shows "Multi" when sub-layers exist
-- [ ] LAYER-07 Default layer settings per device: make default, make default for all, reset
-- [ ] LAYER-08 Load default layer settings on new project option
+- [x] LAYER-07 Default layer settings per device: make default, make default for all, reset
+- [x] LAYER-08 Load default layer settings on new project option
 - [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
-- [~] LAYER-10 Layers linked to material library entries
+- [x] LAYER-10 Layers linked to material library entries
 
 ### Modes
 - [x] MODE-01 Line
@@ -588,10 +588,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Material test
 - [x] MT-01 Grid of speed × power cells
 - [x] MT-02 Alternative axes: interval, frequency, Q-pulse
-- [~] MT-03 Min and max, rows and columns, labels and units
+- [x] MT-03 Min and max, rows and columns, labels and units
 - [x] MT-04 Label layer settings
 - [x] MT-05 Presets: save, load, import, export
-- [~] MT-06 Frame the test before running
+- [x] MT-06 Frame the test before running
 - [x] MT-07 Works on G-code, DSP and galvo devices
 
 ---
@@ -832,7 +832,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
 - [x] ROT-05 Mirror output
 - [~] ROT-06 Test rotation
-- [ ] ROT-07 Read settings from controller (Ruida)
+- [x] ROT-07 Read settings from controller (Ruida)
 - [x] ROT-08 Rotary toggle on the main window
 
 ## 19. Print and cut
@@ -863,7 +863,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-05 Cylinder correction, including concave
 - [x] OTHER-06 Pre-job checklist editor
 - [x] OTHER-07 Project notes dialog shown on open
-- [ ] OTHER-08 Hotkey editor
+- [x] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
 
@@ -942,10 +942,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 24. Keyboard
 
 - [~] KEY-01 Every default shortcut from the menus above
-- [ ] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [ ] KEY-03 Numpad jogging
-- [ ] KEY-04 Node edit single-key commands
-- [ ] KEY-05 Align single-key commands
+- [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
+- [~] KEY-03 Numpad jogging
+- [x] KEY-04 Node edit single-key commands
+- [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
 - [x] KEY-07 F1 context help
 - [x] KEY-08 All shortcuts remappable
@@ -954,7 +954,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] I18N-01 Translation system
 - [x] I18N-02 English
-- [~] I18N-03 Norwegian
+- [x] I18N-03 Norwegian
 - [ ] I18N-04 The other 22 LightBurn languages
 - [ ] I18N-05 Machine error messages translated
 

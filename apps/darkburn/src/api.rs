@@ -28,6 +28,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::vision_cmds::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::layer_defaults::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }

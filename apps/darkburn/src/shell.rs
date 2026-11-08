@@ -66,6 +66,8 @@ pub struct DarkBurn {
     pub flash_layer: Option<(usize, f64)>,
     /// Project files, auto-save and the system clipboard (files.rs).
     pub files: crate::files::FileState,
+    /// Devices, the connected machine and its panels (machine_ui.rs).
+    pub machine: crate::machine_ui::MachineUi,
     /// Libraries, hotkey editor, help (extras.rs).
     pub extras: crate::extras::Extras,
     /// Job, preview, G-code and material test state (job_cmds.rs).
@@ -108,6 +110,7 @@ impl DarkBurn {
             notes_open: false,
             flash_layer: None,
             files: Default::default(),
+            machine: Default::default(),
             extras: Default::default(),
             job: Default::default(),
             images: Default::default(),
@@ -191,6 +194,7 @@ impl DarkBurn {
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
+            || crate::machine_ui::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
@@ -280,6 +284,7 @@ impl DarkBurn {
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
+        crate::machine_ui::frame(ui.ctx(), self);
         crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
@@ -306,6 +311,7 @@ impl DarkBurn {
         crate::extras::dialogs(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
+        crate::devices_ui::dialogs(ui.ctx(), self);
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);

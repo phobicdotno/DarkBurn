@@ -773,10 +773,10 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     let s = job_cmds::current_settings(app);
     let mut clicked: Option<&'static str> = None;
-    ui_kit::status_line(ui, "Disconnected", ui_kit::StatusTone::Dim);
+    // The state, progress bar and Start, Pause and Stop are the machine side's (laser_panel.rs).
     let progress = app.job.pending.as_ref().map(|(task, _)| task.progress());
-    ui_kit::progress(ui, "laser_job", progress.unwrap_or(0.0));
-    if progress.is_some() {
+    if let Some(p) = progress {
+        ui_kit::progress(ui, "laser_plan", p);
         ui_kit::status_line(ui, "Planning the job...", ui_kit::StatusTone::Dim);
     }
     let buttons = |ui: &mut Ui, items: &[(&str, &'static str)], clicked: &mut Option<&'static str>| {
@@ -788,9 +788,16 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     };
-    buttons(ui, &[("Start", "job.start"), ("Pause", "job.pause"), ("Stop", "job.stop")], &mut clicked);
-    buttons(ui, &[("Frame", "job.frame"), ("Save G-code", "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send")], &mut clicked);
-    buttons(ui, &[("Home", "job.home"), ("Go to origin", "job.go_origin"), ("Preview", "window.preview")], &mut clicked);
+    buttons(
+        ui,
+        &[("Frame", "job.frame"), ("Frame outline", "job.frame_rubber"), ("Home", "job.home"), ("Go to origin", "job.go_origin")],
+        &mut clicked,
+    );
+    buttons(
+        ui,
+        &[("Save G-code", "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send"), ("Preview", "window.preview")],
+        &mut clicked,
+    );
     if let Some(op) = app.job.start_op {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(format!("Starting at operation {op}")).size(t.font_small).color(t.text_dim));
@@ -851,18 +858,6 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
         if ui_kit::button(ui, "G-code settings", ui_kit::Button::Small).clicked() {
             clicked = Some("job.gcode_settings");
         }
-    });
-    ui.add_enabled_ui(false, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui_kit::button(ui, "Devices", ui_kit::Button::Small);
-        });
-        let mut i = 0;
-        ui_kit::row(ui, "Port", |ui| {
-            ui_kit::dropdown(ui, "port", &mut i, &["(choose)"]);
-        });
-        ui_kit::row(ui, "Device", |ui| {
-            ui_kit::dropdown(ui, "device", &mut i, &["No device"]);
-        });
     });
     if let Some(id) = clicked {
         app.run(&ctx, id);

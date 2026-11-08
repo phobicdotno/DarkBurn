@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use kurbo::Point;
 
 use crate::command::{Axis, Command, DelayKind, Laser, LayerFlag, RapidOption, parse_commands};
-use crate::encoding::{Power, REL_MAX, REL_MIN, bgr_to_rgb, mm_s_to_um_s, mm_to_um, rgb_to_bgr, um_s_to_mm_s, um_to_mm};
+use crate::encoding::{Power, REL_MAX, REL_MIN, bgr_to_rgb, mm_s_to_um_s, mm_to_um, ms_to_us, rgb_to_bgr, um_s_to_mm_s, um_to_mm, us_to_ms};
 use crate::error::{Result, RuidaError};
 use crate::swizzle::{Magic, Swizzler, detect_magic_histogram};
 
@@ -226,7 +226,7 @@ impl RdJob {
                 c.push(MaxPower { laser, power: Power::from_percent(s.max_power[i]) });
             }
             if let Some(d) = s.dot_mode {
-                c.push(Delay { kind: DelayKind::AddDelay, us: mm_to_um(d.dot_time_ms).max(0) as u32 });
+                c.push(Delay { kind: DelayKind::AddDelay, us: ms_to_us(d.dot_time_ms) });
                 c.push(Delay { kind: DelayKind::LaserInterval, us: mm_to_um(d.spacing_mm).max(0) as u32 });
             }
             c.push(LaserTubeStart(1));
@@ -390,7 +390,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
                     Delay { kind: DelayKind::LaserInterval, us } => dot_spacing = Some(*us),
                     LaserTubeStart(_) => {
                         if let (Some(t), Some(sp)) = (dot_time, dot_spacing) {
-                            s.dot_mode = Some(DotMode { dot_time_ms: um_to_mm(t as i32), spacing_mm: um_to_mm(sp as i32) });
+                            s.dot_mode = Some(DotMode { dot_time_ms: us_to_ms(t), spacing_mm: um_to_mm(sp as i32) });
                         }
                         phase = Phase::Body;
                     }

@@ -19,6 +19,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
     }
+    if let Some(result) = crate::machine_ui::api(app, id, args) {
+        return result;
+    }
     if let Some(result) = crate::job_cmds::execute(app, id, args) {
         return result;
     }

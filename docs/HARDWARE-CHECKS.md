@@ -42,3 +42,16 @@ Source: `docs/research/other-controllers.md`.
 - [ ] Trocen / AWC / LO-X7: no public spec; `.ud5` is reported as scrambled; USB chip unresolved
 - [ ] TopWisdom: USB serial per a developer note; `.out` format not public
 - [ ] Cubiio 2 HTTP upload, Emblaser Wi-Fi, Snapmaker 2.0 HTTP
+
+## Device layer in the app (built against the simulators only)
+- [ ] GRBL: Connect, Start, Pause, Resume, Stop and Fire on a real machine through the Laser panel (the human clicks Connect; no builder does)
+- [ ] GRBL: Stop right after Resume can reset while the head still moves and raise ALARM 3 (seen with the emulator); check on hardware
+- [ ] GRBL: jog arrow directions and Frame for each origin corner (the arrows are mapped from the screen to the machine axes by the device's origin corner)
+- [ ] GRBL: Machine Settings write of `$N=value` and restore of a `.dbset` backup, including the protection-settings warning ($20, $21, $22, $30, $31, $32)
+- [ ] Ruida: the Fire button sends the panel Pulse key down and up on the jog port (UDP only); confirm it fires and stops
+- [ ] Ruida: bed size read on connect from registers 0x26 and 0x36 (two read-only register reads)
+- [ ] Ruida: Home sends HomeXY; Go to origin uses the rapid with the origin option (see "Go to origin" above)
+- [ ] Ruida: set and clear user origin are not offered because the panel Origin key is unconfirmed
+- [ ] Ruida: laser 2 and U axis read and write through Machine Settings and the Move panel (addresses above)
+- [ ] Ruida: file list, upload with the overwrite question, run, delete and calculate time on a real controller
+- [ ] Find My Laser: the USB VID/PID table (CH340, CP210x, FTDI, Arduino, ESP32, STM32) only describes ports; confirm names on real hardware

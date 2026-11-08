@@ -178,7 +178,12 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
 #[derive(Clone, Debug)]
 pub enum After {
     Preview,
-    SaveGcode { path: PathBuf, from_op: Option<usize> },
+    SaveGcode {
+        path: PathBuf,
+        from_op: Option<usize>,
+    },
+    /// Run or send the job on the connected machine (machine_job.rs).
+    Machine(crate::machine_job::Action),
 }
 
 /// A job that was sent or saved: where it landed, for "Show last position".
@@ -323,16 +328,6 @@ impl JobState {
     }
 }
 
-fn corner_of(o: crate::view::Origin) -> darkburn_job::Corner {
-    use crate::view::Origin;
-    match o {
-        Origin::FrontLeft => darkburn_job::Corner::BottomLeft,
-        Origin::FrontRight => darkburn_job::Corner::BottomRight,
-        Origin::RearLeft => darkburn_job::Corner::TopLeft,
-        Origin::RearRight => darkburn_job::Corner::TopRight,
-    }
-}
-
 /// The job settings saved in the open project (or the user's defaults).
 pub fn current_settings(app: &DarkBurn) -> JobProjectSettings {
     JobProjectSettings::from_doc(&app.editor.doc, &app.job.default_planner)
@@ -354,10 +349,8 @@ pub fn update_settings(app: &mut DarkBurn, label: &str, f: impl FnOnce(&mut JobP
 
 /// Everything a job build needs, from the open project and the app's device state.
 pub fn build_input(app: &DarkBurn) -> BuildInput {
-    let mut device = app.job.device;
-    device.bed_w = f64::from(app.prefs.page_width);
-    device.bed_h = f64::from(app.prefs.page_height);
-    device.origin = corner_of(app.prefs.origin);
+    // The selected device profile decides the bed, origin corner, axes and Z.
+    let mut device = app.machine.active().job_device();
     device.swap_xy |= app.job.gcode.swap_xy;
     BuildInput {
         doc: app.editor.doc.clone(),
@@ -445,6 +438,19 @@ pub fn finish(app: &mut DarkBurn, job: Arc<BuiltJob>, then: After) {
             }
             save_and_report(app, &job, &path, from_op);
         }
+        After::Machine(action) => {
+            if job.out_of_bounds() {
+                app.job.bounds_prompt = Some(BoundsPrompt { job, then: After::Machine(action) });
+                return;
+            }
+            run_on_machine(app, job, action);
+        }
+    }
+}
+
+fn run_on_machine(app: &mut DarkBurn, job: Arc<BuiltJob>, action: crate::machine_job::Action) {
+    if let Err(e) = crate::machine_job::after_build(app, job, action) {
+        app.job.message = Some(Message { title: "Cannot run the job".into(), text: e });
     }
 }
 
@@ -467,8 +473,12 @@ pub fn answer_bounds_prompt(app: &mut DarkBurn, go: bool, discard: bool) {
     if discard {
         update_settings(app, "Discard out-of-bounds shapes", |s| s.discard_out_of_bounds = true);
         start_build(app, p.then);
-    } else if go && let After::SaveGcode { path, from_op } = p.then {
-        save_and_report(app, &p.job, &path, from_op);
+    } else if go {
+        match p.then {
+            After::SaveGcode { path, from_op } => save_and_report(app, &p.job, &path, from_op),
+            After::Machine(action) => run_on_machine(app, p.job, action),
+            After::Preview => {}
+        }
     }
 }
 
@@ -710,7 +720,7 @@ fn summary(app: &DarkBurn, job: &BuiltJob) -> Value {
     })
 }
 
-fn build_now(app: &DarkBurn) -> Result<Arc<BuiltJob>, String> {
+pub fn build_now(app: &DarkBurn) -> Result<Arc<BuiltJob>, String> {
     job_build::build_job_simple(&build_input(app)).map(Arc::new).map_err(|e| e.to_string())
 }
 
@@ -1127,22 +1137,23 @@ mod tests {
             "job.go_origin",
         ] {
             let info = crate::commands::describe(id).unwrap();
-            assert!(info.hardware && !info.implemented, "{id}");
+            // The machine side runs these on the simulators; with nothing connected they refuse.
+            assert!(info.hardware && info.implemented, "{id}");
             let e = run(&mut a, id, Value::Null).unwrap_err();
-            assert!(e.contains("no machine"), "{id}: {e}");
+            assert!(e.contains("not connected"), "{id}: {e}");
         }
         for id in ["job.preview_run_from_here", "job.preview_send_from_here"] {
             assert!(crate::commands::describe(id).unwrap().hardware);
-            assert!(run(&mut a, id, json!({ "op_index": 1 })).unwrap_err().contains("no machine"));
+            assert!(run(&mut a, id, json!({ "op_index": 1 })).unwrap_err().contains("not connected"));
         }
         for id in ["file.save_gcode", "window.preview", "laser.material_test", "job.preview_save_from_here"] {
             let info = crate::commands::describe(id).unwrap();
             assert!(!info.hardware && info.implemented, "{id}");
         }
-        // Through the window path the same answer shows as a message.
+        // Through the window path the same answer shows as the machine panel's message.
         let ctx = egui::Context::default();
         a.run(&ctx, "job.start");
-        assert!(a.job.message.as_ref().unwrap().text.contains("no machine"));
+        assert!(a.machine.message.as_ref().unwrap().text.contains("not connected"));
     }
 
     #[test]

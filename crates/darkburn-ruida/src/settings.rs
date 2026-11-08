@@ -233,11 +233,12 @@ pub fn writable(group: Option<Group>) -> impl Iterator<Item = &'static Register>
     REGISTERS.iter().filter(move |r| r.writable && group.is_none_or(|g| r.group == g))
 }
 
-/// Known board names by card ID (RUIDA-14). Only 0x65106510 is confirmed by MeerK40t; the
-/// others are the emulator's default and placeholders that need checking.
+/// Known board names by card ID (RUIDA-14). 0x65106510 (RDC6442S) and 0x90109010 (RDC8445S) are
+/// named by public sources (MeerK40t, ruida-pa); the others are placeholders that need checking.
 pub fn board_name(card_id: u32) -> Option<&'static str> {
     match card_id {
         0x6510_6510 => Some("RDC6442S"),
+        0x9010_9010 => Some("RDC8445S"),
         0x6500_6500 => Some("RDC6442G"),
         _ => None,
     }
@@ -380,11 +381,11 @@ pub struct ControllerInfo {
     pub last_job_time_ms: u32,
 }
 
-/// Decoded machine status word (address 0x200).
-///
-/// UNCERTAIN: EduTechWiki/MeerK40t's client constants say bit 0 = job running, bit 1 = part
-/// end, bit 24 = moving; MeerK40t's emulator answers 21 (running), 22 (idle), 23 (paused).
-/// Both readings agree on bit 0 for "running"; "paused" is read as bits 0 and 1 together.
+/// Decoded machine status word (address 0x200): a set of flags. Bit 0 = job running, bit 1 =
+/// paused (MeerK40t calls it "part end"), bit 24 = moving. Paused is read as bits 0 and 1
+/// together. MeerK40t's emulator answers the plain numbers 21, 22 and 23 instead; those are not
+/// copied (the flags decode them as running, idle and paused by accident only).
+/// UNCERTAIN until checked on a controller (HARDWARE-CHECKS.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct StatusWord(pub u32);
 
@@ -392,9 +393,10 @@ impl StatusWord {
     pub const RUNNING: u32 = 0x0000_0001;
     pub const PART_END: u32 = 0x0000_0002;
     pub const MOVING: u32 = 0x0100_0000;
-    pub const IDLE_VALUE: u32 = 22;
-    pub const RUNNING_VALUE: u32 = 21;
-    pub const PAUSED_VALUE: u32 = 23;
+    /// What the emulator reports: no flags, running, running and paused.
+    pub const IDLE_VALUE: u32 = 0;
+    pub const RUNNING_VALUE: u32 = Self::RUNNING;
+    pub const PAUSED_VALUE: u32 = Self::RUNNING | Self::PART_END;
 
     pub fn job_running(self) -> bool {
         self.0 & Self::RUNNING != 0 && !self.paused()
@@ -460,6 +462,8 @@ mod tests {
         assert_eq!(StatusWord(StatusWord::RUNNING_VALUE).state(), MachineState::Running);
         assert_eq!(StatusWord(StatusWord::PAUSED_VALUE).state(), MachineState::Paused);
         assert_eq!(StatusWord(StatusWord::MOVING).state(), MachineState::Moving);
+        assert_eq!(StatusWord(StatusWord::MOVING | StatusWord::RUNNING).state(), MachineState::Running, "a running job beats the moving flag");
+        assert_eq!((StatusWord::IDLE_VALUE, StatusWord::RUNNING_VALUE, StatusWord::PAUSED_VALUE), (0, 1, 3), "flags, not MeerK40t's 22, 21, 23");
     }
 
     #[test]
@@ -484,5 +488,7 @@ mod tests {
         let u = UAxisSettings { range_um: 5, rotary_diameter_um: 80_000, ..Default::default() };
         assert_eq!(UAxisSettings::from_values(u.to_values()), u);
         assert_eq!(board_name(0x65106510), Some("RDC6442S"));
+        assert_eq!(board_name(0x90109010), Some("RDC8445S"));
+        assert_eq!(board_name(0x12345678), None);
     }
 }

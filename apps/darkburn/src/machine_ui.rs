@@ -856,6 +856,10 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     let safe = app.safe_mode;
     app.machine.ensure_loaded(dir.as_deref(), safe);
     adopt_device_state(app);
+    if let Some(id) = app.machine.applied_device {
+        // What the user changes while on a device is the device's from now on.
+        capture_device_state(app, id);
+    }
     let events = app.machine.tick();
     if !events.is_empty() || app.machine.handle.snapshot().state.is_working() || app.machine.handle.snapshot().state == LaserState::Connecting {
         ctx.request_repaint();
@@ -897,9 +901,12 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     }
     app.machine.applied_device = Some(active);
     let Some(dev) = app.machine.devices.get(active).cloned() else { return };
+    let remembered = dev.state.panel_layout.is_some();
     let p = &mut app.prefs;
-    p.numeric_inches = dev.state.inches;
-    p.show_grid = dev.state.show_grid;
+    if remembered {
+        p.numeric_inches = dev.state.inches;
+        p.show_grid = dev.state.show_grid;
+    }
     p.page_width = dev.width_mm as f32;
     p.page_height = dev.height_mm as f32;
     p.origin = view_origin(dev.origin);
@@ -913,6 +920,10 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
         }
     }
     p.sanitise();
+    if !remembered {
+        // A device that has never been used takes over the app's current units, grid and panels.
+        capture_device_state(app, active);
+    }
     app.machine.rotary_on = false;
     app.machine.cylinder_on = false;
 }

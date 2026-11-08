@@ -268,6 +268,7 @@ fn switching_device_adopts_its_remembered_state() {
     d.origin = darkburn_job::Corner::TopRight;
     d.state.inches = true;
     d.state.show_grid = false;
+    d.state.panel_layout = serde_json::to_string(&a.prefs.panels).ok();
     let id = a.machine.devices.add(d);
     a.machine.select_device(id);
     machine_ui::adopt_device_state(&mut a);
@@ -285,6 +286,18 @@ fn switching_device_adopts_its_remembered_state() {
     a.machine.select_device(id);
     machine_ui::adopt_device_state(&mut a);
     assert!(a.prefs.panel("move").visible);
+}
+
+#[test]
+fn a_new_device_takes_over_the_current_units_and_panels() {
+    let mut a = app();
+    a.prefs.numeric_inches = true;
+    a.prefs.panels.get_mut("move").unwrap().visible = true;
+    machine_ui::adopt_device_state(&mut a);
+    assert!(a.prefs.numeric_inches, "first use does not reset the user's units");
+    assert!(a.prefs.panel("move").visible);
+    let first = a.machine.active().clone();
+    assert!(first.state.inches && first.state.panel_layout.is_some(), "and the device remembers them from then on");
 }
 
 #[test]
@@ -346,7 +359,8 @@ fn bad_arguments_say_why() {
 
 /// Draw one frame of everything the machine side puts on screen.
 fn draw(ctx: &egui::Context, app: &mut DarkBurn, events: Vec<egui::Event>) -> usize {
-    let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))), events, ..Default::default() };
+    let input =
+        egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))), events, ..Default::default() };
     let mut out = ctx.run_ui(input, |ui| {
         machine_ui::frame(ui.ctx(), app);
         for id in ["laser", "move", "console", "file_list"] {
@@ -429,9 +443,15 @@ fn the_banner_says_what_is_connected() {
     assert_eq!(crate::laser_panel::mode_status(false, false, true), "Flat bed");
     assert!(crate::laser_panel::mode_status(true, false, false).contains("no rotary axis"));
     assert_eq!(crate::laser_panel::macro_label(2, ""), "Macro 3");
-    assert_eq!(crate::laser_panel::macro_label(0, "
+    assert_eq!(
+        crate::laser_panel::macro_label(
+            0,
+            "
   G0 X10
-G1"), "G0 X10");
+G1"
+        ),
+        "G0 X10"
+    );
     assert!(crate::laser_panel::macro_label(0, "a very long first line").ends_with("..."));
 }
 

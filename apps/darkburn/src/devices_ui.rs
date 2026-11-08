@@ -474,9 +474,6 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
             machine_ui::apply_default_layers(app);
         }
     });
-    if d.state.panel_layout.is_some() && small(ui, "Forget panel layout", "Use the current layout on this device", true) {
-        d.state.panel_layout = None;
-    }
 }
 
 fn gcode_page(ui: &mut Ui, d: &mut Device) {

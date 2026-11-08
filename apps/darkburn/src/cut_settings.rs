@@ -478,7 +478,12 @@ fn common(ui: &mut Ui, c: &mut CutSetting, modes: &[Mode], layer: &Layer, output
     });
 
     ui_kit::section_heading(ui, "Speed and power");
-    num(ui, "Speed", &mut c.speed, Num::new(0.01..=100_000.0, 1, " mm/s").speed(1.0));
+    let o = crate::options::get();
+    let mut shown = o.speed_value(c.speed);
+    let (k, suffix) = if o.speed_per_min { (60.0, " mm/min") } else { (1.0, " mm/s") };
+    if num(ui, "Speed", &mut shown, Num::new(0.01..=100_000.0 * k, 1, suffix).speed(1.0)) {
+        c.speed = o.speed_to_mm_s(shown);
+    }
     pick(ui, "Laser", &mut c.laser, &[(LaserSelect::Laser1, "Laser 1"), (LaserSelect::Laser2, "Laser 2"), (LaserSelect::Both, "Both")]);
     if c.laser != LaserSelect::Laser2 {
         num(ui, "Max power", &mut c.max_power, pct());

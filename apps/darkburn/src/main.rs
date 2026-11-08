@@ -3,17 +3,24 @@
 
 mod actions;
 mod api;
+mod art_library;
 mod canvas;
 mod canvas_input;
 mod commands;
 mod cut_settings;
 mod cuts_panel;
+mod extras;
 mod files;
+mod help;
+mod i18n;
 mod import;
+mod keymap;
+mod library;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod numeric;
 mod numeric_edits;
+mod options;
 mod palette;
 mod panels;
 mod prefs;
@@ -194,6 +201,7 @@ fn app_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    help::install_logger();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dir = settings_dir();
     let mut notes = Vec::new();
@@ -234,7 +242,11 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             darkburn_ui::fonts::setup_bundled_fonts(&cc.egui_ctx);
             let stored = if safe_mode { None } else { cc.storage.and_then(|s| s.get_string(STORAGE_KEY)) };
-            let prefs = stored.as_deref().map(Prefs::from_json).unwrap_or_default();
+            let prefs = match stored.as_deref() {
+                Some(s) => Prefs::from_json(s),
+                // First run: a workshop's shared defaults, if it left a file.
+                None => extras::shared_defaults(dir.as_deref()).unwrap_or_default(),
+            };
             let mut app = DarkBurn::new(prefs);
             app.settings_dir = dir.clone();
             app.safe_mode = safe_mode;

@@ -56,7 +56,7 @@ impl Xf {
 
 /// Flattening tolerance in screen points: smooth or coarse.
 pub fn tolerance(smooth: bool) -> f64 {
-    if smooth { 0.2 } else { 1.5 }
+    (if smooth { 0.2 } else { 1.5 }) * crate::options::get().curve_quality.tolerance_factor()
 }
 
 /// A path (document coordinates) as screen polylines, with whether each is closed.

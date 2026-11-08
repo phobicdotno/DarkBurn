@@ -230,10 +230,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     // Column layout.
     let width = (ui.available_width() - 14.0).max(200.0);
     // Narrow panels shrink the fixed columns before the name column runs out.
-    let full = [22.0f32, 0.0, 86.0, 60.0, 44.0, 36.0, 30.0];
-    let squeeze = ((width - 64.0) / full.iter().sum::<f32>()).clamp(0.5, 1.0);
-    let mut fixed = full.map(|w| w * squeeze);
-    fixed[2] = fixed[2].max(80.0);
+    // The fixed columns keep their width; the panel is at least 300 points wide, so the name
+    // column always has room. The three switches are narrow (their headers are short).
+    let fixed = [20.0f32, 0.0, 62.0, 54.0, 24.0, 24.0, 24.0];
     let name_w = (width - fixed.iter().sum::<f32>()).max(40.0);
     let mut widths = fixed;
     widths[1] = name_w;
@@ -251,7 +250,15 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let (header, header_resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click());
     let p = ui.painter();
     p.rect_filled(header, t.radius_sm, t.panel_header);
-    for (c, label) in cols(header).iter().zip(["#", "Layer", "Mode", "Spd/Pwr", if squeeze < 1.0 { "Out" } else { "Output" }, "Show", "Air"]) {
+    for (c, label) in cols(header).iter().zip([
+        "#".to_string(),
+        crate::i18n::tr("cuts.col.layer", "Layer"),
+        crate::i18n::tr("cuts.col.mode", "Mode"),
+        crate::i18n::tr("cuts.col.speed_power", "Spd/Pwr"),
+        crate::i18n::tr("cuts.col.out", "Out"),
+        crate::i18n::tr("cuts.col.show", "Vis"),
+        crate::i18n::tr("cuts.col.air", "Air"),
+    ]) {
         p.text(pos2(c.left() + 4.0, c.center().y), Align2::LEFT_CENTER, label, FontId::proportional(t.font_small), t.text_dim);
     }
     let header_resp = header_resp.backing_on_hover_text("Right-click for show, output and air for every layer");
@@ -335,7 +342,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             }
         }
         if !layer.is_tool() {
-            p.text(pos2(c[3].left() + 4.0, r.center().y), Align2::LEFT_CENTER, layer.speed_power(), FontId::monospace(t.font_small), ink);
+            let opts = crate::options::get();
+            let sp = format!("{:.0}/{:.0}", opts.speed_value(layer.main().speed), layer.main().max_power);
+            p.text(pos2(c[3].left() + 4.0, r.center().y), Align2::LEFT_CENTER, sp, FontId::monospace(t.font_small), ink);
         }
         for (col, which, on, tip) in
             [(4, Switch::Output, layer.outputs(), "Output"), (5, Switch::Show, layer.show, "Show"), (6, Switch::Air, layer.air, "Air assist")]
@@ -461,8 +470,15 @@ fn quick_settings(ui: &mut Ui, app: &mut DarkBurn) {
     let dual = layer.settings.iter().any(|s| s.laser != LaserSelect::Laser1);
     type Get = fn(&CutSetting) -> f64;
     type Set = fn(&mut CutSetting, f64);
+    let (speed_k, speed_suffix) = if crate::options::get().speed_per_min { (60.0, " mm/min") } else { (1.0, " mm/s") };
     let mut fields: Vec<(&str, &str, Num, Get, Set)> = vec![
-        ("Speed", "speed", Num::new(0.01..=100_000.0, 1, " mm/s").speed(1.0), |s| s.speed, |s, v| s.speed = v),
+        (
+            "Speed",
+            "speed",
+            Num::new(0.01..=100_000.0 * speed_k, 1, speed_suffix).speed(1.0),
+            |s| crate::options::get().speed_value(s.speed),
+            |s, v| s.speed = crate::options::get().speed_to_mm_s(v),
+        ),
         ("Max power", "max", Num::new(0.0..=100.0, 1, " %").speed(0.2), |s| s.max_power, |s, v| s.max_power = v),
         ("Min power", "min", Num::new(0.0..=100.0, 1, " %").speed(0.2), |s| s.min_power, |s, v| s.min_power = v),
     ];

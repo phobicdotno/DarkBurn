@@ -314,10 +314,64 @@ pub const COMMANDS: &[Cmd] = &[
         "Import Files",
         r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"}},"required":["paths"]}"#,
     ),
+    // Libraries, art, hotkeys, help and preferences files, with arguments
+    a("library.new", "New Cut Library", ""),
+    a("library.open", "Open a Cut Library", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("library.save", "Save the Cut Library", ""),
+    a("library.save_as", "Save the Cut Library to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("library.list", "List Cut Library Entries", ""),
+    a(
+        "library.create_from_layer",
+        "Create a Library Entry from a Layer",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"material":{"type":"string"},"thickness":{"description":"mm as a number, or text like 1/8 in"},"description":{"type":"string"}},"required":["layer"]}"#,
+    ),
+    a(
+        "library.assign",
+        "Assign a Library Entry to a Layer",
+        r#"{"type":"object","properties":{"entry":{"type":"integer"},"layer":{"type":"integer"}},"required":["entry","layer"]}"#,
+    ),
+    a(
+        "library.link",
+        "Link a Layer to a Library Entry",
+        r#"{"type":"object","properties":{"entry":{"type":"integer"},"layer":{"type":"integer"}},"required":["entry","layer"]}"#,
+    ),
+    a("library.unlink", "Unlink a Layer from the Library", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
+    a("library.delete", "Delete a Library Entry", r#"{"type":"object","properties":{"entry":{"type":"integer"}},"required":["entry"]}"#),
+    a("library.duplicate", "Duplicate a Library Entry", r#"{"type":"object","properties":{"entry":{"type":"integer"}},"required":["entry"]}"#),
+    a("art.new", "New Art Library", ""),
+    a("art.open", "Open an Art Library", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "art.save_as",
+        "Save an Art Library to a File",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"path":{"type":"string"}},"required":["library","path"]}"#,
+    ),
+    a(
+        "art.add_selection",
+        "Add the Selection to an Art Library",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"folder":{"type":"integer"},"name":{"type":"string"},"replace":{"type":"boolean"}},"required":["library","name"]}"#,
+    ),
+    a(
+        "art.insert",
+        "Put an Art Library Item on the Page",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"folder":{"type":"integer"},"item":{"type":"integer"}},"required":["library","item"]}"#,
+    ),
+    a(
+        "hotkeys.set",
+        "Set a Hotkey",
+        r#"{"type":"object","properties":{"command":{"type":"string"},"key":{"type":"string","description":"like Ctrl+Shift+Z; empty clears"},"take":{"type":"boolean"}},"required":["command","key"]}"#,
+    ),
+    a("hotkeys.reset", "Reset Hotkeys", r#"{"type":"object","properties":{"command":{"type":"string","description":"omit to reset all"}}}"#),
+    a("hotkeys.list", "List Hotkeys and Conflicts", ""),
+    a("hotkeys.export", "Export Hotkeys to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("hotkeys.import", "Import Hotkeys from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("help.topic", "Read a Help Topic", r#"{"type":"object","properties":{"topic":{"type":"string"}}}"#),
+    a("prefs.import", "Import Preferences from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("prefs.export", "Export Preferences to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("support.write", "Write the Support Data Bundle", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a(
         "setting.set",
         "Change a Setting",
-        r#"{"type":"object","properties":{"key":{"enum":["filled","smooth","show_grid","theme","page_width","page_height","autosave_minutes","svg_dpi","import_group","import_select","import_tool_layers"]},"value":{}},"required":["key","value"]}"#,
+        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
     ),
 ];
 
@@ -379,7 +433,23 @@ pub fn works(id: &str) -> bool {
             | "view.filled_smooth"
             | "view.toggle_filled"
             | "help.about"
-    ) || id.starts_with("panel.")
+            | "help.quick"
+            | "help.docs"
+            | "help.support_data"
+            | "help.camera"
+            | "help.updates"
+            | "help.debug_log"
+            | "file.hotkeys"
+            | "file.prefs_export"
+            | "file.prefs_import"
+            | "file.prefs_backup"
+    ) || id.starts_with("library.")
+        || id.starts_with("art.")
+        || id.starts_with("hotkeys.")
+        || id.starts_with("prefs.")
+        || id.starts_with("support.")
+        || id.starts_with("help.topic")
+        || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
         || id.starts_with("file.recent.")
@@ -429,6 +499,11 @@ pub fn parse_key(text: &str) -> Option<egui::KeyboardShortcut> {
         "+" => Key::Plus,
         "`" => Key::Backtick,
         "Tab" => Key::Tab,
+        // egui has no asterisk key: it is Shift+8 on the main keyboard.
+        "*" => {
+            m |= Modifiers::SHIFT;
+            Key::Num8
+        }
         other => Key::from_name(other)?,
     };
     Some(egui::KeyboardShortcut::new(m, key))
@@ -527,6 +602,19 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_in" => &["WIN-04"],
         "view.zoom_out" => &["WIN-05"],
         "view.zoom_page" => &["WIN-03"],
+        "help.about" => &["HELP-01"],
+        "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
+        "help.docs" => &["HELP-03"],
+        "help.support_data" | "support.write" => &["HELP-04", "PLAT-05"],
+        "help.camera" => &["HELP-05"],
+        "help.updates" => &["HELP-06"],
+        "help.debug_log" => &["HELP-07", "PLAT-04"],
+        "file.hotkeys" | "hotkeys.set" | "hotkeys.reset" | "hotkeys.list" | "hotkeys.export" | "hotkeys.import" => &["FILE-19", "AUX-08", "KEY-08"],
+        "file.prefs_export" | "prefs.export" => &["FILE-16"],
+        "file.prefs_import" | "prefs.import" => &["FILE-17", "SET-27"],
+        "file.prefs_backup" => &["FILE-18"],
+        _ if id.starts_with("library.") => &["LIB-01", "LIB-05", "LIB-07", "LIB-08"],
+        _ if id.starts_with("art.") => &["ART-01", "ART-04"],
         _ if id.starts_with("file.recent.") => &["FILE-03"],
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
         _ => &[],

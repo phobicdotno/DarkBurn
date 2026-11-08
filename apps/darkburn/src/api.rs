@@ -242,7 +242,7 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
             Ok(json!({ "imported": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
         })(),
         "setting.set" => setting(app, a),
-        _ => return None,
+        _ => return crate::extras::with_args(app, id, a),
     })
 }
 
@@ -326,7 +326,7 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "page_height" => p.page_height = number()?.clamp(1.0, 10_000.0) as f32,
         "autosave_minutes" => p.autosave_minutes = number()?.clamp(0.0, 240.0) as f32,
         "svg_dpi" => p.svg_dpi = if number()? <= 72.0 { 72.0 } else { 96.0 },
-        other => return Err(format!("unknown setting {other}")),
+        other => return crate::extras::set_option(app, other, value).map(|_| json!({ "ok": true })),
     }
     Ok(json!({ "ok": true }))
 }

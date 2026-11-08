@@ -588,12 +588,12 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
             app.files.restore = begin_session(&dir);
         }
     }
-    if app.clipboard_out {
+    if app.clipboard_out && app.prefs.opts.system_clipboard {
         app.clipboard_out = false;
         push_to(app, &mut Arboard::open());
     }
     let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
-    if !dropped.is_empty() {
+    if !dropped.is_empty() && !crate::art_library::handle_drop(app, ctx, &dropped) {
         let at = pointer_point(app);
         drop_files(app, ctx, dropped, at);
     }

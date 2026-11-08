@@ -84,7 +84,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         r.shape(c, Affine::IDENTITY, None, 0);
     }
     r.out.project = Some(info);
-    Ok(r.out)
+    Ok(crate::finish(r.out))
 }
 
 fn truthy(v: Option<&str>) -> bool {

@@ -39,6 +39,7 @@ pub fn append_arc(path: &mut BezPath, center: Point, rx: f64, ry: f64, x_rotatio
     if !(rx.is_finite() && ry.is_finite() && start.is_finite() && sweep.is_finite()) || rx <= 0.0 || ry <= 0.0 {
         return;
     }
+    let sweep = sweep.clamp(-std::f64::consts::TAU, std::f64::consts::TAU);
     let arc = Arc::new(center, (rx, ry), start, sweep, x_rotation);
     let tol = (ARC_TOLERANCE * rx.max(ry)).max(1e-7);
     for el in arc.append_iter(tol) {
@@ -297,6 +298,10 @@ pub type BulgeVertex = (Point, f64);
 pub fn to_bulge_polyline(sub: &BezPath, tol: f64, arcs: bool) -> (Vec<BulgeVertex>, bool) {
     let closed = is_closed(sub);
     let mut verts: Vec<BulgeVertex> = Vec::new();
+    if !sub.is_finite() {
+        return (verts, closed);
+    }
+    let tol = safe_tolerance(sub.control_box(), tol);
     let Some((start, _)) = endpoints(sub) else { return (verts, closed) };
     verts.push((start, 0.0));
     for seg in sub.segments() {
@@ -325,7 +330,8 @@ fn flatten_seg(seg: PathSeg, tol: f64, verts: &mut Vec<BulgeVertex>) {
     let mut path = BezPath::new();
     path.move_to(seg.start());
     path.push(seg.as_path_el());
-    kurbo::flatten(path.elements().iter().copied(), tol.max(1e-6), |el| {
+    let tol = safe_tolerance(path.control_box(), tol);
+    kurbo::flatten(path.elements().iter().copied(), tol, |el| {
         if let PathEl::LineTo(p) = el {
             verts.push((p, 0.0));
         }
@@ -391,10 +397,21 @@ pub fn circle_through(a: Point, b: Point, c: Point) -> Option<(Point, f64, f64)>
     Some((center, r, sweep))
 }
 
+/// A flattening tolerance that never asks for more than about 100 000 points across `extent`.
+pub fn safe_tolerance(extent: kurbo::Rect, tol: f64) -> f64 {
+    let size = extent.width().abs().max(extent.height().abs());
+    let t = if tol.is_finite() { tol } else { 0.01 };
+    t.max(1e-6).max(if size.is_finite() { size / 100_000.0 } else { f64::MAX })
+}
+
 /// Flattens a path into polylines (points, closed flag).
 pub fn flatten_polylines(path: &BezPath, tol: f64) -> Vec<(Vec<Point>, bool)> {
     let mut out: Vec<(Vec<Point>, bool)> = Vec::new();
-    kurbo::flatten(path.elements().iter().copied(), tol.max(1e-6), |el| match el {
+    if !path.is_finite() {
+        return out;
+    }
+    let tol = safe_tolerance(path.control_box(), tol);
+    kurbo::flatten(path.elements().iter().copied(), tol, |el| match el {
         PathEl::MoveTo(p) => out.push((vec![p], false)),
         PathEl::LineTo(p) => {
             if let Some(last) = out.last_mut() {

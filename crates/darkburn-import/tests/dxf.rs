@@ -34,7 +34,7 @@ fn texts(doc: &Imported) -> Vec<&TextItem> {
         .collect()
 }
 
-fn find_by_bounds<'a>(doc: &'a Imported, x0: f64, y0: f64, x1: f64, y1: f64) -> Option<(&'a Item, &'a PathItem)> {
+fn find_by_bounds(doc: &Imported, x0: f64, y0: f64, x1: f64, y1: f64) -> Option<(&Item, &PathItem)> {
     paths(doc).into_iter().find(|(_, p)| rect_close(p.path.bounding_box(), x0, y0, x1, y1))
 }
 

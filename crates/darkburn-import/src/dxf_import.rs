@@ -164,6 +164,10 @@ fn raw_scan(bytes: &[u8]) -> RawScan {
     let mut in_layer = false;
     while i < pairs.len() {
         let (code, value) = pairs[i];
+        if code == 2 && value == "ENTITIES" && !in_layer {
+            // Header and tables come first; the rest is not needed here.
+            break;
+        }
         if code == 9 {
             var = value;
         } else if code == 70 && var == "$INSUNITS" {
@@ -180,9 +184,6 @@ fn raw_scan(bytes: &[u8]) -> RawScan {
             in_layer = value == "LAYER";
             if in_layer {
                 layer = Some((String::new(), RawLayer::default()));
-            }
-            if value == "ENTITIES" || value == "ENDSEC" && !scan.layers.is_empty() {
-                // Tables are done; nothing else needed.
             }
         } else if in_layer && let Some((name, l)) = layer.as_mut() {
             match code {
@@ -299,7 +300,7 @@ pub fn import(bytes: &[u8], opts: &DxfOptions) -> Result<Imported, ImportError> 
     if let Some(tol) = opts.auto_join_tolerance {
         geom::join_open_paths(&mut out.items, tol);
     }
-    Ok(out)
+    Ok(crate::finish(out))
 }
 
 fn ocs(normal_z: f64) -> Affine {
@@ -581,8 +582,7 @@ impl Ctx<'_> {
             outline: None,
             attributes,
         };
-        let mut item = Item::new(ItemKind::Text(text)).with_layer(layer).with_group(inh.group);
-        item.layer = Some(item.layer.unwrap_or_default());
+        let item = Item::new(ItemKind::Text(text)).with_layer(layer).with_group(inh.group);
         self.out.items.push(item);
     }
 

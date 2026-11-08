@@ -103,7 +103,7 @@ pub fn import(bytes: &[u8], opts: &PdfOptions) -> Result<Imported, ImportError> 
         let mut interp = Interp { doc: &doc, opts, out: &mut out, off: &off, group, budget: 2_000_000, ops: 0 };
         let _ = guard("PDF page", || interp.page(page_id));
     }
-    Ok(out)
+    Ok(crate::finish(out))
 }
 
 /// Optional-content groups that are switched off by default.

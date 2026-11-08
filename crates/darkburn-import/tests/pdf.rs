@@ -16,7 +16,7 @@ fn rect_close(r: Rect, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
     close(r.x0, x0) && close(r.y0, y0) && close(r.x1, x1) && close(r.y1, y1)
 }
 
-fn find<'a>(doc: &'a Imported, x0: f64, y0: f64, x1: f64, y1: f64) -> Option<(&'a Item, &'a PathItem)> {
+fn find(doc: &Imported, x0: f64, y0: f64, x1: f64, y1: f64) -> Option<(&Item, &PathItem)> {
     doc.items.iter().find_map(|i| match &i.kind {
         ItemKind::Path(p) if rect_close(p.path.bounding_box(), x0, y0, x1, y1) => Some((i, p)),
         _ => None,

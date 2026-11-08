@@ -82,6 +82,6 @@ fn nc_gcode() {
 fn circle_arcs_close_on_start() {
     let c = vec![Item::path(circle_path(Point::new(0.0, 0.0), 10.0), Some(Rgb::BLACK), None)];
     let nc = gweike::export_nc(&c, &NcOptions::default());
-    let last_arc = nc.lines().filter(|l| l.starts_with("G03")).last().unwrap();
+    let last_arc = nc.lines().rfind(|l| l.starts_with("G03")).unwrap();
     assert!(last_arc.starts_with("G03 X10 Y0 "), "{nc}");
 }

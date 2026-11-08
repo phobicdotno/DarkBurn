@@ -145,6 +145,20 @@ pub fn import_auto(file_name: Option<&str>, bytes: &[u8], options: &ImportOption
 pub const SIGNCUT_UNSUPPORTED: &str = "SignCut files (.sc, .scpro2) use an undocumented format and cannot be opened. \
      Export the design from SignCut as PLT/HPGL, DXF or PDF and import that instead.";
 
+/// Largest coordinate kept on import (mm). Anything beyond 1000 km is treated as damage.
+pub const MAX_COORDINATE: f64 = 1e9;
+
+/// Drops items with non-finite or absurd coordinates so later stages stay well-behaved.
+pub(crate) fn finish(mut doc: Imported) -> Imported {
+    let before = doc.items.len();
+    doc.items.retain(|i| i.bounds().is_none_or(|b| [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite() && v.abs() <= MAX_COORDINATE)));
+    let dropped = before - doc.items.len();
+    if dropped > 0 {
+        doc.warn(format!("{dropped} objects with impossible coordinates were left out"));
+    }
+    doc
+}
+
 /// Runs a third-party parser and turns a panic inside it into an error, so damaged files
 /// can never take the app down.
 pub(crate) fn guard<T>(what: &str, f: impl FnOnce() -> T) -> Result<T, ImportError> {

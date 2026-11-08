@@ -237,7 +237,7 @@ pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError>
     for (k, n) in skipped {
         out.warn(format!("{n} HPGL {k} instructions were ignored"));
     }
-    Ok(out)
+    Ok(crate::finish(out))
 }
 
 /// HPGL export options.

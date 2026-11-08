@@ -1,0 +1,21 @@
+[package]
+name = "darkburn-grbl"
+description = "GRBL 1.1 / grblHAL / FluidNC driver, transports and an in-memory GRBL emulator for DarkBurn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Real USB serial ports. Off by default and never enabled in tests (hardware safety rule).
+# `serialport` is MPL-2.0 and used unmodified.
+serial = ["dep:serialport"]
+
+[dependencies]
+kurbo = "0.13.1"
+log = { workspace = true }
+serialport = { version = "4.10.1", optional = true, default-features = false }

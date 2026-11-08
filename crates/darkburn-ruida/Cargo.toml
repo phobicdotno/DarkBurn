@@ -1,0 +1,24 @@
+[package]
+name = "darkburn-ruida"
+description = "Ruida DSP controller support for DarkBurn: codec, .rd files, transports, emulator and driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Real FTDI packet USB (FT245R, 0403:6001). Off by default; never used by tests.
+usb = ["dep:nusb", "dep:futures-lite"]
+
+[dependencies]
+serde = { workspace = true }
+kurbo = "0.13"
+nusb = { version = "0.1", optional = true }
+futures-lite = { version = "2", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

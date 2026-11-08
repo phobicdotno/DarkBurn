@@ -15,6 +15,7 @@ pub mod project;
 pub mod select;
 mod serde_kurbo;
 pub mod shape;
+pub mod snap;
 
 pub use clipboard::{Clipboard, PasteAt};
 pub use document::{Document, ImageData, ImageStore};

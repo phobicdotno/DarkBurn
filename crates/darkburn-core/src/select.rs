@@ -30,7 +30,7 @@ fn hits(doc: &Document, s: &Shape, p: Point, tolerance: f64) -> bool {
         let scale = s.transform.as_coeffs()[0].hypot(s.transform.as_coeffs()[1]).max(1e-9);
         return children.iter().any(|c| hits(doc, c, local, tolerance / scale));
     }
-    s.distance_to_outline(p) <= tolerance
+    darkburn_geom::query::distance_to_path(&s.outline(), p) <= tolerance
 }
 
 /// Box selection. Dragged left to right (`crossing` false) takes shapes wholly inside `r`;
@@ -63,7 +63,8 @@ fn touches(doc: &Document, s: &Shape, r: Rect) -> bool {
         if r.contains(seg.start()) || r.contains(seg.end()) {
             return true;
         }
-        if edges.iter().any(|e| !PathSeg::intersect_line(&seg, *e).is_empty()) {
+        let e = PathSeg::Line;
+        if edges.iter().any(|l| !darkburn_geom::query::seg_intersections(&seg, &e(*l)).is_empty()) {
             return true;
         }
     }

@@ -236,7 +236,8 @@ impl DarkBurn {
     /// The whole window for one frame.
     pub fn ui(&mut self, ui: &mut Ui) {
         let mut clicked: Option<String> = None;
-        self.hint = None;
+        // The canvas leaves its tool hint for the status bar, drawn before it next frame.
+        self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);

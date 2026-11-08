@@ -298,7 +298,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LIB-06 Link layer to entry; unlink when entry deleted
 - [x] LIB-07 Create entry from layer
 - [x] LIB-08 Edit cut, edit description, duplicate, delete
-- [~] LIB-09 Library chosen per device
+- [x] LIB-09 Library chosen per device
 
 ### Console
 - [x] CON-01 Scrolling log and command line
@@ -357,7 +357,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ART-03 Search
 - [x] ART-04 Drag in from the desktop; add selection
 - [x] ART-05 Rename; replace on duplicate
-- [~] ART-06 Shared between running instances
+- [x] ART-06 Shared between running instances
 
 ### File List (DSP controllers)
 - [x] FL-01 List files on controller
@@ -588,10 +588,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Material test
 - [x] MT-01 Grid of speed × power cells
 - [x] MT-02 Alternative axes: interval, frequency, Q-pulse
-- [~] MT-03 Min and max, rows and columns, labels and units
+- [x] MT-03 Min and max, rows and columns, labels and units
 - [x] MT-04 Label layer settings
 - [x] MT-05 Presets: save, load, import, export
-- [~] MT-06 Frame the test before running
+- [x] MT-06 Frame the test before running
 - [x] MT-07 Works on G-code, DSP and galvo devices
 
 ---

@@ -31,6 +31,17 @@ impl Axis {
         }
     }
 
+    /// The unit written on the test sheet next to the numbers (letters the stroke font has).
+    pub fn unit(self) -> &'static str {
+        match self {
+            Axis::Speed => "mm/s",
+            Axis::Power => "%",
+            Axis::Interval => "mm",
+            Axis::Frequency => "kHz",
+            Axis::QPulse => "ns",
+        }
+    }
+
     pub fn from_name(name: &str) -> Option<Axis> {
         Some(match name {
             "speed" => Axis::Speed,
@@ -183,7 +194,8 @@ pub fn generate(doc: &mut Document, p: &MaterialTestParams) -> Result<MaterialTe
     let label_h = if p.labels { p.label_height } else { 0.0 };
     // Room for the row labels on the left and the column labels on top.
     let label_w = if p.labels {
-        let longest = ys.iter().map(|v| darkburn_vision::strokefont::text_width(&fmt(*v), p.label_height)).fold(0.0, f64::max);
+        let unit_w = darkburn_vision::strokefont::text_width(p.y_axis.unit(), p.label_height);
+        let longest = ys.iter().map(|v| darkburn_vision::strokefont::text_width(&fmt(*v), p.label_height)).fold(unit_w, f64::max);
         longest + p.gap + 1.0
     } else {
         0.0
@@ -239,12 +251,18 @@ pub fn generate(doc: &mut Document, p: &MaterialTestParams) -> Result<MaterialTe
             let cy = grid_top - r as f64 * (p.cell_h + p.gap) - (p.cell_h + p.label_height) / 2.0;
             shapes.push(doc.add(label(&text, p.label_height, Point::new(grid_x - p.gap - w, cy), p.label_layer)));
         }
+        // The units: the rows' above their numbers, the columns' after the last column number.
+        let top = grid_top + p.gap;
+        shapes.push(doc.add(label(p.y_axis.unit(), p.label_height, Point::new(p.x, top), p.label_layer)));
+        let right = grid_x + p.columns as f64 * (p.cell_w + p.gap) + p.gap;
+        shapes.push(doc.add(label(p.x_axis.unit(), p.label_height, Point::new(right, top), p.label_layer)));
         used.push(p.label_layer);
     }
+    let unit_w = if p.labels { darkburn_vision::strokefont::text_width(p.x_axis.unit(), p.label_height) + p.gap } else { 0.0 };
     let bounds = Rect::new(
         p.x,
         p.y,
-        grid_x + p.columns as f64 * p.cell_w + (p.columns as f64 - 1.0) * p.gap,
+        unit_w + grid_x + p.columns as f64 * p.cell_w + (p.columns as f64 - 1.0) * p.gap,
         grid_top + if p.labels { p.gap + label_h } else { 0.0 },
     );
     Ok(MaterialTestResult { shapes, layers: used, bounds })
@@ -255,6 +273,32 @@ fn label(text: &str, height: f64, at: Point, layer: usize) -> Shape {
     let mut s = Shape::new(darkburn_core::ShapeKind::Path { path }, Affine::IDENTITY, layer);
     s.name = format!("Label {text}");
     s
+}
+
+// ----- Framing the test (MT-06) ---------------------------------------------------------------
+
+/// The points that frame the test the dialog would add (just the test, not the rest of the
+/// project), as work coordinates for the connected controller.
+pub fn frame_points(app: &crate::shell::DarkBurn) -> Result<Vec<Point>, String> {
+    let mut input = crate::job_cmds::build_input(app);
+    input.doc.shapes.clear();
+    input.selection.clear();
+    input.settings.cut_selected = false;
+    generate(&mut input.doc, &app.job.material)?;
+    let tp = crate::job_build::build_frame(&input, crate::job_build::FrameKind::Rectangle, 100.0, None).map_err(|e| e.to_string())?;
+    Ok(crate::machine_job::work_points(app, &tp))
+}
+
+/// Move the laser head round the test (laser off).
+pub fn frame_test(app: &mut crate::shell::DarkBurn) -> Result<(), String> {
+    if !app.machine.handle.is_connected() {
+        return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
+    }
+    let points = frame_points(app)?;
+    app.machine
+        .handle
+        .frame_outline(points, crate::machine_api::FrameSpec { feed: 3000.0, laser_percent: None })
+        .map_err(|e| e.to_string())
 }
 
 // ----- Presets (MT-05) ---------------------------------------------------------------------------
@@ -303,6 +347,35 @@ pub fn merge_presets(list: &mut Vec<Preset>, incoming: Vec<Preset>) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn framing_the_test_frames_the_test_only() {
+        let mut app = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+        app.editor.edit("far", |d, _| {
+            d.add(Shape::rect(Rect::new(300.0, 300.0, 310.0, 310.0), 0.0, 0));
+            true
+        });
+        app.job.material = MaterialTestParams { x: 10.0, y: 10.0, ..Default::default() };
+        let pts = frame_points(&app).unwrap();
+        assert!(pts.len() >= 4);
+        let max_x = pts.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+        assert!(max_x < 200.0, "the far square is not part of the frame: {max_x}");
+        assert!(pts.iter().map(|p| p.x).fold(f64::MAX, f64::min) >= 9.99);
+        // Not connected: refused, not silently ignored.
+        assert!(frame_test(&mut app).unwrap_err().contains("not connected"));
+    }
+
+    #[test]
+    fn every_axis_unit_can_be_written_with_the_stroke_font() {
+        for a in Axis::ALL {
+            assert!(a.unit().chars().all(|c| darkburn_vision::strokefont::glyph(c).is_some()), "{}", a.unit());
+        }
+        // The unit labels are on the label layer and carry the unit in their name.
+        let mut d = Document::new();
+        let r = generate(&mut d, &MaterialTestParams::default()).unwrap();
+        let names: Vec<String> = r.shapes.iter().filter_map(|i| d.get(*i)).map(|s| s.name.clone()).collect();
+        assert!(names.iter().any(|n| n == "Label mm/s") && names.iter().any(|n| n == "Label %"), "{names:?}");
+    }
+
     use super::*;
 
     #[test]
@@ -310,8 +383,8 @@ mod tests {
         let mut d = Document::new();
         let p = MaterialTestParams::default();
         let r = generate(&mut d, &p).unwrap();
-        // 25 cells and 10 labels.
-        assert_eq!(r.shapes.len(), 25 + 10);
+        // 25 cells, 10 numbers and a unit for each axis.
+        assert_eq!(r.shapes.len(), 25 + 10 + 2, "cells, the numbers and the two units");
         // The first cell is the slowest and weakest, on layer 0.
         let first = d.get(r.shapes[0]).unwrap();
         assert_eq!(first.layer, 0);

@@ -673,7 +673,11 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
                 run_command(ctx, app, "job.material_test_presets", &serde_json::json!({ "action": "export", "path": path.to_string_lossy() }));
             }
         }
-        Some("frame") => app.run(ctx, "job.frame"),
+        Some("frame") => {
+            if let Err(e) = crate::material_test::frame_test(app) {
+                app.job.message = Some(job_cmds::Message { title: "Material test".into(), text: e });
+            }
+        }
         _ => {}
     }
     match action {

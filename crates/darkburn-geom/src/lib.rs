@@ -27,5 +27,6 @@ pub mod query;
 pub mod slots;
 pub mod tabs;
 pub mod transform;
+pub mod unfillet;
 
 pub use path::{Contour, Direction, FillRule, Polyline};

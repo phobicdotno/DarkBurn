@@ -394,6 +394,23 @@ fn for_each_rect(s: &mut Shape, f: &mut dyn FnMut(&mut f64, f64, f64) -> bool) -
     }
 }
 
+/// Remove tangent-arc corners from path shapes (also inside groups). Returns how many changed.
+fn unround_paths(s: &mut Shape) -> usize {
+    match &mut s.kind {
+        ShapeKind::Group { children } => children.iter_mut().map(unround_paths).sum(),
+        ShapeKind::Path { path } => {
+            let new = darkburn_geom::unfillet::remove_rounded_corners(path, 1e-3);
+            if new != *path {
+                *path = new;
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
 fn set_corner_radius(e: &mut Editor, a: &Value, remove: bool) -> R {
     let ids = e.selected();
     if ids.is_empty() {
@@ -401,6 +418,7 @@ fn set_corner_radius(e: &mut Editor, a: &Value, remove: bool) -> R {
     }
     let r = if remove { 0.0 } else { num(a, "radius", 0.0) };
     let mut n = 0;
+    let mut paths = 0;
     let done = e.edit(if remove { "Remove rounded corners" } else { "Corner radius" }, |d, _| {
         for id in &ids {
             if let Some(s) = d.get(*id)
@@ -413,11 +431,14 @@ fn set_corner_radius(e: &mut Editor, a: &Value, remove: bool) -> R {
                     *radius = new;
                     changed
                 });
+                if remove {
+                    paths += unround_paths(s);
+                }
             }
         }
-        n > 0
+        n + paths > 0
     });
-    Ok(json!({ "changed": done, "rectangles": n }))
+    Ok(json!({ "changed": done, "rectangles": n, "paths": paths }))
 }
 
 // ---------------------------------------------------------------- lines
@@ -600,6 +621,24 @@ mod tests {
         // Undo restores the override.
         app.editor.undo();
         assert!(app.editor.doc.get(r).unwrap().start.is_some());
+    }
+
+    #[test]
+    fn remove_rounded_corners_works_on_rounded_paths_too() {
+        let mut app = app();
+        let r = add_rect(&mut app, 0.0, 0.0, 20.0, 10.0, 0);
+        select(&mut app, &[r]);
+        // Round it, turn it into a path (so the corners are arcs), then take the rounding off.
+        run(&mut app, "shape.set_corner_radius", json!({ "radius": 3 })).unwrap();
+        run(&mut app, "edit.convert_path", Value::Null).unwrap();
+        let before = cleanup::node_count(&app.editor.doc.get(r).unwrap().outline());
+        assert!(before > 4);
+        let out = run(&mut app, "shape.remove_rounded_corners", Value::Null).unwrap();
+        assert_eq!(out["paths"], 1, "{out}");
+        let after = app.editor.doc.get(r).unwrap().outline();
+        assert_eq!(cleanup::node_count(&after), 4, "{:?}", after.elements());
+        let bb = app.editor.doc.get(r).unwrap().bbox();
+        assert!((bb.width() - 20.0).abs() < 1e-6 && (bb.height() - 10.0).abs() < 1e-6);
     }
 
     #[test]

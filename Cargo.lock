@@ -848,6 +848,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "darkburn-galvo"
+version = "0.0.11"
+dependencies = [
+ "futures-lite",
+ "kurbo",
+ "nusb",
+]
+
+[[package]]
 name = "darkburn-geom"
 version = "0.0.11"
 dependencies = [

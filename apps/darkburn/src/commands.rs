@@ -566,6 +566,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("support.")
         || id.starts_with("help.topic")
         || crate::job_cmds::works(id)
+        || crate::key_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -803,6 +804,7 @@ pub fn registry() -> &'static [Cmd] {
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
+        v.extend_from_slice(crate::key_cmds::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {

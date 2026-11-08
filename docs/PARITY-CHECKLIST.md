@@ -863,7 +863,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-05 Cylinder correction, including concave
 - [x] OTHER-06 Pre-job checklist editor
 - [ ] OTHER-07 Project notes dialog shown on open
-- [ ] OTHER-08 Hotkey editor
+- [x] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
 
@@ -942,10 +942,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 24. Keyboard
 
 - [~] KEY-01 Every default shortcut from the menus above
-- [ ] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [ ] KEY-03 Numpad jogging
-- [ ] KEY-04 Node edit single-key commands
-- [ ] KEY-05 Align single-key commands
+- [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
+- [~] KEY-03 Numpad jogging
+- [x] KEY-04 Node edit single-key commands
+- [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
 - [x] KEY-07 F1 context help
 - [x] KEY-08 All shortcuts remappable

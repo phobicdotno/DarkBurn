@@ -202,6 +202,7 @@ impl DarkBurn {
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
+            || crate::key_cmds::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)
@@ -252,23 +253,46 @@ impl DarkBurn {
         }
     }
 
+    /// The command whose shortcut was pressed this frame (the key press is used up).
+    pub fn shortcut_command(&mut self, ctx: &egui::Context) -> Option<&'static str> {
+        use egui::Modifiers;
+        if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
+            return None;
+        }
+        for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
+            // In the node tool the plain letter keys are node commands, not align commands.
+            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+                continue;
+            }
+            // egui matches a plain L when Alt+L is pressed; the keys must match exactly (a Shift
+            // that only types the symbol, like the one in "+", is allowed).
+            let m = shortcut.modifiers;
+            let exact = ctx.input(|i| {
+                i.events.iter().any(|e| {
+                    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
+                        if *key == shortcut.logical_key
+                            && modifiers.alt == m.alt
+                            && modifiers.command == m.command
+                            && (modifiers.shift == m.shift || *key == egui::Key::Plus))
+                })
+            });
+            if !exact {
+                continue;
+            }
+            if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                return Some(id);
+            }
+        }
+        None
+    }
+
     /// Keyboard shortcuts of the commands that work (from the keys their menu items show).
     pub fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return;
         }
-        let mut run = None;
-        for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
-            // In the node tool the plain letter keys are node commands, not align commands.
-            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
-                continue;
-            }
-            if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
-                run = Some(id);
-                break;
-            }
-        }
+        let mut run = self.shortcut_command(ctx);
         let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
         if run.is_none() {
             if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) || pressed(Modifiers::NONE, Key::Equals) {

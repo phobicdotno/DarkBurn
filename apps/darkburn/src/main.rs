@@ -26,7 +26,10 @@ mod instance;
 mod job_build;
 mod job_cmds;
 mod job_ui;
+mod key_cmds;
 mod keymap;
+#[cfg(test)]
+mod keys_tests;
 mod laser_panel;
 mod library;
 mod machine_api;

@@ -1160,6 +1160,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "darkburn-mcc"
+version = "0.0.24"
+dependencies = [
+ "encoding_rs",
+ "kurbo 0.13.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "darkburn-mcp"
 version = "0.0.24"
 dependencies = [

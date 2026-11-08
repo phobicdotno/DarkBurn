@@ -29,11 +29,7 @@ fn rot_xyz(ax: f64, ay: f64, az: f64) -> [[f64; 3]; 3] {
 pub fn pose_for(cols: usize, rows: usize, spacing: f64, tilt: (f64, f64, f64), centre: (f64, f64, f64)) -> Pose {
     let r = rot_xyz(tilt.0, tilt.1, tilt.2);
     let (hw, hh) = ((cols - 1) as f64 * spacing / 2.0, (rows - 1) as f64 * spacing / 2.0);
-    let t = [
-        centre.0 - (r[0][0] * hw + r[0][1] * hh),
-        centre.1 - (r[1][0] * hw + r[1][1] * hh),
-        centre.2 - (r[2][0] * hw + r[2][1] * hh),
-    ];
+    let t = [centre.0 - (r[0][0] * hw + r[0][1] * hh), centre.1 - (r[1][0] * hw + r[1][1] * hh), centre.2 - (r[2][0] * hw + r[2][1] * hh)];
     Pose { rvec: rot_to_rvec(&r), tvec: t }
 }
 
@@ -94,9 +90,7 @@ pub fn render_pattern(lens: &LensModel, pose: &Pose, spec: &PatternSpec) -> Gray
         }
     };
     let t = pose.tvec;
-    let to_cam = |x: f64, y: f64| {
-        [rm[0][0] * x + rm[0][1] * y + t[0], rm[1][0] * x + rm[1][1] * y + t[1], rm[2][0] * x + rm[2][1] * y + t[2]]
-    };
+    let to_cam = |x: f64, y: f64| [rm[0][0] * x + rm[0][1] * y + t[0], rm[1][0] * x + rm[1][1] * y + t[1], rm[2][0] * x + rm[2][1] * y + t[2]];
     // bounding box of the board with a margin, in image space
     let s = spec.spacing_mm;
     let (x0, x1, y0, y1) = (-1.6 * s, (spec.cols as f64 - 1.0 + 1.6) * s, -1.6 * s, (spec.rows as f64 - 1.0 + 1.6) * s);

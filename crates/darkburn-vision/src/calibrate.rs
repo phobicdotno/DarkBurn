@@ -19,9 +19,13 @@ pub struct Pose {
 #[derive(Clone, Debug, PartialEq)]
 pub enum CalibError {
     /// At least three usable views are needed.
-    NotEnoughViews { usable: usize },
+    NotEnoughViews {
+        usable: usize,
+    },
     /// A view has the wrong number of points.
-    BadView { index: usize },
+    BadView {
+        index: usize,
+    },
     Degenerate,
 }
 
@@ -271,9 +275,7 @@ pub fn calibrate(plane: &[Point], views: &[Vec<Point>], image_size: (u32, u32), 
             (p[i - 2], p[i - 1])
         };
         let mut k = [0.0; 4];
-        for j in 0..nk {
-            k[j] = p[i + j];
-        }
+        k[..nk].copy_from_slice(&p[i..i + nk]);
         LensModel { name: String::new(), kind: opts.kind, width: w, height: h, fx, fy, cx, cy, k }
     };
     let pose_of = |p: &[f64], v: usize| {
@@ -372,7 +374,10 @@ mod tests {
         let truth = truth_standard();
         let sp = spec();
         let plane = sp.object_points();
-        let views: Vec<Vec<Point>> = sample_poses(sp.cols, sp.rows, sp.spacing_mm).iter().map(|p| project_target(&truth, p, &plane).into_iter().map(|q| q.unwrap()).collect()).collect();
+        let views: Vec<Vec<Point>> = sample_poses(sp.cols, sp.rows, sp.spacing_mm)
+            .iter()
+            .map(|p| project_target(&truth, p, &plane).into_iter().map(|q| q.unwrap()).collect())
+            .collect();
         let res = calibrate(&plane, &views, (1280, 720), CalibOptions::default()).unwrap();
         assert!(res.rms_px < 1e-3, "rms {}", res.rms_px);
         assert!((res.model.fx - 900.0).abs() < 0.5, "{:?}", res.model);
@@ -382,10 +387,21 @@ mod tests {
 
     #[test]
     fn solves_fisheye_from_points() {
-        let truth = LensModel { kind: LensKind::Fisheye, fx: 700.0, fy: 700.0, cx: 640.0, cy: 360.0, k: [-0.03, 0.01, 0.0, 0.0], ..LensModel::ideal(1280, 720, 700.0) };
+        let truth = LensModel {
+            kind: LensKind::Fisheye,
+            fx: 700.0,
+            fy: 700.0,
+            cx: 640.0,
+            cy: 360.0,
+            k: [-0.03, 0.01, 0.0, 0.0],
+            ..LensModel::ideal(1280, 720, 700.0)
+        };
         let sp = spec();
         let plane = sp.object_points();
-        let views: Vec<Vec<Point>> = sample_poses(sp.cols, sp.rows, sp.spacing_mm).iter().map(|p| project_target(&truth, p, &plane).into_iter().map(|q| q.unwrap()).collect()).collect();
+        let views: Vec<Vec<Point>> = sample_poses(sp.cols, sp.rows, sp.spacing_mm)
+            .iter()
+            .map(|p| project_target(&truth, p, &plane).into_iter().map(|q| q.unwrap()).collect())
+            .collect();
         let res = calibrate(&plane, &views, (1280, 720), CalibOptions { kind: LensKind::Fisheye, ..Default::default() }).unwrap();
         assert!(res.rms_px < 0.05, "rms {}", res.rms_px);
         assert!((res.model.fx - 700.0).abs() < 3.0, "{:?}", res.model);

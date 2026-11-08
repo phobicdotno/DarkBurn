@@ -60,11 +60,11 @@ pub struct ImageOrientation {
 
 impl ImageOrientation {
     pub fn is_identity(&self) -> bool {
-        !self.flip_x && !self.flip_y && self.rotate_quarters % 4 == 0
+        !self.flip_x && !self.flip_y && self.rotate_quarters.is_multiple_of(4)
     }
 
     pub fn oriented_size(&self, w: u32, h: u32) -> (u32, u32) {
-        if self.rotate_quarters % 2 == 1 { (h, w) } else { (w, h) }
+        if !self.rotate_quarters.is_multiple_of(2) { (h, w) } else { (w, h) }
     }
 
     /// Map a pixel position of the source image to the oriented image.
@@ -168,7 +168,13 @@ fn one() -> f64 {
 pub fn default_targets(bed: BedRect, margin: f64, count: usize) -> Vec<Point> {
     let (x0, y0, x1, y1) = (bed.x + margin, bed.y + margin, bed.x + bed.width - margin, bed.y + bed.height - margin);
     let mut v = vec![Point::new(x0, y0), Point::new(x1, y0), Point::new(x1, y1), Point::new(x0, y1)];
-    let extra = [Point::new((x0 + x1) / 2.0, y0), Point::new(x1, (y0 + y1) / 2.0), Point::new((x0 + x1) / 2.0, y1), Point::new(x0, (y0 + y1) / 2.0), Point::new((x0 + x1) / 2.0, (y0 + y1) / 2.0)];
+    let extra = [
+        Point::new((x0 + x1) / 2.0, y0),
+        Point::new(x1, (y0 + y1) / 2.0),
+        Point::new((x0 + x1) / 2.0, y1),
+        Point::new(x0, (y0 + y1) / 2.0),
+        Point::new((x0 + x1) / 2.0, (y0 + y1) / 2.0),
+    ];
     for e in extra {
         if v.len() >= count {
             break;
@@ -224,7 +230,12 @@ impl CameraAlignment {
     }
 
     /// Warp an undistorted camera image into a bed-aligned image covering `view` at `px_per_mm` (north up, Y up on the bed).
-    pub fn render_bed_image<P: Pixel<Subpixel = u8>>(&self, undistorted: &ImageBuffer<P, Vec<u8>>, view: BedRect, px_per_mm: f64) -> ImageBuffer<P, Vec<u8>> {
+    pub fn render_bed_image<P: Pixel<Subpixel = u8>>(
+        &self,
+        undistorted: &ImageBuffer<P, Vec<u8>>,
+        view: BedRect,
+        px_per_mm: f64,
+    ) -> ImageBuffer<P, Vec<u8>> {
         let oriented = self.orientation.apply_image(undistorted);
         let (ow, oh) = view.pixel_size(px_per_mm);
         let inv = self.homography.inverse();
@@ -535,7 +546,12 @@ pub struct TraceImage {
 
 /// Convert a capture (or overlay) into a grayscale image for tracing, undistorting with the lens and, when an
 /// alignment is given, warping to bed coordinates so the traced shapes land at true size.
-pub fn trace_from_capture(raw: &RgbaImage, lens: Option<&LensModel>, focal_scale: f64, alignment: Option<(&CameraAlignment, BedRect, f64)>) -> TraceImage {
+pub fn trace_from_capture(
+    raw: &RgbaImage,
+    lens: Option<&LensModel>,
+    focal_scale: f64,
+    alignment: Option<(&CameraAlignment, BedRect, f64)>,
+) -> TraceImage {
     let undistorted = match lens {
         Some(l) => l.undistort_image(raw, focal_scale),
         None => raw.clone(),
@@ -691,7 +707,8 @@ mod tests {
             HeadMark { image: px, head_pos: head, bed: Point::new(head.x + off.x, head.y + off.y) }
         };
         let hp = Point::new(50.0, 50.0);
-        let marks = vec![mk(hp, Point::new(10.0, 10.0)), mk(hp, Point::new(190.0, 10.0)), mk(hp, Point::new(190.0, 140.0)), mk(hp, Point::new(10.0, 140.0))];
+        let marks =
+            vec![mk(hp, Point::new(10.0, 10.0)), mk(hp, Point::new(190.0, 10.0)), mk(hp, Point::new(190.0, 140.0)), mk(hp, Point::new(10.0, 140.0))];
         let cal = HeadCameraCalibration::solve(&marks, (200, 150), None, 1.0).unwrap();
         assert!(cal.rms_mm < 1e-6);
         assert!((cal.bed_point(Point::new(0.0, 0.0), Point::new(100.0, 75.0)).unwrap() - Point::new(0.0, 0.0)).hypot() < 1e-6);
@@ -708,7 +725,10 @@ mod tests {
             }
             img
         };
-        let caps = vec![MosaicCapture { head_pos: Point::new(30.0, 30.0), image: capture(Point::new(30.0, 30.0)) }, MosaicCapture { head_pos: Point::new(60.0, 30.0), image: capture(Point::new(60.0, 30.0)) }];
+        let caps = vec![
+            MosaicCapture { head_pos: Point::new(30.0, 30.0), image: capture(Point::new(30.0, 30.0)) },
+            MosaicCapture { head_pos: Point::new(60.0, 30.0), image: capture(Point::new(60.0, 30.0)) },
+        ];
         let view = BedRect::new(10.0, 15.0, 80.0, 30.0);
         let out = stitch_mosaic(&caps, &cal, view, 2.0);
         assert_eq!(out.dimensions(), (160, 60));

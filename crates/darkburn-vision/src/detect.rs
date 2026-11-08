@@ -422,7 +422,12 @@ pub fn order_grid(points: &[Point], cols: usize, rows: usize) -> Option<Vec<Poin
         quad.reverse();
     }
     let ideal: Vec<Point> = (0..rows).flat_map(|r| (0..cols).map(move |c| Point::new(c as f64, r as f64))).collect();
-    let ideal_corners = [Point::new(0.0, 0.0), Point::new((cols - 1) as f64, 0.0), Point::new((cols - 1) as f64, (rows - 1) as f64), Point::new(0.0, (rows - 1) as f64)];
+    let ideal_corners = [
+        Point::new(0.0, 0.0),
+        Point::new((cols - 1) as f64, 0.0),
+        Point::new((cols - 1) as f64, (rows - 1) as f64),
+        Point::new(0.0, (rows - 1) as f64),
+    ];
 
     let mut best_result: Option<(Vec<Point>, f64)> = None;
     for shift in 0..4 {

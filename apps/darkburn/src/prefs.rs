@@ -34,7 +34,7 @@ pub struct PanelState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// `system`, `dark`, `light` or the id of one of SolidCraft's bundled themes.
+    /// `system`, `dark`, `light` or the id of a bundled theme. The default is DarkBurn's own Warning Label.
     pub theme: String,
     /// The canvas colours: the theme's, or always light or dark.
     pub backdrop: Backdrop,
@@ -63,7 +63,7 @@ impl Default for Prefs {
         let toolbars = TOOLBARS.iter().map(|(id, _)| (id.to_string(), true)).collect();
         let active_tab = [(Area::RightTop, "cuts"), (Area::RightBottom, "laser")].into_iter().map(|(a, id)| (a, id.to_string())).collect();
         Prefs {
-            theme: "system".into(),
+            theme: "warning-label".into(),
             backdrop: Backdrop::Theme,
             grid_contrast: 0.5,
             show_grid: true,

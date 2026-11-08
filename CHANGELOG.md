@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.0.11 (build 3)
+- New Warning Label look: graphite with laser-sign yellow, now the default
+
 ## v0.0.10 (build 2)
 - Dark and light themes, plus a pick of ready-made ones
 - Its own window with a slim title bar

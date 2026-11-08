@@ -51,3 +51,5 @@ These build from outside SolidCraft's workspace as they are, so none had to be v
 | `assets/icons/ui/STYLE_GUIDE.md` | SolidCraft contributors | SolidCraft `assets/icons/ui` | MIT OR Apache-2.0 |
 | `assets/styles/ui/themes/*.json` | SolidCraft contributors; palettes credited in each file's `provenance` field (Nord, Gruvbox, Solarized, Dracula, Catppuccin, Tokyo Night, Atom One Dark: MIT palettes) | SolidCraft `assets/styles/ui/themes` | MIT OR Apache-2.0 |
 | `assets/icons/ui/design/svg/**/db_*.svg` | DarkBurn contributors | Original artwork drawn in SolidCraft's icon style | MIT OR Apache-2.0 |
+
+- `assets/styles/ui/themes/warning-label.json` is DarkBurn's own colour scheme, built from SolidCraft's Graphite theme (MIT OR Apache-2.0) with new colours.

@@ -1748,6 +1748,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         app.settings_dir = Some(dir.clone());
         run(&mut app, "camera.set", json!({ "camera_name": "Desk cam", "device_index": 2, "exposure": -5.0 })).unwrap();
+        let lens = darkburn_vision::lens::LensModel { name: "wide".into(), width: 640, height: 480, fx: 500.0, fy: 501.0, cx: 320.0, cy: 240.0, k: [0.1, -0.02, 0.0, 0.0], kind: darkburn_vision::lens::LensKind::Fisheye };
+        app.vision.state.camera.lens = Some(lens.clone());
         run(&mut app, "camera.save_settings", json!({})).unwrap();
         assert!(dir.join("camera.json").exists());
         let f = dir.join("export.json");
@@ -1762,6 +1764,7 @@ mod tests {
         let mut other = DarkBurn::new(Prefs::default());
         run(&mut other, "camera.import_settings", json!({ "path": f.display().to_string() })).unwrap();
         assert_eq!(other.vision.state.camera.exposure, Some(-5.0));
+        assert_eq!(other.vision.state.camera.lens, Some(lens), "the lens calibration travels in the file");
         assert!(run(&mut other, "camera.import_settings", json!({ "path": dir.join("nothing.json").display().to_string() })).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }

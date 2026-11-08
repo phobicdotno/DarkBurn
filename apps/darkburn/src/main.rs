@@ -9,6 +9,8 @@ mod canvas_input;
 mod commands;
 mod cut_settings;
 mod cuts_panel;
+mod devices;
+mod devices_ui;
 mod extras;
 mod file_io;
 mod files;
@@ -25,7 +27,15 @@ mod job_build;
 mod job_cmds;
 mod job_ui;
 mod keymap;
+mod laser_panel;
 mod library;
+mod machine_api;
+#[cfg(test)]
+mod machine_api_tests;
+mod machine_job;
+mod machine_ui;
+#[cfg(test)]
+mod machine_ui_tests;
 mod material_test;
 #[cfg(target_os = "windows")]
 mod native_frame;

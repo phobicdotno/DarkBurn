@@ -557,7 +557,8 @@ pub fn works(id: &str) -> bool {
             | "help.updates"
             | "help.debug_log"
             | "file.hotkeys"
-    ) || id.starts_with("library.")
+    ) || crate::machine_ui::handles(id)
+        || id.starts_with("library.")
         || id.starts_with("art.")
         || id.starts_with("hotkeys.")
         || id.starts_with("support.")
@@ -640,13 +641,14 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().find(|c| c.id == id)
+    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
 /// device. An agent must ask before running one; none is implemented yet.
 pub fn hardware(id: &str) -> bool {
-    (id.starts_with("laser.")
+    (crate::machine_ui::is_hardware(id)
+        || id.starts_with("laser.")
         || id.starts_with("arrange.laser_")
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
         || crate::job_cmds::hardware(id))
@@ -751,6 +753,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_in" => &["WIN-04"],
         "view.zoom_out" => &["WIN-05"],
         "view.zoom_page" => &["WIN-03"],
+        _ if crate::machine_ui::handles(id) => crate::machine_ui::checklist(id),
         "help.about" => &["HELP-01"],
         "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
         "help.docs" => &["HELP-03"],
@@ -796,6 +799,7 @@ pub fn registry() -> &'static [Cmd] {
     ALL.get_or_init(|| {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
+        v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
@@ -1151,6 +1155,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
     (
         "Laser Tools",
         &[
+            C("laser.devices"),
+            S,
             Sub(
                 "Print and Cut",
                 &[
@@ -1293,7 +1299,8 @@ mod tests {
     #[test]
     fn hardware_commands_are_flagged_and_do_nothing() {
         for info in list().into_iter().filter(|i| i.hardware) {
-            assert!(!info.implemented, "{} touches hardware and must not run yet", info.id);
+            // The machine commands run, but api::execute lets an agent reach only the simulators.
+            assert!(!info.implemented || crate::machine_ui::handles(&info.id), "{} touches hardware and must not run yet", info.id);
         }
         assert!(describe("laser.controller_info").unwrap().hardware);
         assert!(!describe("edit.undo").unwrap().hardware);
@@ -1314,7 +1321,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["job.start", "laser.controller_info"] {
+        for id in ["laser.repeat_marking", "laser.lens_test"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

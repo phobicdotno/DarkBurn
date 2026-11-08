@@ -19,12 +19,17 @@ type_complexity = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 
 [features]
-# Live webcam capture (off by default). The camera panel only opens a camera after the user
-# turns it on, picks one and presses Start.
-default = ["live-camera"]
+# Live webcam capture only opens after the user turns it on, picks a camera and presses Start.
+# Real USB serial ports for GRBL machines: listing ports, and opening one only when the user clicks Connect.
+default = ["live-camera", "serial"]
 live-camera = ["darkburn-vision/capture"]
+serial = ["darkburn-grbl/serial"]
+# Ruida over raw FTDI USB.
+usb = ["darkburn-ruida/usb"]
 
 [dependencies]
+darkburn-grbl = { path = "../../crates/darkburn-grbl" }
+darkburn-ruida = { path = "../../crates/darkburn-ruida" }
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }
 darkburn-geom = { workspace = true }

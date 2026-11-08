@@ -85,8 +85,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EDIT-27 Image options: remove crop
 - [ ] EDIT-28 Image options: remove backup path
 - [~] EDIT-29 Settings
-- [ ] EDIT-30 Device settings
-- [ ] EDIT-31 Machine settings
+- [x] EDIT-30 Device settings
+- [x] EDIT-31 Machine settings
 
 ### Tools
 - [x] TOOLS-01 Select
@@ -175,7 +175,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-13 Centre finder
 - [ ] LT-14 Feeder setup
 - [x] LT-15 Cylinder correction
-- [ ] LT-16 Get controller info
+- [x] LT-16 Get controller info
 - [ ] LT-17 Repeat marking (galvo)
 - [ ] LT-18 Lens correction test (galvo)
 - [ ] LT-19 Material test, galvo variant
@@ -260,34 +260,34 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CUTS-11 Mouse wheel does not change mode
 
 ### Laser
-- [ ] LASER-01 Connection status: disconnected, ready, busy, framing, no laser
-- [ ] LASER-02 Job progress bar with elapsed and remaining time
-- [ ] LASER-03 Start, pause, stop
-- [~] LASER-04 Frame as rectangle
-- [~] LASER-05 Frame as rubber-band outline, optionally with laser on
+- [x] LASER-01 Connection status: disconnected, ready, busy, framing, no laser
+- [x] LASER-02 Job progress bar with elapsed and remaining time
+- [x] LASER-03 Start, pause, stop
+- [x] LASER-04 Frame as rectangle
+- [x] LASER-05 Frame as rubber-band outline, optionally with laser on
 - [~] LASER-06 Save machine file
-- [ ] LASER-07 Run a saved G-code file
-- [ ] LASER-08 Send file to controller, optionally start at once
-- [ ] LASER-09 Home
-- [ ] LASER-10 Go to origin
+- [x] LASER-07 Run a saved G-code file
+- [x] LASER-08 Send file to controller, optionally start at once
+- [x] LASER-09 Home
+- [x] LASER-10 Go to origin
 - [x] LASER-11 Start from: current position, user origin, absolute coordinates
 - [x] LASER-12 Job origin 9-point picker
 - [x] LASER-13 Cut selected graphics only
 - [x] LASER-14 Use selection origin
 - [x] LASER-15 Show last position
 - [x] LASER-16 Optimize cut path toggle and optimization settings button
-- [ ] LASER-17 Devices button; right-click resets connection
-- [ ] LASER-18 Port picker with auto choice, remembered port, excluded ports
-- [ ] LASER-19 Device profile picker
-- [ ] LASER-20 Rescan network bridge
+- [x] LASER-17 Devices button; right-click resets connection
+- [x] LASER-18 Port picker with auto choice, remembered port, excluded ports
+- [x] LASER-19 Device profile picker
+- [~] LASER-20 Rescan network bridge
 - [ ] LASER-21 Red light toggle (galvo)
 - [x] LASER-22 Rotary and cylinder correction toggles, mode status text
-- [ ] LASER-23 Option to disable Start on machines that take uploads
-- [ ] LASER-24 Pre-job checklist before start
+- [x] LASER-23 Option to disable Start on machines that take uploads
+- [x] LASER-24 Pre-job checklist before start
 - [ ] LASER-25 Sounds on job finished and on error
 - [ ] LASER-26 Job log saved as CSV
 - [x] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
-- [ ] LASER-28 Warning when closing during a running job
+- [x] LASER-28 Warning when closing during a running job
 
 ### Library (materials)
 - [x] LIB-01 Named library files: new, load, save, save as, auto-save, backup on save
@@ -301,30 +301,30 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] LIB-09 Library chosen per device
 
 ### Console
-- [ ] CON-01 Scrolling log and command line
-- [ ] CON-02 Show every sent G-code line option
-- [ ] CON-03 Six macro buttons, editable by right-click
-- [ ] CON-04 Multi-line macros sent line by line
+- [x] CON-01 Scrolling log and command line
+- [x] CON-02 Show every sent G-code line option
+- [x] CON-03 Six macro buttons, editable by right-click
+- [x] CON-04 Multi-line macros sent line by line
 
 ### Move
-- [ ] MOVE-01 Jog arrows for X and Y, diagonals from numpad
-- [ ] MOVE-02 Z jog arrows and separate Z speed
-- [ ] MOVE-03 Rotary axis jog arrows
-- [ ] MOVE-04 Home button in the centre
-- [ ] MOVE-05 Jog distance and speed fields
-- [ ] MOVE-06 Continuous jog toggle
-- [ ] MOVE-07 Ctrl, Shift and Ctrl+Shift jog multipliers
-- [ ] MOVE-08 Get position readout for X, Y, Z, U
-- [ ] MOVE-09 Move to X, Y, Z position
-- [ ] MOVE-10 Saved positions list with editor (add, reorder, sort, Z on/off)
-- [ ] MOVE-11 Move from machine zero
-- [ ] MOVE-12 Focus Z
-- [ ] MOVE-13 Set and clear user origin
-- [ ] MOVE-14 Set finish position
-- [ ] MOVE-15 Fire button with power %
-- [ ] MOVE-16 Invert keypad direction
-- [ ] MOVE-17 Speed and power override sliders during a job (GRBL)
-- [ ] MOVE-18 Laser 2 controls
+- [x] MOVE-01 Jog arrows for X and Y, diagonals from numpad
+- [x] MOVE-02 Z jog arrows and separate Z speed
+- [~] MOVE-03 Rotary axis jog arrows
+- [x] MOVE-04 Home button in the centre
+- [x] MOVE-05 Jog distance and speed fields
+- [x] MOVE-06 Continuous jog toggle
+- [x] MOVE-07 Ctrl, Shift and Ctrl+Shift jog multipliers
+- [x] MOVE-08 Get position readout for X, Y, Z, U
+- [x] MOVE-09 Move to X, Y, Z position
+- [x] MOVE-10 Saved positions list with editor (add, reorder, sort, Z on/off)
+- [x] MOVE-11 Move from machine zero
+- [~] MOVE-12 Focus Z
+- [x] MOVE-13 Set and clear user origin
+- [~] MOVE-14 Set finish position
+- [x] MOVE-15 Fire button with power %
+- [x] MOVE-16 Invert keypad direction
+- [x] MOVE-17 Speed and power override sliders during a job (GRBL)
+- [x] MOVE-18 Laser 2 controls
 
 ### Camera Control
 - [~] CAMP-01 Camera picker
@@ -360,9 +360,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] ART-06 Shared between running instances
 
 ### File List (DSP controllers)
-- [ ] FL-01 List files on controller
-- [ ] FL-02 Upload, start, delete one or many, delete all
-- [ ] FL-03 Calculate job time (Ruida)
+- [x] FL-01 List files on controller
+- [x] FL-02 Upload, start, delete one or many, delete all
+- [x] FL-03 Calculate job time (Ruida)
 
 ### Panel layout
 - [x] PANEL-01 Default right-side tab groups as in LightBurn
@@ -675,14 +675,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 15. Devices
 
 ### Device management
-- [ ] DEV-01 Devices dialog: list, drag reorder, sort by name or type
-- [ ] DEV-02 Find my laser: auto-detect serial, USB and network machines
-- [ ] DEV-03 New device wizard: type, connection, name and size, origin and homing, summary
-- [ ] DEV-04 Edit, duplicate, remove device
-- [ ] DEV-05 Import and export device profiles
+- [x] DEV-01 Devices dialog: list, drag reorder, sort by name or type
+- [~] DEV-02 Find my laser: auto-detect serial, USB and network machines
+- [x] DEV-03 New device wizard: type, connection, name and size, origin and homing, summary
+- [x] DEV-04 Edit, duplicate, remove device
+- [x] DEV-05 Import and export device profiles
 - [ ] DEV-06 Network bridge setup wizard
-- [ ] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups
-- [ ] DEV-08 Design-only device with no laser
+- [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups
+- [x] DEV-08 Design-only device with no laser
 
 ### Connections
 - [ ] CONN-01 USB serial with baud choice
@@ -701,12 +701,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] GRBL-03 GRBL-LPC
 - [ ] GRBL-04 grblHAL
 - [ ] GRBL-05 FluidNC
-- [ ] GRBL-06 $J jogging and continuous jog
-- [ ] GRBL-07 Settings editor for $$ values, with backup
-- [ ] GRBL-08 Alarm and error codes shown in plain words
-- [ ] GRBL-09 Feed and power overrides while running
-- [ ] GRBL-10 Fire button
-- [ ] GRBL-11 DTR control
+- [x] GRBL-06 $J jogging and continuous jog
+- [x] GRBL-07 Settings editor for $$ values, with backup
+- [x] GRBL-08 Alarm and error codes shown in plain words
+- [x] GRBL-09 Feed and power overrides while running
+- [x] GRBL-10 Fire button
+- [~] GRBL-11 DTR control
 - [ ] GRBL-12 Auto-detect common diode lasers (xTool, Ortur, Atomstack, Sculpfun)
 - [ ] GCODE-01 Smoothieware, including fast raster clustering
 - [ ] GCODE-02 Marlin with M3, M106 or inline power
@@ -717,14 +717,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### DSP family
 - [ ] RUIDA-01 Ruida over Ethernet (UDP)
 - [ ] RUIDA-02 Ruida over USB
-- [ ] RUIDA-03 Start, pause, stop, frame, home, go to origin
-- [ ] RUIDA-04 Jog, including continuous jog
-- [ ] RUIDA-05 Send file with name, auto-increment name, overwrite prompt
-- [ ] RUIDA-06 File list on controller: upload, delete, run
-- [ ] RUIDA-07 Read and write machine settings, with backup
-- [ ] RUIDA-08 Controller info: job time, laser-on time
-- [ ] RUIDA-09 Dual tube and laser 2 offset
-- [ ] RUIDA-10 U axis, rotary read and write
+- [x] RUIDA-03 Start, pause, stop, frame, home, go to origin
+- [x] RUIDA-04 Jog, including continuous jog
+- [x] RUIDA-05 Send file with name, auto-increment name, overwrite prompt
+- [x] RUIDA-06 File list on controller: upload, delete, run
+- [x] RUIDA-07 Read and write machine settings, with backup
+- [x] RUIDA-08 Controller info: job time, laser-on time
+- [x] RUIDA-09 Dual tube and laser 2 offset
+- [x] RUIDA-10 U axis, rotary read and write
 - [ ] RUIDA-11 Job start and end delays
 - [ ] RUIDA-12 Hardware overscan, corner power, dot mode, PWM override
 - [ ] RUIDA-13 RD file save and import
@@ -861,7 +861,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-03 Centre finder
 - [x] OTHER-04 Feeder setup
 - [x] OTHER-05 Cylinder correction, including concave
-- [ ] OTHER-06 Pre-job checklist editor
+- [x] OTHER-06 Pre-job checklist editor
 - [ ] OTHER-07 Project notes dialog shown on open
 - [ ] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
@@ -918,23 +918,23 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 23. Device settings
 
-- [ ] DS-01 Work area size and origin corner
-- [ ] DS-02 Negative-coordinate machine mode
-- [ ] DS-03 Red-dot pointer offset
-- [ ] DS-04 Z: enable, reverse, relative moves only, optimize moves
-- [ ] DS-05 Tab pulse width
-- [ ] DS-06 Job checklist on and editor
-- [ ] DS-07 Overwrite files by default
-- [ ] DS-08 Scanning offset table
+- [x] DS-01 Work area size and origin corner
+- [~] DS-02 Negative-coordinate machine mode
+- [~] DS-03 Red-dot pointer offset
+- [~] DS-04 Z: enable, reverse, relative moves only, optimize moves
+- [~] DS-05 Tab pulse width
+- [x] DS-06 Job checklist on and editor
+- [x] DS-07 Overwrite files by default
+- [~] DS-08 Scanning offset table
 - [~] DS-09 G-code: auto-home on start, swap X/Y
 - [~] DS-10 G-code: fast whitespace scan and its speed
-- [~] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
+- [x] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
 - [~] DS-12 G-code: air assist commands, S-value max, baud rate
-- [~] DS-13 G-code: buffered or synchronous transfer
+- [x] DS-13 G-code: buffered or synchronous transfer
 - [~] DS-14 G-code: start and end scripts
 - [~] DS-15 G-code: G0 for overscan, S with every G1
-- [ ] DS-16 DSP: U axis, laser 2, filename increment, disable start
-- [ ] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
+- [x] DS-16 DSP: U axis, laser 2, filename increment, disable start
+- [~] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
 - [ ] DS-18 Galvo: all galvo settings from section 15
 - [~] DS-19 Simulation: acceleration and speed values for the time estimate
 - [ ] DS-20 Frame continuously *(later)*

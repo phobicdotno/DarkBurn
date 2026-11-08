@@ -283,11 +283,7 @@ pub fn open_sync(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 /// [`FileIo::device_profiles`]; until it exists the user is told.
 pub fn device_profile_hook(app: &mut DarkBurn, path: &Path) {
     app.fio.device_profiles.push(path.to_path_buf());
-    crate::files::show_message(
-        app,
-        "Device profile",
-        format!("{} is a device profile. Device profiles cannot be added in this version yet.", path.display()),
-    );
+    crate::machine_ui::import_profile_file(app, path);
 }
 
 // ----- Export -----

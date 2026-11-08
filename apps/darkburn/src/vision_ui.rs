@@ -953,24 +953,25 @@ fn lens_dialog(ctx: &Context, app: &mut DarkBurn) {
                 app.vision.message = vc::pattern_from(&spec_args).and_then(|s| vc::calib_add_frame(app, &s)).err();
             }
             if button(ui, "Add picture files", "Choose saved pictures of the pattern")
-                && let Some(files) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "bmp"]).pick_files() {
-                    let spec = vc::pattern_from(&spec_args);
-                    app.vision.message = None;
-                    for f in files {
-                        let r = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| crate::images::decode(&b)).map(|i| i.to_rgba8());
-                        match (r, &spec) {
-                            (Ok(img), Ok(s)) => {
-                                app.vision.raw = Some(img);
-                                app.vision.frame_gen += 1;
-                                if let Err(e) = vc::calib_add_frame(app, s) {
-                                    app.vision.message = Some(format!("{}: {e}", f.display()));
-                                }
+                && let Some(files) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "bmp"]).pick_files()
+            {
+                let spec = vc::pattern_from(&spec_args);
+                app.vision.message = None;
+                for f in files {
+                    let r = std::fs::read(&f).map_err(|e| e.to_string()).and_then(|b| crate::images::decode(&b)).map(|i| i.to_rgba8());
+                    match (r, &spec) {
+                        (Ok(img), Ok(s)) => {
+                            app.vision.raw = Some(img);
+                            app.vision.frame_gen += 1;
+                            if let Err(e) = vc::calib_add_frame(app, s) {
+                                app.vision.message = Some(format!("{}: {e}", f.display()));
                             }
-                            (Err(e), _) => app.vision.message = Some(format!("{}: {e}", f.display())),
-                            (_, Err(e)) => app.vision.message = Some(e.clone()),
                         }
+                        (Err(e), _) => app.vision.message = Some(format!("{}: {e}", f.display())),
+                        (_, Err(e)) => app.vision.message = Some(e.clone()),
                     }
                 }
+            }
             if button(ui, "Clear pictures", "") {
                 app.vision.calib_frames.clear();
                 app.vision.calib_result = None;
@@ -1033,9 +1034,10 @@ fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
         match tex {
             Some((id, size)) => {
                 if let Some(p) = clickable_picture(ui, id, size, &d.clicks)
-                    && d.clicks.len() < d.count {
-                        d.clicks.push(p);
-                    }
+                    && d.clicks.len() < d.count
+                {
+                    d.clicks.push(p);
+                }
                 note(ui, &format!("Clicked {} of {}.", d.clicks.len(), d.count));
             }
             None => note(ui, "There is no camera picture yet. Pick a camera or a picture file in the Camera Control panel."),
@@ -1104,13 +1106,14 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
         ui.horizontal(|ui| {
             if ui.add_enabled(d.pending.is_some(), egui::Button::new("Add mark")).clicked()
-                && let Some(p) = d.pending.take() {
-                    app.vision.marks.push(darkburn_vision::camera::HeadMark {
-                        image: p,
-                        head_pos: Point::new(d.head[0], d.head[1]),
-                        bed: Point::new(d.bed[0], d.bed[1]),
-                    });
-                }
+                && let Some(p) = d.pending.take()
+            {
+                app.vision.marks.push(darkburn_vision::camera::HeadMark {
+                    image: p,
+                    head_pos: Point::new(d.head[0], d.head[1]),
+                    bed: Point::new(d.bed[0], d.bed[1]),
+                });
+            }
             if button(ui, "Clear marks", "") {
                 app.vision.marks.clear();
             }
@@ -1125,10 +1128,11 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         note(ui, "Move the head to different places over the bed, add a capture at each, then stitch them into one picture.");
         ui.horizontal(|ui| {
             if button(ui, "Add capture at head position", "Uses the latest camera picture")
-                && let Some(img) = app.vision.raw.clone() {
-                    let n = vc::head_add_capture(app, img, Point::new(d.head[0], d.head[1]));
-                    d.text = format!("{n} capture(s).");
-                }
+                && let Some(img) = app.vision.raw.clone()
+            {
+                let n = vc::head_add_capture(app, img, Point::new(d.head[0], d.head[1]));
+                d.text = format!("{n} capture(s).");
+            }
             if button(ui, "Stitch", "") {
                 d.text = msg(vc::head_stitch(app), |v| format!("Stitched {} capture(s).", v["captures"]));
             }
@@ -1198,14 +1202,13 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     // Source
     ui_kit::section_heading(ui, "Camera");
     let mut allowed = app.vision.prefs.live_enabled;
-    if vc::live_built()
-        && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
-            app.vision.prefs.live_enabled = allowed;
-            if !allowed {
-                stop_live(app);
-            }
-            let _ = vc::save_prefs(app);
+    if vc::live_built() && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
+        app.vision.prefs.live_enabled = allowed;
+        if !allowed {
+            stop_live(app);
         }
+        let _ = vc::save_prefs(app);
+    }
     if allowed && vc::live_built() {
         let names: Vec<String> = app.vision.cameras.iter().map(|(_, n)| n.clone()).collect();
         let mut names_ref: Vec<&str> = vec!["No camera"];
@@ -1239,10 +1242,11 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
     ui.horizontal_wrapped(|ui| {
         if button(ui, "Open picture file", "Use a saved picture instead of a camera")
-            && let Some(p) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "bmp", "webp"]).pick_file() {
-                stop_live(app);
-                app.vision.message = vc::load_frame_file(app, &p).err();
-            }
+            && let Some(p) = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "bmp", "webp"]).pick_file()
+        {
+            stop_live(app);
+            app.vision.message = vc::load_frame_file(app, &p).err();
+        }
     });
     let mut kind = usize::from(app.vision.state.camera.kind == darkburn_vision::camera::CameraKind::HeadMounted);
     let before = kind;
@@ -1283,13 +1287,15 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     });
     ui.horizontal_wrapped(|ui| {
         if button(ui, "Import settings", "")
-            && let Some(p) = rfd::FileDialog::new().add_filter("Camera settings", &["json"]).pick_file() {
-                app.vision.message = crate::api::execute_headless(app, "camera.import_settings", &json!({ "path": p.display().to_string() })).err();
-            }
+            && let Some(p) = rfd::FileDialog::new().add_filter("Camera settings", &["json"]).pick_file()
+        {
+            app.vision.message = crate::api::execute_headless(app, "camera.import_settings", &json!({ "path": p.display().to_string() })).err();
+        }
         if button(ui, "Export settings", "")
-            && let Some(p) = rfd::FileDialog::new().add_filter("Camera settings", &["json"]).set_file_name("camera-settings.json").save_file() {
-                app.vision.message = crate::api::execute_headless(app, "camera.export_settings", &json!({ "path": p.display().to_string() })).err();
-            }
+            && let Some(p) = rfd::FileDialog::new().add_filter("Camera settings", &["json"]).set_file_name("camera-settings.json").save_file()
+        {
+            app.vision.message = crate::api::execute_headless(app, "camera.export_settings", &json!({ "path": p.display().to_string() })).err();
+        }
     });
     // Overlay controls
     ui_kit::section_heading(ui, "Overlay");

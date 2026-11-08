@@ -236,7 +236,7 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         "project.save_as" => text(a, "path").and_then(|p| crate::files::save_to(app, Path::new(p))).map(|_| info(app)),
         "setting.set" => setting(app, a),
         _ if crate::image_ui::handles(id) => crate::image_ui::execute(app, id, a),
-        _ => return crate::file_io::with_args(app, id, a),
+        _ => return crate::file_io::with_args(app, id, a).or_else(|| crate::extras::with_args(app, id, a)),
     })
 }
 
@@ -320,7 +320,7 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "page_height" => p.page_height = number()?.clamp(1.0, 10_000.0) as f32,
         "autosave_minutes" => p.autosave_minutes = number()?.clamp(0.0, 240.0) as f32,
         "svg_dpi" => p.svg_dpi = if number()? <= 72.0 { 72.0 } else { 96.0 },
-        other => return Err(format!("unknown setting {other}")),
+        other => return crate::extras::set_option(app, other, value).map(|_| json!({ "ok": true })),
     }
     Ok(json!({ "ok": true }))
 }
@@ -391,7 +391,7 @@ mod tests {
     fn bad_requests_say_why() {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
-        assert!(run(&mut app, "laser.rotary", Value::Null).unwrap_err().contains("machine"));
+        assert!(run(&mut app, "laser.controller_info", Value::Null).unwrap_err().contains("machine"));
         assert!(run(&mut app, "tools.qr", Value::Null).unwrap_err().contains("not implemented"));
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));

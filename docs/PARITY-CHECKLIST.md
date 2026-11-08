@@ -9,7 +9,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 175 of 785 done (56 partly).
+**Progress:** 307 of 785 done (169 partly).
 
 ---
 
@@ -52,7 +52,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-16 Export preferences
 - [x] FILE-17 Import preferences
 - [x] FILE-18 Load preferences backup (backup browser)
-- [ ] FILE-19 Edit hotkeys
+- [x] FILE-19 Edit hotkeys
 - [x] FILE-20 Exit
 
 ### Edit
@@ -192,16 +192,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] WIN-09 Show or hide each panel and toolbar
 
 ### Language
-- [~] LANG-01 Language menu with names shown in their own language
+- [x] LANG-01 Language menu with names shown in their own language
 
 ### Help
 - [x] HELP-01 About DarkBurn
-- [ ] HELP-02 Quick help and context help on F1
-- [ ] HELP-03 Online documentation link
-- [ ] HELP-04 Generate support data
-- [ ] HELP-05 Camera selection help
-- [ ] HELP-06 Check for updates
-- [ ] HELP-07 Enable debug log
+- [x] HELP-02 Quick help and context help on F1
+- [x] HELP-03 Online documentation link
+- [x] HELP-04 Generate support data
+- [~] HELP-05 Camera selection help
+- [~] HELP-06 Check for updates
+- [x] HELP-07 Enable debug log
 
 ---
 
@@ -210,7 +210,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-01 Main: new, open, save, import, undo, redo, cut, copy, paste, delete
 - [x] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
 - [ ] TB-03 Main: capture camera image, preview, settings, device settings
-- [ ] TB-04 Main can split in two on narrow screens
+- [~] TB-04 Main can split in two on narrow screens
 - [~] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
 - [~] TB-06 Arrange: make same width, make same height, move selection pop-up
 - [ ] TB-07 Arrange long variant
@@ -290,15 +290,15 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LASER-28 Warning when closing during a running job
 
 ### Library (materials)
-- [ ] LIB-01 Named library files: new, load, save, save as, auto-save, backup on save
-- [ ] LIB-02 Entries grouped by material, then thickness, then description
-- [ ] LIB-03 Thickness in fractions when using inches; entries with no thickness
-- [ ] LIB-04 Type icon for line, fill and image entries
-- [ ] LIB-05 Assign entry to layer
-- [ ] LIB-06 Link layer to entry; unlink when entry deleted
-- [ ] LIB-07 Create entry from layer
-- [ ] LIB-08 Edit cut, edit description, duplicate, delete
-- [ ] LIB-09 Library chosen per device
+- [x] LIB-01 Named library files: new, load, save, save as, auto-save, backup on save
+- [x] LIB-02 Entries grouped by material, then thickness, then description
+- [x] LIB-03 Thickness in fractions when using inches; entries with no thickness
+- [~] LIB-04 Type icon for line, fill and image entries
+- [x] LIB-05 Assign entry to layer
+- [x] LIB-06 Link layer to entry; unlink when entry deleted
+- [x] LIB-07 Create entry from layer
+- [x] LIB-08 Edit cut, edit description, duplicate, delete
+- [~] LIB-09 Library chosen per device
 
 ### Console
 - [ ] CON-01 Scrolling log and command line
@@ -352,12 +352,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SP-07 Edit several shapes at once
 
 ### Art Library
-- [ ] ART-01 Several art library files open at once
-- [ ] ART-02 Folders and thumbnails, full-size preview on hover
-- [ ] ART-03 Search
-- [ ] ART-04 Drag in from the desktop; add selection
-- [ ] ART-05 Rename; replace on duplicate
-- [ ] ART-06 Shared between running instances
+- [x] ART-01 Several art library files open at once
+- [x] ART-02 Folders and thumbnails, full-size preview on hover
+- [x] ART-03 Search
+- [x] ART-04 Drag in from the desktop; add selection
+- [x] ART-05 Rename; replace on duplicate
+- [~] ART-06 Shared between running instances
 
 ### File List (DSP controllers)
 - [ ] FL-01 List files on controller
@@ -367,8 +367,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Panel layout
 - [x] PANEL-01 Default right-side tab groups as in LightBurn
 - [x] PANEL-02 Move, Art Library and File List hidden by default
-- [ ] PANEL-03 Compact layout on small screens
-- [ ] PANEL-04 Panel layout saved per device
+- [x] PANEL-03 Compact layout on small screens
+- [~] PANEL-04 Panel layout saved per device
 
 ---
 
@@ -399,8 +399,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CANVAS-23 Right-click menu: cut, copy, paste, duplicate, select all, group, ungroup, preview, properties
 - [x] CANVAS-24 Paste at cursor
 - [x] CANVAS-25 Wireframe and filled rendering, coarse and smooth
-- [ ] CANVAS-26 Antialiasing and curve quality settings
-- [ ] CANVAS-27 Reduce motion setting
+- [x] CANVAS-26 Antialiasing and curve quality settings
+- [x] CANVAS-27 Reduce motion setting
 - [x] CANVAS-28 Hidden layer dims its images; flashing highlight of layer shapes
 - [~] CANVAS-29 Drag and drop project files, images and device profiles
 - [x] CANVAS-30 System clipboard with SVG text, bitmaps and plain text detection
@@ -515,7 +515,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LAYER-07 Default layer settings per device: make default, make default for all, reset
 - [ ] LAYER-08 Load default layer settings on new project option
 - [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
-- [ ] LAYER-10 Layers linked to material library entries
+- [~] LAYER-10 Layers linked to material library entries
 
 ### Modes
 - [x] MODE-01 Line
@@ -804,7 +804,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] AUX-05 Machine settings backup files
 - [ ] AUX-06 Camera calibration files
 - [ ] AUX-07 Scanning offset files
-- [ ] AUX-08 Hotkey files
+- [x] AUX-08 Hotkey files
 - [ ] AUX-09 Galvo lens correction files
 - [ ] AUX-10 CSV and text files for variable text
 - [ ] AUX-11 SHX fonts
@@ -864,7 +864,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] OTHER-06 Pre-job checklist editor
 - [ ] OTHER-07 Project notes dialog shown on open
 - [ ] OTHER-08 Hotkey editor
-- [ ] OTHER-09 Beginner mode
+- [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
 
 ---
@@ -872,36 +872,36 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 22. Settings
 
 ### Display and units
-- [ ] SET-01 Units mm or inch; speed in mm/s or mm/min
-- [ ] SET-02 Curve quality, antialiasing, filled rendering, reduce motion
-- [ ] SET-03 Font size and toolbar icon size
-- [ ] SET-04 Cursor and node size
-- [ ] SET-05 Dark background, grid contrast, grid spacing
-- [~] SET-06 Grid snap distance, object snap distance, snapping on or off
-- [~] SET-07 Click tolerance
-- [ ] SET-08 Full-screen cursor, centre cross, palette labels
-- [ ] SET-09 Show rotary and cylinder toggles on main window
-- [ ] SET-10 Invert mouse wheel zoom
+- [x] SET-01 Units mm or inch; speed in mm/s or mm/min
+- [x] SET-02 Curve quality, antialiasing, filled rendering, reduce motion
+- [x] SET-03 Font size and toolbar icon size
+- [x] SET-04 Cursor and node size
+- [~] SET-05 Dark background, grid contrast, grid spacing
+- [x] SET-06 Grid snap distance, object snap distance, snapping on or off
+- [x] SET-07 Click tolerance
+- [x] SET-08 Full-screen cursor, centre cross, palette labels
+- [x] SET-09 Show rotary and cylinder toggles on main window
+- [x] SET-10 Invert mouse wheel zoom
 
 ### Editor
-- [ ] SET-11 Beginner mode
-- [~] SET-12 Auto-save interval
-- [ ] SET-13 Check for updates
-- [ ] SET-14 Open files in the running copy
-- [ ] SET-15 Default states for cut selected and use selection origin
-- [ ] SET-16 Save job origin and cut selected in the project
-- [ ] SET-17 Remember move, size, rotate and shear lock states
-- [ ] SET-18 Ignore out-of-bounds shapes
-- [ ] SET-19 Ignore Start when the monitor is off
-- [ ] SET-20 Load default layers on new project
-- [ ] SET-21 Built-in or system file dialogs
-- [ ] SET-22 Sounds on error and on job finished
-- [ ] SET-23 Save job log
-- [ ] SET-24 Use system clipboard
-- [~] SET-25 Nudge distances for normal, Ctrl and Shift
-- [ ] SET-26 Default font, height, auto-weld
-- [ ] SET-27 Shared default preferences file for makerspaces
-- [ ] SET-28 Excluded serial ports
+- [x] SET-11 Beginner mode
+- [x] SET-12 Auto-save interval
+- [~] SET-13 Check for updates
+- [~] SET-14 Open files in the running copy
+- [~] SET-15 Default states for cut selected and use selection origin
+- [~] SET-16 Save job origin and cut selected in the project
+- [x] SET-17 Remember move, size, rotate and shear lock states
+- [~] SET-18 Ignore out-of-bounds shapes
+- [~] SET-19 Ignore Start when the monitor is off
+- [~] SET-20 Load default layers on new project
+- [~] SET-21 Built-in or system file dialogs
+- [~] SET-22 Sounds on error and on job finished
+- [~] SET-23 Save job log
+- [x] SET-24 Use system clipboard
+- [x] SET-25 Nudge distances for normal, Ctrl and Shift
+- [~] SET-26 Default font, height, auto-weld
+- [x] SET-27 Shared default preferences file for makerspaces
+- [~] SET-28 Excluded serial ports
 
 ### Files
 - [x] SET-29 SVG DPI
@@ -911,10 +911,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-33 Import hidden Illustrator layers
 - [x] SET-34 Group and select imported shapes
 - [x] SET-35 Allow import to tool layers
-- [ ] SET-36 Output curve tolerance
+- [~] SET-36 Output curve tolerance
 
 ### Camera
-- [ ] SET-37 Capture system, resolution, colour view
+- [~] SET-37 Capture system, resolution, colour view
 
 ## 23. Device settings
 
@@ -941,20 +941,20 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 24. Keyboard
 
-- [ ] KEY-01 Every default shortcut from the menus above
+- [~] KEY-01 Every default shortcut from the menus above
 - [ ] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
 - [ ] KEY-03 Numpad jogging
 - [ ] KEY-04 Node edit single-key commands
 - [ ] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
-- [ ] KEY-07 F1 context help
-- [ ] KEY-08 All shortcuts remappable
+- [x] KEY-07 F1 context help
+- [x] KEY-08 All shortcuts remappable
 
 ## 25. Languages
 
-- [ ] I18N-01 Translation system
-- [ ] I18N-02 English
-- [ ] I18N-03 Norwegian
+- [x] I18N-01 Translation system
+- [x] I18N-02 English
+- [~] I18N-03 Norwegian
 - [ ] I18N-04 The other 22 LightBurn languages
 - [ ] I18N-05 Machine error messages translated
 
@@ -963,8 +963,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] PLAT-01 Windows file association and single running copy
 - [ ] PLAT-02 Explorer thumbnails for project files
 - [ ] PLAT-03 Recent files in the Windows jump list
-- [ ] PLAT-04 Debug log
-- [ ] PLAT-05 Support data bundle
+- [x] PLAT-04 Debug log
+- [x] PLAT-05 Support data bundle
 - [~] PLAT-06 Crash restore file
 - [x] PLAT-07 Automatic preference backups
 - [~] PLAT-08 Print support

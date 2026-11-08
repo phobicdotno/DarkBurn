@@ -41,6 +41,8 @@ pub enum Tool {
     Mirror,
     /// Pick the two point pairs of a two-point rotate and scale.
     TwoPoint,
+    /// Place and type text (text_ui.rs).
+    Text,
 }
 
 impl Tool {
@@ -61,6 +63,7 @@ impl Tool {
             Tool::RoundCorners => "tools.round_corners",
             Tool::Mirror => "arrange.mirror",
             Tool::TwoPoint => "arrange.two_point",
+            Tool::Text => "tools.text",
         }
     }
 
@@ -74,6 +77,7 @@ impl Tool {
             Tool::Rect => "Drag a rectangle. Ctrl: square, Shift: from the centre.",
             Tool::Ellipse => "Drag an ellipse. Ctrl: circle, Shift: from the centre.",
             Tool::Polygon => "Drag a polygon from its centre. Shift keeps a corner on top.",
+            Tool::Text => crate::text_ui::HINT,
             other => crate::node_tool::hint(other),
         }
     }

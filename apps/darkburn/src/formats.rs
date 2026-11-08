@@ -745,7 +745,7 @@ pub struct ExportOutput {
 /// CSV rows) is turned into plain text here once the text code is wired in; until then the
 /// document is written as it is.
 pub fn prepare_for_output(doc: &Document) -> Document {
-    doc.clone()
+    crate::text_render::prepare_for_output(doc)
 }
 
 fn rgb_of(layer: usize) -> di::Rgb {

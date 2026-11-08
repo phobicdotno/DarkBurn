@@ -85,6 +85,12 @@ pub fn shape_json(s: &Shape, detail: bool) -> Value {
         ShapeKind::Image(i) => {
             o.insert("geometry".into(), json!({"width": r4(i.width), "height": r4(i.height), "source": i.source, "cropped": i.crop.is_some()}));
         }
+        ShapeKind::Code(c) => {
+            o.insert(
+                "geometry".into(),
+                json!({"spec": serde_json::to_value(&c.spec).unwrap_or(Value::Null), "variable": c.variable, "offset": c.offset, "error": c.error}),
+            );
+        }
         ShapeKind::Group { children } => {
             o.insert("children".into(), Value::Array(children.iter().map(|c| shape_json(c, false)).collect()));
         }

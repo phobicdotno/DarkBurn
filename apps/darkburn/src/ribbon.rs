@@ -24,6 +24,7 @@ const CHEVRON_W: f32 = 30.0;
 
 /// One thing in a ribbon group.
 #[derive(Clone, Copy)]
+#[allow(dead_code, reason = "static form items stay available for groups not wired yet")]
 enum Item {
     /// A command button.
     Cmd(&'static str),
@@ -101,15 +102,11 @@ const TABS: &[(&str, &str, &[Group])] = &[
         "text",
         "Text",
         &[
-            g("Font", "text", &[Choices(&[("Font", &["IBM Plex Sans"])]), Fields(&[("Height", "10.00 mm")], 120.0)]),
-            g("Style", "text", &[Checks(&["Bold", "Italic"]), Checks(&["Upper case", "Welded"]), Checks(&["Distort"])]),
-            g("Spacing", "text", &[Fields(&[("Letters", "0.00"), ("Lines", "0.00")], 110.0)]),
-            g("Alignment", "text", &[Choices(&[("X", &["Left", "Middle", "Right"]), ("Y", &["Baseline", "Top", "Middle", "Bottom"])])]),
-            g(
-                "Variable text",
-                "text",
-                &[Choices(&[("Type", &["Normal", "Date and time", "Merge", "Serial number", "Cut setting"])]), Fields(&[("Offset", "0")], 90.0)],
-            ),
+            g("Font", "text", &[Live("text_font")]),
+            g("Style", "text", &[Live("text_style")]),
+            g("Spacing", "text", &[Live("text_spacing")]),
+            g("Alignment", "text", &[Live("text_align")]),
+            g("Variable text", "text", &[Live("text_variable")]),
         ],
     ),
     ("modes", "Modes", &[g("Modes", "modes", &[Cmd("laser.rotary"), Cmd("laser.print_and_cut"), Cmd("laser.cylinder")])]),
@@ -198,6 +195,7 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
             for item in group.items {
                 gx = match item {
                     Numeric => crate::numeric_edits::show(ui, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
+                    Live(kind) if kind.starts_with("text_") => crate::text_ui::ribbon_item(ui, kind, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
                     Live(kind) => crate::shape_ui::ribbon_item(ui, kind, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
                     _ => item_at(ui, *item, gx, row, pan_tool, compact, &mut app.hint, clicked),
                 } + BUTTON_GAP;

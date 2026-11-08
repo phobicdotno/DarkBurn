@@ -222,6 +222,8 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
         prefs.opts.speed_per_min = i == 1;
     });
     ui.add_space(t.space_12);
+    crate::text_ui::settings_section(ui, prefs);
+    ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.behaviour", "Behaviour"));
     ui_kit::checkbox(ui, &tr("settings.beginner", "Beginner mode (hides advanced cut settings)"), &mut prefs.cut_beginner);
     ui_kit::checkbox(ui, &tr("settings.check_updates", "Check for updates"), &mut prefs.opts.check_updates);

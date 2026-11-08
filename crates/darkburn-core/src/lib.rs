@@ -24,5 +24,5 @@ pub use document::{Document, ImageData, ImageStore};
 pub use editor::{Editor, History, Selection};
 pub use kurbo;
 pub use layer::{CutSetting, ImageMode, LAYER_COUNT, Layer, MAX_SUB_LAYERS, Mode, T1, T2};
-pub use shape::{ImageAdjust, ImageShape, Shape, ShapeId, ShapeKind, TextShape};
+pub use shape::{CodeShape, CodeSpec, ImageAdjust, ImageShape, PathText, Shape, ShapeId, ShapeKind, TextShape};
 pub use varray::{AlongDef, ArrayDef, ArrayKind, CircularDef, GridDef, GridShift};

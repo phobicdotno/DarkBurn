@@ -92,6 +92,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.nodes", "Edit Nodes", "Ctrl+`", "db_node_edit"),
     c("tools.tabs", "Add Tabs", "Ctrl+Tab", "db_tabs"),
     c("tools.text", "Edit Text", "Ctrl+T", "text"),
+    c("text.edit_dialog", "Edit Text Shapes", "", ""),
     c("tools.position_laser", "Position Laser", "Alt+L", "db_position_laser"),
     c("tools.measure", "Measure", "Alt+M", "measure"),
     c("tools.qr", "Create QR Code", "", "db_qr"),
@@ -565,6 +566,7 @@ pub fn works(id: &str) -> bool {
         || crate::job_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
+        || crate::text_cmds::works(id)
         || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
@@ -767,6 +769,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         _ => {
             let jobs = crate::job_cmds::checklist(id);
             let jobs = if jobs.is_empty() { crate::vision_cmds::checklist(id) } else { jobs };
+            let jobs = if jobs.is_empty() { crate::text_cmds::checklist(id) } else { jobs };
             if jobs.is_empty() { crate::shape_ops::checklist(id) } else { jobs }
         }
     }
@@ -799,6 +802,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
+        v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
                 && let Some(args) = crate::shape_ops::args_schema(c.id)
@@ -1020,6 +1024,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.nodes"),
             C("tools.tabs"),
             C("tools.text"),
+            C("text.edit_dialog"),
             C("tools.position_laser"),
             C("tools.measure"),
             C("tools.qr"),

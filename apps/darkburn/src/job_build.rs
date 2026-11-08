@@ -606,7 +606,9 @@ fn is_outside(bbox: Rect, area: Rect) -> bool {
 }
 
 fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {
-    let doc = &input.doc;
+    // Text hook: variable text, QR codes and barcodes are evaluated for this job.
+    let prepared = crate::text_render::prepare_for_output(&input.doc);
+    let doc = &prepared;
     let st = &input.settings;
     if st.cut_selected && input.selection.is_empty() {
         return Err(BuildError::NothingSelected);

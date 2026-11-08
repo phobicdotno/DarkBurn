@@ -1072,6 +1072,7 @@ dependencies = [
  "darkburn-mcp",
  "darkburn-raster",
  "darkburn-ruida",
+ "darkburn-text",
  "darkburn-ui",
  "darkburn-vision",
  "eframe",
@@ -1091,6 +1092,7 @@ dependencies = [
  "tiny-skia",
  "usvg",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
@@ -1098,6 +1100,7 @@ name = "darkburn-core"
 version = "0.0.24"
 dependencies = [
  "darkburn-geom",
+ "darkburn-text",
  "kurbo 0.13.1",
  "serde",
  "serde_json",

@@ -30,10 +30,11 @@ usb = ["darkburn-ruida/usb"]
 [dependencies]
 darkburn-grbl = { path = "../../crates/darkburn-grbl" }
 darkburn-ruida = { path = "../../crates/darkburn-ruida" }
-darkburn-job = { path = "../../crates/darkburn-job" }
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }
 darkburn-geom = { workspace = true }
+darkburn-text = { path = "../../crates/darkburn-text" }
+darkburn-job = { path = "../../crates/darkburn-job" }
 darkburn-raster = { path = "../../crates/darkburn-raster" }
 darkburn-vision = { path = "../../crates/darkburn-vision" }
 darkburn-import = { path = "../../crates/darkburn-import" }
@@ -66,3 +67,6 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0.11"
+
+[dev-dependencies]
+zip = { workspace = true }

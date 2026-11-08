@@ -16,6 +16,37 @@ pub const OUTLINE_TOLERANCE: f64 = 0.01;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ShapeId(pub u64);
 
+/// The direction a shape is cut in (a per shape override).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CutDirection {
+    /// Whatever the optimiser decides, or the drawn direction when it is off.
+    #[default]
+    Auto,
+    /// Closed shapes clockwise.
+    Clockwise,
+    /// Closed shapes counter-clockwise.
+    CounterClockwise,
+    /// Reverse the drawn direction.
+    Reversed,
+}
+
+impl CutDirection {
+    pub const ALL: [CutDirection; 4] = [CutDirection::Auto, CutDirection::Clockwise, CutDirection::CounterClockwise, CutDirection::Reversed];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CutDirection::Auto => "Automatic",
+            CutDirection::Clockwise => "Clockwise",
+            CutDirection::CounterClockwise => "Counter-clockwise",
+            CutDirection::Reversed => "Reversed",
+        }
+    }
+}
+
+fn is_auto_direction(d: &CutDirection) -> bool {
+    *d == CutDirection::Auto
+}
+
 /// A shape in the document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -38,6 +69,12 @@ pub struct Shape {
     /// Manually placed tabs (the cut skips them), as points on the outline in local coordinates.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<[f64; 2]>,
+    /// Forced start point of the cut, a point near the outline in local coordinates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_point: Option<[f64; 2]>,
+    /// Forced cut direction.
+    #[serde(skip_serializing_if = "is_auto_direction")]
+    pub direction: CutDirection,
     /// Set on a group that is a virtual array: the original items and the array settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub array: Option<Box<crate::varray::ArrayDef>>,
@@ -55,6 +92,8 @@ impl Default for Shape {
             priority: 0,
             power_scale: 100.0,
             tabs: Vec::new(),
+            start_point: None,
+            direction: CutDirection::Auto,
             array: None,
         }
     }

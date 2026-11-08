@@ -423,6 +423,8 @@ struct Collected {
     bounds: Option<Rect>,
     selection_bounds: Option<Rect>,
     frame_paths: Vec<BezPath>,
+    /// Outlines on tool layers that are framed with the job.
+    tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
 }
@@ -680,6 +682,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
+    let mut tool_frame: Vec<BezPath> = Vec::new();
     let mut kerf_note = [false; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
@@ -697,6 +700,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
+                // Tool layers never burn, but may be framed with the job (LAYER-02).
+                if l.is_tool() && l.frame && !leaf.is_image() {
+                    tool_frame.push(leaf.outline());
+                }
                 continue;
             }
             let bbox = leaf.bbox();
@@ -746,6 +753,13 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             frame_paths.push(path.clone());
             let mut si = ShapeInput::new(path);
             // Tabs placed with the Add tabs tool are stored in the shape's local coordinates.
+            si.start_point = leaf.start_point.map(|p| leaf.transform * Point::new(p[0], p[1]));
+            si.direction = match leaf.direction {
+                darkburn_core::CutDirection::Auto => None,
+                darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
+                darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
+                darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
+            };
             si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
             si.group = group;
             si.priority = leaf.priority;
@@ -808,7 +822,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
         }
     }
-    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, warnings, dropped })
+    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -1069,8 +1083,17 @@ pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Optio
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
     let origin = origin_for(input, c.selection_bounds)?;
     let points = match kind {
-        FrameKind::Rectangle => frame_rect_points(bounds),
-        FrameKind::RubberBand => frame_rubber_points(&c.frame_paths, input.device.tolerance),
+        FrameKind::Rectangle => {
+            let mut r = bounds;
+            for p in &c.tool_frame {
+                r = r.union(darkburn_core::kurbo::Shape::bounding_box(p));
+            }
+            frame_rect_points(r)
+        }
+        FrameKind::RubberBand => {
+            let all: Vec<BezPath> = c.frame_paths.iter().chain(&c.tool_frame).cloned().collect();
+            frame_rubber_points(&all, input.device.tolerance)
+        }
         FrameKind::Selection => {
             if input.selection.is_empty() {
                 return Err(BuildError::NothingSelected);

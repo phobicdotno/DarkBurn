@@ -737,3 +737,48 @@ fn swap_xy_and_negative_coordinates_change_the_output() {
     let corner = bounds(&|dev| dev.origin = Corner::TopRight);
     assert!((corner.x1 - (200.0 - 10.0)).abs() < 1e-6 && (corner.y1 - (200.0 - 20.0)).abs() < 1e-6, "{corner:?}");
 }
+
+#[test]
+fn shape_start_point_and_direction_overrides_survive_the_optimiser() {
+    use darkburn_core::CutDirection;
+    let mut d = line_doc(20.0);
+    let id = d.iter().next().unwrap().id;
+    let first_rapid = |d: &Document| {
+        let b = build(d.clone());
+        b.toolpath.ops.iter().find_map(|o| if let Op::Rapid { to } = o { Some(*to) } else { None }).unwrap()
+    };
+    // The square is (10,10)-(30,30); a start point on the top edge, in document coordinates.
+    let doc_pt = Point::new(20.0, 30.0);
+    let local = d.get(id).unwrap().transform.inverse() * doc_pt;
+    d.get_mut(id).unwrap().start_point = Some([local.x, local.y]);
+    let p = first_rapid(&d);
+    assert!(p.distance(doc_pt) < 1e-6, "the cut starts at the forced start point: {p:?}");
+    // Clockwise or counter-clockwise from there.
+    let heading = |d: &Document| {
+        let b = build(d.clone());
+        let s = segs(&b.toolpath);
+        s.iter().find(|s| s.kind == 'C' && s.power > 0.0).map(|s| s.to - s.from).unwrap()
+    };
+    d.get_mut(id).unwrap().direction = CutDirection::Clockwise;
+    assert!(heading(&d).x > 0.0, "clockwise along the top edge heads right");
+    d.get_mut(id).unwrap().direction = CutDirection::CounterClockwise;
+    assert!(heading(&d).x < 0.0, "counter-clockwise along the top edge heads left");
+}
+
+#[test]
+fn set_props_command_sets_direction_and_start_point() {
+    let mut app = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+    let id = app.editor.doc.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+    app.editor.selection.set([id]);
+    let r = crate::api::execute_headless(&mut app, "shape.set_props", &serde_json::json!({ "direction": "clockwise", "start_point": [20.0, 30.0] }));
+    assert!(r.is_ok(), "{r:?}");
+    let s = app.editor.doc.get(id).unwrap();
+    assert_eq!(s.direction, darkburn_core::CutDirection::Clockwise);
+    let sp = s.start_point.unwrap();
+    let doc = s.transform * Point::new(sp[0], sp[1]);
+    assert!(doc.distance(Point::new(20.0, 30.0)) < 1e-9);
+    crate::api::execute_headless(&mut app, "shape.set_props", &serde_json::json!({ "start_point": null, "direction": "auto" })).unwrap();
+    let s = app.editor.doc.get(id).unwrap();
+    assert!(s.start_point.is_none() && s.direction == darkburn_core::CutDirection::Auto);
+    assert!(crate::api::execute_headless(&mut app, "shape.set_props", &serde_json::json!({ "direction": "sideways" })).is_err());
+}

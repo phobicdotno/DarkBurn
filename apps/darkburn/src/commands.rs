@@ -284,7 +284,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "shape.set_props",
         "Set Shape Properties",
-        r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"}}}"#,
+        r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"},"direction":{"enum":["auto","clockwise","counter_clockwise","reversed"]},"start_point":{"type":["array","null"],"items":{"type":"number"},"minItems":2,"maxItems":2}}}"#,
     ),
     a(
         "shape.set_corner_radius",

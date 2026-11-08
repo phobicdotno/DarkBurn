@@ -274,6 +274,12 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
                 if q != path {
                     any |= set_shape_path(d, *id, q);
                 }
+                // Remember the point too, so the cut planner keeps it when it orders the job.
+                if let Some(s) = d.get_mut(*id) {
+                    let local = s.transform.inverse() * p;
+                    s.start_point = Some([local.x, local.y]);
+                    any = true;
+                }
             }
         }
         any

@@ -207,3 +207,22 @@ fn gcode_device_settings_reach_the_writer() {
     let g1 = gcode_text(&over, None, &DeviceGcodeSettings::default());
     assert!(g0.matches("G0").count() > g1.matches("G0").count());
 }
+
+#[test]
+fn tool_layers_are_framed_only_when_asked_and_never_burn() {
+    let mut d = line_doc(20.0);
+    sq(&mut d, darkburn_core::T1, 100.0, 100.0, 10.0);
+    let i = input(d.clone());
+    let plain = build_frame(&i, FrameKind::Rectangle, 100.0, None).unwrap();
+    let max_x = |tp: &darkburn_job::Toolpath| tp.ops.iter().filter_map(Op::target).map(|p| p.x).fold(f64::MIN, f64::max);
+    assert!((max_x(&plain) - 30.0).abs() < 1e-6, "tool layer ignored by default");
+    d.layer_mut(darkburn_core::T1).frame = true;
+    let i = input(d.clone());
+    let framed = build_frame(&i, FrameKind::Rectangle, 100.0, None).unwrap();
+    assert!((max_x(&framed) - 110.0).abs() < 1e-6, "{}", max_x(&framed));
+    let rubber = build_frame(&i, FrameKind::RubberBand, 100.0, None).unwrap();
+    assert!((max_x(&rubber) - 110.0).abs() < 1e-6);
+    // The job itself never includes the tool layer.
+    let job = build_job_simple(&i).unwrap();
+    assert!((job.bounds.x1 - 30.0).abs() < 1e-6);
+}

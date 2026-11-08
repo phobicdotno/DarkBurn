@@ -22,6 +22,7 @@ neg_cmp_op_on_partial_ord = "allow"
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }
 darkburn-geom = { workspace = true }
+darkburn-raster = { path = "../../crates/darkburn-raster" }
 kurbo = { workspace = true }
 image = { workspace = true }
 usvg = { workspace = true }

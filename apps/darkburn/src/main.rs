@@ -9,6 +9,10 @@ mod commands;
 mod cut_settings;
 mod cuts_panel;
 mod files;
+mod image_ops;
+mod image_render;
+mod image_ui;
+mod images;
 mod import;
 #[cfg(target_os = "windows")]
 mod native_frame;
@@ -19,6 +23,7 @@ mod panels;
 mod prefs;
 mod render;
 mod ribbon;
+mod scan_offsets;
 mod settings;
 mod shape_props;
 mod shell;

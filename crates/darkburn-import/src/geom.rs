@@ -76,11 +76,11 @@ pub fn split_subpaths(path: &BezPath) -> Vec<BezPath> {
     let mut cur = BezPath::new();
     for el in path.elements() {
         if let PathEl::MoveTo(_) = el
-            && !cur.is_empty()
+            && !cur.elements().is_empty()
         {
             out.push(std::mem::take(&mut cur));
         }
-        if cur.is_empty() && !matches!(el, PathEl::MoveTo(_)) {
+        if cur.elements().is_empty() && !matches!(el, PathEl::MoveTo(_)) {
             // Path without a leading move-to: start from the origin like SVG does.
             cur.move_to(Point::ZERO);
         }
@@ -424,4 +424,24 @@ pub fn fmt_num(v: f64, decimals: usize) -> String {
         }
     }
     if s == "-0" { "0".into() } else { s }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(a: (f64, f64), b: (f64, f64)) -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to(a);
+        p.line_to(b);
+        p
+    }
+
+    #[test]
+    fn chain_joins_only_touching_ends() {
+        let subs = vec![line((0.0, 0.0), (10.0, 0.0)), line((500.0, 0.0), (510.0, 0.0)), line((510.005, 0.0), (510.0, 10.0))];
+        let (chains, joins) = chain(subs, 0.01);
+        assert_eq!(joins, 1, "{chains:?}");
+        assert_eq!(chains.len(), 2);
+    }
 }

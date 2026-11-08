@@ -9,11 +9,16 @@ mod commands;
 mod cut_settings;
 mod cuts_panel;
 mod devices;
+mod devices_ui;
 mod files;
 mod import;
+mod laser_panel;
 mod machine_api;
 #[cfg(test)]
 mod machine_api_tests;
+mod machine_ui;
+#[cfg(test)]
+mod machine_ui_tests;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod numeric;

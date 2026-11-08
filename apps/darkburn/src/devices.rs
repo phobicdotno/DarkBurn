@@ -235,7 +235,14 @@ pub struct DspSettings {
 
 impl Default for DspSettings {
     fn default() -> Self {
-        DspSettings { u_axis: false, dual_tube: false, filename_increment: true, disable_start: false, check_bounds_when_framing: true, network_timeout_ms: 3000 }
+        DspSettings {
+            u_axis: false,
+            dual_tube: false,
+            filename_increment: true,
+            disable_start: false,
+            check_bounds_when_framing: true,
+            network_timeout_ms: 3000,
+        }
     }
 }
 
@@ -289,7 +296,11 @@ impl Default for DeviceSettings {
             z_optimize: true,
             tab_pulse_width: 0.1,
             checklist_on: false,
-            checklist: vec!["Material is in place and flat".into(), "Air assist and extraction are on".into(), "Lid is closed and the area is clear".into()],
+            checklist: vec![
+                "Material is in place and flat".into(),
+                "Air assist and extraction are on".into(),
+                "Lid is closed and the area is clear".into(),
+            ],
             overwrite_files: false,
             scan_offsets: Vec::new(),
             fire_max_percent: 10.0,
@@ -441,7 +452,9 @@ impl Device {
         }
         match self.connection {
             ConnectionKind::Tcp if self.host.trim().is_empty() => v.push("Enter the host name or IP address.".into()),
-            ConnectionKind::Udp if self.host.trim().parse::<std::net::IpAddr>().is_err() => v.push("Enter the controller's IP address, like 192.168.1.100.".into()),
+            ConnectionKind::Udp if self.host.trim().parse::<std::net::IpAddr>().is_err() => {
+                v.push("Enter the controller's IP address, like 192.168.1.100.".into())
+            }
             ConnectionKind::Serial if self.settings.gcode.baud_rate == 0 => v.push("Pick a baud rate.".into()),
             _ => {}
         }
@@ -550,8 +563,7 @@ pub fn find_my_laser(ports: &[PortInfo]) -> Vec<Candidate> {
 
 /// A Ruida controller on the network cannot be found without sending packets, so DarkBurn asks
 /// for its IP instead [DEV-02].
-pub const RUIDA_DISCOVERY_NOTE: &str =
-    "Ruida controllers on the network are not searched for (that would send packets). Choose Ruida in the wizard and type the controller's IP address.";
+pub const RUIDA_DISCOVERY_NOTE: &str = "Ruida controllers on the network are not searched for (that would send packets). Choose Ruida in the wizard and type the controller's IP address.";
 
 // ============================================================================================
 // The store
@@ -823,7 +835,9 @@ impl Wizard {
         match self.step {
             WizardStep::Type => Vec::new(),
             WizardStep::Connection => d.validate().into_iter().filter(|m| m.contains("host") || m.contains("IP") || m.contains("baud")).collect(),
-            WizardStep::NameAndSize => d.validate().into_iter().filter(|m| m.contains("name") || m.contains("Width") || m.contains("Height")).collect(),
+            WizardStep::NameAndSize => {
+                d.validate().into_iter().filter(|m| m.contains("name") || m.contains("Width") || m.contains("Height")).collect()
+            }
             WizardStep::OriginAndHoming => Vec::new(),
             WizardStep::Summary => d.validate(),
         }
@@ -869,7 +883,9 @@ impl Wizard {
             rows.push((
                 "Connection".into(),
                 match d.connection {
-                    ConnectionKind::Serial => format!("{} @ {} baud", if d.state.port.is_empty() { "automatic port" } else { &d.state.port }, d.settings.gcode.baud_rate),
+                    ConnectionKind::Serial => {
+                        format!("{} @ {} baud", if d.state.port.is_empty() { "automatic port" } else { &d.state.port }, d.settings.gcode.baud_rate)
+                    }
                     ConnectionKind::Tcp => format!("{}:{}", d.host, d.tcp_port),
                     ConnectionKind::Udp => format!("UDP {}", d.host),
                     ConnectionKind::Usb => "FTDI USB".into(),
@@ -927,7 +943,11 @@ mod tests {
         u.sort();
         u.dedup();
         assert_eq!(names.len(), u.len(), "names stay unique: {names:?}");
-        assert_eq!(s.devices.iter().position(|d| d.id == dup), s.devices.iter().position(|d| d.id == id).map(|p| p + 1), "the copy sits after its original");
+        assert_eq!(
+            s.devices.iter().position(|d| d.id == dup),
+            s.devices.iter().position(|d| d.id == id).map(|p| p + 1),
+            "the copy sits after its original"
+        );
         assert!(s.remove(again));
         s.select(id);
         assert!(s.remove(id));

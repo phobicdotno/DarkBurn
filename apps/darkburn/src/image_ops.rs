@@ -200,6 +200,20 @@ fn finite(v: f64, lo: f64, hi: f64, what: &str) -> Result<f64, String> {
 
 /// Applies `a` to the images `ids` and their layers; true when something changed.
 pub fn adjust(e: &mut Editor, ids: &[ShapeId], a: &AdjustArgs) -> Result<bool, String> {
+    let mut failed = None;
+    let changed = e.edit("Adjust image", |d, _| match adjust_doc(d, ids, a) {
+        Ok(changed) => changed,
+        Err(err) => {
+            failed = Some(err);
+            false
+        }
+    });
+    failed.map_or(Ok(changed), Err)
+}
+
+/// [`adjust`] straight on the document, with no undo step (the dialog's live preview); true
+/// when anything changed.
+pub fn adjust_doc(d: &mut Document, ids: &[ShapeId], a: &AdjustArgs) -> Result<bool, String> {
     if ids.is_empty() {
         return Err("select an image first".into());
     }
@@ -209,7 +223,11 @@ pub fn adjust(e: &mut Editor, ids: &[ShapeId], a: &AdjustArgs) -> Result<bool, S
     let (amount, radius, denoise) = (v(a.enhance_amount, 0.0, 1000.0, "enhance amount")?, v(a.enhance_radius, 0.0, 100.0, "enhance radius")?, v(a.enhance_denoise, 0.0, 100.0, "enhance denoise")?);
     let dpi = v(a.dpi, 1.0, 25_400.0, "DPI")?;
     let (cells, angle, ramp) = (v(a.halftone_cells, 1.0, 1000.0, "halftone cells")?, v(a.halftone_angle, -360.0, 360.0, "halftone angle")?, v(a.threshold_ramp, 0.0, 100.0, "ramp length")?);
-    Ok(e.edit("Adjust image", |d, _| {
+    let snapshot = |d: &Document| -> (Vec<Option<ImageAdjust>>, Vec<darkburn_core::Layer>) {
+        (ids.iter().map(|id| d.get(*id).and_then(|s| if let ShapeKind::Image(i) = &s.kind { Some(i.adjust) } else { None })).collect(), d.layers.clone())
+    };
+    let before = snapshot(d);
+    {
         let mut layers = Vec::new();
         for id in ids {
             let Some(img) = image_mut(d, *id) else { continue };
@@ -241,8 +259,8 @@ pub fn adjust(e: &mut Editor, ids: &[ShapeId], a: &AdjustArgs) -> Result<bool, S
             c.threshold_ramp = ramp.unwrap_or(c.threshold_ramp);
             c.sanitise();
         }
-        true
-    }))
+    }
+    Ok(snapshot(d) != before)
 }
 
 // ----- Trace Image -----
@@ -317,9 +335,15 @@ pub fn node_count(paths: &[BezPath]) -> usize {
 
 /// Traces grey pixels placed by `to_mm`; very large ones are shrunk first.
 pub fn trace_gray(gray: &GrayF, to_mm: Affine, args: &TraceArgs) -> Vec<BezPath> {
+    trace_gray_limited(gray, to_mm, args, TRACE_MAX_PIXELS)
+}
+
+/// [`trace_gray`] shrinking images above `max_px` pixels first (the dialog's preview uses a
+/// small limit so it stays quick).
+pub fn trace_gray_limited(gray: &GrayF, to_mm: Affine, args: &TraceArgs, max_px: u64) -> Vec<BezPath> {
     let px = u64::from(gray.width) * u64::from(gray.height);
-    if px > TRACE_MAX_PIXELS {
-        let k = (TRACE_MAX_PIXELS as f64 / px as f64).sqrt();
+    if px > max_px {
+        let k = (max_px as f64 / px as f64).sqrt();
         let (nw, nh) = (((f64::from(gray.width) * k) as u32).max(1), ((f64::from(gray.height) * k) as u32).max(1));
         let small = GrayF::from_luma8(&image::imageops::resize(&gray.to_luma8(), nw, nh, image::imageops::FilterType::Triangle));
         let back = to_mm * Affine::scale_non_uniform(f64::from(gray.width) / f64::from(nw), f64::from(gray.height) / f64::from(nh));
@@ -331,11 +355,16 @@ pub fn trace_gray(gray: &GrayF, to_mm: Affine, args: &TraceArgs) -> Vec<BezPath>
 /// The paths tracing image `id` would give, in document millimetres (the image's adjustments
 /// and crop count). Used by the dialog's preview as well.
 pub fn trace_paths(doc: &Document, id: ShapeId, args: &TraceArgs) -> Result<Vec<BezPath>, String> {
+    trace_paths_limited(doc, id, args, TRACE_MAX_PIXELS)
+}
+
+/// [`trace_paths`] on at most `max_px` pixels.
+pub fn trace_paths_limited(doc: &Document, id: ShapeId, args: &TraceArgs, max_px: u64) -> Result<Vec<BezPath>, String> {
     let (leaf, img) = image_shape(doc, id)?;
     let gray = images::source_gray(doc, img).map_err(|e| e.to_string())?;
     let mut g = (*gray).clone();
     images::adjustments(&img.adjust).apply(&mut g);
-    Ok(trace_gray(&g, images::pixel_to_doc(leaf, img, (g.width, g.height)), args))
+    Ok(trace_gray_limited(&g, images::pixel_to_doc(leaf, img, (g.width, g.height)), args, max_px))
 }
 
 /// The layer traced paths go to: the one asked for, else the current layer unless it is an

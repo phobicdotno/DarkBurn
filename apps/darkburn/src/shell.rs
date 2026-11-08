@@ -66,6 +66,8 @@ pub struct DarkBurn {
     pub flash_layer: Option<(usize, f64)>,
     /// Project files, auto-save and the system clipboard (files.rs).
     pub files: crate::files::FileState,
+    /// Image windows and presets (image_ui.rs).
+    pub images: crate::image_ui::ImageUi,
 }
 
 impl DarkBurn {
@@ -96,6 +98,7 @@ impl DarkBurn {
             notes_open: false,
             flash_layer: None,
             files: Default::default(),
+            images: Default::default(),
         }
     }
 
@@ -129,6 +132,7 @@ impl DarkBurn {
             | "arrange.ungroup" => sel > 0,
             "arrange.group" | "arrange.same_width" | "arrange.same_height" => sel > 1,
             "edit.paste" | "edit.paste_in_place" => true,
+            _ if crate::image_ui::handles(id) => crate::image_ui::can_run(self, id),
             _ if id.starts_with("arrange.align_") || id.starts_with("arrange.distribute_") || id.starts_with("arrange.move_") => sel > 1,
             _ if id.starts_with("arrange.page_") => sel > 0,
             _ => true,
@@ -167,7 +171,7 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
-        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) {
+        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) || crate::image_ui::run(self, ctx, id) {
             return;
         }
         match id {
@@ -269,6 +273,7 @@ impl DarkBurn {
         self.dialogs(ui.ctx());
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
+        crate::image_ui::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }

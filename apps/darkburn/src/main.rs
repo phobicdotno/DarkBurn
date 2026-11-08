@@ -243,6 +243,7 @@ fn main() -> eframe::Result {
             let mut app = DarkBurn::new(prefs);
             app.settings_dir = dir.clone();
             app.safe_mode = safe_mode;
+            image_ui::load_tuning(&app);
             app.note = (!notes.is_empty()).then(|| notes.join(" "));
             app.custom_titlebar = custom_titlebar;
             #[cfg(target_os = "windows")]

@@ -71,6 +71,23 @@ pub fn render(gray: &GrayF, size_mm: (f64, f64), adjust: &Adjustments, settings:
     Rendered { image: ColorImage::from_gray([w as usize, h as usize], preview.as_raw()), dots: (w, h), reduced: k < 1.0 }
 }
 
+/// The part of an image a dialog preview shows at the layer's true resolution: all of it when
+/// it fits in `max_side` dots a side, else the middle `max_side` dots square. Returns the
+/// pixels, their size in mm, and whether it is a part.
+pub fn window(gray: &GrayF, size_mm: (f64, f64), interval_mm: f64, max_side: u32) -> (std::borrow::Cow<'_, GrayF>, (f64, f64), bool) {
+    let i = interval_mm.max(1e-4);
+    let (dw, dh) = (size_mm.0 / i, size_mm.1 / i);
+    let (fx, fy) = ((f64::from(max_side) / dw).min(1.0), (f64::from(max_side) / dh).min(1.0));
+    if fx >= 1.0 && fy >= 1.0 {
+        return (std::borrow::Cow::Borrowed(gray), size_mm, false);
+    }
+    let (w, h) = (gray.width, gray.height);
+    let (sw, sh) = (((f64::from(w) * fx) as u32).clamp(1, w), ((f64::from(h) * fy) as u32).clamp(1, h));
+    let (x0, y0) = ((w - sw) / 2, (h - sh) / 2);
+    let sub = GrayF::from_fn(sw, sh, |x, y| gray.get(x0 + x, y0 + y));
+    (std::borrow::Cow::Owned(sub), (size_mm.0 * f64::from(sw) / f64::from(w), size_mm.1 * f64::from(sh) / f64::from(h)), true)
+}
+
 /// Decodes and renders a job.
 pub fn compute(job: &Job) -> Option<ColorImage> {
     let gray = images::source_gray_of(&job.data, &job.shape).ok()?;
@@ -116,7 +133,7 @@ struct Entry {
 type Cache = HashMap<u64, Entry>;
 
 fn cache_id() -> egui::Id {
-    egui::Id::new("darkburn_image_render_cache")
+    egui::Id::unique("darkburn_image_render_cache")
 }
 
 /// The processed texture of image shape `leaf`, or None when it needs none or the first one is

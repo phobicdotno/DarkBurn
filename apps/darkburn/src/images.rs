@@ -30,7 +30,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-use darkburn_core::kurbo::{Affine, BezPath};
+use darkburn_core::kurbo::Affine;
 use darkburn_core::layer::ImageMode as LayerMode;
 use darkburn_core::{CutSetting, Document, ImageAdjust, ImageData, ImageShape, Mode, Shape, ShapeKind};
 use darkburn_raster::{Adjustments, GrayF, ImageMode, ImageSettings, ProcessedImage, ScanPlan, ScanSettings, apply_mask, process_image, scan_plans};

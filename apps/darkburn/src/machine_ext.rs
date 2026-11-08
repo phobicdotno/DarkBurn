@@ -129,7 +129,9 @@ pub fn is_hardware(id: &str) -> bool {
 /// Commands here that only edit documents, files or the device list, though their id starts
 /// with `laser.`.
 pub fn not_hardware(id: &str) -> bool {
-    matches!(id, "laser.repeat_marking" | "laser.lens_test")
+    // Repeat marking is a galvo marking operation, so it counts as hardware even though the
+    // command only opens its settings.
+    matches!(id, "laser.lens_test")
 }
 
 /// The command touches Gweike machine concepts (the MCP side reads this).
@@ -139,7 +141,7 @@ pub fn gweike(id: &str) -> bool {
 
 /// The command writes a file.
 pub fn writes_files(id: &str) -> bool {
-    matches!(id, "gweike.export_chf" | "gcode.export" | "file.export_gweike_dxf" | "file.export_gweike_nc")
+    matches!(id, "gweike.export_chf" | "gcode.export" | "device.export_library" | "file.export_gweike_dxf" | "file.export_gweike_nc")
 }
 
 pub fn checklist(id: &str) -> &'static [&'static str] {

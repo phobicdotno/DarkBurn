@@ -190,11 +190,15 @@ pub struct ImageShape {
     pub crop: Option<BezPath>,
     /// The file the image came from, for Refresh Image.
     pub source: Option<String>,
+    /// The crop path kept after the crop was baked into the pixels (Flatten Image Crop), in
+    /// local coordinates. Remove Backup Path throws it away.
+    #[serde(with = "serde_kurbo::opt_path")]
+    pub backup: Option<BezPath>,
 }
 
 impl Default for ImageShape {
     fn default() -> Self {
-        ImageShape { image: String::new(), width: 10.0, height: 10.0, adjust: ImageAdjust::default(), crop: None, source: None }
+        ImageShape { image: String::new(), width: 10.0, height: 10.0, adjust: ImageAdjust::default(), crop: None, source: None, backup: None }
     }
 }
 

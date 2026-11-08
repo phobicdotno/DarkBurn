@@ -9,6 +9,10 @@ mod commands;
 mod cut_settings;
 mod cuts_panel;
 mod files;
+mod image_ops;
+mod image_render;
+mod image_ui;
+mod images;
 mod import;
 mod job_build;
 mod job_cmds;
@@ -24,6 +28,7 @@ mod prefs;
 mod preview;
 mod render;
 mod ribbon;
+mod scan_offsets;
 mod settings;
 mod shape_props;
 mod shell;
@@ -243,6 +248,7 @@ fn main() -> eframe::Result {
             let mut app = DarkBurn::new(prefs);
             app.settings_dir = dir.clone();
             app.safe_mode = safe_mode;
+            image_ui::load_tuning(&app);
             app.note = (!notes.is_empty()).then(|| notes.join(" "));
             app.custom_titlebar = custom_titlebar;
             #[cfg(target_os = "windows")]

@@ -478,6 +478,7 @@ pub fn bitmap(bytes: &[u8], opts: &Options, dpi: Option<f64>) -> Result<Imported
     if pw == 0 || ph == 0 {
         return Err("the image is empty".into());
     }
+    crate::images::check_import_size(pw, ph)?;
     let dpi = file_dpi(bytes, format).or(dpi).unwrap_or(DEFAULT_IMAGE_DPI);
     let mut w = pw as f64 * 25.4 / dpi;
     let mut h = ph as f64 * 25.4 / dpi;

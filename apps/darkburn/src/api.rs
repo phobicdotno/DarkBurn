@@ -245,6 +245,7 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
             Ok(json!({ "imported": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
         })(),
         "setting.set" => setting(app, a),
+        _ if crate::image_ui::handles(id) => crate::image_ui::execute(app, id, a),
         _ => return None,
     })
 }

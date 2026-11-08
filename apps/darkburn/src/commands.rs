@@ -305,6 +305,66 @@ pub const COMMANDS: &[Cmd] = &[
         "Delete a Layer",
         r#"{"type":"object","properties":{"layer":{"type":"integer"},"with_shapes":{"type":"boolean"}},"required":["layer"]}"#,
     ),
+    // Images, with arguments (image_ui.rs)
+    a(
+        "image.adjust",
+        "Adjust Selected Images",
+        r#"{"type":"object","properties":{"brightness":{"type":"number","minimum":-100,"maximum":100},"contrast":{"type":"number","minimum":-100,"maximum":100},"gamma":{"type":"number","minimum":0.1,"maximum":10},"enhance_amount":{"type":"number","description":"percent"},"enhance_radius":{"type":"number","description":"pixels"},"enhance_denoise":{"type":"number"},"image_mode":{"enum":["threshold","ordered","atkinson","dither","stucki","jarvis","newsprint","halftone","sketch","grayscale"]},"dpi":{"type":"number"},"negative":{"type":"boolean"},"pass_through":{"type":"boolean"},"halftone_cells":{"type":"number"},"halftone_angle":{"type":"number"},"threshold_ramp":{"type":"number","description":"mm"}}}"#,
+    ),
+    a(
+        "image.trace",
+        "Trace Selected Images",
+        r#"{"type":"object","properties":{"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"clip":{"type":"array","items":{"type":"number"},"description":"[left, top, right, bottom] as fractions of the picture"},"sketch":{"type":"boolean"},"delete_image":{"type":"boolean"},"layer":{"type":"integer"}}}"#,
+    ),
+    a(
+        "image.trace_capture",
+        "Trace a Captured Picture",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"dpi":{"type":"number"},"threshold":{"type":"integer"},"sketch":{"type":"boolean"},"layer":{"type":"integer"}},"required":["path"]}"#,
+    ),
+    a(
+        "image.convert_bitmap",
+        "Convert Selected Shapes to a Bitmap",
+        r#"{"type":"object","properties":{"dpi":{"type":"number"},"fill":{"type":"boolean"},"stroke_mm":{"type":"number"},"layer":{"type":"integer"},"keep_original":{"type":"boolean"}}}"#,
+    ),
+    a(
+        "image.replace",
+        "Replace the Selected Image from a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"fit":{"type":"boolean"}},"required":["path"]}"#,
+    ),
+    a("image.save_bitmap", "Save the Processed Bitmap", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("image.presets", "List Adjust Image Presets", ""),
+    a(
+        "image.preset_save",
+        "Save the Selected Image's Settings as a Preset",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
+    a(
+        "image.preset_load",
+        "Apply a Preset to the Selected Images",
+        r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#,
+    ),
+    a("image.preset_delete", "Delete a Preset", r#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#),
+    a("image.preset_import", "Import Presets from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "image.preset_export",
+        "Export Presets to a File",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"names":{"type":"array","items":{"type":"string"}}},"required":["path"]}"#,
+    ),
+    a(
+        "image.scan_offsets",
+        "Scanning Offset Table and Fast Skip",
+        r#"{"type":"object","properties":{"speed":{"type":"number","description":"mm/s"},"offset":{"type":"number","description":"mm"},"remove_speed":{"type":"number"},"fast_skip":{"type":"boolean"},"skip_mm":{"type":"number"}}}"#,
+    ),
+    a(
+        "image.scan_offsets_import",
+        "Import a Scanning Offset File",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
+    a(
+        "image.scan_offsets_export",
+        "Export the Scanning Offset Table",
+        r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
+    ),
     // Project and settings, with arguments
     a("project.info", "Project Summary", ""),
     a("project.open", "Open a Project File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
@@ -348,6 +408,18 @@ pub fn works(id: &str) -> bool {
             | "edit.select_open_fill"
             | "edit.select_layer"
             | "edit.select_contained"
+            | "edit.convert_bitmap"
+            | "edit.image_replace"
+            | "edit.image_replace_fit"
+            | "edit.image_refresh"
+            | "edit.image_crop"
+            | "edit.image_flatten"
+            | "edit.image_remove_crop"
+            | "edit.image_remove_backup"
+            | "tools.adjust_image"
+            | "tools.trace_image"
+            | "tools.mask_image"
+            | "file.save_bitmap"
             | "tools.select"
             | "tools.line"
             | "tools.rect"
@@ -389,6 +461,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("layer.")
         || id.starts_with("project.")
         || id.starts_with("setting.")
+        || id.starts_with("image.")
         || id.starts_with("arrange.align_")
         || id.starts_with("arrange.distribute_")
         || id.starts_with("arrange.move_h_")
@@ -484,6 +557,23 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "edit.select_open_fill" => &["EDIT-19"],
         "edit.select_layer" => &["EDIT-20"],
         "edit.select_contained" => &["EDIT-21"],
+        "tools.adjust_image" | "image.adjust" => &["TOOLS-19", "IMG-16", "IMG-12", "IMG-13", "SP-05"],
+        "image.preset_save" | "image.preset_load" | "image.preset_delete" | "image.preset_import" | "image.preset_export" | "image.presets" => {
+            &["IMG-17"]
+        }
+        "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
+        "image.trace_capture" => &["IMG-20"],
+        "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],
+        "edit.image_replace" | "image.replace" => &["EDIT-22"],
+        "edit.image_replace_fit" => &["EDIT-23"],
+        "edit.image_refresh" => &["EDIT-24"],
+        "edit.image_crop" => &["EDIT-25"],
+        "edit.image_flatten" => &["EDIT-26"],
+        "edit.image_remove_crop" => &["EDIT-27"],
+        "edit.image_remove_backup" => &["EDIT-28"],
+        "tools.mask_image" => &["TOOLS-22", "SHAPE-29"],
+        "file.save_bitmap" | "image.save_bitmap" => &["FILE-13"],
+        "image.scan_offsets" | "image.scan_offsets_import" | "image.scan_offsets_export" => &["IMG-22", "IMG-23"],
         "tools.select" => &["TOOLS-01"],
         "tools.line" => &["TOOLS-02", "DRAW-01", "DRAW-02"],
         "tools.rect" | "shape.add_rect" => &["TOOLS-03", "DRAW-04"],

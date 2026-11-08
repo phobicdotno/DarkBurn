@@ -590,3 +590,31 @@ fn each_device_has_its_own_library() {
     machine_ui::adopt_device_state(&mut a);
     assert_eq!(a.extras.library.device, "Library machine");
 }
+
+#[test]
+fn the_default_layout_shows_the_machine_panels() {
+    let ctx = egui::Context::default();
+    let mut a = app();
+    a.prefs.panels.get_mut("console").unwrap().visible = true;
+    let mut found = Vec::new();
+    for _ in 0..4 {
+        let input =
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| a.ui(ui));
+        out.textures_delta.clear();
+        found.clear();
+        fn walk(s: &egui::epaint::Shape, found: &mut Vec<String>) {
+            match s {
+                egui::epaint::Shape::Text(t) => found.push(t.galley.text().to_string()),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|x| walk(x, found)),
+                _ => {}
+            }
+        }
+        for s in &out.shapes {
+            walk(&s.shape, &mut found);
+        }
+    }
+    for want in ["Laser", "Cuts / Layers", "SIMULATOR: no hardware attached", "Connect", "Devices", "Start", "Stop"] {
+        assert!(found.iter().any(|t| t == want), "{want} is on screen: {found:?}");
+    }
+}

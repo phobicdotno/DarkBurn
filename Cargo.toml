@@ -18,6 +18,7 @@ solidcraft-ui-registry = { path = "../solidcraft/crates/ui-registry" }
 solidcraft-color       = { path = "../solidcraft/crates/color" }
 darkburn-ui = { path = "crates/darkburn-ui" }
 darkburn-core = { path = "crates/darkburn-core" }
+darkburn-geom = { path = "crates/darkburn-geom" }
 
 # Pinned to SolidCraft's versions (one egui in the graph)
 egui      = { version = "=0.37.0", features = ["default_fonts"] }

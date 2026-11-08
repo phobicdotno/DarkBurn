@@ -708,6 +708,7 @@ version = "0.0.11"
 dependencies = [
  "arboard",
  "darkburn-core",
+ "darkburn-geom",
  "darkburn-ui",
  "eframe",
  "egui",
@@ -736,6 +737,15 @@ dependencies = [
  "serde",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "darkburn-geom"
+version = "0.0.11"
+dependencies = [
+ "cavalier_contours",
+ "i_overlay",
+ "kurbo 0.13.1",
 ]
 
 [[package]]

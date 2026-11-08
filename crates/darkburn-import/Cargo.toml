@@ -1,0 +1,21 @@
+[package]
+name = "darkburn-import"
+description = "DarkBurn file import and export: DXF, PDF/AI, HPGL, LightBurn projects, SVG and AI export, Gweike/Mlaser files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo = "0.13"
+dxf = "0.6"
+lopdf = { version = "0.47", default-features = false }
+quick-xml = "0.41"
+flate2 = "1"
+fax = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+base64 = "0.22"
+serde = { workspace = true }

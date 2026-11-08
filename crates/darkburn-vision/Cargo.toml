@@ -1,0 +1,22 @@
+[package]
+name = "darkburn-vision"
+description = "DarkBurn camera calibration and alignment, rotary maths, print and cut registration and test generators (pure maths and data)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Live camera capture through nokhwa (MIT/Apache-2.0). Off by default.
+capture = ["dep:nokhwa"]
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+nokhwa = { version = "0.10", default-features = false, features = ["input-native"], optional = true }

@@ -95,30 +95,16 @@ fn choice(ui: &mut Ui, label: &str, id: &str, options: &[&str]) {
     });
 }
 
-/// The contents of panel `id`. Everything is disabled until the panel's phase.
-pub fn contents(ui: &mut Ui, id: &str, _app: &mut crate::shell::DarkBurn) {
+/// The contents of panel `id`. Panels of later phases are shown disabled.
+pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
     let t = Tokens::get();
     ui.spacing_mut().item_spacing.y = t.form_gap_y;
+    match id {
+        "cuts" => return crate::cuts_panel::show(ui, app),
+        "shape_properties" => return crate::shape_props::show(ui, app),
+        _ => {}
+    }
     ui.add_enabled_ui(false, |ui| match id {
-        "cuts" => {
-            let columns = [
-                ui_kit::Column::new("#", 0.5),
-                ui_kit::Column::new("Layer", 1.0).flex(),
-                ui_kit::Column::new("Mode", 0.8),
-                ui_kit::Column::new("Spd/Pwr", 0.9),
-                ui_kit::Column::new("Output", 0.7),
-                ui_kit::Column::new("Show", 0.6),
-                ui_kit::Column::new("Air", 0.5),
-            ];
-            ui_kit::table_custom(ui, "cuts", &columns, "No layers yet. Shapes you draw add their layer here.", |_, _| {});
-            ui.add_space(t.space_8);
-            ui_kit::section_heading(ui, "Cut settings");
-            field_row(ui, "Speed", "100 mm/s");
-            field_row(ui, "Max power", "20 %");
-            field_row(ui, "Min power", "10 %");
-            field_row(ui, "Interval", "0.1 mm");
-            field_row(ui, "Passes", "1");
-        }
         "console" => {
             coming(ui, "The machine's replies appear here once a laser is connected.");
             let mut log = String::new();
@@ -152,9 +138,6 @@ pub fn contents(ui: &mut Ui, id: &str, _app: &mut crate::shell::DarkBurn) {
                 ui_kit::hint_field(ui, &mut v, "No file");
             });
             buttons(ui, &["Browse", "Clear"]);
-        }
-        "shape_properties" => {
-            coming(ui, "Select a shape to see its properties.");
         }
         "laser" => {
             ui_kit::status_line(ui, "Disconnected", ui_kit::StatusTone::Dim);

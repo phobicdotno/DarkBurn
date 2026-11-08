@@ -31,6 +31,8 @@ enum Item {
     Checks(&'static [&'static str]),
     /// A column of drop-downs: (label, options).
     Choices(&'static [(&'static str, &'static [&'static str])]),
+    /// The numeric edits: position, size, scale and rotation of the selection.
+    Numeric,
 }
 
 struct Group {
@@ -39,7 +41,7 @@ struct Group {
     items: &'static [Item],
 }
 
-use Item::{Checks, Choices, Cmd, Fields};
+use Item::{Checks, Choices, Cmd, Fields, Numeric};
 
 const fn g(caption: &'static str, toolbar: &'static str, items: &'static [Item]) -> Group {
     Group { caption, toolbar, items }
@@ -55,17 +57,7 @@ const TABS: &[(&str, &str, &[Group])] = &[
             g("View", "main", &[Cmd("view.pan"), Cmd("view.zoom_page"), Cmd("view.zoom_in"), Cmd("view.zoom_out"), Cmd("view.frame_selection")]),
             g("Laser", "main", &[Cmd("laser.capture"), Cmd("window.preview")]),
             g("Setup", "main", &[Cmd("edit.settings"), Cmd("edit.device_settings")]),
-            g(
-                "Position and size",
-                "numeric",
-                &[
-                    Fields(&[("X", "0.00 mm"), ("Y", "0.00 mm")], 100.0),
-                    Fields(&[("W", "0.00 mm"), ("H", "0.00 mm")], 100.0),
-                    Fields(&[("%", "100"), ("%", "100")], 64.0),
-                    Fields(&[("Rotate", "0.00"), ("Units", "mm")], 112.0),
-                    Checks(&["Lock aspect"]),
-                ],
-            ),
+            g("Position and size", "numeric", &[Numeric]),
         ],
     ),
     (
@@ -126,14 +118,12 @@ fn tab_visible(prefs: &Prefs, groups: &[Group]) -> bool {
 /// The ribbon, docked at the top under the application bar.
 pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<String>) {
     let pan_tool = app.pan_tool;
-    let hint = &mut app.hint;
-    let prefs = &mut app.prefs;
-    let tabs: Vec<_> = TABS.iter().filter(|(_, _, groups)| tab_visible(prefs, groups)).collect();
+    let tabs: Vec<_> = TABS.iter().filter(|(_, _, groups)| tab_visible(&app.prefs, groups)).collect();
     if tabs.is_empty() {
         return;
     }
-    if !tabs.iter().any(|(id, _, _)| *id == prefs.ribbon_tab) {
-        prefs.ribbon_tab = tabs[0].0.to_string();
+    if !tabs.iter().any(|(id, _, _)| *id == app.prefs.ribbon_tab) {
+        app.prefs.ribbon_tab = tabs[0].0.to_string();
     }
     let t = Tokens::get();
     let host = Container::new(ui.ctx(), Surface::Chrome);
@@ -144,7 +134,7 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
         // Tab row.
         let mut x = r.left() + 8.0;
         for (id, label, _) in &tabs {
-            let active = prefs.ribbon_tab == *id;
+            let active = app.prefs.ribbon_tab == *id;
             let font = if active { fonts::semibold(t.font_button) } else { FontId::proportional(t.font_button) };
             let g = ui.painter().layout_no_wrap(label.to_string(), font, t.text);
             let tr = Rect::from_min_size(pos2(x, r.top() + 4.0), vec2(g.size().x + 18.0, TAB_ROW_HEIGHT - 8.0));
@@ -161,20 +151,24 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
             ui.painter().galley(pos2(tr.left() + 9.0, tr.center().y - g.size().y / 2.0), g, ink);
             solidcraft_ui_registry::publish_target(&format!("ribbon:tab:{id}"), tr);
             if resp.clicked() {
-                prefs.ribbon_tab = id.to_string();
+                app.prefs.ribbon_tab = id.to_string();
             }
         }
         // Groups.
-        let Some((_, _, groups)) = tabs.iter().find(|(id, _, _)| prefs.ribbon_tab == *id) else {
+        let Some((_, _, groups)) = tabs.iter().find(|(id, _, _)| app.prefs.ribbon_tab == *id) else {
             return;
         };
         let row = Rect::from_min_max(pos2(r.left(), r.top() + TAB_ROW_HEIGHT), pos2(r.right(), r.top() + TAB_ROW_HEIGHT + GROUP_HEIGHT));
         let mut gx = row.left() + 4.0;
-        for group in groups.iter().filter(|g| prefs.toolbar(g.toolbar)) {
+        let shown_groups: Vec<&Group> = groups.iter().filter(|g| app.prefs.toolbar(g.toolbar)).collect();
+        for group in shown_groups {
             let start = gx;
             gx += GROUP_PAD;
             for item in group.items {
-                gx = item_at(ui, *item, gx, row, pan_tool, hint, clicked) + BUTTON_GAP;
+                gx = match item {
+                    Numeric => crate::numeric_edits::show(ui, pos2(gx, row.top() + 4.0), BUTTON_HEIGHT, app),
+                    _ => item_at(ui, *item, gx, row, pan_tool, &mut app.hint, clicked),
+                } + BUTTON_GAP;
             }
             gx += GROUP_PAD - BUTTON_GAP;
             let caption = Rect::from_min_max(pos2(start, row.bottom() - CAPTION_HEIGHT), pos2(gx, row.bottom()));
@@ -283,6 +277,7 @@ fn item_at(ui: &mut Ui, item: Item, x: f32, row: Rect, pan_tool: bool, hint: &mu
             });
             area.right()
         }
+        Numeric => x,
     }
 }
 

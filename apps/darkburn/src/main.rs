@@ -5,14 +5,18 @@ mod actions;
 mod canvas;
 mod commands;
 mod cut_settings;
+mod cuts_panel;
 mod files;
 #[cfg(target_os = "windows")]
 mod native_frame;
+mod numeric;
+mod numeric_edits;
 mod palette;
 mod panels;
 mod prefs;
 mod ribbon;
 mod settings;
+mod shape_props;
 mod shell;
 mod startup;
 mod tools;

@@ -410,8 +410,8 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Z axis");
     ui_kit::checkbox(ui, "Z axis enabled", &mut d.settings.z_enabled);
     ui_kit::checkbox(ui, "Reverse Z", &mut d.settings.z_reverse);
-    ui_kit::checkbox(ui, "Relative Z moves only", &mut d.settings.z_relative_only);
-    ui_kit::checkbox(ui, "Optimize Z moves", &mut d.settings.z_optimize);
+    ui_kit::checkbox(ui, "Relative Z moves only", &mut d.settings.gcode.z_relative_only);
+    ui_kit::checkbox(ui, "Optimize Z moves", &mut d.settings.gcode.z_optimize);
     ui_kit::row(ui, "Tab pulse width", |ui| {
         ui_kit::number_field(ui, &mut d.settings.tab_pulse_width, 0.001..=10.0, 0.01, " mm");
     });

@@ -150,8 +150,6 @@ pub struct DeviceSettings {
     /// DS-04
     pub z_enabled: bool,
     pub z_reverse: bool,
-    pub z_relative_only: bool,
-    pub z_optimize: bool,
     /// DS-05
     pub tab_pulse_width: f64,
     /// DS-06
@@ -176,8 +174,6 @@ impl Default for DeviceSettings {
             red_dot_y: 0.0,
             z_enabled: false,
             z_reverse: false,
-            z_relative_only: false,
-            z_optimize: true,
             tab_pulse_width: 0.1,
             checklist_on: false,
             checklist: vec![
@@ -396,6 +392,7 @@ impl Device {
             bed: Some(self.bed()),
             max_fire_percent: self.settings.fire_max_percent.clamp(0.0, 100.0),
             overwrite_default: self.settings.overwrite_files.then_some(darkburn_ruida::OverwriteChoice::Overwrite),
+            net_timeout_ms: (self.family() == Family::Ruida).then_some(self.settings.dsp.network_timeout_ms),
             ..Default::default()
         };
         Ok(ConnectSpec { link, config })

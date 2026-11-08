@@ -130,6 +130,10 @@ pub struct DeviceGcodeSettings {
     pub tool_index: Option<u8>,
     /// Go back to the start (or origin) when the job ends (ORIG-10).
     pub return_to_finish: bool,
+    /// Z moves are written as distances (DS-04).
+    pub z_relative_only: bool,
+    /// Skip Z moves to the height the head is already at (DS-04).
+    pub z_optimize: bool,
 }
 
 impl Default for DeviceGcodeSettings {
@@ -155,6 +159,8 @@ impl Default for DeviceGcodeSettings {
             marlin_power: MarlinPower::Inline,
             tool_index: None,
             return_to_finish: false,
+            z_relative_only: false,
+            z_optimize: true,
         }
     }
 }
@@ -169,6 +175,8 @@ impl DeviceGcodeSettings {
         g.s_every_g1 = self.s_every_g1;
         g.marlin_power = self.marlin_power;
         g.tool_index = self.tool_index;
+        g.z_relative_only = self.z_relative_only;
+        g.z_always = !self.z_optimize;
         g.start_script = self.start_script.clone();
         if self.auto_home && matches!(self.flavor, Flavor::Grbl | Flavor::GrblHal | Flavor::FluidNc) {
             g.start_script = format!("$H\n{}", g.start_script);

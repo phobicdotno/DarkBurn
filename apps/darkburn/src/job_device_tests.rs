@@ -159,3 +159,51 @@ fn dsp_fields_reach_the_ruida_job() {
     assert_eq!(rd.layers[0].settings.dot_mode.map(|m| (m.dot_time_ms, m.spacing_mm)), Some((3.0, 2.0)));
     assert_eq!(rd.layers[0].ops.iter().filter(|o| matches!(o, darkburn_ruida::RdOp::Cut { .. })).count(), 40);
 }
+
+#[test]
+fn z_relative_only_and_z_optimize_change_the_gcode() {
+    let mut d = line_doc(20.0);
+    {
+        let s = d.layer_mut(0).main_mut();
+        s.passes = 2;
+        s.z_offset = 2.0;
+        s.z_step = 0.0;
+    }
+    let mut i = input(d);
+    i.device.z_enabled = true;
+    let b = build_job_simple(&i).unwrap();
+    let plain = gcode_text(&b, None, &DeviceGcodeSettings::default());
+    assert!(plain.contains("G0 Z2") && !plain.contains("G91"), "{plain}");
+    assert_eq!(plain.matches("G0 Z2").count(), 1, "the second pass is already at Z2: {plain}");
+    let always = gcode_text(&b, None, &DeviceGcodeSettings { z_optimize: false, ..Default::default() });
+    assert_eq!(always.matches("G0 Z").count(), 2, "{always}");
+    let rel = gcode_text(&b, None, &DeviceGcodeSettings { z_relative_only: true, ..Default::default() });
+    assert!(rel.contains("G91") && rel.contains("G90"), "{rel}");
+}
+
+#[test]
+fn gcode_device_settings_reach_the_writer() {
+    let b = build(line_doc(20.0));
+    let g = gcode_text(&b, None, &DeviceGcodeSettings { auto_home: true, start_script: "M999".into(), end_script: "M5 ; done".into(), ..Default::default() });
+    assert!(g.starts_with("$H") || g.contains("$H
+"), "{g}");
+    assert!(g.contains("M999") && g.contains("M5 ; done"));
+    assert!(g.find("$H").unwrap() < g.find("M999").unwrap());
+    // S with every G1.
+    let every = gcode_text(&b, None, &DeviceGcodeSettings { s_every_g1: true, ..Default::default() });
+    let lone = gcode_text(&b, None, &DeviceGcodeSettings::default());
+    assert!(every.matches('S').count() > lone.matches('S').count());
+    // Air command.
+    let air = gcode_text(&b, None, &DeviceGcodeSettings { air: darkburn_job::gcode::AirCommand::M7, ..Default::default() });
+    assert!(air.contains("M7") && !air.contains("M8"));
+    // Overscan as G0.
+    let fill = build(fill_doc(1.0, 10.0));
+    let mut d = fill_doc(1.0, 10.0);
+    d.layer_mut(0).main_mut().overscan = 2.0;
+    d.layer_mut(0).main_mut().overscan_percent = false;
+    let _ = fill;
+    let over = build(d);
+    let g0 = gcode_text(&over, None, &DeviceGcodeSettings { overscan_as_g0: true, ..Default::default() });
+    let g1 = gcode_text(&over, None, &DeviceGcodeSettings::default());
+    assert!(g0.matches("G0").count() > g1.matches("G0").count());
+}

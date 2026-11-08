@@ -624,6 +624,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
     let mut kerf_note = [false; layer::LAYER_COUNT];
+    // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
+    let vision_map = crate::vision_state::JobMap::from_doc(doc);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
@@ -680,6 +682,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 path = darkburn_geom::offset::kerf_offset(&path, kerf, TOLERANCE);
                 kerf_note[li] |= differ;
             }
+            if let Some(m) = &vision_map {
+                path = m.apply(path);
+            }
             frame_paths.push(path.clone());
             let mut si = ShapeInput::new(path);
             si.group = group;
@@ -692,6 +697,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         if *differ {
             warnings.push(format!("Layer {} has different kerf offsets on its sub-layers; the first one is used.", layer::layer_label(li)));
         }
+    }
+
+    if let Some(m) = &vision_map {
+        warnings.extend(m.warnings.take());
     }
 
     // Images, layer by layer.

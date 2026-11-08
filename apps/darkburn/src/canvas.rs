@@ -144,6 +144,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     let dark = luminance(ct.field) < 128.0;
     paint_backdrop(ui, &app.prefs, &view, canvas);
     let painter = ui.painter().with_clip_rect(canvas);
+    crate::vision_ui::paint_overlay(ui.ctx(), app, &xf, &painter);
     let now = ui.input(|i| i.time);
     let flash = app.flash_layer.map(|(layer, t0)| (layer, ((now - t0) * 6.0).floor() as i64 % 2 == 0));
     let selected = app.editor.selected();

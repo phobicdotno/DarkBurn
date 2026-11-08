@@ -498,6 +498,7 @@ pub fn works(id: &str) -> bool {
             | "view.toggle_filled"
             | "help.about"
     ) || crate::job_cmds::works(id)
+        || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || id.starts_with("panel.")
         || id.starts_with("toolbar.")
@@ -579,6 +580,7 @@ pub fn hardware(id: &str) -> bool {
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
         || crate::job_cmds::hardware(id))
         && !crate::job_cmds::not_hardware(id)
+        && !crate::vision_cmds::not_hardware(id)
 }
 
 /// The checklist items a command implements (the ones that work today).
@@ -682,6 +684,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
         _ => {
             let jobs = crate::job_cmds::checklist(id);
+            let jobs = if jobs.is_empty() { crate::vision_cmds::checklist(id) } else { jobs };
             if jobs.is_empty() { crate::shape_ops::checklist(id) } else { jobs }
         }
     }
@@ -712,6 +715,7 @@ pub fn registry() -> &'static [Cmd] {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::job_cmds::COMMANDS);
+        v.extend_from_slice(crate::vision_cmds::COMMANDS);
         for c in &mut v {
             if c.args.is_empty()
                 && let Some(args) = crate::shape_ops::args_schema(c.id)
@@ -1207,7 +1211,7 @@ mod tests {
         for info in list().into_iter().filter(|i| i.hardware) {
             assert!(!info.implemented, "{} touches hardware and must not run yet", info.id);
         }
-        assert!(describe("laser.rotary").unwrap().hardware);
+        assert!(describe("laser.controller_info").unwrap().hardware);
         assert!(!describe("edit.undo").unwrap().hardware);
         assert_eq!(describe("shape.add_rect").unwrap().args_schema["required"].as_array().unwrap().len(), 4);
         assert_eq!(describe("arrange.align_left").unwrap().menu_path, ["Arrange", "Align", "Align Left"]);
@@ -1226,7 +1230,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["job.start", "laser.rotary"] {
+        for id in ["job.start", "laser.controller_info"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

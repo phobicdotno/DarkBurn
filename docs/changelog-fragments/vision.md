@@ -1,0 +1,14 @@
+- Camera panel: pick a camera or a picture file, see it live, lay it over the bed
+- Camera overlay can be faded, hidden, shifted, resized and shown in black and white
+- Trace a camera picture straight from the panel
+- Camera settings can be saved, exported and imported, and the last camera is remembered
+- Calibrate the camera lens with a dot grid or chessboard, standard or fisheye
+- Line up the camera with the bed using targets drawn by DarkBurn
+- Head-mounted cameras can be lined up and their pictures stitched together
+- Rotary setup with chuck or roller, axis, steps, sizes, mirror and a test turn plan
+- Rotary, cylinder and print and cut switches in the status bar
+- Cylinder correction for outside and inside curves
+- Print and cut: set two targets, align with or without scaling, reset, or use the wizard
+- Focus test and interval test drawn into the design
+- Centre finder for round stock
+- Feeder setup with window plan and step correction

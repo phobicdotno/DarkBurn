@@ -74,6 +74,8 @@ pub struct DarkBurn {
     pub shape_ui: crate::shape_ui::ShapeUi,
     /// Opening, importing and exporting other file types (file_io.rs).
     pub fio: crate::file_io::FileIo,
+    /// Camera, rotary, cylinder, print and cut and the test tools (vision_cmds.rs).
+    pub vision: crate::vision_cmds::Vision,
 }
 
 impl DarkBurn {
@@ -108,6 +110,7 @@ impl DarkBurn {
             images: Default::default(),
             shape_ui: Default::default(),
             fio: Default::default(),
+            vision: Default::default(),
         }
     }
 
@@ -189,6 +192,7 @@ impl DarkBurn {
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)
+            || crate::vision_ui::run(self, ctx, id)
         {
             return;
         }
@@ -300,6 +304,7 @@ impl DarkBurn {
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
+        crate::vision_ui::frame(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }
@@ -543,7 +548,7 @@ impl DarkBurn {
                 .clone()
                 .or_else(|| self.hint.clone())
                 .unwrap_or_else(|| if self.pan_tool { "Drag to pan the view".into() } else { String::new() });
-            let right_edge = r.right() - 200.0;
+            let right_edge = crate::vision_ui::status_chips(ui, r, self);
             let clip = ui.painter().with_clip_rect(Rect::from_min_max(pos2(x, r.top()), pos2(right_edge, r.bottom())));
             clip.text(pos2(x, r.center().y), Align2::LEFT_CENTER, tip, font.clone(), ink);
             let right = format!("{:.0} %", self.prefs.view.percent());

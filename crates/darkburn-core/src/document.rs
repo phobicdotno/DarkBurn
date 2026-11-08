@@ -52,6 +52,9 @@ pub struct Document {
     /// Job settings saved with the project (optimization, job origin): an opaque, versioned JSON
     /// value owned by the app. None until the user changes them.
     pub job_settings: Option<serde_json::Value>,
+    /// Camera, rotary, cylinder and print-and-cut setup saved with the project (opaque JSON owned
+    /// by the app's vision code). None until the user sets any of it up.
+    pub vision_settings: Option<serde_json::Value>,
     next_id: u64,
 }
 
@@ -77,6 +80,7 @@ impl Document {
             notes: String::new(),
             show_notes_on_load: false,
             job_settings: None,
+            vision_settings: None,
             next_id: 1,
         }
     }

@@ -9,7 +9,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 175 of 785 done (56 partly).
+**Progress:** 307 of 785 done (169 partly).
 
 ---
 

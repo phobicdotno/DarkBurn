@@ -1,0 +1,20 @@
+[package]
+name = "darkburn-galvo"
+description = "EzCad2 / BJJCZ LMC galvo laser support for DarkBurn: codec, lens correction, job compiler, emulator and driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Real USB bulk link to a BJJCZ board (VID 0x9588). Off by default; never used by tests.
+usb = ["dep:nusb", "dep:futures-lite"]
+
+[dependencies]
+kurbo = "0.13"
+nusb = { version = "0.1", optional = true }
+futures-lite = { version = "2", optional = true }

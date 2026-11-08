@@ -102,6 +102,27 @@ pub const COMMANDS: &[Cmd] = &[
         r#"{"type":"object","properties":{"index":{"type":"integer"}},"required":["index"]}"#,
     ),
     a("machine.controller_info", "Read Controller Info", ""),
+    a("machine.show_all", "Show Every Sent Line in the Console", r#"{"type":"object","properties":{"on":{"type":"boolean"}},"required":["on"]}"#),
+    a(
+        "machine.file_upload",
+        "Send a .rd File to the Controller",
+        r#"{"type":"object","properties":{"path":{"type":"string"},"name":{"type":"string"},"start":{"type":"boolean"}},"required":["path"]}"#,
+    ),
+    a(
+        "machine.file_overwrite",
+        "Answer the Overwrite Question",
+        r#"{"type":"object","properties":{"choice":{"enum":["overwrite","rename","cancel"]}},"required":["choice"]}"#,
+    ),
+    a(
+        "machine.dsp_read",
+        "Read Laser 2 or U Axis Settings",
+        r#"{"type":"object","properties":{"what":{"enum":["laser2","u_axis"]}},"required":["what"]}"#,
+    ),
+    a(
+        "machine.dsp_write",
+        "Write Laser 2 or U Axis Settings",
+        r#"{"type":"object","properties":{"what":{"enum":["laser2","u_axis"]},"values":{"type":"object"}},"required":["what","values"]}"#,
+    ),
     a("device.list", "List Devices", ""),
     a("device.select", "Choose the Device", r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#),
     a("device.duplicate", "Duplicate a Device", r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#),
@@ -141,6 +162,9 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "machine.file_list" | "machine.file_run" | "machine.file_delete" | "machine.file_delete_all" => &["FL-01", "FL-02", "RUIDA-06"],
         "machine.file_calc_time" => &["FL-03"],
         "machine.controller_info" | "laser.controller_info" => &["LT-16", "RUIDA-08"],
+        "machine.show_all" => &["CON-02"],
+        "machine.file_upload" | "machine.file_overwrite" => &["FL-02", "RUIDA-05"],
+        "machine.dsp_read" | "machine.dsp_write" => &["RUIDA-09", "RUIDA-10", "MOVE-18"],
         "edit.device_settings" => &["EDIT-30"],
         "device.list" | "device.select" | "device.duplicate" | "device.remove" | "device.export" | "device.import" => &["DEV-01", "DEV-04", "DEV-05"],
         _ => &[],
@@ -323,11 +347,11 @@ impl MachineUi {
         }
         let now = self.devices.to_json();
         if now != self.saved {
-            if let Some(dir) = dir {
-                if let Err(e) = self.devices.save(dir) {
-                    log::warn!("could not save the device list: {e}");
-                    return;
-                }
+            if let Some(dir) = dir
+                && let Err(e) = self.devices.save(dir)
+            {
+                log::warn!("could not save the device list: {e}");
+                return;
             }
             self.saved = now;
         }
@@ -456,6 +480,11 @@ impl MachineUi {
         self.dlg.confirm_close = false;
     }
 
+    /// Make the next frame adopt the active device's state again (after it was edited).
+    pub fn applied_reset(&mut self) {
+        self.applied_device = None;
+    }
+
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
@@ -570,10 +599,10 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         // ----- connection
         "machine.connect" => {
-            if let Some(dev) = a.get("device").and_then(Value::as_u64) {
-                if !m.select_device(dev) {
-                    return Err(format!("no device {dev}"));
-                }
+            if let Some(dev) = a.get("device").and_then(Value::as_u64)
+                && !m.select_device(dev)
+            {
+                return Err(format!("no device {dev}"));
             }
             if m.active().is_design_only() {
                 return Err("This device is design only; there is no laser to connect.".into());
@@ -682,6 +711,52 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "machine.file_delete_all" => mach(m.handle.command(MachineCommand::DeleteAllFiles)),
         "machine.file_calc_time" => mach(m.handle.command(MachineCommand::CalcTime(index_of(a, "index")?))),
         "machine.controller_info" => mach(m.handle.command(MachineCommand::ReadControllerInfo)),
+        "machine.show_all" => {
+            let on = a.get("on").and_then(Value::as_bool).ok_or("argument on must be true or false")?;
+            m.show_all = on;
+            mach(m.handle.command(MachineCommand::ShowAll(on)))
+        }
+        "machine.file_upload" => {
+            let path = std::path::PathBuf::from(a.get("path").and_then(Value::as_str).ok_or("argument path must be text")?);
+            let data = std::fs::read(&path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
+            let name = a
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| m.upload_name.clone());
+            let mut job = JobRequest::new(crate::machine_api::JobData::RdFile { name: name.clone(), data });
+            job.name = name;
+            job.start_immediately = a.get("start").and_then(Value::as_bool).unwrap_or(false);
+            job.auto_increment_name = m.active().settings.dsp.filename_increment;
+            mach(m.handle.start_job(job))
+        }
+        "machine.file_overwrite" => {
+            let c = match a.get("choice").and_then(Value::as_str) {
+                Some("overwrite") => ruida::OverwriteChoice::Overwrite,
+                Some("rename") => ruida::OverwriteChoice::Rename,
+                Some("cancel") => ruida::OverwriteChoice::Cancel,
+                _ => return Err("choice must be overwrite, rename or cancel".into()),
+            };
+            mach(m.handle.answer_overwrite(c))
+        }
+        "machine.dsp_read" => match a.get("what").and_then(Value::as_str) {
+            Some("laser2") => mach(m.handle.command(MachineCommand::ReadLaser2)),
+            Some("u_axis") => mach(m.handle.command(MachineCommand::ReadUAxis)),
+            _ => Err("what must be laser2 or u_axis".into()),
+        },
+        "machine.dsp_write" => {
+            let v = a.get("values").cloned().ok_or("argument values is missing")?;
+            match a.get("what").and_then(Value::as_str) {
+                Some("laser2") => {
+                    mach(m.handle.command(MachineCommand::WriteLaser2(serde_json::from_value(v).map_err(|e| format!("laser 2 values: {e}"))?)))
+                }
+                Some("u_axis") => {
+                    mach(m.handle.command(MachineCommand::WriteUAxis(serde_json::from_value(v).map_err(|e| format!("U axis values: {e}"))?)))
+                }
+                _ => Err("what must be laser2 or u_axis".into()),
+            }
+        }
         // ----- the device list
         "device.list" => Ok(json!({
             "active": m.devices.active,

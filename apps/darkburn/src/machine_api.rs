@@ -1544,13 +1544,13 @@ impl DriverAdapter for RuidaAdapter {
         match cmd {
             C::StartJob(req) => {
                 busy(working)?;
-                if let (Some(b), Some((w, h))) = (req.bounds, self.bed()) {
-                    if b.x0 < -1e-6 || b.y0 < -1e-6 || b.x1 > w + 1e-6 || b.y1 > h + 1e-6 {
-                        return Err(MachineError::OutOfBounds(format!(
-                            "the job spans X {:.1}..{:.1}, Y {:.1}..{:.1} but the machine is {w:.0} x {h:.0} mm",
-                            b.x0, b.x1, b.y0, b.y1
-                        )));
-                    }
+                if let (Some(b), Some((w, h))) = (req.bounds, self.bed())
+                    && (b.x0 < -1e-6 || b.y0 < -1e-6 || b.x1 > w + 1e-6 || b.y1 > h + 1e-6)
+                {
+                    return Err(MachineError::OutOfBounds(format!(
+                        "the job spans X {:.1}..{:.1}, Y {:.1}..{:.1} but the machine is {w:.0} x {h:.0} mm",
+                        b.x0, b.x1, b.y0, b.y1
+                    )));
                 }
                 self.job_estimated = req.estimated;
                 self.job_name = req.name.clone();

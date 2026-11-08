@@ -102,6 +102,10 @@ pub fn contents(ui: &mut Ui, id: &str, app: &mut crate::shell::DarkBurn) {
     match id {
         "cuts" => return crate::cuts_panel::show(ui, app),
         "shape_properties" => return crate::shape_props::show(ui, app),
+        "laser" | "move" | "console" | "file_list" => {
+            crate::laser_panel::show_panel(ui, id, app);
+            return;
+        }
         _ => {}
     }
     ui.add_enabled_ui(false, |ui| match id {

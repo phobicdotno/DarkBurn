@@ -394,8 +394,9 @@ impl Device {
         let (w, h) = kind.default_size();
         let mut settings = DeviceSettings::default();
         settings.gcode.flavor = kind.flavor();
-        if kind == DeviceType::SimulatorGrbl {
-            settings.gcode.dtr = false;
+        if kind.is_simulator() {
+            // Nothing can burn in a simulator, so its Fire button is on.
+            settings.gcode.fire_button = true;
         }
         Device {
             id: 0,
@@ -491,7 +492,7 @@ impl Device {
             toggle_dtr: g.dtr,
             dtr: true,
             synchronous: g.transfer == Transfer::Synchronous,
-            s_max: Some(g.s_max).filter(|_| self.family() == Family::Grbl && !self.is_simulator()),
+            s_max: (self.family() == Family::Grbl && !self.is_simulator()).then_some(g.s_max),
             bed: Some(self.bed()),
             max_fire_percent: self.settings.fire_max_percent.clamp(0.0, 100.0),
             overwrite_default: self.settings.overwrite_files.then_some(darkburn_ruida::OverwriteChoice::Overwrite),

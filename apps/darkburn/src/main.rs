@@ -3,6 +3,7 @@
 
 mod actions;
 mod canvas;
+mod canvas_input;
 mod commands;
 mod cut_settings;
 mod files;
@@ -11,6 +12,7 @@ mod native_frame;
 mod palette;
 mod panels;
 mod prefs;
+mod render;
 mod ribbon;
 mod settings;
 mod shell;

@@ -942,6 +942,9 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     sync_job_state(app);
     crate::machine_job::update_head(app);
     let events = app.machine.tick();
+    crate::settings_wiring::on_machine_events(app, &events);
+    let excluded = app.prefs.opts.excluded_ports.clone();
+    crate::settings_wiring::filter_ports(&mut app.machine.ports, &excluded);
     if !events.is_empty() || app.machine.handle.snapshot().state.is_working() || app.machine.handle.snapshot().state == LaserState::Connecting {
         ctx.request_repaint();
     }

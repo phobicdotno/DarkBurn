@@ -483,7 +483,7 @@ fn open_arguments(app: &mut DarkBurn, ctx: &egui::Context, paths: Vec<PathBuf>) 
     crate::files::drop_files(app, ctx, paths, None);
 }
 
-fn instance_tick(ctx: &egui::Context, app: &mut DarkBurn) {
+pub(crate) fn instance_tick(ctx: &egui::Context, app: &mut DarkBurn) {
     let Some(dir) = app.settings_dir.clone() else { return };
     if !app.prefs.files.single_instance || app.fio.secondary || app.safe_mode {
         return;

@@ -168,6 +168,7 @@ pub fn new_project(app: &mut DarkBurn) {
     app.editor.clipboard = clipboard;
     app.project_path = None;
     app.notes_open = false;
+    crate::settings_wiring::on_new_project(app);
     discard_autosave(app);
 }
 
@@ -183,6 +184,7 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     app.editor = Editor::with_document(loaded.doc);
     app.editor.clipboard = clipboard;
     app.project_path = Some(path.to_path_buf());
+    crate::settings_wiring::on_open_project(app);
     remember_recent(&mut app.prefs, path);
     discard_autosave(app);
     if loaded.newer_version {

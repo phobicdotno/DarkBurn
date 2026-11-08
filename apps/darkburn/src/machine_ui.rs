@@ -135,7 +135,8 @@ pub const COMMANDS: &[Cmd] = &[
 
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
-    crate::machine_job::handles(id)
+    crate::machine_ext::handles(id)
+        || crate::machine_job::handles(id)
         || id.starts_with("machine.")
         || id.starts_with("device.")
         || matches!(id, "laser.devices" | "laser.controller_info" | "edit.device_settings" | "edit.machine_settings")
@@ -143,12 +144,17 @@ pub fn handles(id: &str) -> bool {
 
 /// The commands here that do not touch a machine (and so are not flagged hardware).
 pub fn is_hardware(id: &str) -> bool {
-    crate::machine_job::handles(id)
+    (crate::machine_ext::handles(id) && crate::machine_ext::is_hardware(id))
+        || crate::machine_job::handles(id)
         || id.starts_with("machine.")
         || matches!(id, "laser.devices" | "laser.controller_info" | "edit.device_settings" | "edit.machine_settings")
 }
 
 pub fn checklist(id: &str) -> &'static [&'static str] {
+    let ext = crate::machine_ext::checklist(id);
+    if !ext.is_empty() {
+        return ext;
+    }
     match id {
         "job.start" => &["LASER-03", "LASER-24"],
         "job.pause" | "job.stop" => &["LASER-03"],
@@ -290,6 +296,8 @@ pub struct MachineUi {
     pub close_ok: bool,
     pub rotary_on: bool,
     pub cylinder_on: bool,
+    /// Dialogs and fields of the G-code, galvo and Gweike pieces (`machine_ext.rs`).
+    pub ext: crate::machine_ext::ExtUi,
     /// The machine events of the last frame, for tests and the log.
     pub last_events: Vec<MachineEvent>,
     /// When the running job began, for the "elapsed" display of machines that do not report it.
@@ -327,6 +335,7 @@ impl MachineUi {
             close_ok: false,
             rotary_on: false,
             cylinder_on: false,
+            ext: Default::default(),
             last_events: Vec::new(),
             job_log: Vec::new(),
             applied_device: None,
@@ -391,6 +400,9 @@ impl MachineUi {
         if dev.is_design_only() {
             return Err("This device is design only; there is no laser to connect.".into());
         }
+        if dev.has_no_laser() {
+            return Err(dev.link(&[]).err().unwrap_or_else(|| "This device has no live connection.".into()));
+        }
         let spec = dev.connect_spec(&self.ports)?;
         if spec.link.is_simulator() {
             self.connect_now(spec, None)
@@ -427,7 +439,10 @@ impl MachineUi {
         let events = self.handle.poll();
         for e in &events {
             match e {
-                MachineEvent::Connected(fw) => self.say(format!("Connected: {fw}")),
+                MachineEvent::Connected(fw) => {
+                    let hint = crate::gcode_machines::mismatch_hint(fw, self.active().kind);
+                    self.say(format!("Connected: {fw}{hint}"));
+                }
                 MachineEvent::ConnectFailed(m) => self.fail(format!("Could not connect: {m}")),
                 MachineEvent::Disconnected(Some(r)) => self.fail(format!("Connection lost: {r}")),
                 MachineEvent::Alarm(m) => self.fail(format!("Alarm: {m}")),
@@ -570,6 +585,9 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     crate::machine_job::update_head(app);
     if src == Source::Api && is_hardware(id) && app.machine.handle.is_real_machine() {
         return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+    }
+    if let Some(r) = crate::machine_ext::run(app, id, a, src) {
+        return Some(r);
     }
     Some(run_command(app, id, a, src))
 }

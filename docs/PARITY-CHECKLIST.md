@@ -176,8 +176,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LT-14 Feeder setup
 - [x] LT-15 Cylinder correction
 - [x] LT-16 Get controller info
-- [ ] LT-17 Repeat marking (galvo)
-- [ ] LT-18 Lens correction test (galvo)
+- [x] LT-17 Repeat marking (galvo)
+- [x] LT-18 Lens correction test (galvo)
 - [ ] LT-19 Material test, galvo variant
 
 ### Window
@@ -280,7 +280,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LASER-18 Port picker with auto choice, remembered port, excluded ports
 - [x] LASER-19 Device profile picker
 - [~] LASER-20 Rescan network bridge
-- [ ] LASER-21 Red light toggle (galvo)
+- [x] LASER-21 Red light toggle (galvo)
 - [x] LASER-22 Rotary and cylinder correction toggles, mode status text
 - [x] LASER-23 Option to disable Start on machines that take uploads
 - [x] LASER-24 Pre-job checklist before start
@@ -708,11 +708,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] GRBL-10 Fire button
 - [~] GRBL-11 DTR control
 - [ ] GRBL-12 Auto-detect common diode lasers (xTool, Ortur, Atomstack, Sculpfun)
-- [ ] GCODE-01 Smoothieware, including fast raster clustering
-- [ ] GCODE-02 Marlin with M3, M106 or inline power
-- [ ] GCODE-03 LinuxCNC
-- [ ] GCODE-04 Snapmaker
-- [ ] GCODE-05 Custom G-code device *(later)*
+- [x] GCODE-01 Smoothieware, including fast raster clustering
+- [x] GCODE-02 Marlin with M3, M106 or inline power
+- [x] GCODE-03 LinuxCNC
+- [~] GCODE-04 Snapmaker
+- [x] GCODE-05 Custom G-code device *(later)*
 
 ### DSP family
 - [ ] RUIDA-01 Ruida over Ethernet (UDP)
@@ -735,24 +735,24 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] TOPW-02 TopWisdom machine settings, framing, overcut
 
 ### Galvo (fiber, UV, CO2 galvo)
-- [ ] GALVO-01 EZCad2-style boards over USB
-- [ ] GALVO-02 Laser source types: fiber, MOPA, UV, CO2
-- [ ] GALVO-03 Lens correction file load and clear
-- [ ] GALVO-04 Galvo scale, skew, bulge and trapezoid calibration
-- [ ] GALVO-05 Field size and offset
-- [ ] GALVO-06 Frequency and Q-pulse
-- [ ] GALVO-07 Timing settings: jump speed and delays, laser on and off, end and polygon delays
-- [ ] GALVO-08 Wobble
-- [ ] GALVO-09 Red light framing with nudge and scale
-- [ ] GALVO-10 Require framing before start
-- [ ] GALVO-11 Door switch and foot switch inputs
-- [ ] GALVO-12 Done-marking output signal
-- [ ] GALVO-13 Repeat marking
-- [ ] GALVO-14 Rotary runner by slice or by shape
-- [ ] GALVO-15 External axis setup
-- [ ] GALVO-16 3D sliced image
-- [ ] GALVO-17 Lens correction test and scale calibration
-- [ ] GALVO-18 Import EZCad config
+- [~] GALVO-01 EZCad2-style boards over USB
+- [x] GALVO-02 Laser source types: fiber, MOPA, UV, CO2
+- [x] GALVO-03 Lens correction file load and clear
+- [x] GALVO-04 Galvo scale, skew, bulge and trapezoid calibration
+- [x] GALVO-05 Field size and offset
+- [x] GALVO-06 Frequency and Q-pulse
+- [x] GALVO-07 Timing settings: jump speed and delays, laser on and off, end and polygon delays
+- [x] GALVO-08 Wobble
+- [x] GALVO-09 Red light framing with nudge and scale
+- [x] GALVO-10 Require framing before start
+- [~] GALVO-11 Door switch and foot switch inputs
+- [~] GALVO-12 Done-marking output signal
+- [x] GALVO-13 Repeat marking
+- [~] GALVO-14 Rotary runner by slice or by shape
+- [x] GALVO-15 External axis setup
+- [~] GALVO-16 3D sliced image
+- [x] GALVO-17 Lens correction test and scale calibration
+- [x] GALVO-18 Import EZCad config
 - [ ] GALVO-19 Drill mode
 
 ### User's machines (acceptance targets)
@@ -805,7 +805,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] AUX-06 Camera calibration files
 - [ ] AUX-07 Scanning offset files
 - [x] AUX-08 Hotkey files
-- [ ] AUX-09 Galvo lens correction files
+- [x] AUX-09 Galvo lens correction files
 - [x] AUX-10 CSV and text files for variable text
 - [ ] AUX-11 SHX fonts
 - [ ] AUX-12 Import LightBurn library, art, device and hotkey files *(decide)*
@@ -926,16 +926,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DS-06 Job checklist on and editor
 - [x] DS-07 Overwrite files by default
 - [~] DS-08 Scanning offset table
-- [~] DS-09 G-code: auto-home on start, swap X/Y
-- [~] DS-10 G-code: fast whitespace scan and its speed
+- [x] DS-09 G-code: auto-home on start, swap X/Y
+- [x] DS-10 G-code: fast whitespace scan and its speed
 - [x] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
-- [~] DS-12 G-code: air assist commands, S-value max, baud rate
+- [x] DS-12 G-code: air assist commands, S-value max, baud rate
 - [x] DS-13 G-code: buffered or synchronous transfer
-- [~] DS-14 G-code: start and end scripts
-- [~] DS-15 G-code: G0 for overscan, S with every G1
+- [x] DS-14 G-code: start and end scripts
+- [x] DS-15 G-code: G0 for overscan, S with every G1
 - [x] DS-16 DSP: U axis, laser 2, filename increment, disable start
 - [~] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
-- [ ] DS-18 Galvo: all galvo settings from section 15
+- [x] DS-18 Galvo: all galvo settings from section 15
 - [~] DS-19 Simulation: acceleration and speed values for the time estimate
 - [ ] DS-20 Frame continuously *(later)*
 
@@ -980,12 +980,12 @@ The M3 Ultra is a fibre plus CO2 flatbed run by an Au3tech MCC100 controller car
 LightBurn cannot drive it. DarkBurn reaches it in safe steps, file export first.
 
 - [x] MCC-01 Export DXF with one layer per material, ready for Gweike's own software
-- [ ] MCC-02 Export the vendor's craft file format
+- [x] MCC-02 Export the vendor's craft file format
 - [~] MCC-03 Export the G-code flavour the vendor software imports
-- [ ] MCC-04 Fibre cut settings that LightBurn lacks: assist gas, pierce stages, follower height
-- [ ] MCC-05 Controller card simulator so the backend can be tested without the machine
+- [x] MCC-04 Fibre cut settings that LightBurn lacks: assist gas, pierce stages, follower height
+- [x] MCC-05 Controller card simulator so the backend can be tested without the machine
 - [ ] MCC-06 Native Ethernet backend, built on the protocol work in phobicMlaserLinux, after it is confirmed on the real card
-- [ ] MCC-07 Safety: the machine's height follower, piercing and gas logic stay in charge and are never bypassed
+- [~] MCC-07 Safety: the machine's height follower, piercing and gas logic stay in charge and are never bypassed
 
 ---
 

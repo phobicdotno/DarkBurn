@@ -83,7 +83,7 @@ pub fn from_snapshot(snap: &Snapshot, base: AdditionalSettings) -> Option<Additi
     match snap.family {
         Family::Grbl => from_grbl(&snap.grbl_settings, base),
         Family::Ruida => snap.ruida.settings.as_ref().and_then(|s| from_ruida(s, base)),
-        Family::DesignOnly => None,
+        Family::DesignOnly | Family::Galvo | Family::FileOnly => None,
     }
 }
 

@@ -97,7 +97,13 @@ pub fn panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui_kit::status_line(ui, e, StatusTone::Error);
     }
     if g.estimate_s > 0.0 {
-        note(ui, &format!("Estimate {}", machine_ui::format_duration(std::time::Duration::from_secs_f64(g.estimate_s))));
+        note(ui, &format!("Running: estimate {}", machine_ui::format_duration(std::time::Duration::from_secs_f64(g.estimate_s))));
+    }
+    if small(ui, &tr("galvo.estimate", "Estimate the time"), "Compile the job and show the library's time estimate", true) {
+        go(app, "galvo.estimate", json!({}));
+    }
+    if let Some(e) = app.machine.ext.galvo_estimate.clone() {
+        note(ui, &e);
     }
 }
 

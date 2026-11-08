@@ -29,6 +29,7 @@ pub const TOPICS: &[&str] = &[
     "variable_text",
     "shape_properties",
     "laser",
+    "gweike",
     "library",
     "move",
     "art_library",
@@ -109,6 +110,19 @@ pub fn topic(id: &str) -> Topic {
                     "Start, pause and stop a job, frame it, or save it as a file. Start from chooses where the job is placed: at the page's own coordinates, at the laser's present position, or at a user origin.",
                 ),
                 tr("help.laser.p2", "Nothing here talks to a machine until you connect one."),
+            ],
+        ),
+        "gweike" => (
+            tr("help.gweike.title", "Gweike M3 Ultra"),
+            vec![
+                tr(
+                    "help.gweike.p1",
+                    "DarkBurn writes the files the Gweike software opens: DXF with a layer per material, G-code (.nc) and the .chf craft file. Map each layer to a material and a craft in the Gweike window.",
+                ),
+                tr(
+                    "help.gweike.p2",
+                    "The card simulator plans the job and shows the time estimate. Nothing is sent to the machine. Direct control waits for a read-only capture on the real card (see docs/research/mlaser-rea-findings.md). The machine's own height follower, piercing and gas logic always stay in charge.",
+                ),
             ],
         ),
         "library" => (

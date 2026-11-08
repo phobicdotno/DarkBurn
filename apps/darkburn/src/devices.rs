@@ -1020,6 +1020,10 @@ impl Wizard {
         }
         let mut d = self.draft.clone();
         d.settings.gcode.auto_home = d.auto_home;
+        if d.family() == Family::Galvo {
+            // The size typed in the wizard is the lens field.
+            d.settings.galvo.field_size_mm = d.width_mm;
+        }
         let id = store.add(d);
         store.active = Some(id);
         Ok(id)

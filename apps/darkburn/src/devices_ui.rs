@@ -424,12 +424,16 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         connection_fields(ui, d);
     }
     ui_kit::section_heading(ui, "Work area");
-    ui_kit::row(ui, "Width", |ui| {
-        ui_kit::number_field(ui, &mut d.width_mm, 1.0..=10_000.0, 1.0, " mm");
-    });
-    ui_kit::row(ui, "Height", |ui| {
-        ui_kit::number_field(ui, &mut d.height_mm, 1.0..=10_000.0, 1.0, " mm");
-    });
+    if d.family() == Family::Galvo {
+        note(ui, "The work area of a galvo is its square lens field. Set the size on the Galvo page.");
+    } else {
+        ui_kit::row(ui, "Width", |ui| {
+            ui_kit::number_field(ui, &mut d.width_mm, 1.0..=10_000.0, 1.0, " mm");
+        });
+        ui_kit::row(ui, "Height", |ui| {
+            ui_kit::number_field(ui, &mut d.height_mm, 1.0..=10_000.0, 1.0, " mm");
+        });
+    }
     origin_fields(ui, d);
     ui_kit::checkbox(ui, "Home when a job starts", &mut d.auto_home);
     ui_kit::checkbox(ui, "Negative coordinates (zero at the far corner)", &mut d.settings.negative_coords);

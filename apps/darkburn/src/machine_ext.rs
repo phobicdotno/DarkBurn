@@ -188,6 +188,8 @@ pub struct ExtUi {
     pub gcode_scripts_open: bool,
     /// Machine Settings of a Smoothieware or Marlin controller: edits not written yet.
     pub gcode_edits: std::collections::BTreeMap<String, String>,
+    /// The last galvo job estimate, as a sentence.
+    pub galvo_estimate: Option<String>,
     /// The galvo Device Settings dialog's last EZCad import message.
     pub galvo_message: Option<String>,
 }
@@ -295,6 +297,14 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
             let c = galvo_job::compile(&b.job, &d)?;
             let mut v = galvo_job::estimate_json(&c);
             v["warnings"] = json!(b.warnings);
+            app.machine.ext.galvo_estimate = Some(format!(
+                "Estimate {} ({} list packets). Mark {:.1} s, jumps {:.1} s, delays {:.1} s.",
+                crate::machine_ui::format_duration(std::time::Duration::from_secs_f64(c.estimate.total_s().max(0.0))),
+                c.packet_count(),
+                c.estimate.mark_s,
+                c.estimate.jump_s,
+                c.estimate.delay_s
+            ));
             Ok(v)
         }),
         "galvo.settings_get" => galvo_device(app).map(|d| serde_json::to_value(&d.settings.galvo).unwrap_or(Value::Null)),

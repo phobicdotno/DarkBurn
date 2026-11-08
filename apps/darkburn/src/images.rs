@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 
 use darkburn_core::kurbo::{Affine, BezPath};
 use darkburn_core::layer::ImageMode as LayerMode;
-use darkburn_core::{CutSetting, Document, ImageAdjust, ImageShape, Mode, Shape, ShapeKind};
+use darkburn_core::{CutSetting, Document, ImageAdjust, ImageData, ImageShape, Mode, Shape, ShapeKind};
 use darkburn_raster::{Adjustments, GrayF, ImageMode, ImageSettings, ProcessedImage, ScanPlan, ScanSettings, apply_mask, process_image, scan_plans};
 use image::DynamicImage;
 
@@ -199,9 +199,11 @@ pub fn image_leaves(doc: &Document, layer: usize) -> Vec<Shape> {
 
 type GrayKey = (String, u64);
 
-fn crop_hash(crop: &Option<BezPath>) -> u64 {
+fn crop_hash(img: &ImageShape) -> u64 {
     let mut h = DefaultHasher::new();
-    format!("{crop:?}").hash(&mut h);
+    if img.crop.is_some() {
+        format!("{:?}{}{}", img.crop, img.width, img.height).hash(&mut h);
+    }
     h.finish()
 }
 
@@ -213,13 +215,18 @@ fn gray_cache() -> &'static Mutex<Vec<(GrayKey, Arc<GrayF>)>> {
 /// The grey version of an image shape's pixels, cropped by its crop path (outside the crop is
 /// white, like transparency). Cached by image and crop; the last few are kept.
 pub fn source_gray(doc: &Document, img: &ImageShape) -> Result<Arc<GrayF>, ImageError> {
-    let key: GrayKey = (img.image.clone(), crop_hash(&img.crop));
+    let data = doc.images.get(&img.image).ok_or_else(|| ImageError::Unreadable("its pixels are not in the project".into()))?;
+    source_gray_of(data, img)
+}
+
+/// [`source_gray`] for pixels already in hand (so a worker thread can do it).
+pub fn source_gray_of(data: &ImageData, img: &ImageShape) -> Result<Arc<GrayF>, ImageError> {
+    let key: GrayKey = (img.image.clone(), crop_hash(img));
     if let Ok(c) = gray_cache().lock()
         && let Some((_, g)) = c.iter().find(|(k, _)| *k == key)
     {
         return Ok(g.clone());
     }
-    let data = doc.images.get(&img.image).ok_or_else(|| ImageError::Unreadable("its pixels are not in the project".into()))?;
     let decoded = decode(&data.bytes).map_err(ImageError::Unreadable)?;
     let gray = match &img.crop {
         Some(crop) => {

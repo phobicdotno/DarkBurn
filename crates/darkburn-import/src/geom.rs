@@ -98,13 +98,16 @@ pub fn is_closed(sub: &BezPath) -> bool {
     matches!(sub.elements().last(), Some(PathEl::ClosePath))
 }
 
-/// First and last point of an open subpath.
+/// First and last point of a subpath (a closed one ends where it starts).
 pub fn endpoints(sub: &BezPath) -> Option<(Point, Point)> {
     let start = match sub.elements().first()? {
         PathEl::MoveTo(p) => *p,
         _ => return None,
     };
-    let end = sub.elements().last()?.end_point()?;
+    let end = match sub.elements().last()? {
+        PathEl::ClosePath => start,
+        el => el.end_point()?,
+    };
     Some((start, end))
 }
 

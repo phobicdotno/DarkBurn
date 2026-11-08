@@ -160,6 +160,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     render::paint(&painter, ui.ctx(), &xf, &scene);
     crate::canvas_input::paint_overlays(ui, app, &xf, &painter, ct.accent, dark);
     crate::job_ui::paint_overlay(&painter, &xf, app, ct.accent);
+    crate::text_ui::paint_overlay(app, &xf, &painter, ct.accent, now);
     paint_rulers(ui, &app.prefs, &view, full, canvas);
     out.cursor = hover.map(|p| app.prefs.origin.to_machine(view.to_page(canvas, p), page));
     out

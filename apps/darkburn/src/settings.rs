@@ -127,6 +127,8 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
         prefs.origin = Origin::ALL[i];
     });
     ui.add_space(t.space_12);
+    crate::text_ui::settings_section(ui, prefs);
+    ui.add_space(t.space_12);
     ui_kit::section_heading(ui, "Files");
     crate::file_io::import_options_body(ui, prefs);
     ui.add_space(t.space_12);

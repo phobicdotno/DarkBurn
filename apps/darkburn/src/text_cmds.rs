@@ -25,7 +25,6 @@ const BARCODE_PROPS: &str = r#""barcode":{"enum":["code128","code39","ean13","up
 
 /// The commands of this area. `commands::registry` adds them to the registry.
 pub const COMMANDS: &[Cmd] = &[
-    cmd("text.edit_dialog", "Edit Text Shapes", ""),
     cmd("text.font_picker", "Choose a Font", ""),
     cmd("text.add_shx", "Add an SHX Font", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     cmd(
@@ -63,12 +62,12 @@ pub const COMMANDS: &[Cmd] = &[
     cmd("variable.next", "Next Variable Text", ""),
     cmd("variable.previous", "Previous Variable Text", ""),
     cmd("variable.reset", "Reset Variable Text", ""),
+    cmd("variable.test", "Test Variable Text", r#"{"type":"object","properties":{"template":{"type":"string"},"count":{"type":"integer"}}}"#),
     cmd(
-        "variable.test",
-        "Test Variable Text",
-        r#"{"type":"object","properties":{"template":{"type":"string"},"count":{"type":"integer"}}}"#,
+        "variable.bake",
+        "Bake Variable Text",
+        r#"{"type":"object","properties":{"all":{"type":"boolean","description":"every variable shape, not just the selection"}}}"#,
     ),
-    cmd("variable.bake", "Bake Variable Text", r#"{"type":"object","properties":{"all":{"type":"boolean","description":"every variable shape, not just the selection"}}}"#),
     cmd(
         "variable.csv_load",
         "Load a CSV File",
@@ -98,7 +97,11 @@ pub fn commands() -> &'static [Cmd] {
 
 /// The commands that run in this build.
 pub fn works(id: &str) -> bool {
-    id.starts_with("text.") || id.starts_with("qr.") || id.starts_with("barcode.") || id.starts_with("variable.") || matches!(id, "tools.text" | "tools.qr" | "tools.path_to_text")
+    id.starts_with("text.")
+        || id.starts_with("qr.")
+        || id.starts_with("barcode.")
+        || id.starts_with("variable.")
+        || matches!(id, "tools.text" | "tools.qr" | "tools.path_to_text")
 }
 
 /// The checklist items a command implements.
@@ -231,7 +234,9 @@ pub fn variable_kind(s: &str) -> Result<VariableText, String> {
 
 fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent>, String> {
     let kind = word(a, "kind");
-    let any = ["text", "url", "ssid", "password", "security", "hidden", "name", "phone", "email", "website", "address", "note"].iter().any(|k| a.get(k).is_some());
+    let any = ["text", "url", "ssid", "password", "security", "hidden", "name", "phone", "email", "website", "address", "note"]
+        .iter()
+        .any(|k| a.get(k).is_some());
     if kind.is_none() && !any {
         return Ok(None);
     }
@@ -243,7 +248,9 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
         _ => "text",
     });
     Ok(Some(match kind {
-        "text" => QrContent::Text(s("text").or_else(|| if let Some(QrContent::Text(t)) = current { Some(t.clone()) } else { None }).unwrap_or_default()),
+        "text" => {
+            QrContent::Text(s("text").or_else(|| if let Some(QrContent::Text(t)) = current { Some(t.clone()) } else { None }).unwrap_or_default())
+        }
         "url" => QrContent::Url(s("url").or_else(|| if let Some(QrContent::Url(t)) = current { Some(t.clone()) } else { None }).unwrap_or_default()),
         "wifi" => {
             let (mut ssid, mut password, mut security, mut hidden) = match current {
@@ -274,7 +281,14 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
                 Some(QrContent::Contact(c)) => c.clone(),
                 _ => ContactCard::default(),
             };
-            for (k, f) in [("name", &mut c.name), ("phone", &mut c.phone), ("email", &mut c.email), ("website", &mut c.url), ("address", &mut c.address), ("note", &mut c.note)] {
+            for (k, f) in [
+                ("name", &mut c.name),
+                ("phone", &mut c.phone),
+                ("email", &mut c.email),
+                ("website", &mut c.url),
+                ("address", &mut c.address),
+                ("note", &mut c.note),
+            ] {
                 if let Some(v) = word(a, k) {
                     *f = v.to_string();
                 }
@@ -380,6 +394,18 @@ fn contains_id(s: &Shape, id: ShapeId) -> bool {
     }
 }
 
+/// The text shape `id`, also inside groups.
+pub fn find_text(doc: &Document, id: ShapeId) -> Option<&TextShape> {
+    fn walk(s: &Shape, id: ShapeId) -> Option<&TextShape> {
+        match &s.kind {
+            ShapeKind::Text(t) if s.id == id => Some(t),
+            ShapeKind::Group { children } => children.iter().find_map(|c| walk(c, id)),
+            _ => None,
+        }
+    }
+    doc.iter().find_map(|s| walk(s, id))
+}
+
 fn is_text(s: &Shape) -> bool {
     matches!(s.kind, ShapeKind::Text(_))
 }
@@ -430,7 +456,7 @@ fn text_summary(app: &DarkBurn, id: ShapeId) -> Value {
 
 // ---------------------------------------------------------------- the path text
 
-fn path_for_text(doc: &Document, text: &Shape, path: &Shape) -> BezPath {
+fn path_for_text(text: &Shape, path: &Shape) -> BezPath {
     // The path in the text's own coordinates.
     let to_text = text.transform.inverse() * path.transform;
     let mut p = path.local_outline();
@@ -458,7 +484,7 @@ fn on_path(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if ps.local_outline().elements().is_empty() {
         return Err("the path is empty".into());
     }
-    let path = path_for_text(&app.editor.doc, &ts, &ps);
+    let path = path_for_text(&ts, &ps);
     let pt = PathText {
         path,
         start_offset: num(a, "start_offset").unwrap_or(0.0),
@@ -620,7 +646,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
             Ok(json!({ "changed": changed, "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() }))
         })(),
         "text.on_path" | "tools.path_to_text" => on_path(app, a),
-        "text.detach_path" => (|| {
+        "text.detach_path" => {
             let ids = selected_text(app, &ids_arg(app, a));
             let changed = app.editor.edit("Take text off its path", |d, _| {
                 let mut any = false;
@@ -637,7 +663,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
                 any
             });
             ok_changed(changed)
-        })(),
+        }
         "text.fonts" => {
             let lib = render::lib();
             let installed = darkburn_text::list_families(&lib);
@@ -685,7 +711,9 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
             let want_qr = id == "qr.set";
             let ids: Vec<ShapeId> = ids_arg(app, a)
                 .into_iter()
-                .filter(|i| app.editor.doc.get(*i).is_some_and(|s| matches!(&s.kind, ShapeKind::Code(c) if matches!(c.spec, CodeSpec::Qr(_)) == want_qr)))
+                .filter(|i| {
+                    app.editor.doc.get(*i).is_some_and(|s| matches!(&s.kind, ShapeKind::Code(c) if matches!(c.spec, CodeSpec::Qr(_)) == want_qr))
+                })
                 .collect();
             if ids.is_empty() {
                 return Err(if want_qr { "select a QR code first" } else { "select a barcode first" }.into());
@@ -755,8 +783,8 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
                 None => {
                     let ids = selected_text(app, &app.editor.selected());
                     ids.first()
-                        .and_then(|i| app.editor.doc.get(*i).or_else(|| None))
-                        .and_then(|s| if let ShapeKind::Text(t) = &s.kind { Some(t.text.clone()) } else { None })
+                        .and_then(|i| find_text(&app.editor.doc, *i))
+                        .map(|t| t.text.clone())
                         .ok_or("give a template, or select variable text")?
                 }
             };
@@ -783,10 +811,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
 }
 
 fn code_errors(app: &DarkBurn, ids: &[ShapeId]) -> Vec<String> {
-    ids.iter()
-        .filter_map(|i| app.editor.doc.get(*i))
-        .filter_map(|s| if let ShapeKind::Code(c) = &s.kind { c.error.clone() } else { None })
-        .collect()
+    ids.iter().filter_map(|i| app.editor.doc.get(*i)).filter_map(|s| if let ShapeKind::Code(c) = &s.kind { c.error.clone() } else { None }).collect()
 }
 
 fn add_code(app: &mut DarkBurn, label: &str, c: CodeShape, at: Point, layer: usize) -> Result<Value, String> {
@@ -801,6 +826,51 @@ fn add_code(app: &mut DarkBurn, label: &str, c: CodeShape, at: Point, layer: usi
     let mut v = text_summary(app, id);
     v["errors"] = json!(code_errors(app, &[id]));
     Ok(v)
+}
+
+/// Copy the settings of a text draft (the Edit Text Shapes dialog) into the shape.
+fn copy_settings(t: &mut TextShape, d: &TextShape) {
+    t.text = d.text.clone();
+    t.font = d.font.clone();
+    t.height = d.height.max(0.1);
+    t.bold = d.bold;
+    t.italic = d.italic;
+    t.upper_case = d.upper_case;
+    t.welded = d.welded;
+    t.distort = d.distort;
+    t.letter_spacing = d.letter_spacing;
+    t.line_spacing = d.line_spacing;
+    t.align_x = d.align_x;
+    t.align_y = d.align_y;
+    t.variable = d.variable;
+    t.offset = d.offset;
+}
+
+/// Apply the edited drafts of the Edit Text Shapes dialog as one undo step.
+pub fn apply_drafts(app: &mut DarkBurn, drafts: &[(ShapeId, TextShape)]) -> bool {
+    let changed = app.editor.edit("Edit text shapes", |d, _| {
+        let mut any = false;
+        for (id, draft) in drafts {
+            any |= with_shape(d, *id, &mut |s| match &mut s.kind {
+                ShapeKind::Text(t) => {
+                    let before = t.clone();
+                    copy_settings(t, draft);
+                    *t != before
+                }
+                _ => false,
+            });
+        }
+        if any {
+            render::refresh(d);
+        }
+        any
+    });
+    if changed {
+        for (_, d) in drafts {
+            app.prefs.fonts.touch(&d.font);
+        }
+    }
+    changed
 }
 
 /// The tool and dialog commands (menus, ribbon, shortcuts).

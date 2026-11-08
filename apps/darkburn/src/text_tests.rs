@@ -199,7 +199,14 @@ fn qr_codes_stay_editable() {
 #[test]
 fn every_barcode_kind_is_made() {
     let mut a = app();
-    for (k, d) in [("code128", "Hello-123"), ("code39", "ABC-123"), ("ean13", "590123412345"), ("upca", "03600029145"), ("itf", "123456"), ("datamatrix", "DarkBurn")] {
+    for (k, d) in [
+        ("code128", "Hello-123"),
+        ("code39", "ABC-123"),
+        ("ean13", "590123412345"),
+        ("upca", "03600029145"),
+        ("itf", "123456"),
+        ("datamatrix", "DarkBurn"),
+    ] {
         let r = run(&mut a, "barcode.add", json!({ "barcode": k, "data": d })).unwrap();
         assert!(r["errors"].as_array().unwrap().is_empty(), "{k}: {r}");
         let id = ShapeId(r["id"].as_u64().unwrap());

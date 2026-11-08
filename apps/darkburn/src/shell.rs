@@ -306,6 +306,7 @@ impl DarkBurn {
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
+        crate::text_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);

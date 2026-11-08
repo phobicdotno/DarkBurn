@@ -92,6 +92,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.nodes", "Edit Nodes", "Ctrl+`", "db_node_edit"),
     c("tools.tabs", "Add Tabs", "Ctrl+Tab", "db_tabs"),
     c("tools.text", "Edit Text", "Ctrl+T", "text"),
+    c("text.edit_dialog", "Edit Text Shapes", "", ""),
     c("tools.position_laser", "Position Laser", "Alt+L", "db_position_laser"),
     c("tools.measure", "Measure", "Alt+M", "measure"),
     c("tools.qr", "Create QR Code", "", "db_qr"),

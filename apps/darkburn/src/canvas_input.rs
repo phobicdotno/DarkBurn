@@ -156,6 +156,10 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
         }
     }
 
+    if app.tool == Tool::Select && !panning && response.double_clicked_by(PointerButton::Primary) {
+        crate::text_ui::on_double_click(app, raw, tol);
+    }
+
     // Keys, when no text field has the keyboard.
     if ctx.memory(|mem| mem.focused().is_none()) && !egui::Popup::is_any_open(&ctx) {
         keys(&ctx, app, &mut st, &mut run);
@@ -216,6 +220,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
                 },
                 _ => CursorIcon::Default,
             },
+            Tool::Text => CursorIcon::Text,
             _ => CursorIcon::Crosshair,
         };
         ctx.set_cursor_icon(icon);

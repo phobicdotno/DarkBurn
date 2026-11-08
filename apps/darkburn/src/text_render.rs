@@ -6,14 +6,14 @@
 //! evaluates a document before a job or an export (`prepare_for_output`).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard};
 
 use darkburn_core::kurbo::{Affine, BezPath, Shape as _};
 use darkburn_core::shape::{AlignX, AlignY, VariableText};
 use darkburn_core::{CodeShape, CodeSpec, Document, LAYER_COUNT, Shape, ShapeKind, TextShape};
 use darkburn_text::{
-    BarcodeSpec, CutValues, Direction, EvalContext, FontLibrary, HAlign, LayoutSource, PathTextOptions, QrSpec, ShxFont, TextLayout, TextSpec,
-    VAlign, VarKind, VariableState, geomutil, layout_with_backup, text_on_path,
+    CutValues, Direction, EvalContext, FontLibrary, HAlign, LayoutSource, PathTextOptions, ShxFont, TextLayout, TextSpec, VAlign, VarKind,
+    VariableState, geomutil, layout_with_backup, text_on_path,
 };
 
 /// Prefix of a font name that is an SHX single-line font file.
@@ -46,11 +46,6 @@ fn library() -> &'static RwLock<FontLibrary> {
 /// The shared font library (system fonts, loaded on first use).
 pub fn lib() -> RwLockReadGuard<'static, FontLibrary> {
     library().read().unwrap_or_else(|e| e.into_inner())
-}
-
-/// The font library for changing (adding a font file).
-pub fn lib_mut() -> RwLockWriteGuard<'static, FontLibrary> {
-    library().write().unwrap_or_else(|e| e.into_inner())
 }
 
 fn shx_cache() -> &'static Mutex<HashMap<String, Option<Arc<ShxFont>>>> {
@@ -103,14 +98,9 @@ pub fn cut_values(doc: &Document, layer: usize) -> CutValues {
     let l = doc.layer(layer.min(LAYER_COUNT - 1));
     let s = l.settings.iter().find(|s| s.enabled).or(l.settings.first());
     match s {
-        Some(s) => CutValues {
-            speed: s.speed,
-            power: s.max_power,
-            interval: s.interval,
-            passes: s.passes,
-            layer: layer as u32,
-            laser_name: l.name.clone(),
-        },
+        Some(s) => {
+            CutValues { speed: s.speed, power: s.max_power, interval: s.interval, passes: s.passes, layer: layer as u32, laser_name: l.name.clone() }
+        }
         None => CutValues { layer: layer as u32, ..Default::default() },
     }
 }
@@ -175,7 +165,13 @@ pub fn layout_of(t: &TextShape, spec: &TextSpec) -> Option<(TextLayout, LayoutSo
 pub fn outlines_of(t: &TextShape, layout: &TextLayout) -> Vec<BezPath> {
     let paths: Vec<BezPath> = match &t.on_path {
         Some(p) if !p.path.elements().is_empty() => {
-            let opts = PathTextOptions { start_offset: p.start_offset, center_on_path: p.center_on_path, offset: p.offset, flip: p.flip, distort: t.distort };
+            let opts = PathTextOptions {
+                start_offset: p.start_offset,
+                center_on_path: p.center_on_path,
+                offset: p.offset,
+                flip: p.flip,
+                distort: t.distort,
+            };
             text_on_path(layout, &p.path, &opts).into_iter().map(|g| g.path).filter(|p| !p.elements().is_empty()).collect()
         }
         _ => layout.glyphs.iter().map(|g| g.path.clone()).filter(|p| !p.elements().is_empty()).collect(),
@@ -414,14 +410,4 @@ pub fn set_code_size(doc: &Document, layer: usize, c: &mut CodeShape, size: f64)
             }
         }
     }
-}
-
-/// A QR spec with text content (convenience for commands).
-pub fn qr_text(text: &str) -> QrSpec {
-    QrSpec { content: darkburn_text::QrContent::Text(text.to_string()), ..Default::default() }
-}
-
-/// A barcode spec (convenience for commands).
-pub fn barcode(kind: darkburn_text::BarcodeKind, data: &str) -> BarcodeSpec {
-    BarcodeSpec { kind, data: data.to_string(), ..Default::default() }
 }

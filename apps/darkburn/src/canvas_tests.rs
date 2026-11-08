@@ -246,6 +246,33 @@ fn dropping_a_device_profile_and_an_image_on_the_window_adds_them() {
 }
 
 #[test]
+fn the_settings_window_and_every_dialog_command_draw_in_a_full_window_frame() {
+    let mut rig = Rig::new();
+    rig.add_rect(KRect::new(10.0, 10.0, 40.0, 30.0), 0);
+    let mut full_frame = |rig: &mut Rig| {
+        rig.time += 0.016;
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1500.0, 950.0))),
+            time: Some(rig.time),
+            ..Default::default()
+        };
+        let app = &mut rig.app;
+        let mut out = rig.ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+        out.shapes.len()
+    };
+    let closed = full_frame(&mut rig);
+    let ctx = rig.ctx.clone();
+    for id in ["edit.settings", "edit.device_settings", "tools.offset", "arrange.grid_array", "window.preview"] {
+        rig.app.run(&ctx, id);
+        let n = full_frame(&mut rig);
+        full_frame(&mut rig);
+        assert!(n > 0, "{id} draws");
+    }
+    assert!(closed > 0);
+}
+
+#[test]
 fn click_tolerance_decides_how_close_a_line_must_be() {
     let mut doc = darkburn_core::Document::new();
     let mut path = darkburn_core::kurbo::BezPath::new();

@@ -405,7 +405,7 @@ mod tests {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
         assert!(run(&mut app, "laser.rotary", Value::Null).unwrap_err().contains("machine"));
-        assert!(run(&mut app, "tools.trace_image", Value::Null).unwrap_err().contains("not implemented"));
+        assert!(run(&mut app, "tools.qr", Value::Null).unwrap_err().contains("not implemented"));
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));
         assert!(run(&mut app, "layer.set_param", json!({ "layer": 99, "field": "speed", "value": 1 })).is_err());

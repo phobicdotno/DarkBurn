@@ -160,3 +160,47 @@ fn the_full_screen_cursor_option_draws_lines_across_the_canvas() {
     let on = count(&mut rig);
     assert!(on > off, "the crosshair adds shapes: {off} -> {on}");
 }
+
+fn click(rig: &mut Rig, at: Pos2) {
+    rig.mv(at);
+    rig.button(at, PointerButton::Primary, true);
+    rig.button(at, PointerButton::Primary, false);
+    rig.frame(vec![], Modifiers::NONE);
+}
+
+#[test]
+fn locked_and_hidden_shapes_cannot_be_picked_by_clicking() {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 140.0, 120.0), 3);
+    rig.app.editor.selection.clear();
+    let at = rig.screen(Point::new(100.0, 110.0));
+    click(&mut rig, at);
+    assert_eq!(rig.app.editor.selected(), vec![id], "an ordinary click selects");
+
+    rig.app.editor.selection.clear();
+    rig.app.editor.edit("Lock", |d, _| {
+        d.get_mut(id).unwrap().locked = true;
+        true
+    });
+    click(&mut rig, at);
+    assert!(rig.app.editor.selected().is_empty(), "locked shapes are not selectable");
+
+    rig.app.editor.edit("Unlock", |d, _| {
+        d.get_mut(id).unwrap().locked = false;
+        true
+    });
+    rig.app.editor.doc.layer_mut(3).show = false;
+    click(&mut rig, at);
+    assert!(rig.app.editor.selected().is_empty(), "shapes on hidden layers are not selectable");
+}
+
+#[test]
+fn click_tolerance_decides_how_close_a_line_must_be() {
+    let mut doc = darkburn_core::Document::new();
+    let mut path = darkburn_core::kurbo::BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.line_to((50.0, 0.0));
+    let id = doc.add(Shape::path(path, 0));
+    assert_eq!(darkburn_core::select::hit(&doc, Point::new(25.0, 0.4), 0.5), Some(id));
+    assert_eq!(darkburn_core::select::hit(&doc, Point::new(25.0, 0.4), 0.2), None);
+}

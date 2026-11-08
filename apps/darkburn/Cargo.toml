@@ -18,6 +18,12 @@ too_many_arguments = "allow"
 type_complexity = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 
+[features]
+# Live webcam capture (off by default). The camera panel only opens a camera after the user
+# turns it on, picks one and presses Start.
+default = ["live-camera"]
+live-camera = ["darkburn-vision/capture"]
+
 [dependencies]
 darkburn-ui = { workspace = true }
 darkburn-core = { workspace = true }

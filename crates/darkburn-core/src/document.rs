@@ -54,6 +54,9 @@ pub struct Document {
     pub job_settings: Option<serde_json::Value>,
     /// Variable text state (serial number, merge row, auto-advance), saved with the project.
     pub variables: darkburn_text::VariableState,
+    /// Camera, rotary, cylinder and print-and-cut setup saved with the project (opaque JSON owned
+    /// by the app's vision code). None until the user sets any of it up.
+    pub vision_settings: Option<serde_json::Value>,
     next_id: u64,
 }
 
@@ -80,6 +83,7 @@ impl Document {
             show_notes_on_load: false,
             job_settings: None,
             variables: Default::default(),
+            vision_settings: None,
             next_id: 1,
         }
     }

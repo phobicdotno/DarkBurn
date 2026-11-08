@@ -144,6 +144,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     let dark = luminance(ct.field) < 128.0;
     paint_backdrop(ui, &app.prefs, &view, canvas);
     let painter = ui.painter().with_clip_rect(canvas);
+    crate::vision_ui::paint_overlay(ui.ctx(), app, &xf, &painter);
     let now = ui.input(|i| i.time);
     let flash = app.flash_layer.map(|(layer, t0)| (layer, ((now - t0) * 6.0).floor() as i64 % 2 == 0));
     let selected = app.editor.selected();
@@ -159,6 +160,14 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     };
     render::paint(&painter, ui.ctx(), &xf, &scene);
     crate::canvas_input::paint_overlays(ui, app, &xf, &painter, ct.accent, dark);
+    if let (true, Some(p)) = (app.prefs.opts.fullscreen_cursor, hover) {
+        let line = Stroke::new(1.0, ct.accent.gamma_multiply(0.45));
+        let gap = app.prefs.opts.cursor_size;
+        painter.line_segment([pos2(canvas.left(), p.y), pos2(p.x - gap, p.y)], line);
+        painter.line_segment([pos2(p.x + gap, p.y), pos2(canvas.right(), p.y)], line);
+        painter.line_segment([pos2(p.x, canvas.top()), pos2(p.x, p.y - gap)], line);
+        painter.line_segment([pos2(p.x, p.y + gap), pos2(p.x, canvas.bottom())], line);
+    }
     crate::job_ui::paint_overlay(&painter, &xf, app, ct.accent);
     crate::text_ui::paint_overlay(app, &xf, &painter, ct.accent, now);
     paint_rulers(ui, &app.prefs, &view, full, canvas);
@@ -215,10 +224,13 @@ fn paint_backdrop(ui: &Ui, prefs: &Prefs, view: &View, canvas: Rect) {
     // Page outline, centre cross and the origin corner.
     painter.rect_stroke(page_rect, 0.0, Stroke::new(1.0, mix(ct.border, ct.text_dim, 0.4)), egui::StrokeKind::Outside);
     let c = page_rect.center();
-    let arm = 8.0;
-    let cross = Stroke::new(1.0, ct.accent);
-    painter.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], cross);
-    painter.line_segment([c - vec2(0.0, arm), c + vec2(0.0, arm)], cross);
+    let opts = crate::options::get();
+    if opts.centre_cross {
+        let arm = opts.cursor_size;
+        let cross = Stroke::new(1.0, ct.accent);
+        painter.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], cross);
+        painter.line_segment([c - vec2(0.0, arm), c + vec2(0.0, arm)], cross);
+    }
     let o = prefs.origin;
     let corner = pos2(if o.flips_x() { page_rect.right() } else { page_rect.left() }, if o.flips_y() { page_rect.bottom() } else { page_rect.top() });
     painter.circle_filled(corner, 3.5, ct.accent);

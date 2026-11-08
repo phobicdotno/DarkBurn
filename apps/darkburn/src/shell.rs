@@ -66,6 +66,8 @@ pub struct DarkBurn {
     pub flash_layer: Option<(usize, f64)>,
     /// Project files, auto-save and the system clipboard (files.rs).
     pub files: crate::files::FileState,
+    /// Libraries, hotkey editor, help (extras.rs).
+    pub extras: crate::extras::Extras,
     /// Job, preview, G-code and material test state (job_cmds.rs).
     pub job: crate::job_cmds::JobState,
     /// Image windows and presets (image_ui.rs).
@@ -76,6 +78,8 @@ pub struct DarkBurn {
     pub fio: crate::file_io::FileIo,
     /// The text tool, text dialogs and the Variable Text panel (text_ui.rs).
     pub text: crate::text_ui::TextUi,
+    /// Camera, rotary, cylinder, print and cut and the test tools (vision_cmds.rs).
+    pub vision: crate::vision_cmds::Vision,
 }
 
 impl DarkBurn {
@@ -106,11 +110,13 @@ impl DarkBurn {
             notes_open: false,
             flash_layer: None,
             files: Default::default(),
+            extras: Default::default(),
             job: Default::default(),
             images: Default::default(),
             shape_ui: Default::default(),
             fio: Default::default(),
             text: Default::default(),
+            vision: Default::default(),
         }
     }
 
@@ -196,6 +202,8 @@ impl DarkBurn {
             || crate::shape_ops::run(self, ctx, id)
             || crate::file_io::run(self, ctx, id)
             || crate::text_cmds::run(self, ctx, id)
+            || crate::vision_ui::run(self, ctx, id)
+            || crate::extras::run(self, ctx, id)
         {
             return;
         }
@@ -243,17 +251,17 @@ impl DarkBurn {
     /// Keyboard shortcuts of the commands that work (from the keys their menu items show).
     pub fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
-        if ctx.memory(|m| m.focused().is_some()) {
+        if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return;
         }
         let mut run = None;
-        for (shortcut, id) in commands::shortcut_table() {
+        for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
             // In the node tool the plain letter keys are node commands, not align commands.
             if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
                 continue;
             }
-            if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
-                run = Some(*id);
+            if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
+                run = Some(id);
                 break;
             }
         }
@@ -275,6 +283,7 @@ impl DarkBurn {
     /// The whole window for one frame.
     pub fn ui(&mut self, ui: &mut Ui) {
         let mut clicked: Option<String> = None;
+        crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
@@ -301,6 +310,7 @@ impl DarkBurn {
         });
         self.cursor = cursor;
         self.dialogs(ui.ctx());
+        crate::extras::dialogs(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
         crate::job_ui::frame(ui.ctx(), self);
@@ -308,6 +318,7 @@ impl DarkBurn {
         crate::shape_ui::show(ui.ctx(), self);
         crate::text_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
+        crate::vision_ui::frame(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }
@@ -333,7 +344,8 @@ impl DarkBurn {
             let mut x = left + 118.0;
             separator(ui, r, x - 10.0);
             for (name, entries) in commands::MENUS {
-                let galley = ui.painter().layout_no_wrap(name.to_string(), FontId::proportional(t.font_button), t.app_bar_text);
+                let galley =
+                    ui.painter().layout_no_wrap(crate::i18n::tr(&format!("menu.{name}"), name), FontId::proportional(t.font_button), t.app_bar_text);
                 let br = Rect::from_min_size(pos2(x, r.center().y - 13.0), vec2(galley.size().x + 16.0, 26.0));
                 x = br.right() + 2.0;
                 let id = ui.scope_id().with(("menu", *name));
@@ -359,6 +371,11 @@ impl DarkBurn {
             separator(ui, r, x + 8.0);
             x += 26.0;
             for (icon, tip) in [("save", "Save (Ctrl+S)"), ("undo", "Undo (Ctrl+Z)"), ("redo", "Redo (Ctrl+Shift+Z)")] {
+                // Too narrow: these give way before they run into the settings and help buttons.
+                let right_cluster = r.right() - if custom { titlebar::WIDTH } else { 0.0 } - 22.0 - 2.0 * 34.0 - 8.0;
+                if x + 18.0 > right_cluster {
+                    break;
+                }
                 let br = Rect::from_center_size(pos2(x, r.center().y), vec2(32.0, 32.0));
                 let resp = ui.interact(br, ui.scope_id().with(("ab", icon)), Sense::hover());
                 icons::paint_app_bar(ui.painter(), Rect::from_center_size(br.center(), vec2(18.0, 18.0)), icon, 0.35);
@@ -382,13 +399,17 @@ impl DarkBurn {
                 rx -= 34.0;
             }
             let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-            ui.painter().text(
-                pos2(rx + 4.0, r.center().y),
-                Align2::RIGHT_CENTER,
-                version,
-                FontId::proportional(t.font_small),
-                t.app_bar_text.gamma_multiply(0.7),
-            );
+            // The version gives way when the window is too narrow for it beside the menus.
+            let version_room = (rx - x) > 120.0;
+            if version_room {
+                ui.painter().text(
+                    pos2(rx + 4.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    version,
+                    FontId::proportional(t.font_small),
+                    t.app_bar_text.gamma_multiply(0.7),
+                );
+            }
             if custom {
                 titlebar::caption_buttons(ui, r);
             }
@@ -403,8 +424,10 @@ impl DarkBurn {
                     let Some(c) = commands::find(id) else {
                         continue;
                     };
-                    let mut item = MenuItem::new(c.id, c.label, c.icon);
-                    item.shortcut = c.key;
+                    let label = crate::i18n::cmd_label(c);
+                    let key = crate::keymap::key_for(c);
+                    let mut item = MenuItem::new(c.id, &label, c.icon);
+                    item.shortcut = &key;
                     item.enabled = commands::works(id) && self.can_run(id);
                     if id == "view.pan" {
                         item.checked = Some(self.pan_tool);
@@ -414,7 +437,8 @@ impl DarkBurn {
                     }
                 }
                 Entry::Sub(label, inner) => {
-                    let mut row = MenuItem::new(label, label, "");
+                    let shown = crate::i18n::tr(&format!("menu.{label}"), label);
+                    let mut row = MenuItem::new(label, &shown, "");
                     row.submenu = true;
                     Menu::button_with(
                         ui,
@@ -427,7 +451,8 @@ impl DarkBurn {
                 }
                 Entry::Dynamic("recent") => {
                     let recent = self.prefs.recent.clone();
-                    let mut row = MenuItem::new("file.recent", "Recent Projects", "");
+                    let recent_text = crate::i18n::tr("menu.recent", "Recent Projects");
+                    let mut row = MenuItem::new("file.recent", &recent_text, "");
                     row.submenu = true;
                     row.enabled = !recent.is_empty();
                     if recent.is_empty() {
@@ -449,10 +474,11 @@ impl DarkBurn {
                     }
                 }
                 Entry::Dynamic("panels") => {
-                    Menu::heading(ui, "Panels");
+                    Menu::heading(ui, &crate::i18n::tr("menu.panels", "Panels"));
                     for p in PANELS {
                         let id = format!("panel.{}", p.id);
-                        let mut item = MenuItem::new(&id, p.title, "");
+                        let title = crate::i18n::panel_title(p.id, p.title);
+                        let mut item = MenuItem::new(&id, &title, "");
                         item.checked = Some(self.prefs.panel(p.id).visible);
                         if item.show(ui).clicked() {
                             *clicked = Some(id.clone());
@@ -460,10 +486,11 @@ impl DarkBurn {
                     }
                 }
                 Entry::Dynamic("toolbars") => {
-                    Menu::heading(ui, "Toolbars");
+                    Menu::heading(ui, &crate::i18n::tr("menu.toolbars", "Toolbars"));
                     for (bar, label) in TOOLBARS.iter().copied().chain([("status", "Status Bar")]) {
                         let id = format!("toolbar.{bar}");
-                        let mut item = MenuItem::new(&id, label, "");
+                        let label = crate::i18n::tr(&format!("toolbar.{bar}"), label);
+                        let mut item = MenuItem::new(&id, &label, "");
                         item.checked = Some(if bar == "status" { self.prefs.status_bar } else { self.prefs.toolbar(bar) });
                         if item.show(ui).clicked() {
                             *clicked = Some(id.clone());
@@ -475,7 +502,7 @@ impl DarkBurn {
                         let id = format!("lang.{code}");
                         let mut item = MenuItem::new(&id, name, "");
                         item.checked = Some(self.prefs.language == *code);
-                        item.enabled = *code == "en";
+                        item.enabled = crate::i18n::available(code);
                         if item.show(ui).clicked() && item.enabled {
                             *clicked = Some(id.clone());
                         }
@@ -520,7 +547,9 @@ impl DarkBurn {
                 x = br.right() + 4.0;
             }
             x += 12.0;
+            let inches = self.prefs.numeric_inches;
             let position = match self.cursor {
+                Some(p) if inches => format!("x: {:.3}  y: {:.3} in", p.x / 25.4, p.y / 25.4),
                 Some(p) => format!("x: {:.2}  y: {:.2} mm", p.x, p.y),
                 None => "x: –  y: –".to_string(),
             };
@@ -528,18 +557,23 @@ impl DarkBurn {
             ui.painter().galley(pos2(x, r.center().y - g.size().y / 2.0), g, ink);
             solidcraft_ui_registry::publish_rect("status:cursor", Rect::from_min_size(pos2(x, r.top()), vec2(220.0, r.height())));
             x += 230.0;
+            let u = if inches { 25.4 } else { 1.0 };
+            let (dec, unit) = if inches { (3, "in") } else { (2, "mm") };
             let sel_text = match selection {
                 Some((b, n)) => format!(
-                    "Min {:.2}, {:.2}  Max {:.2}, {:.2}  ({:.2} × {:.2} mm)  {n} object{}",
-                    b.x0,
-                    b.y0,
-                    b.x1,
-                    b.y1,
-                    b.width(),
-                    b.height(),
-                    if n == 1 { "" } else { "s" }
+                    "{} {:.dec$}, {:.dec$}  {} {:.dec$}, {:.dec$}  ({:.dec$} × {:.dec$} {unit})  {n} {}",
+                    crate::i18n::tr("status.min", "Min"),
+                    b.x0 / u,
+                    b.y0 / u,
+                    crate::i18n::tr("status.max", "Max"),
+                    b.x1 / u,
+                    b.y1 / u,
+                    b.width() / u,
+                    b.height() / u,
+                    if n == 1 { crate::i18n::tr("status.object", "object") } else { crate::i18n::tr("status.objects", "objects") },
+                    dec = dec
                 ),
-                None => "No selection".into(),
+                None => crate::i18n::tr("status.no_selection", "No selection"),
             };
             let g = ui.painter().layout_no_wrap(sel_text, FontId::monospace(t.font_small), if selection.is_some() { ink } else { dim });
             let w = g.size().x;
@@ -551,7 +585,7 @@ impl DarkBurn {
                 .clone()
                 .or_else(|| self.hint.clone())
                 .unwrap_or_else(|| if self.pan_tool { "Drag to pan the view".into() } else { String::new() });
-            let right_edge = r.right() - 200.0;
+            let right_edge = crate::vision_ui::status_chips(ui, r, self);
             let clip = ui.painter().with_clip_rect(Rect::from_min_max(pos2(x, r.top()), pos2(right_edge, r.bottom())));
             clip.text(pos2(x, r.center().y), Align2::LEFT_CENTER, tip, font.clone(), ink);
             let right = format!("{:.0} %", self.prefs.view.percent());
@@ -573,7 +607,7 @@ impl DarkBurn {
         let (edge, salt, size, range) = match area {
             Area::Left => (Edge::Left, "db_dock_left", 260.0, 180.0..=520.0),
             Area::Bottom => (Edge::Bottom, "db_dock_bottom", 180.0, 100.0..=480.0),
-            _ => (Edge::Right, "db_dock_right", 300.0, 220.0..=560.0),
+            _ => (Edge::Right, "db_dock_right", 380.0, 300.0..=640.0),
         };
         let panel = host.edge(salt, edge).resizable(true).default_size(size).size_range(range);
         let frame = host.edge_frame(t.panel);
@@ -588,7 +622,7 @@ impl DarkBurn {
         }
         let t = Tokens::get();
         let host = Container::new(ui.ctx(), Surface::Panel);
-        let panel = host.edge("db_dock_right", Edge::Right).resizable(true).default_size(300.0).size_range(220.0..=560.0);
+        let panel = host.edge("db_dock_right", Edge::Right).resizable(true).default_size(380.0).size_range(300.0..=640.0);
         let frame = host.edge_frame(t.panel);
         host.show_edge(ui, panel, frame, |ui| {
             let r = ui.max_rect();
@@ -621,12 +655,61 @@ impl DarkBurn {
         let mut pick = None;
         let mut action: Option<(String, Option<Area>)> = None;
         let close = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
-        let tabs_clip = Rect::from_min_max(header.min, pos2(close.left() - 2.0, header.bottom()));
-        for p in &shown {
+        let mut tabs_clip = Rect::from_min_max(header.min, pos2(close.left() - 2.0, header.bottom()));
+        if ui.rect_contains_pointer(r) {
+            self.extras.hover_topic = Some(crate::help::topic_id_for(&active));
+        }
+        // Tabs that do not fit go behind a chevron; the active one always stays visible.
+        let titles: Vec<String> = shown.iter().map(|p| crate::i18n::panel_title(p.id, p.title)).collect();
+        let widths: Vec<f32> =
+            titles.iter().map(|s| ui.painter().layout_no_wrap(s.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();
+        let mut keep = vec![true; shown.len()];
+        let overflow_w = 26.0;
+        if 4.0 + widths.iter().sum::<f32>() > tabs_clip.width() {
+            let room = tabs_clip.width() - 4.0 - overflow_w;
+            keep = vec![false; shown.len()];
+            let at = shown.iter().position(|p| p.id == active).unwrap_or(0);
+            let mut used = 0.0;
+            for i in std::iter::once(at).chain((0..shown.len()).filter(|i| *i != at)) {
+                if used + widths[i] <= room {
+                    keep[i] = true;
+                    used += widths[i];
+                }
+            }
+            tabs_clip = Rect::from_min_max(tabs_clip.min, pos2(tabs_clip.right() - overflow_w, tabs_clip.bottom()));
+            let ovf = Rect::from_center_size(pos2(tabs_clip.right() + overflow_w / 2.0, header.center().y), vec2(22.0, 22.0));
+            let hidden: Vec<(&'static str, String)> =
+                shown.iter().zip(&titles).enumerate().filter(|(i, _)| !keep[*i]).map(|(_, (p, s))| (p.id, s.clone())).collect();
+            let id = ui.scope_id().with(("tab_overflow", area));
+            Menu::button_with(
+                ui,
+                |ui, _| {
+                    let resp = ui.interact(ovf, id, Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(ovf, t.radius_sm, t.hover);
+                    }
+                    ui.painter().text(ovf.center(), Align2::CENTER_CENTER, "\u{bb}", FontId::proportional(t.font_heading), t.text);
+                    solidcraft_ui_registry::publish_target(&format!("panel:overflow:{area:?}"), ovf);
+                    resp.backing_on_hover_text(crate::i18n::tr("ui.more_tabs", "More tabs"))
+                },
+                |ui| {
+                    ui.set_min_width(180.0);
+                    for (pid, title) in &hidden {
+                        if MenuItem::new(pid, title, "").show(ui).clicked() {
+                            pick = Some(*pid);
+                        }
+                    }
+                },
+            );
+        }
+        for (pi, p) in shown.iter().enumerate() {
+            if !keep[pi] {
+                continue;
+            }
             let on = p.id == active;
             let font = if on { fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
             let ink = if on { t.text } else { t.text_dim };
-            let g = ui.painter().layout_no_wrap(p.title.to_string(), font, ink);
+            let g = ui.painter().layout_no_wrap(titles[pi].clone(), font, ink);
             let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(g.size().x + 16.0, PANEL_HEADER - 6.0));
             x = tr.right() + 2.0;
             let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("tab", p.id)), Sense::click());
@@ -644,12 +727,13 @@ impl DarkBurn {
             Menu::context(&resp, |ui| {
                 ui.set_min_width(200.0);
                 for to in Area::ALL.into_iter().filter(|a| *a != area) {
-                    if MenuItem::new("move", &format!("Move to {}", to.label().to_lowercase()), "").show(ui).clicked() {
+                    let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.label().to_lowercase());
+                    if MenuItem::new("move", &text, "").show(ui).clicked() {
                         action = Some((p.id.to_string(), Some(to)));
                     }
                 }
                 Menu::separator(ui);
-                if MenuItem::new("hide", "Hide", "close").show(ui).clicked() {
+                if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
                     action = Some((p.id.to_string(), None));
                 }
             });
@@ -685,7 +769,10 @@ impl DarkBurn {
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("about"), "db_app", "About DarkBurn").actions("", "Close", None).show(ctx, true, |ui| {
                 let t = Tokens::get();
                 ui.label(egui::RichText::new(format!("DarkBurn {}", env!("CARGO_PKG_VERSION"))).font(fonts::semibold(t.font_subtitle)));
-                ui.label("A laser cutter and engraver program.");
+                ui.label(crate::i18n::tr("about.tagline", "A laser cutter and engraver program."));
+                if ui.link(crate::i18n::tr("about.docs", "Online documentation")).clicked() {
+                    crate::help::open_url(crate::help::DOCS_URL);
+                }
                 ui.add_space(t.space_8);
                 ui.label(egui::RichText::new("Licensed under the MIT License or the Apache License 2.0.").color(t.text_dim));
                 ui.label(

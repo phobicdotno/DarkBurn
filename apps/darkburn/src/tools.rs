@@ -88,12 +88,7 @@ pub const POLYGON_SIDES: u32 = 6;
 
 /// The arrow-key nudge distance in mm for the held modifiers.
 pub fn nudge_step(shift: bool, ctrl: bool) -> f64 {
-    match (ctrl, shift) {
-        (true, true) => 0.01,
-        (true, false) => 0.1,
-        (false, true) => 10.0,
-        (false, false) => 1.0,
-    }
+    crate::options::get().nudge_step(shift, ctrl)
 }
 
 /// The rectangle a drag from `a` to `b` draws: a square when `square`, centred on `a` when

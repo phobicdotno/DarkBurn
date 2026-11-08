@@ -398,6 +398,58 @@ pub const COMMANDS: &[Cmd] = &[
         "Import Files",
         r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"}},"x":{"type":"number"},"y":{"type":"number"},"pdf_page":{"description":"a page number, or \"all\""}},"required":["paths"]}"#,
     ),
+    // Libraries, art, hotkeys, help and preferences files, with arguments
+    a("library.new", "New Cut Library", ""),
+    a("library.open", "Open a Cut Library", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("library.save", "Save the Cut Library", ""),
+    a("library.save_as", "Save the Cut Library to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("library.list", "List Cut Library Entries", ""),
+    a(
+        "library.create_from_layer",
+        "Create a Library Entry from a Layer",
+        r#"{"type":"object","properties":{"layer":{"type":"integer"},"material":{"type":"string"},"thickness":{"description":"mm as a number, or text like 1/8 in"},"description":{"type":"string"}},"required":["layer"]}"#,
+    ),
+    a(
+        "library.assign",
+        "Assign a Library Entry to a Layer",
+        r#"{"type":"object","properties":{"entry":{"type":"integer"},"layer":{"type":"integer"}},"required":["entry","layer"]}"#,
+    ),
+    a(
+        "library.link",
+        "Link a Layer to a Library Entry",
+        r#"{"type":"object","properties":{"entry":{"type":"integer"},"layer":{"type":"integer"}},"required":["entry","layer"]}"#,
+    ),
+    a("library.unlink", "Unlink a Layer from the Library", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
+    a("library.delete", "Delete a Library Entry", r#"{"type":"object","properties":{"entry":{"type":"integer"}},"required":["entry"]}"#),
+    a("library.duplicate", "Duplicate a Library Entry", r#"{"type":"object","properties":{"entry":{"type":"integer"}},"required":["entry"]}"#),
+    a("art.new", "New Art Library", ""),
+    a("art.open", "Open an Art Library", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "art.save_as",
+        "Save an Art Library to a File",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"path":{"type":"string"}},"required":["library","path"]}"#,
+    ),
+    a(
+        "art.add_selection",
+        "Add the Selection to an Art Library",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"folder":{"type":"integer"},"name":{"type":"string"},"replace":{"type":"boolean"}},"required":["library","name"]}"#,
+    ),
+    a(
+        "art.insert",
+        "Put an Art Library Item on the Page",
+        r#"{"type":"object","properties":{"library":{"type":"integer"},"folder":{"type":"integer"},"item":{"type":"integer"}},"required":["library","item"]}"#,
+    ),
+    a(
+        "hotkeys.set",
+        "Set a Hotkey",
+        r#"{"type":"object","properties":{"command":{"type":"string"},"key":{"type":"string","description":"like Ctrl+Shift+Z; empty clears"},"take":{"type":"boolean"}},"required":["command","key"]}"#,
+    ),
+    a("hotkeys.reset", "Reset Hotkeys", r#"{"type":"object","properties":{"command":{"type":"string","description":"omit to reset all"}}}"#),
+    a("hotkeys.list", "List Hotkeys and Conflicts", ""),
+    a("hotkeys.export", "Export Hotkeys to a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("hotkeys.import", "Import Hotkeys from a File", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a("help.topic", "Read a Help Topic", r#"{"type":"object","properties":{"topic":{"type":"string"}}}"#),
+    a("support.write", "Write the Support Data Bundle", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a(
         "project.export",
         "Export to a File",
@@ -413,7 +465,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "setting.set",
         "Change a Setting",
-        r#"{"type":"object","properties":{"key":{"enum":["filled","smooth","show_grid","theme","page_width","page_height","autosave_minutes","svg_dpi","import_group","import_select","import_tool_layers"]},"value":{}},"required":["key","value"]}"#,
+        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
     ),
 ];
 
@@ -498,7 +550,20 @@ pub fn works(id: &str) -> bool {
             | "view.filled_smooth"
             | "view.toggle_filled"
             | "help.about"
-    ) || crate::job_cmds::works(id)
+            | "help.quick"
+            | "help.docs"
+            | "help.support_data"
+            | "help.camera"
+            | "help.updates"
+            | "help.debug_log"
+            | "file.hotkeys"
+    ) || id.starts_with("library.")
+        || id.starts_with("art.")
+        || id.starts_with("hotkeys.")
+        || id.starts_with("support.")
+        || id.starts_with("help.topic")
+        || crate::job_cmds::works(id)
+        || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
         || id.starts_with("panel.")
@@ -552,6 +617,11 @@ pub fn parse_key(text: &str) -> Option<egui::KeyboardShortcut> {
         "+" => Key::Plus,
         "`" => Key::Backtick,
         "Tab" => Key::Tab,
+        // egui has no asterisk key: it is Shift+8 on the main keyboard.
+        "*" => {
+            m |= Modifiers::SHIFT;
+            Key::Num8
+        }
         other => Key::from_name(other)?,
     };
     Some(egui::KeyboardShortcut::new(m, key))
@@ -581,6 +651,7 @@ pub fn hardware(id: &str) -> bool {
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
         || crate::job_cmds::hardware(id))
         && !crate::job_cmds::not_hardware(id)
+        && !crate::vision_cmds::not_hardware(id)
 }
 
 /// The checklist items a command implements (the ones that work today).
@@ -680,18 +751,23 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_in" => &["WIN-04"],
         "view.zoom_out" => &["WIN-05"],
         "view.zoom_page" => &["WIN-03"],
+        "help.about" => &["HELP-01"],
+        "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
+        "help.docs" => &["HELP-03"],
+        "help.support_data" | "support.write" => &["HELP-04", "PLAT-05"],
+        "help.camera" => &["HELP-05"],
+        "help.updates" => &["HELP-06"],
+        "help.debug_log" => &["HELP-07", "PLAT-04"],
+        "file.hotkeys" | "hotkeys.set" | "hotkeys.reset" | "hotkeys.list" | "hotkeys.export" | "hotkeys.import" => &["FILE-19", "AUX-08", "KEY-08"],
+        _ if id.starts_with("library.") => &["LIB-01", "LIB-05", "LIB-07", "LIB-08"],
+        _ if id.starts_with("art.") => &["ART-01", "ART-04"],
         _ if id.starts_with("file.recent.") => &["FILE-03"],
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
         _ => {
             let jobs = crate::job_cmds::checklist(id);
-            let text = crate::text_cmds::checklist(id);
-            if !jobs.is_empty() {
-                jobs
-            } else if !text.is_empty() {
-                text
-            } else {
-                crate::shape_ops::checklist(id)
-            }
+            let jobs = if jobs.is_empty() { crate::vision_cmds::checklist(id) } else { jobs };
+            let jobs = if jobs.is_empty() { crate::text_cmds::checklist(id) } else { jobs };
+            if jobs.is_empty() { crate::shape_ops::checklist(id) } else { jobs }
         }
     }
 }
@@ -721,6 +797,7 @@ pub fn registry() -> &'static [Cmd] {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::job_cmds::COMMANDS);
+        v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
@@ -1218,7 +1295,7 @@ mod tests {
         for info in list().into_iter().filter(|i| i.hardware) {
             assert!(!info.implemented, "{} touches hardware and must not run yet", info.id);
         }
-        assert!(describe("laser.rotary").unwrap().hardware);
+        assert!(describe("laser.controller_info").unwrap().hardware);
         assert!(!describe("edit.undo").unwrap().hardware);
         assert_eq!(describe("shape.add_rect").unwrap().args_schema["required"].as_array().unwrap().len(), 4);
         assert_eq!(describe("arrange.align_left").unwrap().menu_path, ["Arrange", "Align", "Align Left"]);
@@ -1237,7 +1314,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        for id in ["job.start", "laser.rotary"] {
+        for id in ["job.start", "laser.controller_info"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

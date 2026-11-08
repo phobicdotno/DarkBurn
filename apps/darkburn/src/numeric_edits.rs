@@ -102,6 +102,9 @@ pub fn shown_rotation(doc: &Document, ids: &[ShapeId]) -> f64 {
     }
 }
 
+/// Width of the numeric edits as drawn by [`show`].
+pub const WIDTH: f32 = 497.0;
+
 /// Draw the numeric edits from `at`, `height` points tall; returns the right edge.
 pub fn show(ui: &mut Ui, at: Pos2, height: f32, app: &mut DarkBurn) -> f32 {
     let t = Tokens::get();

@@ -61,3 +61,12 @@ pub fn paint_preview(app: &crate::shell::DarkBurn, xf: &crate::render::Xf, paint
         }
     }
 }
+
+/// A live ribbon control ("dock_padding", "dock_checks", "corner_radius") at `at`, `height` tall;
+/// returns its right edge.
+pub fn ribbon_item(_ui: &mut egui::Ui, _kind: &str, at: egui::Pos2, _height: f32, _app: &mut crate::shell::DarkBurn) -> f32 {
+    at.x
+}
+
+/// The open shape dialogs for one frame.
+pub fn show(_ctx: &egui::Context, _app: &mut crate::shell::DarkBurn) {}

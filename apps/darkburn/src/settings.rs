@@ -111,6 +111,7 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
     });
     ui_kit::checkbox(ui, "Show the grid", &mut prefs.show_grid);
     ui_kit::checkbox(ui, "Invert the mouse wheel zoom", &mut prefs.invert_wheel);
+    ui_kit::checkbox(ui, "Numbers on the cut palette", &mut prefs.palette_labels);
     ui.add_space(t.space_12);
     ui_kit::section_heading(ui, "Work area");
     ui_kit::row(ui, "Width", |ui| {

@@ -10,6 +10,7 @@ pub mod arrange;
 pub mod clipboard;
 pub mod document;
 pub mod editor;
+pub mod expr;
 pub mod layer;
 pub mod project;
 pub mod select;

@@ -71,6 +71,16 @@ pub struct Prefs {
     pub import_select: bool,
     /// Imported colours may land on the tool layers T1 and T2.
     pub import_tool_layers: bool,
+    /// Layer numbers on the cut palette buttons.
+    pub palette_labels: bool,
+    /// Numeric edits show inches instead of millimetres.
+    pub numeric_inches: bool,
+    /// The 9-point anchor numeric edits work about.
+    pub anchor: darkburn_core::arrange::Anchor,
+    /// Numeric edits keep the width-to-height ratio.
+    pub lock_aspect: bool,
+    /// The Cut Settings Editor hides its Advanced tab.
+    pub cut_beginner: bool,
 }
 
 impl Default for Prefs {
@@ -102,6 +112,11 @@ impl Default for Prefs {
             import_group: true,
             import_select: true,
             import_tool_layers: false,
+            palette_labels: false,
+            numeric_inches: false,
+            anchor: darkburn_core::arrange::Anchor::Centre,
+            lock_aspect: true,
+            cut_beginner: false,
         }
     }
 }

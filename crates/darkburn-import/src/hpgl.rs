@@ -141,7 +141,12 @@ pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError>
             i += 1;
         }
         let params = parse_params(&params_str);
-        commands += 1;
+        if matches!(
+            cmd.as_str(),
+            "IN" | "DF" | "SP" | "PU" | "PD" | "PA" | "PR" | "CI" | "AA" | "AR" | "EA" | "ER" | "PG" | "PE" | "SC" | "IP" | "LT" | "VS" | "PW" | "WU"
+        ) {
+            commands += 1;
+        }
         let to_pt = |x: f64, y: f64| Point::new(x / upm, y / upm);
         match cmd.as_str() {
             "IN" | "DF" => {

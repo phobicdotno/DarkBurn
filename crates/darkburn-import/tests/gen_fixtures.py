@@ -224,9 +224,11 @@ def images_pdf():
     t = Image.open(io.BytesIO(tb.getvalue()))
     off = t.tag_v2[273][0]
     cnt = t.tag_v2[279][0]
+    # Pillow writes the TIFF as WhiteIsZero, so its black pixels are CCITT "white" runs;
+    # /BlackIs1 true makes those samples 0 (black) in DeviceGray again.
     g4 = tb.getvalue()[off:off + cnt]
     im_g4 = p.stream("/Type /XObject /Subtype /Image /Width 16 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 1 "
-                     "/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 16 /Rows 4 /BlackIs1 false >>", g4)
+                     "/Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 16 /Rows 4 /BlackIs1 true >>", g4)
     content = b"\n".join([
         b"q 72 0 0 72 0 0 cm /ImRGB Do Q",
         b"q 72 0 0 18 100 0 cm /ImBits Do Q",

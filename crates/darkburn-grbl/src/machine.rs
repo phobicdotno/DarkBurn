@@ -760,13 +760,20 @@ impl GrblMachine {
 
     /// Traces a closed outline (e.g. the convex hull of the design).
     pub fn frame_outline(&self, points: &[Point], opts: FrameOptions) -> Result<(), GrblError> {
-        let s = self.motion_ok(false)?;
+        // Check the arguments before the machine state, so a bad request is always reported as
+        // bad, whatever the machine happens to be doing.
         if points.is_empty() {
             return Err(GrblError::InvalidArgument("Nothing to frame.".into()));
         }
         if opts.feed <= 0.0 {
             return Err(GrblError::InvalidArgument("Framing speed must be above 0.".into()));
         }
+        if let Some(pct) = opts.laser_percent
+            && !(0.0..=self.opts.max_fire_percent).contains(&pct)
+        {
+            return Err(GrblError::InvalidArgument(format!("Fire power must be between 0 and {} %.", self.opts.max_fire_percent)));
+        }
+        let s = self.motion_ok(false)?;
         if let Some(t) = s.travel(&self.opts) {
             let wco = s.status.wco;
             for p in points {
@@ -1927,6 +1934,13 @@ impl Worker {
                 if let Some(mut j) = self.job.take() {
                     let p = j.progress();
                     self.snap.paused = false;
+                    // The last line (a wait for motion to finish) has been answered, so the
+                    // machine is idle now. Say so before announcing the end, instead of leaving
+                    // the state of the last status report in place until the next poll.
+                    if matches!(self.snap.status.state, MachineState::Run(_)) {
+                        self.snap.status.state = MachineState::Idle;
+                    }
+                    self.last_poll = Instant::now().checked_sub(self.opts.poll_interval).unwrap_or_else(Instant::now);
                     self.emit(Event::JobProgress(p.clone()));
                     self.emit(Event::JobFinished(p));
                 }

@@ -48,6 +48,10 @@ impl CoverageReport {
 }
 
 fn valid_id(id: &str) -> bool {
+    // `lang.<tag>`: the tag is a language code such as `zh-TW`.
+    if let Some(tag) = id.strip_prefix("lang.") {
+        return !tag.is_empty() && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    }
     id.contains('.')
         && !id.starts_with('.')
         && !id.ends_with('.')

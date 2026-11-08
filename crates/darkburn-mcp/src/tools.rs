@@ -125,6 +125,17 @@ impl DarkburnTools {
         }
     }
 
+    /// Like `done`, but a long operation (`still_running`) is waited for up to `wait_ms`.
+    fn done_waiting(&mut self, r: Result<Value, CommandError>, wait_ms: u64) -> Value {
+        match r {
+            Err(e) if e.code == ErrorCode::StillRunning => match e.pending_id.clone() {
+                Some(id) => self.finish_pending(&id, wait_ms),
+                None => fail(&e),
+            },
+            other => done(other),
+        }
+    }
+
     fn run(&mut self, tool_name: &str, command: &str, params: Value, token: Option<String>, wait_ms: u64) -> Value {
         let ctx = CallContext { tool: tool_name.into(), confirmation_token: token };
         match self.backend.execute_ctx(command, params, &ctx) {
@@ -242,7 +253,29 @@ impl DarkburnTools {
                 if a.get("region").is_some_and(|v| !v.is_null()) && region.is_none() {
                     return text_result("[invalid_params] screenshot: `region` is {x, y, width, height} in logical pixels", true);
                 }
-                match self.backend.screenshot(region) {
+                let shot = match self.backend.screenshot(region) {
+                    // The app takes the picture on a later frame: wait for it like any long operation.
+                    Err(e) if e.code == ErrorCode::StillRunning => match e.pending_id.clone() {
+                        Some(id) => match self.wait(&id, wait_ms) {
+                            Ok(PendingState::Done { result: Ok(v), .. }) => match v["png_base64"].as_str().and_then(crate::util::base64_decode) {
+                                Some(png) => Ok(png),
+                                None => Err(CommandError::failed("the app's screenshot reply held no picture")),
+                            },
+                            Ok(PendingState::Done { result: Err(e), .. }) => Err(e),
+                            Ok(PendingState::Running { what, running_s }) => {
+                                return text_result(
+                                    format!("still running: {what} ({running_s} s); it was not cancelled, call `pending` with id `{id}`"),
+                                    true,
+                                );
+                            }
+                            Ok(PendingState::Unknown) => Err(CommandError::failed("the screenshot is gone: ask for it again")),
+                            Err(e) => Err(e),
+                        },
+                        None => Err(e),
+                    },
+                    other => other,
+                };
+                match shot {
                     Ok(png) if png.len() > 32 << 20 => text_result("[failed] the screenshot is larger than 32 MiB: ask for a smaller region", true),
                     Ok(png) => image_result(
                         &png,
@@ -255,8 +288,14 @@ impl DarkburnTools {
                     Err(e) => fail(&e),
                 }
             }
-            "measure" => done(self.backend.measure(strip_nulls(a))),
-            "preview_job" => done(self.backend.preview_job(strip_nulls(a))),
+            "measure" => {
+                let r = self.backend.measure(strip_nulls(a));
+                self.done_waiting(r, wait_ms)
+            }
+            "preview_job" => {
+                let r = self.backend.preview_job(strip_nulls(a));
+                self.done_waiting(r, wait_ms)
+            }
             "machine_status" => done(self.backend.inspect("machine.status", 0)),
             "list_devices" => done(self.backend.inspect("machine.devices", 0)),
             "pending" => match s(a, "id") {

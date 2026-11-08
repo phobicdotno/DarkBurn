@@ -10,7 +10,7 @@ use darkburn_mcp::{Backend, Gate, MockBackend, PolicyHandle, RemoteBackend, mcp_
 
 const HELP: &str = "darkburn-mcp: MCP server for DarkBurn (JSON-RPC over stdio)
 
-USAGE: darkburn-mcp [--headless] [--control-file PATH] [--port N --token-file PATH]
+USAGE: darkburn-mcp [--print-config] [--headless] [--control-file PATH] [--port N --token-file PATH]
 
   (default)             connect to the running DarkBurn app; the port and session token are read
                         from %APPDATA%\\DarkBurn\\control.json each time a connection is made
@@ -18,6 +18,7 @@ USAGE: darkburn-mcp [--headless] [--control-file PATH] [--port N --token-file PA
   --port N              port of the app's control channel (default 27879); needs --token-file
   --token-file PATH     file whose first line is the session token (with --port)
   --headless            serve an in-memory backend without a window (CI, tests); hardware is denied
+  --print-config        print the `claude mcp add` line and the Claude Desktop JSON for this install
   --version, --help
 ";
 
@@ -30,6 +31,11 @@ fn main() -> ExitCode {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--headless" => headless = true,
+            "--print-config" => {
+                let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(darkburn_mcp::config::SERVER_EXE));
+                print!("{}", darkburn_mcp::config::print_config(&exe));
+                return ExitCode::SUCCESS;
+            }
             "--control-file" => control_file = args.next().map(PathBuf::from),
             "--port" => port = args.next().and_then(|p| p.parse().ok()),
             "--token-file" => token_file = args.next().map(PathBuf::from),

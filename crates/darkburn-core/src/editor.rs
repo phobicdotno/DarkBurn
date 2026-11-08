@@ -114,6 +114,16 @@ impl History {
         self.undo.len()
     }
 
+    /// Labels of the undo steps, the next one to undo first.
+    pub fn undo_labels(&self) -> Vec<&str> {
+        self.undo.iter().rev().map(|s| s.label.as_str()).collect()
+    }
+
+    /// Labels of the redo steps, the next one to redo first.
+    pub fn redo_labels(&self) -> Vec<&str> {
+        self.redo.iter().rev().map(|s| s.label.as_str()).collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.undo.is_empty()
     }

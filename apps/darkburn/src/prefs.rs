@@ -89,6 +89,8 @@ pub struct Prefs {
     pub library_paths: BTreeMap<String, String>,
     /// Import, export and file preferences (formats.rs).
     pub files: crate::formats::FilePrefs,
+    /// AI agents (MCP): off until the user turns it on (mcp_ui.rs).
+    pub mcp: crate::mcp_ui::McpPrefs,
 }
 
 impl Default for Prefs {
@@ -129,6 +131,7 @@ impl Default for Prefs {
             hotkeys: Default::default(),
             library_paths: BTreeMap::new(),
             files: Default::default(),
+            mcp: Default::default(),
         }
     }
 }

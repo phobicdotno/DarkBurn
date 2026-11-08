@@ -69,6 +69,7 @@ pub struct ControlServer {
     streams: Streams,
     discovery: Option<PathBuf>,
     refused: Arc<AtomicUsize>,
+    active: Arc<AtomicUsize>,
 }
 
 impl ControlServer {
@@ -91,7 +92,7 @@ impl ControlServer {
         let refused = Arc::new(AtomicUsize::new(0));
         {
             let (shutdown, streams, token, active, refused, cfg) =
-                (shutdown.clone(), streams.clone(), token.clone(), active, refused.clone(), cfg.clone());
+                (shutdown.clone(), streams.clone(), token.clone(), active.clone(), refused.clone(), cfg.clone());
             std::thread::Builder::new()
                 .name("darkburn-control-accept".into())
                 .spawn(move || accept_loop(listener, tx, shutdown, streams, token, active, refused, cfg))?;
@@ -103,7 +104,7 @@ impl ControlServer {
                 &Discovery { host: addr.ip().to_string(), port: addr.port(), token: token.clone(), pid: std::process::id(), started_ms: now_ms() },
             )?;
         }
-        Ok(Self { addr, token, rx, shutdown, streams, discovery, refused })
+        Ok(Self { addr, token, rx, shutdown, streams, discovery, refused, active })
     }
 
     pub fn addr(&self) -> SocketAddr {
@@ -114,6 +115,10 @@ impl ControlServer {
     }
     pub fn token(&self) -> &str {
         &self.token
+    }
+    /// Clients connected now (authenticated or still in the handshake).
+    pub fn connections(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
     }
     /// Connections dropped for a non-loopback peer, a wrong token or a bad hello.
     pub fn refused_connections(&self) -> usize {

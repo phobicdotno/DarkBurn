@@ -155,10 +155,12 @@ enum Page {
     Text,
     Devices,
     Defaults,
+    Agents,
 }
 
 impl Page {
-    const ALL: [Page; 8] = [Page::General, Page::Display, Page::Editing, Page::WorkArea, Page::Files, Page::Text, Page::Devices, Page::Defaults];
+    const ALL: [Page; 9] =
+        [Page::General, Page::Display, Page::Editing, Page::WorkArea, Page::Files, Page::Text, Page::Devices, Page::Defaults, Page::Agents];
 
     fn title(self) -> String {
         match self {
@@ -170,6 +172,7 @@ impl Page {
             Page::Text => tr("settings.page.text", "Text"),
             Page::Devices => tr("settings.page.devices", "Devices"),
             Page::Defaults => tr("settings.page.defaults", "Shared defaults"),
+            Page::Agents => "AI agents (MCP)".to_string(),
         }
     }
 }
@@ -179,6 +182,9 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
     let t = Tokens::get();
     let tab_id = egui::Id::unique("db_settings_page");
     let mut current: usize = ui.data(|d| d.get_temp(tab_id)).unwrap_or(0);
+    if crate::mcp_ui::take_goto_page() {
+        current = Page::ALL.len() - 1;
+    }
     ui.horizontal_wrapped(|ui| {
         for (i, p) in Page::ALL.iter().enumerate() {
             if ui.selectable_label(current == i, p.title()).clicked() {
@@ -198,6 +204,7 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
         Page::Text => text(ui, prefs),
         Page::Devices => devices(ui, prefs),
         Page::Defaults => defaults(ui, prefs),
+        Page::Agents => crate::mcp_ui::settings_page(ui, prefs),
     }
 }
 

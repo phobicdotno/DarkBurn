@@ -98,7 +98,7 @@ impl ContainmentTree {
     pub fn fill_groups(&self) -> Vec<Vec<usize>> {
         let mut groups = Vec::new();
         for i in 0..self.parent.len() {
-            if self.depth[i] % 2 == 0 {
+            if self.depth[i].is_multiple_of(2) {
                 let mut g = vec![i];
                 g.extend(self.children[i].iter().copied());
                 groups.push(g);
@@ -199,8 +199,8 @@ pub fn containment(paths: &[BezPath], tol: f64) -> ContainmentTree {
         depth[i] = d;
     }
     let mut children = vec![Vec::new(); n];
-    for i in 0..n {
-        if let Some(p) = parent[i] {
+    for (i, p) in parent.iter().enumerate() {
+        if let Some(p) = *p {
             children[p].push(i);
         }
     }

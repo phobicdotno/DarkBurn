@@ -310,7 +310,7 @@ pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
             continue;
         }
         let s = area.signum();
-        let outer = tree.depth[k] % 2 == 0;
+        let outer = tree.depth[k].is_multiple_of(2);
         let d = -kerf * s * if outer { 1.0 } else { -1.0 };
         let pl = contour_to_pline(c, tol);
         if pl.vertex_count() < 2 {

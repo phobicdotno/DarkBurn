@@ -499,8 +499,7 @@ pub fn seg_tangent(seg: &PathSeg, t: f64) -> Vec2 {
                 d
             } else {
                 // Coincident handle: use the next handle direction.
-                let probe = if t < 0.5 { seg.eval(t + 1e-4) - seg.eval(t) } else { seg.eval(t) - seg.eval(t - 1e-4) };
-                probe
+                if t < 0.5 { seg.eval(t + 1e-4) - seg.eval(t) } else { seg.eval(t) - seg.eval(t - 1e-4) }
             }
         }
     };

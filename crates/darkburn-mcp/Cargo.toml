@@ -1,0 +1,26 @@
+[package]
+name = "darkburn-mcp"
+description = "MCP server layer for DarkBurn: tools, safety gate, control channel, mock backend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "darkburn_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "darkburn-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# SolidCraft's small MCP machinery, used as it is (MIT OR Apache-2.0, see ATTRIBUTION.md)
+solidcraft-mcp-server = { path = "../../../solidcraft/crates/mcp-server" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+getrandom = "0.3"
+jsonschema = { version = "0.30", default-features = false }

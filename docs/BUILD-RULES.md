@@ -14,6 +14,9 @@ Read this before writing code. These rules are not optional.
 - Every driver talks through a transport trait. Tests and demos use an in-memory emulator or loopback.
 - Real-hardware tests are done by the owner by hand. Leave the TARGET-* and MCC-06 items for that.
 - The Gweike M3 Ultra is a 1200 W fibre cutter. No code may ever bypass its height follower, piercing or gas logic.
+- Gweike MCC100 card: never write licence registers 150 or 151, and never write register 0x65 from 0x65 or 0x66.
+- Any Gweike remote-monitor or cloud connection is off by default and needs the user to turn it on.
+- No Gweike motion code runs until a read-only capture on the real card has closed the open gaps listed in `docs/research/mlaser-rea-findings.md`.
 
 ## Code
 - Rust edition 2024, `cargo fmt` (repo rustfmt.toml), `cargo clippy --workspace` clean, tests for every behaviour.

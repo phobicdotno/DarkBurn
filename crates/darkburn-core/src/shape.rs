@@ -35,6 +35,12 @@ pub struct Shape {
     pub priority: i32,
     /// Power scale in percent applied to this shape's layer power.
     pub power_scale: f64,
+    /// Manually placed tabs (the cut skips them), as points on the outline in local coordinates.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<[f64; 2]>,
+    /// Set on a group that is a virtual array: the original items and the array settings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub array: Option<Box<crate::varray::ArrayDef>>,
 }
 
 impl Default for Shape {
@@ -48,6 +54,8 @@ impl Default for Shape {
             locked: false,
             priority: 0,
             power_scale: 100.0,
+            tabs: Vec::new(),
+            array: None,
         }
     }
 }

@@ -63,6 +63,8 @@ pub const COMMANDS: &[Cmd] = &[
     c("edit.auto_join", "Auto-Join Selected Shapes", "Alt+J", ""),
     c("edit.optimize", "Optimize Selected Shapes", "Alt+Shift+O", ""),
     c("edit.delete_duplicates", "Delete Duplicates", "Alt+D", ""),
+    c("edit.delete_overlapping", "Delete Overlapping Lines", "", ""),
+    c("shape.remove_rounded_corners", "Remove Rounded Corners", "", ""),
     c("edit.select_open", "Select Open Shapes", "", ""),
     c("edit.select_open_fill", "Select Open Shapes Set to Fill", "", ""),
     c("edit.select_layer", "Select All Shapes in Current Layer", "", ""),
@@ -110,6 +112,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("arrange.group", "Group", "Ctrl+G", "db_group"),
     c("arrange.ungroup", "Ungroup", "Ctrl+U", "db_ungroup"),
     c("arrange.auto_group", "Auto-Group", "", ""),
+    c("arrange.alignment_helper", "Alignment Helper", "", ""),
     c("arrange.flip_h", "Flip Horizontal", "Ctrl+Shift+H", "db_flip_h"),
     c("arrange.flip_v", "Flip Vertical", "Ctrl+Shift+V", "db_flip_v"),
     c("arrange.mirror", "Mirror Across Line", "Ctrl+Shift+M", "mirror"),
@@ -277,6 +280,22 @@ pub const COMMANDS: &[Cmd] = &[
         "Set Shape Properties",
         r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"}}}"#,
     ),
+    a(
+        "shape.set_corner_radius",
+        "Set Rectangle Corner Radius",
+        r#"{"type":"object","properties":{"radius":{"type":"number","description":"mm; negative rounds inwards"}},"required":["radius"]}"#,
+    ),
+    a("shape.add_line", "Add a Line", ""),
+    a("shape.set_start_point", "Set Start Point", ""),
+    a("shape.reverse_direction", "Reverse Direction", ""),
+    a("node.edit", "Edit Nodes", ""),
+    a("tabs.add", "Add Tab", ""),
+    a("tabs.remove", "Remove Tab", ""),
+    a("tabs.clear", "Clear Tabs", ""),
+    a("tabs.auto", "Layer Tab Positions", ""),
+    a("measure.selection", "Measure Selection", ""),
+    a("measure.points", "Measure Between Points", ""),
+    a("measure.arc", "Measure an Arc", ""),
     // Layers, with arguments
     a("layer.select", "Make a Layer Current", r#"{"type":"object","properties":{"layer":{"type":"integer"}},"required":["layer"]}"#),
     a(
@@ -379,7 +398,8 @@ pub fn works(id: &str) -> bool {
             | "view.filled_smooth"
             | "view.toggle_filled"
             | "help.about"
-    ) || id.starts_with("panel.")
+    ) || crate::shape_ops::works(id)
+        || id.starts_with("panel.")
         || id.starts_with("toolbar.")
         || id.starts_with("lang.")
         || id.starts_with("file.recent.")
@@ -529,7 +549,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_page" => &["WIN-03"],
         _ if id.starts_with("file.recent.") => &["FILE-03"],
         _ if id.starts_with("arrange.page_") => &["ARR-27"],
-        _ => &[],
+        _ => crate::shape_ops::checklist(id),
     }
 }
 
@@ -557,6 +577,13 @@ pub fn registry() -> &'static [Cmd] {
     ALL.get_or_init(|| {
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
+        for c in &mut v {
+            if c.args.is_empty()
+                && let Some(args) = crate::shape_ops::args_schema(c.id)
+            {
+                c.args = args;
+            }
+        }
         for p in crate::panels::PANELS {
             v.push(c(leak(format!("panel.{}", p.id)), leak(format!("Show or Hide {}", p.title)), "", ""));
         }
@@ -730,6 +757,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("edit.auto_join"),
             C("edit.optimize"),
             C("edit.delete_duplicates"),
+            C("edit.delete_overlapping"),
+            C("shape.remove_rounded_corners"),
             S,
             C("edit.select_open"),
             C("edit.select_open_fill"),
@@ -794,6 +823,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("arrange.group"),
             C("arrange.ungroup"),
             C("arrange.auto_group"),
+            C("arrange.alignment_helper"),
             S,
             C("arrange.flip_h"),
             C("arrange.flip_v"),
@@ -1055,7 +1085,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout"] {
             assert!(works(id));
         }
-        for id in ["file.save_gcode", "tools.offset", "arrange.grid_array"] {
+        for id in ["file.save_gcode", "tools.trace_image", "laser.rotary"] {
             assert!(!works(id), "{id} arrives in a later phase");
         }
     }

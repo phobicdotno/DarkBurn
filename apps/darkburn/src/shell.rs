@@ -66,6 +66,8 @@ pub struct DarkBurn {
     pub flash_layer: Option<(usize, f64)>,
     /// Project files, auto-save and the system clipboard (files.rs).
     pub files: crate::files::FileState,
+    /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
+    pub shape_ui: crate::shape_ui::ShapeUi,
 }
 
 impl DarkBurn {
@@ -96,6 +98,7 @@ impl DarkBurn {
             notes_open: false,
             flash_layer: None,
             files: Default::default(),
+            shape_ui: Default::default(),
         }
     }
 
@@ -108,6 +111,9 @@ impl DarkBurn {
     /// Whether command `id` has something to act on now (menus grey out the rest).
     pub fn can_run(&self, id: &str) -> bool {
         let sel = self.editor.selection.len();
+        if let Some(can) = crate::shape_ops::can_run(self, id) {
+            return can;
+        }
         match id {
             "edit.undo" => self.editor.history.can_undo(),
             "edit.redo" => self.editor.history.can_redo(),
@@ -167,7 +173,7 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
-        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) {
+        if crate::actions::run(self, ctx, id) || crate::files::run(self, ctx, id) || crate::shape_ops::run(self, ctx, id) {
             return;
         }
         match id {
@@ -219,6 +225,10 @@ impl DarkBurn {
         }
         let mut run = None;
         for (shortcut, id) in commands::shortcut_table() {
+            // In the node tool the plain letter keys are node commands, not align commands.
+            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+                continue;
+            }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(shortcut)) {
                 run = Some(*id);
                 break;

@@ -151,6 +151,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
             Tool::Select => select_tool(ui, app, &mut st, response, xf, m, raw, tol),
             Tool::Line => line_tool(ui, app, &mut st, response, xf, m, raw, tol),
             Tool::Rect | Tool::Ellipse | Tool::Polygon => shape_tool(ui, app, &mut st, response, xf, m, raw),
+            _ => crate::node_tool::interact(ui, app, response, xf, m, raw),
         }
     }
 
@@ -435,8 +436,10 @@ fn finish_pen(app: &mut DarkBurn, st: &mut State, closed: bool) {
     st.gesture = Gesture::None;
     if let Some(path) = st.pen.finish(closed) {
         let layer = app.editor.current_layer;
+        // A line that starts or ends on the end of an open line on the same layer extends it.
+        let closed = darkburn_core::shape::path_is_closed(&path);
         app.editor.edit("Draw line", |d, sel| {
-            let id = d.add(Shape::path(path, layer));
+            let (id, _) = crate::shape_nodes::add_line_in(d, path, layer, !closed, 0.05);
             sel.set([id]);
             true
         });
@@ -525,7 +528,9 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
         app.editor.selection.set([id]);
         st.mode = HandleMode::Scale;
     }
-    if pressed(Modifiers::NONE, Key::H) {
+    if app.tool == Tool::Nodes {
+        // The node tool uses the plain letter keys itself.
+    } else if pressed(Modifiers::NONE, Key::H) {
         *run = Some("arrange.flip_h");
     } else if pressed(Modifiers::NONE, Key::V) {
         *run = Some("arrange.flip_v");
@@ -723,6 +728,9 @@ pub fn paint_overlays(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &egui::Painter,
             painter.text(xf.to_screen(to) + vec2(14.0, 14.0), Align2::LEFT_TOP, format!("{len:.2} mm  {ang:.1}°"), font.clone(), text);
         }
     }
+
+    crate::node_tool::paint(ui, app, xf, painter, accent, dark);
+    crate::shape_ui::paint_preview(app, xf, painter, accent);
 
     // Snap marker.
     if let Some(s) = st.snapped {

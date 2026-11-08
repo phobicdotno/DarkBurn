@@ -21,7 +21,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use darkburn_core::kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use darkburn_core::layer::{self, CutSetting, LaserSelect, Layer, Mode};
-use darkburn_core::{Document, ImageShape, Shape, ShapeId, ShapeKind};
+use darkburn_core::{Document, ImageShape, PathDirection, Shape, ShapeId, ShapeKind};
 use darkburn_job as job;
 use darkburn_job::gcode::{AirCommand, Flavor, GcodeSettings, MarlinPower};
 use darkburn_job::{
@@ -440,7 +440,8 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
     c.line = job::LineSettings {
         perforation: s.perforation.then_some(job::Perforation { cut: s.perf_cut.max(0.01), skip: s.perf_skip.max(0.0) }),
         tabs: job::TabSettings {
-            enabled: s.tabs.enabled && s.tabs.auto_spacing,
+            enabled: s.tabs.enabled,
+            auto: s.tabs.auto_spacing,
             spacing: s.tabs.spacing.max(0.1),
             min_count: s.tabs.min_count,
             max_count: s.tabs.max_count.max(s.tabs.min_count),
@@ -591,6 +592,19 @@ fn image_inputs(
     out
 }
 
+/// Manual tabs, forced start point and forced direction of a shape (`leaf` has its group's
+/// transform folded in) go to the job input.
+pub fn apply_shape_overrides(si: &mut ShapeInput, leaf: &Shape) {
+    si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
+    si.start_point = leaf.start.map(|t| leaf.transform * Point::new(t[0], t[1]));
+    si.direction = leaf.direction.map(|d| match d {
+        PathDirection::AsDrawn => job::ForcedDirection::AsDrawn,
+        PathDirection::Reversed => job::ForcedDirection::Reversed,
+        PathDirection::Clockwise => job::ForcedDirection::Clockwise,
+        PathDirection::CounterClockwise => job::ForcedDirection::CounterClockwise,
+    });
+}
+
 fn kerf_of(layer: &Layer) -> (f64, bool) {
     let kerfs: Vec<f64> =
         layer.settings.iter().filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine) && s.kerf != 0.0).map(|s| s.kerf).collect();
@@ -692,6 +706,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             si.group = group;
             si.priority = leaf.priority;
             si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
+            apply_shape_overrides(&mut si, &leaf);
             entry.shapes.push(si);
         }
     }
@@ -1149,6 +1164,48 @@ mod tests {
         assert!(off >= 3.0, "tabs make laser-off moves: {off}");
         let sim = b.simulate(&AdditionalSettings::default());
         assert!(sim.total_time > 0.0 && sim.scan_distance > 0.0, "{sim:?}");
+    }
+
+    #[test]
+    fn manual_tabs_reach_the_job() {
+        let off = |tabs: Vec<[f64; 2]>| {
+            let mut d = Document::new();
+            line_layer(&mut d, 1, 10.0, 80.0);
+            {
+                let s = d.layer_mut(1).main_mut();
+                s.tabs.enabled = true;
+                s.tabs.auto_spacing = false;
+                s.tabs.size = 2.0;
+            }
+            let mut sh = Shape::rect(Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1);
+            sh.tabs = tabs;
+            d.add(sh);
+            let b = build_job_simple(&input(d)).unwrap();
+            b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power == 0.0)).count()
+        };
+        assert_eq!(off(vec![]), 0, "no automatic tabs and no manual ones: solid cut");
+        assert!(off(vec![[0.0, -20.0]]) >= 1, "a manual tab leaves a gap");
+        assert!(off(vec![[0.0, -20.0], [20.0, 0.0]]) >= 2);
+    }
+
+    #[test]
+    fn forced_start_point_and_direction_reach_the_job() {
+        let first_move = |start: Option<[f64; 2]>, dir: Option<PathDirection>| {
+            let mut d = Document::new();
+            line_layer(&mut d, 1, 10.0, 80.0);
+            let mut sh = Shape::rect(Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1);
+            sh.start = start;
+            sh.direction = dir;
+            d.add(sh);
+            let b = build_job_simple(&input(d)).unwrap();
+            let pts: Vec<Point> = b.toolpath.ops.iter().filter_map(Op::target).collect();
+            (pts[0], pts[1])
+        };
+        let (a, _) = first_move(Some([20.0, 0.0]), None);
+        assert!(a.distance(Point::new(50.0, 30.0)) < 1e-6, "starts at the forced point: {a:?}");
+        let (_, cw1) = first_move(Some([0.0, -20.0]), Some(PathDirection::Clockwise));
+        let (_, ccw1) = first_move(Some([0.0, -20.0]), Some(PathDirection::CounterClockwise));
+        assert!(cw1.x < 30.0 && ccw1.x > 30.0, "directions differ: cw {cw1:?} ccw {ccw1:?}");
     }
 
     #[test]

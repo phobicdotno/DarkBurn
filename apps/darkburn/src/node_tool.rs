@@ -572,6 +572,11 @@ fn plain_selected(app: &DarkBurn) -> Vec<(ShapeId, BezPath)> {
     app.editor.selected().into_iter().filter_map(|id| crate::shape_ops::shape_path(&app.editor.doc, id).map(|p| (id, p))).collect()
 }
 
+/// Selected shapes' outlines with their forced start point and direction applied.
+fn marker_selected(app: &DarkBurn) -> Vec<(ShapeId, BezPath)> {
+    app.editor.selected().into_iter().filter_map(|id| crate::shape_nodes::marker_path(&app.editor.doc, id).map(|p| (id, p))).collect()
+}
+
 fn others_of(app: &DarkBurn, id: ShapeId) -> Vec<BezPath> {
     app.editor.doc.iter().filter(|s| s.id != id).flat_map(|s| s.leaves()).filter(|l| !l.is_image()).map(|l| l.outline()).collect()
 }
@@ -1166,7 +1171,7 @@ fn warp_tool(
 
 fn start_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: &Response, xf: &Xf, m: Mods, raw: Option<Point>, free: bool) {
     let tol = xf.mm(HIT_PX);
-    let targets = plain_selected(app);
+    let targets = marker_selected(app);
     if free && let Some(_) = take_key(ctx, Key::R) {
         run_cmd(app, ctx, st, "shape.reverse_direction", json!({}));
         return;
@@ -1348,7 +1353,7 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
     let text = if dark { Color32::from_gray(230) } else { Color32::from_gray(25) };
     let font = FontId::proportional(11.0);
     let hover = st.hover;
-    let targets = plain_selected(app);
+    let targets = if app.tool == Tool::StartPoints { marker_selected(app) } else { plain_selected(app) };
     let tol = xf.mm(HIT_PX);
     match app.tool {
         Tool::Nodes => {

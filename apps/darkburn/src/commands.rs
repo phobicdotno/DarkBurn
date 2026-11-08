@@ -294,6 +294,8 @@ pub const COMMANDS: &[Cmd] = &[
     a("shape.add_line", "Add a Line", ""),
     a("shape.set_start_point", "Set Start Point", ""),
     a("shape.reverse_direction", "Reverse Direction", ""),
+    a("shape.set_direction", "Set Cut Direction", ""),
+    a("shape.clear_start_point", "Clear Start Point", ""),
     a("node.edit", "Edit Nodes", ""),
     a("tabs.add", "Add Tab", ""),
     a("tabs.remove", "Remove Tab", ""),

@@ -135,6 +135,7 @@ pub fn map_shape(s: &mut Shape, f: &mut dyn FnMut(&Shape) -> Option<BezPath>) ->
         Some(p) => {
             let old = s.transform;
             s.tabs = s.tabs.iter().map(|t| old * Point::new(t[0], t[1])).map(|p| [p.x, p.y]).collect();
+            s.start = s.start.map(|t| old * Point::new(t[0], t[1])).map(|p| [p.x, p.y]);
             s.kind = ShapeKind::Path { path: p };
             s.transform = Affine::IDENTITY;
             1

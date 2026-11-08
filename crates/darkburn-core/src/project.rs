@@ -15,7 +15,7 @@ use crate::shape::Shape;
 /// File extension.
 pub const EXTENSION: &str = "dbrn";
 /// The schema version this build writes.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 const FORMAT_NAME: &str = "darkburn-project";
 
 /// Why a project did not open.
@@ -242,6 +242,29 @@ mod tests {
         d.vision_settings = Some(serde_json::json!({ "version": 1, "rotary": { "enabled": true } }));
         d.show_notes_on_load = true;
         d
+    }
+
+    #[test]
+    fn start_and_direction_overrides_round_trip_and_old_files_load() {
+        use crate::shape::PathDirection;
+        let mut d = Document::new();
+        let mut r = Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1);
+        r.start = Some([5.0, 0.0]);
+        r.direction = Some(PathDirection::Clockwise);
+        r.tabs = vec![[1.0, 2.0]];
+        let id = d.add(r);
+        let bytes = save(&d, "t", None).unwrap();
+        let back = load(&bytes).unwrap().doc;
+        let s = back.get(id).unwrap();
+        assert_eq!(s.start, Some([5.0, 0.0]));
+        assert_eq!(s.direction, Some(PathDirection::Clockwise));
+        assert_eq!(s.tabs, vec![[1.0, 2.0]]);
+        // A version 2 file has neither field and opens with defaults.
+        let mut d2 = Document::new();
+        let id2 = d2.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 1));
+        let b2 = save(&d2, "t", None).unwrap();
+        let s2 = load(&b2).unwrap().doc;
+        assert!(s2.get(id2).unwrap().start.is_none() && s2.get(id2).unwrap().direction.is_none());
     }
 
     #[test]

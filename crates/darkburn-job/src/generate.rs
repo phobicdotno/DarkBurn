@@ -253,7 +253,20 @@ fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSe
     }
     // Containment depth among closed paths (for tabs and lead side).
     let closed: Vec<(Rect, &Poly)> = list.iter().filter(|(p, _)| p.closed).map(|(p, _)| (geom::bbox(&p.pts), p)).collect();
-    for (poly, si) in list.iter() {
+    // A forced start point belongs to the closed sub-path of its shape that lies nearest to it.
+    let mut start_owner: std::collections::HashMap<usize, (usize, f64)> = std::collections::HashMap::new();
+    for (li, (poly, si)) in list.iter().enumerate() {
+        if let (true, Some(sp)) = (poly.closed, layer.shapes[*si].start_point) {
+            let mut ring = poly.pts.clone();
+            ring.push(poly.pts[0]);
+            let d = geom::point_at(&ring, geom::nearest_arclen(&ring, sp).0).0.distance(sp);
+            let e = start_owner.entry(*si).or_insert((li, d));
+            if d < e.1 {
+                *e = (li, d);
+            }
+        }
+    }
+    for (li, (poly, si)) in list.iter().enumerate() {
         let shape = &layer.shapes[*si];
         let bb = geom::bbox(&poly.pts);
         let area = geom::signed_area(&poly.pts).abs();
@@ -270,6 +283,7 @@ fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSe
         let mut pts = poly.pts.clone();
         let mut forced_start = None;
         if poly.closed
+            && start_owner.get(si).is_some_and(|o| o.0 == li)
             && let Some(sp) = shape.start_point
         {
             // Insert the forced start point on the polygon.

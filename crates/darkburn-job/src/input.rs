@@ -227,11 +227,18 @@ pub struct TabSettings {
     pub tab_power: Option<f64>,
     /// No tabs on shapes inside other shapes.
     pub skip_inner: bool,
+    /// Space tabs evenly on shapes without manual tabs. When off, only manual tabs cut gaps.
+    #[serde(default = "yes")]
+    pub auto: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for TabSettings {
     fn default() -> Self {
-        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false }
+        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false, auto: true }
     }
 }
 

@@ -2,7 +2,7 @@
 //! and measuring. Part of the shape-editing commands; see `shape_ops.rs`.
 
 use darkburn_core::kurbo::{BezPath, Point, Vec2};
-use darkburn_core::{Document, Editor, Shape, ShapeId, ShapeKind};
+use darkburn_core::{Document, Editor, PathDirection, Shape, ShapeId, ShapeKind};
 use darkburn_geom::cleanup;
 use darkburn_geom::node::{self, NodeRef};
 use darkburn_geom::path as gpath;
@@ -29,6 +29,8 @@ pub fn works(id: &str) -> bool {
             | "shape.add_line"
             | "shape.set_start_point"
             | "shape.reverse_direction"
+            | "shape.set_direction"
+            | "shape.clear_start_point"
             | "measure.selection"
             | "measure.points"
             | "measure.arc"
@@ -42,7 +44,9 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         }
         "tools.tabs" | "tabs.add" | "tabs.remove" | "tabs.clear" | "tabs.auto" => &["TOOLS-07"],
         "tools.measure" | "measure.selection" | "measure.points" | "measure.arc" => &["TOOLS-10", "DRAW-18", "DRAW-19"],
-        "tools.start_points" | "shape.set_start_point" | "shape.reverse_direction" => &["NODE-10", "NODE-11", "NODE-12", "TB-11"],
+        "tools.start_points" | "shape.set_start_point" | "shape.reverse_direction" | "shape.set_direction" | "shape.clear_start_point" => {
+            &["NODE-10", "NODE-11", "NODE-12", "TB-11", "PLAN-13", "LAYER-09"]
+        }
         "shape.set_corner_radius" => &["DRAW-04"],
         "shape.remove_rounded_corners" => &["DRAW-05"],
         "shape.add_line" => &["DRAW-03"],
@@ -74,7 +78,10 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         "shape.set_start_point" => {
             r#"{"type":"object","properties":{"shape":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"all":{"type":"boolean","description":"every sub-path, not just the nearest"}},"required":["x","y"]}"#
         }
-        "shape.reverse_direction" => r#"{"type":"object","properties":{"shape":{"type":"integer"}}}"#,
+        "shape.reverse_direction" | "shape.clear_start_point" => r#"{"type":"object","properties":{"shape":{"type":"integer"}}}"#,
+        "shape.set_direction" => {
+            r#"{"type":"object","properties":{"shape":{"type":"integer"},"direction":{"enum":["none","as_drawn","reversed","clockwise","counter_clockwise"]}},"required":["direction"]}"#
+        }
         "measure.selection" => r#"{"type":"object","properties":{}}"#,
         "measure.points" => r#"{"type":"object","properties":{"a":{"type":"array"},"b":{"type":"array"}},"required":["a","b"]}"#,
         "measure.arc" => {
@@ -262,6 +269,23 @@ fn tabs_auto(e: &mut Editor, a: &Value) -> R {
 
 // ---------------------------------------------------------------- start points, corners
 
+/// The shape's outline as it will be cut: with its forced start point and direction applied.
+/// Used for the start and end markers of the Start Points tool.
+pub fn marker_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
+    let s = doc.get(id)?;
+    let mut path = shape_path(doc, id)?;
+    if let Some(st) = s.start {
+        path = gpath::set_start_point(&path, s.transform * Point::new(st[0], st[1]), false);
+    }
+    path = match s.direction {
+        Some(PathDirection::Reversed) => gpath::reverse(&path),
+        Some(PathDirection::Clockwise) => gpath::set_direction(&path, gpath::Direction::Clockwise),
+        Some(PathDirection::CounterClockwise) => gpath::set_direction(&path, gpath::Direction::CounterClockwise),
+        _ => path,
+    };
+    Some(path)
+}
+
 fn set_start(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let p = Point::new(num(a, "x", 0.0), num(a, "y", 0.0));
@@ -269,10 +293,22 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
     let done = e.edit("Set start point", |d, _| {
         let mut any = false;
         for id in &ids {
-            if let Some(path) = shape_path(d, *id) {
+            let Some(path) = shape_path(d, *id) else { continue };
+            let Some(at) = query::nearest_point(&path, p).map(|h| h.point) else { continue };
+            let is_path = d.get(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Path { .. }));
+            if is_path {
+                // Paths keep their own sub-path order: rotate the nearest sub-path (or all).
                 let q = gpath::set_start_point(&path, p, all);
                 if q != path {
                     any |= set_shape_path(d, *id, q);
+                }
+            }
+            if let Some(s) = d.get_mut(*id) {
+                let local = s.transform.inverse() * at;
+                let new = Some([local.x, local.y]);
+                if s.start != new {
+                    s.start = new;
+                    any = true;
                 }
             }
         }
@@ -286,8 +322,63 @@ fn reverse(e: &mut Editor, a: &Value) -> R {
     let done = e.edit("Reverse direction", |d, _| {
         let mut any = false;
         for id in &ids {
-            if let Some(path) = shape_path(d, *id) {
+            let is_path = d.get(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Path { .. }));
+            if is_path && let Some(path) = shape_path(d, *id) {
                 any |= set_shape_path(d, *id, gpath::reverse(&path));
+                if let Some(s) = d.get_mut(*id) {
+                    s.direction = None;
+                }
+            } else if let Some(s) = d.get_mut(*id)
+                && !s.is_group()
+                && !s.is_image()
+            {
+                s.direction = Some(if s.direction == Some(PathDirection::Reversed) { PathDirection::AsDrawn } else { PathDirection::Reversed });
+                any = true;
+            }
+        }
+        any
+    });
+    ok(done, &ids)
+}
+
+/// Force the cut direction (`as_drawn`, `reversed`, `clockwise`, `counter_clockwise`) or clear
+/// the override (`none`) on the selected shapes. The geometry is not changed.
+fn set_direction(e: &mut Editor, a: &Value) -> R {
+    let ids = targets(e, a)?;
+    let dir = match word(a, "direction", "none") {
+        "as_drawn" => Some(PathDirection::AsDrawn),
+        "reversed" => Some(PathDirection::Reversed),
+        "clockwise" => Some(PathDirection::Clockwise),
+        "counter_clockwise" => Some(PathDirection::CounterClockwise),
+        "none" => None,
+        other => return Err(format!("unknown direction {other}")),
+    };
+    let done = e.edit("Set cut direction", |d, _| {
+        let mut any = false;
+        for id in &ids {
+            if let Some(s) = d.get_mut(*id)
+                && s.direction != dir
+            {
+                s.direction = dir;
+                any = true;
+            }
+        }
+        any
+    });
+    ok(done, &ids)
+}
+
+/// Clear the forced start point of the selected shapes.
+fn clear_start(e: &mut Editor, a: &Value) -> R {
+    let ids = targets(e, a)?;
+    let done = e.edit("Clear start point", |d, _| {
+        let mut any = false;
+        for id in &ids {
+            if let Some(s) = d.get_mut(*id)
+                && s.start.is_some()
+            {
+                s.start = None;
+                any = true;
             }
         }
         any
@@ -444,6 +535,8 @@ pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
         "shape.remove_rounded_corners" => set_corner_radius(e, a, true),
         "shape.add_line" => add_line(e, a, env),
         "shape.set_start_point" => set_start(e, a),
+        "shape.set_direction" => set_direction(e, a),
+        "shape.clear_start_point" => clear_start(e, a),
         "shape.reverse_direction" => reverse(e, a),
         "measure.selection" => measure_selection(e, a),
         "measure.points" => measure_points(a),
@@ -478,6 +571,35 @@ mod tests {
         run(&mut app, "shape.set_start_point", json!({ "x": 10, "y": 10 })).unwrap();
         run(&mut app, "shape.reverse_direction", json!({})).unwrap();
         assert!(app.editor.history.len() >= 6);
+    }
+
+    #[test]
+    fn start_point_and_direction_are_overrides_that_keep_the_shape_editable() {
+        let mut app = app();
+        let r = add_rect(&mut app, 0.0, 0.0, 10.0, 10.0, 0);
+        select(&mut app, &[r]);
+        run(&mut app, "shape.set_start_point", json!({ "x": 10.2, "y": 5.0 })).unwrap();
+        let sh = app.editor.doc.get(r).unwrap();
+        assert!(matches!(sh.kind, ShapeKind::Rect { .. }), "still a rectangle");
+        let st = sh.start.expect("start recorded");
+        assert!((st[0] - 5.0).abs() < 1e-6 || (st[0] - 10.0).abs() < 1e-6 || (st[0] + 5.0).abs() < 1e-6, "{st:?}");
+        let mp = marker_path(&app.editor.doc, r).unwrap();
+        let first = gpath::start_point(&mp).unwrap();
+        assert!(first.distance(Point::new(10.0, 5.0)) < 1e-6, "marker starts at the click: {first:?}");
+        run(&mut app, "shape.reverse_direction", json!({})).unwrap();
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::Reversed));
+        run(&mut app, "shape.reverse_direction", json!({})).unwrap();
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::AsDrawn));
+        run(&mut app, "shape.set_direction", json!({ "direction": "clockwise" })).unwrap();
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::Clockwise));
+        assert!(run(&mut app, "shape.set_direction", json!({ "direction": "sideways" })).is_err());
+        run(&mut app, "shape.set_direction", json!({ "direction": "none" })).unwrap();
+        run(&mut app, "shape.clear_start_point", json!({})).unwrap();
+        let sh = app.editor.doc.get(r).unwrap();
+        assert!(sh.start.is_none() && sh.direction.is_none());
+        // Undo restores the override.
+        app.editor.undo();
+        assert!(app.editor.doc.get(r).unwrap().start.is_some());
     }
 
     #[test]

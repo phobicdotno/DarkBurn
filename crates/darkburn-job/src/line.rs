@@ -60,7 +60,7 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
         let tab_power = tabs.tab_power.unwrap_or(0.0).min(power);
         let mut centers: Vec<f64> = if ctx.manual_tabs.is_empty() {
             let count = if tabs.spacing > 0.0 { (perimeter / tabs.spacing).round() as u32 } else { tabs.min_count };
-            let count = count.clamp(tabs.min_count, tabs.max_count.max(tabs.min_count));
+            let count = if tabs.auto { count.clamp(tabs.min_count, tabs.max_count.max(tabs.min_count)) } else { 0 };
             (0..count).map(|k| (k as f64 + 0.5) * perimeter / count as f64).collect()
         } else {
             ctx.manual_tabs.iter().map(|p| geom::nearest_arclen(pts, *p).0).collect()

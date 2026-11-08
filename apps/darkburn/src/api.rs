@@ -394,7 +394,7 @@ mod tests {
     fn bad_requests_say_why() {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
-        assert!(run(&mut app, "laser.controller_info", Value::Null).unwrap_err().contains("machine"));
+        assert!(run(&mut app, "tools.position_laser", Value::Null).unwrap_err().contains("machine"));
         assert!(run(&mut app, "tools.qr", Value::Null).unwrap_err().contains("not implemented"));
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));

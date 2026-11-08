@@ -430,7 +430,8 @@ pub fn selected_text(app: &DarkBurn, ids: &[ShapeId]) -> Vec<ShapeId> {
 
 /// Add a text shape; the new shape is selected.
 pub fn add_text(app: &mut DarkBurn, at: Point, layer: usize, a: &Value) -> Result<ShapeId, String> {
-    let mut t = TextShape { font: default_font(app), height: app.prefs.fonts.default_size.max(0.1), ..Default::default() };
+    let mut t =
+        TextShape { font: default_font(app), height: app.prefs.fonts.default_size.max(0.1), welded: app.prefs.opts.auto_weld, ..Default::default() };
     apply_text_args(&mut t, a)?;
     app.prefs.fonts.touch(&t.font);
     let shape = Shape::new(ShapeKind::Text(t), Affine::translate(at.to_vec2()), layer);

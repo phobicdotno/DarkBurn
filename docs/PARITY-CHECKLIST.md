@@ -239,7 +239,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SB-02 Cursor position in current units
 - [x] SB-03 Selection bounds and object count
 - [x] SB-04 Help text for the control under the mouse
-- [ ] SB-05 Layer and pass progress while a job runs
+- [x] SB-05 Layer and pass progress while a job runs
 - [x] SB-06 Auto-save status
 
 ---
@@ -368,7 +368,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PANEL-01 Default right-side tab groups as in LightBurn
 - [x] PANEL-02 Move, Art Library and File List hidden by default
 - [x] PANEL-03 Compact layout on small screens
-- [~] PANEL-04 Panel layout saved per device
+- [x] PANEL-04 Panel layout saved per device
 
 ---
 
@@ -862,7 +862,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-04 Feeder setup
 - [x] OTHER-05 Cylinder correction, including concave
 - [x] OTHER-06 Pre-job checklist editor
-- [ ] OTHER-07 Project notes dialog shown on open
+- [x] OTHER-07 Project notes dialog shown on open
 - [ ] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
@@ -886,22 +886,22 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Editor
 - [x] SET-11 Beginner mode
 - [x] SET-12 Auto-save interval
-- [~] SET-13 Check for updates
-- [~] SET-14 Open files in the running copy
-- [~] SET-15 Default states for cut selected and use selection origin
-- [~] SET-16 Save job origin and cut selected in the project
+- [x] SET-13 Check for updates
+- [x] SET-14 Open files in the running copy
+- [x] SET-15 Default states for cut selected and use selection origin
+- [x] SET-16 Save job origin and cut selected in the project
 - [x] SET-17 Remember move, size, rotate and shear lock states
-- [~] SET-18 Ignore out-of-bounds shapes
+- [x] SET-18 Ignore out-of-bounds shapes
 - [~] SET-19 Ignore Start when the monitor is off
-- [~] SET-20 Load default layers on new project
+- [x] SET-20 Load default layers on new project
 - [~] SET-21 Built-in or system file dialogs
 - [~] SET-22 Sounds on error and on job finished
-- [~] SET-23 Save job log
+- [x] SET-23 Save job log
 - [x] SET-24 Use system clipboard
 - [x] SET-25 Nudge distances for normal, Ctrl and Shift
-- [~] SET-26 Default font, height, auto-weld
+- [x] SET-26 Default font, height, auto-weld
 - [x] SET-27 Shared default preferences file for makerspaces
-- [~] SET-28 Excluded serial ports
+- [x] SET-28 Excluded serial ports
 
 ### Files
 - [x] SET-29 SVG DPI

@@ -1,0 +1,17 @@
+[package]
+name = "darkburn-job"
+description = "DarkBurn's job engine: toolpath generation, cut planning, job origin, time estimate and G-code output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

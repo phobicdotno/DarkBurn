@@ -891,6 +891,13 @@ fn orig_node(path: &BezPath, n: NodeRef) -> Option<Point> {
     contours(path).get(n.subpath)?.node(n.node)
 }
 
+/// Keys the node tool handles itself, so the shell must leave them alone while it is active:
+/// every plain key, and Ctrl+D (delete segment). Delete, Backspace and Ctrl+D fall back to the
+/// ordinary delete and duplicate commands when no node or segment is selected.
+pub fn owns_shortcut(s: &egui::KeyboardShortcut) -> bool {
+    s.modifiers == Modifiers::NONE || (s.modifiers.command && !s.modifiers.shift && !s.modifiers.alt && s.logical_key == Key::D)
+}
+
 fn node_keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, raw: Option<Point>, tol: f64) {
     // Nudge the selected nodes.
     for key in [Key::ArrowLeft, Key::ArrowRight, Key::ArrowUp, Key::ArrowDown] {
@@ -919,6 +926,29 @@ fn node_keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, raw: Optio
                 })
                 .collect();
             commit(app, "Nudge nodes", edits);
+        }
+    }
+    // Delete and Backspace remove the selected nodes (or segment); with none selected they delete
+    // the shapes as everywhere else. Ctrl+D deletes the selected segment, else duplicates.
+    for key in [Key::Delete, Key::Backspace, Key::D] {
+        let taken = ctx.input_mut(|i| {
+            let pos = i.events.iter().position(
+                |e| matches!(e, egui::Event::Key { key: k, pressed: true, modifiers, .. } if *k == key && (key != Key::D || modifiers.command)),
+            )?;
+            match i.events.remove(pos) {
+                egui::Event::Key { modifiers, .. } => Some(modifiers),
+                _ => None,
+            }
+        });
+        let Some(m) = taken else { continue };
+        let have = !st.nodes.is_empty() || st.seg.is_some();
+        if have {
+            let op = if key == Key::D || st.nodes.is_empty() { NodeOp::DeleteSegment } else { NodeOp::Delete };
+            run_node_op(ctx, app, st, op, raw, tol);
+        } else if key == Key::D {
+            run_cmd(app, ctx, st, "edit.duplicate", json!({}));
+        } else if !m.alt {
+            run_cmd(app, ctx, st, "edit.delete", json!({}));
         }
     }
     for key in [Key::I, Key::D, Key::C, Key::S, Key::L, Key::V, Key::B, Key::T, Key::E, Key::H] {
@@ -1626,6 +1656,48 @@ mod tests {
         assert!(matches!(c.segs[0], PathSeg::Cubic(_)));
         assert!((c.segs[0].eval(0.5).y + 3.0).abs() < 1e-9);
         assert_eq!(c.segs[0].start(), Point::new(0.0, 0.0));
+    }
+
+    /// Feed one key press through `node_keys` inside an egui frame.
+    fn press(app: &mut DarkBurn, st: &mut State, key: Key, modifiers: Modifiers) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }],
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| node_keys(ui.ctx(), app, st, Some(Point::new(0.0, 0.0)), 1.0));
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn delete_and_ctrl_d_work_in_the_node_tool() {
+        use crate::shape_ops::tests::{add_rect, app, run, select};
+        let mut app = app();
+        let r = add_rect(&mut app, 0.0, 0.0, 10.0, 10.0, 0);
+        select(&mut app, &[r]);
+        run(&mut app, "node.edit", json!({ "op": "insert", "subpath": 0, "seg": 0, "t": 0.5 })).unwrap();
+        let count = |app: &DarkBurn| crate::shape_ops::shape_path(&app.editor.doc, r).map(|p| darkburn_geom::cleanup::node_count(&p)).unwrap_or(0);
+        assert_eq!(count(&app), 5);
+        let mut st = State::default();
+        st.nodes.push((r, NodeRef::new(0, 1)));
+        press(&mut app, &mut st, Key::Delete, Modifiers::NONE);
+        assert_eq!(count(&app), 4, "Delete removed the selected node");
+        // Nothing selected: Delete removes the shape, Ctrl+D duplicates it.
+        let mut st = State::default();
+        let n = app.editor.doc.len();
+        press(&mut app, &mut st, Key::D, Modifiers::COMMAND);
+        assert_eq!(app.editor.doc.len(), n + 1, "Ctrl+D duplicated");
+        press(&mut app, &mut st, Key::Delete, Modifiers::NONE);
+        assert_eq!(app.editor.doc.len(), n, "Delete deleted the selection");
+    }
+
+    #[test]
+    fn the_node_tool_owns_delete_and_ctrl_d_but_not_other_ctrl_keys() {
+        let sc = |m: Modifiers, k: Key| egui::KeyboardShortcut::new(m, k);
+        assert!(owns_shortcut(&sc(Modifiers::NONE, Key::Delete)));
+        assert!(owns_shortcut(&sc(Modifiers::COMMAND, Key::D)));
+        assert!(!owns_shortcut(&sc(Modifiers::COMMAND, Key::C)));
+        assert!(!owns_shortcut(&sc(Modifiers::COMMAND | Modifiers::SHIFT, Key::D)));
     }
 
     #[test]

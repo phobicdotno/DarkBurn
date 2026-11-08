@@ -261,7 +261,7 @@ impl DarkBurn {
         let mut run = None;
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
             // In the node tool the plain letter keys are node commands, not align commands.
-            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+            if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
             }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
@@ -275,7 +275,7 @@ impl DarkBurn {
                 run = Some("view.zoom_in");
             } else if pressed(Modifiers::NONE, Key::Minus) {
                 run = Some("view.zoom_out");
-            } else if pressed(Modifiers::NONE, Key::Backspace) {
+            } else if self.tool != Tool::Nodes && pressed(Modifiers::NONE, Key::Backspace) {
                 run = Some("edit.delete");
             }
         }

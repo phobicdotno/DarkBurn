@@ -13,7 +13,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ---
 
-## 0. DarkBurn shell (SolidCraft look and feel)
+## 0. DarkBurn shell
 
 - [x] SHELL-01 Cargo workspace, Rust + egui/eframe pinned to SolidCraft's versions
 - [x] SHELL-02 SolidCraft theme crate applied (dark and light tokens)

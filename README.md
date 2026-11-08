@@ -1,7 +1,7 @@
 # DarkBurn
 
 A clean-room, open laser cutter and engraver program with full LightBurn feature parity,
-built in Rust + egui with the SolidCraft look and feel.
+built in Rust + egui.
 
 - Targets: GRBL (USB serial), Ruida (Ethernet/USB), Gweike M3 Ultra, and more.
 - Status: planning. See `docs/PARITY-CHECKLIST.md` for the feature, GUI and menu checklist

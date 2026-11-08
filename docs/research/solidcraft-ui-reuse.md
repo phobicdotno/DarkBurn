@@ -1,4 +1,4 @@
-# Reusing SolidCraft's look and feel in DarkBurn (Rust + egui)
+# Reusing SolidCraft's UI crates in DarkBurn (Rust + egui)
 
 Source: `C:\Users\kk\solidcraft`, version 0.40.0-rc.3, HEAD `be6e43955`, which sits on upstream `419bbcda0`. Rust edition 2024, rust-version 1.95, egui/eframe 0.37. I only read the repo; nothing in it was modified.
 Screenshot of the running app: `C:\Users\kk\AppData\Local\Temp\claude\b66be70eda9554f1\e846ba18-a1db-462b-80d4-b843627ceb1a\scratchpad\solidcraft-window.png` (installed v0.40.0-rc.3, 5120x2088).

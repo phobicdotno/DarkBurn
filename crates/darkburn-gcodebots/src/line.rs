@@ -26,6 +26,7 @@
 //! byte on Smoothieware), then switches the laser off and waits for the answers.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -41,7 +42,7 @@ use kurbo::Point;
 use crate::detect::{FirmwareGuess, identify_lines};
 use crate::machine::{Capabilities, GcodeMachine, MachineError, MachineEvent, MachineFamily, MachineSnapshot};
 use crate::template::{jog_vars, num, render, render_lines};
-use crate::translate::{TranslateOptions, translate};
+use crate::translate::{TranslateOptions, parse_words, translate};
 
 /// How the controller's position and state are polled.
 #[derive(Clone, Debug, PartialEq)]
@@ -254,6 +255,9 @@ pub struct LineMachine {
     cmds: Sender<Cmd>,
     events: Receiver<MachineEvent>,
     shared: Arc<Mutex<MachineSnapshot>>,
+    /// Set when a job or frame has been handed to the worker and the snapshot does not show it
+    /// yet, so a second start is refused at once.
+    starting: Arc<AtomicBool>,
     cfg: LineConfig,
     worker: Option<JoinHandle<()>>,
 }
@@ -275,9 +279,10 @@ impl LineMachine {
             ..Default::default()
         };
         let shared = Arc::new(Mutex::new(snap.clone()));
-        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), cfg.clone(), snap);
+        let starting = Arc::new(AtomicBool::new(false));
+        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), starting.clone(), cfg.clone(), snap);
         let handle = std::thread::Builder::new().name("darkburn-gcode".into()).spawn(move || worker.run()).expect("spawn G-code worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, cfg, worker: Some(handle) }
+        Self { cmds: cmd_tx, events: ev_rx, shared, starting, cfg, worker: Some(handle) }
     }
 
     pub fn config(&self) -> &LineConfig {
@@ -299,10 +304,20 @@ impl LineMachine {
 
     fn free(&self) -> Result<MachineSnapshot, MachineError> {
         let s = self.ready()?;
-        if s.activity != Activity::Idle {
+        if s.activity != Activity::Idle || self.starting.load(Ordering::SeqCst) {
             return Err(MachineError::Busy);
         }
         Ok(s)
+    }
+
+    /// Claims the right to start a job or frame; the worker releases it.
+    fn claim_start(&self) -> Result<(), MachineError> {
+        self.starting.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).map(|_| ()).map_err(|_| MachineError::Busy)
+    }
+
+    fn send_start(&self, job: Job, kind: JobKind) -> Result<(), MachineError> {
+        self.claim_start()?;
+        self.send(Cmd::StartJob(job, kind)).inspect_err(|_| self.starting.store(false, Ordering::SeqCst))
     }
 
     fn motion_ok(&self) -> Result<MachineSnapshot, MachineError> {
@@ -376,7 +391,7 @@ impl GcodeMachine for LineMachine {
         if let Some(b) = &job.bounds {
             b.check().map_err(MachineError::from)?;
         }
-        self.send(Cmd::StartJob(job, JobKind::Job))
+        self.send_start(job, JobKind::Job)
     }
 
     fn pause(&self) -> Result<(), MachineError> {
@@ -438,7 +453,7 @@ impl GcodeMachine for LineMachine {
         let lines = translate(src.iter().map(String::as_str), &self.cfg.power);
         let n = lines.len();
         let job = Job::from_lines(lines).with_total(n);
-        self.send(Cmd::StartJob(job, JobKind::Frame))
+        self.send_start(job, JobKind::Frame)
     }
 
     fn jog(&self, step: JogStep) -> Result<(), MachineError> {
@@ -513,12 +528,12 @@ impl GcodeMachine for LineMachine {
 
     fn unlock(&self) -> Result<(), MachineError> {
         let s = self.free()?;
+        if s.alarm.is_some() && self.cfg.halt_needs_power_cycle {
+            return Err(MachineError::Unsupported("this controller must be power-cycled after an emergency stop"));
+        }
         let lines = render_lines(&self.cfg.commands.unlock, &[]);
         if lines.is_empty() {
             return Err(MachineError::Unsupported("unlocking"));
-        }
-        if s.alarm.is_some() && self.cfg.halt_needs_power_cycle {
-            return Err(MachineError::Unsupported("this controller must be power-cycled after an emergency stop"));
         }
         self.send(Cmd::Lines { lines, tag: Tag::Unlock })
     }
@@ -689,6 +704,8 @@ struct Sent {
 struct Out {
     text: String,
     tag: Tag,
+    /// Sent even when the window is full (pause, resume, fire off).
+    urgent: bool,
 }
 
 struct ActiveJob {
@@ -736,7 +753,7 @@ impl ActiveJob {
                 Some(raw) => {
                     self.source_index += 1;
                     if let Some(text) = clean_line(&raw) {
-                        self.staged = Some(Out { text, tag: Tag::Job(self.source_index) });
+                        self.staged = Some(Out { text, tag: Tag::Job(self.source_index), urgent: false });
                         return;
                     }
                 }
@@ -774,6 +791,8 @@ struct Worker {
     cmds: Receiver<Cmd>,
     events: Sender<MachineEvent>,
     shared: Arc<Mutex<MachineSnapshot>>,
+    starting: Arc<AtomicBool>,
+    start_seen: bool,
     cfg: LineConfig,
     snap: MachineSnapshot,
     rx_line: Vec<u8>,
@@ -790,6 +809,7 @@ struct Worker {
     ident_lines: Vec<String>,
     collect: Vec<String>,
     unknown_pending: Option<String>,
+    reckon_relative: bool,
 }
 
 enum Flow {
@@ -803,6 +823,7 @@ impl Worker {
         cmds: Receiver<Cmd>,
         events: Sender<MachineEvent>,
         shared: Arc<Mutex<MachineSnapshot>>,
+        starting: Arc<AtomicBool>,
         cfg: LineConfig,
         snap: MachineSnapshot,
     ) -> Self {
@@ -812,6 +833,8 @@ impl Worker {
             cmds,
             events,
             shared,
+            starting,
+            start_seen: false,
             phase: Phase::WaitBanner { deadline: now + cfg.banner_wait },
             cfg,
             snap,
@@ -828,6 +851,7 @@ impl Worker {
             ident_lines: Vec::new(),
             collect: Vec::new(),
             unknown_pending: None,
+            reckon_relative: false,
         }
     }
 
@@ -842,6 +866,10 @@ impl Worker {
     fn publish(&mut self) {
         self.snap.updated = Some(Instant::now());
         *self.shared.lock().unwrap_or_else(|p| p.into_inner()) = self.snap.clone();
+        if self.start_seen {
+            self.start_seen = false;
+            self.starting.store(false, Ordering::SeqCst);
+        }
     }
 
     fn run(mut self) {
@@ -956,10 +984,11 @@ impl Worker {
         if matches!(tag, Tag::Console | Tag::Macro) {
             self.emit(MachineEvent::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
         }
-        self.queue.push_back(Out { text, tag });
+        self.queue.push_back(Out { text, tag, urgent: false });
     }
 
     fn start_job(&mut self, job: Job, kind: JobKind) {
+        self.start_seen = true;
         if self.job.is_some() || self.stop.is_some() {
             self.emit(MachineEvent::Rejected("A job is already running.".into()));
             return;
@@ -1009,7 +1038,7 @@ impl Worker {
     }
 
     fn enqueue_front(&mut self, text: String) {
-        self.queue.push_front(Out { text, tag: Tag::Plain });
+        self.queue.push_front(Out { text, tag: Tag::Plain, urgent: true });
     }
 
     fn fire_off(&mut self) {
@@ -1018,7 +1047,7 @@ impl Worker {
             // Drop queued fire-on lines first so they cannot switch the laser on afterwards.
             self.queue.retain(|o| o.tag != Tag::Fire);
             for l in render_lines(&self.cfg.commands.fire_off, &[]) {
-                self.queue.push_front(Out { text: l, tag: Tag::StopStep });
+                self.queue.push_front(Out { text: l, tag: Tag::StopStep, urgent: true });
             }
         }
         self.snap.fire_on = false;
@@ -1102,9 +1131,49 @@ impl Worker {
     fn write_line(&mut self, text: &str, tag: Tag) -> Result<(), ()> {
         let wire = format!("{text}\n");
         self.write(wire.as_bytes())?;
+        if self.cfg.poll == PollMode::None {
+            self.reckon(text);
+        }
         self.inflight_bytes += wire.len();
         self.inflight.push_back(Sent { len: wire.len(), tag, text: text.to_owned() });
         Ok(())
+    }
+
+    /// Dead reckoning for controllers that cannot report a position: follows the X/Y/Z words
+    /// of the lines sent (G90/G91, G92, homing). It is the commanded position, not a measurement.
+    fn reckon(&mut self, text: &str) {
+        let Some(words) = parse_words(&strip_comment_simple(text)) else { return };
+        let mut rel = self.reckon_relative;
+        let mut pos = self.snap.mpos;
+        let (mut set_origin, mut home) = (false, false);
+        for (l, v) in &words {
+            if *l == 'G' {
+                match v.parse::<f64>().ok() {
+                    Some(g) if (g - 90.0).abs() < 1e-9 => rel = false,
+                    Some(g) if (g - 91.0).abs() < 1e-9 => rel = true,
+                    Some(g) if (g - 92.0).abs() < 1e-9 || (g - 28.0).abs() < 1e-9 => {
+                        set_origin = (g - 92.0).abs() < 1e-9;
+                        home = !set_origin;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if text.trim_start().starts_with("$H") {
+            home = true;
+        }
+        self.reckon_relative = rel;
+        if home {
+            pos = [0.0; 3];
+        } else {
+            for (l, v) in &words {
+                let Some(i) = ['X', 'Y', 'Z'].iter().position(|a| a == l) else { continue };
+                let Ok(v) = v.parse::<f64>() else { continue };
+                pos[i] = if set_origin || !rel { v } else { pos[i] + v };
+            }
+        }
+        self.snap.mpos = pos;
+        self.snap.wpos = pos;
     }
 
     fn ingest(&mut self, data: &[u8]) {
@@ -1132,10 +1201,10 @@ impl Worker {
             return;
         }
         if low == "ok" || low.starts_with("ok ") || low.starts_with("ok:") {
-            if let Some(rest) = line.get(2..) {
-                if rest.contains("C:") || rest.contains("X:") {
-                    self.parse_position(rest, false);
-                }
+            if let Some(rest) = line.get(2..)
+                && (rest.contains("C:") || rest.contains("X:"))
+            {
+                self.parse_position(rest, false);
             }
             self.on_ack(None);
             return;
@@ -1221,16 +1290,16 @@ impl Worker {
         let mut found = false;
         for tok in head.split_whitespace() {
             let tok = tok.trim_start_matches("C:");
-            if let Some((k, v)) = tok.split_once(':') {
-                if let Ok(v) = v.parse::<f64>() {
-                    match k {
-                        "X" => pos[0] = v,
-                        "Y" => pos[1] = v,
-                        "Z" => pos[2] = v,
-                        _ => continue,
-                    }
-                    found = true;
+            if let Some((k, v)) = tok.split_once(':')
+                && let Ok(v) = v.parse::<f64>()
+            {
+                match k {
+                    "X" => pos[0] = v,
+                    "Y" => pos[1] = v,
+                    "Z" => pos[2] = v,
+                    _ => continue,
                 }
+                found = true;
             }
         }
         if found {
@@ -1436,10 +1505,10 @@ impl Worker {
             return Err(());
         }
         // Fire timer.
-        if let Some(u) = self.fire_until {
-            if now >= u {
-                self.fire_off();
-            }
+        if let Some(u) = self.fire_until
+            && now >= u
+        {
+            self.fire_off();
         }
         self.tick_stop(now);
         self.poll(now)?;
@@ -1461,9 +1530,9 @@ impl Worker {
             }
             PollMode::M114 => {
                 let busy = self.inflight.iter().any(|s| s.tag == Tag::Poll) || self.queue.iter().any(|o| o.tag == Tag::Poll);
-                if !busy && self.stop.is_none() && !matches!(self.snap.alarm, Some(_) if self.cfg.halt_needs_power_cycle) {
+                if !busy && self.stop.is_none() && !(self.snap.alarm.is_some() && self.cfg.halt_needs_power_cycle) {
                     self.last_poll = now;
-                    self.queue.push_back(Out { text: "M114".into(), tag: Tag::Poll });
+                    self.queue.push_back(Out { text: "M114".into(), tag: Tag::Poll, urgent: false });
                 }
             }
         }
@@ -1489,7 +1558,7 @@ impl Worker {
             if let Some(front) = self.queue.front() {
                 let len = front.text.len() + 1;
                 let alone = front.tag == Tag::SettingsRead || matches!(front.tag, Tag::Home);
-                if (alone && !self.inflight.is_empty()) || !self.can_send(len) {
+                if (alone && !self.inflight.is_empty()) || (!front.urgent && !self.can_send(len)) {
                     return Ok(());
                 }
                 let Some(o) = self.queue.pop_front() else { return Ok(()) };
@@ -1515,20 +1584,20 @@ impl Worker {
                 match fin {
                     FinishPosition::Stay => {}
                     FinishPosition::Origin => {
-                        tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail });
-                        tail.push_back(Out { text: "G0 X0 Y0".into(), tag: Tag::JobTail });
+                        tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail, urgent: false });
+                        tail.push_back(Out { text: "G0 X0 Y0".into(), tag: Tag::JobTail, urgent: false });
                     }
                     FinishPosition::Machine(p) => {
-                        tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail });
-                        tail.push_back(Out { text: format!("G0 X{} Y{}", num(p.x), num(p.y)), tag: Tag::JobTail });
+                        tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail, urgent: false });
+                        tail.push_back(Out { text: format!("G0 X{} Y{}", num(p.x), num(p.y)), tag: Tag::JobTail, urgent: false });
                     }
                 }
                 for l in render_lines(&self.cfg.commands.laser_off, &[]) {
-                    tail.push_back(Out { text: l, tag: Tag::JobTail });
+                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
                 }
                 let sync = self.cfg.finish_sync.trim();
                 if !sync.is_empty() {
-                    tail.push_back(Out { text: sync.to_owned(), tag: Tag::JobSync });
+                    tail.push_back(Out { text: sync.to_owned(), tag: Tag::JobSync, urgent: false });
                 }
                 job.tail = tail;
                 job.exhausted = true;
@@ -1564,13 +1633,11 @@ impl Worker {
             }
             None => false,
         };
-        if done {
-            if let Some(j) = self.job.take() {
-                let p = j.progress();
-                self.snap.job = Some(p.clone());
-                self.snap.activity = Activity::Idle;
-                self.emit(MachineEvent::JobFinished(p));
-            }
+        if done && let Some(j) = self.job.take() {
+            let p = j.progress();
+            self.snap.job = Some(p.clone());
+            self.snap.activity = Activity::Idle;
+            self.emit(MachineEvent::JobFinished(p));
         }
     }
 
@@ -1592,14 +1659,12 @@ impl Worker {
                     let mut lines = render_lines(&self.cfg.commands.after_stop, &[]);
                     lines.extend(render_lines(&self.cfg.commands.laser_off, &[]));
                     lines.extend(render_lines(&self.cfg.commands.fire_off, &[]));
-                    let reason = s.reason.clone();
-                    let _ = reason;
                     if let Some(s) = self.stop.as_mut() {
                         s.phase = StopPhase::Off;
                         s.since = now;
                     }
                     for l in lines {
-                        self.queue.push_back(Out { text: l, tag: Tag::StopStep });
+                        self.queue.push_back(Out { text: l, tag: Tag::StopStep, urgent: true });
                     }
                 }
             }
@@ -1648,6 +1713,10 @@ impl Worker {
             self.emit(MachineEvent::StateChanged(new));
         }
     }
+}
+
+fn strip_comment_simple(t: &str) -> String {
+    clean_line(t).unwrap_or_default()
 }
 
 // ===================================================================================

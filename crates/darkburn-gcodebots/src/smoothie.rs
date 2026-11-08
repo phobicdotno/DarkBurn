@@ -32,8 +32,13 @@ pub fn config(p: &DeviceProfile) -> LineConfig {
         TransferMode::Synchronous => (1, 100),
         TransferMode::Buffered => (2, 120),
     };
+    if g.reduce_smoothie_pause_delay {
+        // Smoothieware reads lines in order, so a pause waits behind every line already sent.
+        // One line in flight keeps that wait short.
+        c.window_lines = 1;
+    }
     c.poll = PollMode::Raw(b"?".to_vec());
-    c.poll_interval = Duration::from_millis(if g.reduce_smoothie_pause_delay { 150 } else { 250 });
+    c.poll_interval = Duration::from_millis(200);
     c.reports_state = true;
     c.s_max = g.s_max;
     c.travel = Some(p.travel_limits());

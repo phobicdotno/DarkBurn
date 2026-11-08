@@ -431,18 +431,15 @@ impl LineEmulator {
         }
         let up = line.to_ascii_uppercase();
         if self.halted {
-            match self.cfg.flavor {
-                EmuFlavor::Smoothie => {
-                    if up.starts_with("$X") || up.starts_with("M999") {
-                        self.halted = false;
-                        self.stats.lines.push(line);
-                        self.ok();
-                    } else {
-                        self.say("!!");
-                    }
+            // A halted Marlin does not answer at all until it is reset.
+            if self.cfg.flavor == EmuFlavor::Smoothie {
+                if up.starts_with("$X") || up.starts_with("M999") {
+                    self.halted = false;
+                    self.stats.lines.push(line);
+                    self.ok();
+                } else {
+                    self.say("!!");
                 }
-                // A halted Marlin does not answer at all until it is reset.
-                _ => {}
             }
             return true;
         }
@@ -499,9 +496,7 @@ impl LineEmulator {
                 }
             }
             _ => {
-                if !self.laser_enabled {
-                    0.0
-                } else if self.inline && !g1 {
+                if !self.laser_enabled || (self.inline && !g1) {
                     0.0
                 } else {
                     (self.s / 255.0).clamp(0.0, 1.0)
@@ -515,13 +510,13 @@ impl LineEmulator {
         let mut handled_reply = false;
         for (l, v, _) in w {
             if *l == 'G' {
-                match *v {
-                    g if g == 20.0 || g == 21.0 => {}
-                    g if g == 90.0 => self.abs = true,
-                    g if g == 91.0 => self.abs = false,
-                    g if g == 0.0 => self.motion = 0,
-                    g if g == 1.0 => self.motion = 1,
-                    g if g == 92.0 => {
+                match (*v * 10.0).round() as i32 {
+                    200 | 210 => {}
+                    900 => self.abs = true,
+                    910 => self.abs = false,
+                    0 => self.motion = 0,
+                    10 => self.motion = 1,
+                    920 => {
                         for (i, a) in ['X', 'Y', 'Z'].iter().enumerate() {
                             if let Some(val) = get(*a) {
                                 self.offset[i] = self.lpos[i] - val;
@@ -531,13 +526,13 @@ impl LineEmulator {
                             self.offset = self.lpos;
                         }
                     }
-                    g if (g - 92.1).abs() < 1e-6 => self.offset = [0.0; 3],
-                    g if g == 4.0 => {
+                    921 => self.offset = [0.0; 3],
+                    40 => {
                         let secs = get('P').map_or(0.0, |ms| ms / 1000.0) + get('S').unwrap_or(0.0);
                         self.enqueue(Item::Dwell(secs), true, true);
                         handled_reply = true;
                     }
-                    g if g == 28.0 || (g - 28.2).abs() < 1e-6 => {
+                    280 | 282 => {
                         self.enqueue(Item::Home, true, true);
                         handled_reply = true;
                     }
@@ -545,10 +540,10 @@ impl LineEmulator {
                 }
             }
         }
-        if let Some(f) = get('F') {
-            if f > 0.0 {
-                self.feed = f;
-            }
+        if let Some(f) = get('F')
+            && f > 0.0
+        {
+            self.feed = f;
         }
         if let Some(s) = get('S') {
             // S on M-codes is handled by the M-code itself; modal S for moves.
@@ -572,8 +567,8 @@ impl LineEmulator {
                 }
             }
             if self.soft_endstops && matches!(self.cfg.flavor, EmuFlavor::Marlin | EmuFlavor::Snapmaker) {
-                for i in 0..3 {
-                    target[i] = target[i].clamp(0.0, self.cfg.travel[i]);
+                for (t, max) in target.iter_mut().zip(self.cfg.travel) {
+                    *t = t.clamp(0.0, max);
                 }
             }
             let power = self.power_now(g1);
@@ -656,7 +651,6 @@ impl LineEmulator {
                     EmuFlavor::Smoothie => {
                         let m = self.mpos;
                         self.say(&format!("ok C: X:{:.4} Y:{:.4} Z:{:.4}", m[0], m[1], m[2]));
-                        let _ = w;
                     }
                     _ => {
                         let m = self.mpos;
@@ -887,13 +881,12 @@ impl LineEmulator {
             let mut burned = 0.0;
             let mut rapid = false;
             let mut power = 0.0;
-            if let Item::Move { to, feed, power: p, rapid: r } = &e.item {
+            if let Item::Move { to, power: p, rapid: r, .. } = &e.item {
                 let prev = self.mpos;
-                for i in 0..3 {
-                    self.mpos[i] = e.from[i] + (to[i] - e.from[i]) * frac;
+                for (i, t) in to.iter().enumerate() {
+                    self.mpos[i] = e.from[i] + (t - e.from[i]) * frac;
                 }
                 let d = ((self.mpos[0] - prev[0]).powi(2) + (self.mpos[1] - prev[1]).powi(2) + (self.mpos[2] - prev[2]).powi(2)).sqrt();
-                let _ = feed;
                 if *p > 0.0 {
                     burned = d;
                     power = *p;

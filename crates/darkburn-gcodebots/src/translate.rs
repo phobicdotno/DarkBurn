@@ -119,7 +119,7 @@ pub fn home_command(p: &DeviceProfile) -> String {
 type Word = (char, String);
 
 /// Splits a G-code line into words. `None` for lines that are not plain G-code (`$H`, console).
-fn parse_words(line: &str) -> Option<Vec<Word>> {
+pub(crate) fn parse_words(line: &str) -> Option<Vec<Word>> {
     let mut words = Vec::new();
     let mut chars = line.chars().peekable();
     while let Some(&c) = chars.peek() {
@@ -194,10 +194,10 @@ where
         translate_line(&line, opts, &mut st, &mut out);
     }
     // Never leave power on at the end.
-    if let PowerStyle::Command { off, .. } = &opts.style {
-        if st.cmd_state.is_some() {
-            out.push(off.clone());
-        }
+    if let PowerStyle::Command { off, .. } = &opts.style
+        && st.cmd_state.is_some()
+    {
+        out.push(off.clone());
     }
     if st.air_is_on && !opts.air_off.trim().is_empty() {
         out.push(opts.air_off.trim().to_owned());
@@ -232,10 +232,8 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
             'G' => {
                 if let Ok(g) = v.parse::<f64>() {
                     let g = g as u8;
-                    match g {
-                        0..=3 => g_motion = Some(g),
-                        20 | 21 if opts.inches => {}
-                        _ => {}
+                    if g <= 3 {
+                        g_motion = Some(g);
                     }
                 }
             }
@@ -266,7 +264,7 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
     }
 
     // Laser on/off words.
-    if let Some(m @ (3 | 4 | 5)) = m_code {
+    if let Some(m @ (3..=5)) = m_code {
         st.laser_on = m != 5;
         match &opts.style {
             PowerStyle::Command { off, .. } => {
@@ -277,14 +275,11 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
                 return;
             }
             PowerStyle::MarlinInline => {
-                let mut o = vec![('M', m.to_string()), ('I', String::new())];
-                if m != 5 {
-                    // `M3 I` has no power of its own; S comes with the moves.
-                    st.s_in = st.s_in.max(0.0);
-                } else {
+                // `M3 I` has no power of its own; S comes with the moves.
+                let o = vec![('M', m.to_string()), ('I', String::new())];
+                if m == 5 {
                     st.s_in = 0.0;
                 }
-                o.retain(|_| true);
                 out.push(join(&o));
                 return;
             }
@@ -317,7 +312,7 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
     for w in &mut words {
         match (w.0, w.1.parse::<f64>()) {
             ('G', Ok(g)) if opts.inches && (g - 21.0).abs() < 1e-9 => w.1 = "20".into(),
-            ('G', Ok(g)) if !opts.inches && (g - 20.0).abs() < 1e-9 => w.1 = "20".into(),
+            ('G', Ok(g)) if !opts.inches && (g - 20.0).abs() < 1e-9 => w.1 = "21".into(),
             ('X' | 'Y' | 'Z' | 'I' | 'J' | 'F', Ok(v)) if opts.inches => {
                 w.1 = format!("{:.4}", v / 25.4).trim_end_matches('0').trim_end_matches('.').to_owned()
             }
@@ -365,17 +360,19 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
     }
 
     // Fast whitespace scan: blank G1 moves go fast, powered moves get their feed back.
-    if let Some(fast) = opts.fast_whitespace {
-        if is_cut_move && motion == 1 && st.laser_on {
-            let fast_out = if opts.inches { fast / 25.4 } else { fast };
-            let want = if burning { st.feed_src.map(|f| if opts.inches { f / 25.4 } else { f }) } else { Some(fast_out) };
-            if let Some(w) = want {
-                if st.feed_out.is_none_or(|cur| (cur - w).abs() > 1e-9) || words.iter().any(|(l, _)| *l == 'F') {
-                    words.retain(|(l, _)| *l != 'F');
-                    words.push(('F', fmt_num(w)));
-                    st.feed_out = Some(w);
-                }
-            }
+    if let Some(fast) = opts.fast_whitespace
+        && is_cut_move
+        && motion == 1
+        && st.laser_on
+    {
+        let fast_out = if opts.inches { fast / 25.4 } else { fast };
+        let want = if burning { st.feed_src.map(|f| if opts.inches { f / 25.4 } else { f }) } else { Some(fast_out) };
+        if let Some(w) = want
+            && (st.feed_out.is_none_or(|cur| (cur - w).abs() > 1e-9) || words.iter().any(|(l, _)| *l == 'F'))
+        {
+            words.retain(|(l, _)| *l != 'F');
+            words.push(('F', fmt_num(w)));
+            st.feed_out = Some(w);
         }
     }
 
@@ -468,8 +465,8 @@ pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
             for (c, v) in w {
                 if *c == 'G' {
                     match v.parse::<f64>().ok() {
-                        Some(g) if g == 91.0 => abs = false,
-                        Some(g) if g == 90.0 => abs = true,
+                        Some(g) if (g - 91.0).abs() < 1e-9 => abs = false,
+                        Some(g) if (g - 90.0).abs() < 1e-9 => abs = true,
                         _ => {}
                     }
                 }

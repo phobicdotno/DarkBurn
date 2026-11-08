@@ -130,11 +130,21 @@ pub fn identify(line: &str) -> DetectResult {
 /// Guesses from everything received so far: the first line that identifies a firmware wins;
 /// a bare `start` or `ok` is a weak hint for Marlin-style boards and picks the next probe.
 pub fn identify_lines<S: AsRef<str>>(lines: &[S]) -> DetectResult {
+    let mut best: Option<DetectResult> = None;
     for l in lines {
         let r = identify(l.as_ref());
-        if r.firmware != FirmwareGuess::Unknown {
-            return r;
+        if r.firmware == FirmwareGuess::Unknown {
+            continue;
         }
+        match &best {
+            None => best = Some(r),
+            // A later line of the same firmware may carry the version the banner lacked.
+            Some(b) if b.firmware == r.firmware && b.version.is_none() && r.version.is_some() => best = Some(r),
+            _ => {}
+        }
+    }
+    if let Some(b) = best {
+        return b;
     }
     let saw = |s: &str| lines.iter().any(|l| l.as_ref().trim().eq_ignore_ascii_case(s));
     let next = if saw("start") {

@@ -562,10 +562,10 @@ impl DeviceProfile {
         if self.gcode.max_fire_percent < 0.0 || self.gcode.max_fire_percent > 100.0 {
             out.push("The fire button power limit must be 0 to 100 %.".to_owned());
         }
-        if let Connection::Tcp { host, port } = &self.connection {
-            if host.trim().is_empty() || *port == 0 {
-                out.push("The network address needs a host and a port.".to_owned());
-            }
+        if let Connection::Tcp { host, port } = &self.connection
+            && (host.trim().is_empty() || *port == 0)
+        {
+            out.push("The network address needs a host and a port.".to_owned());
         }
         if self.kind == DeviceKind::Custom && self.gcode.custom.jog.trim().is_empty() {
             out.push("A custom device needs a jog command template.".to_owned());

@@ -125,6 +125,22 @@ pub fn page(ui: &mut Ui, prefs: &mut Prefs) {
         ui_kit::dropdown(ui, "origin", &mut i, &labels);
         prefs.origin = Origin::ALL[i];
     });
+    ui.add_space(t.space_12);
+    ui_kit::section_heading(ui, "Import");
+    ui_kit::row(ui, "SVG resolution", |ui| {
+        let mut i = usize::from(prefs.svg_dpi != 72.0);
+        ui_kit::dropdown(ui, "svg_dpi", &mut i, &["72 DPI", "96 DPI"]);
+        prefs.svg_dpi = if i == 0 { 72.0 } else { 96.0 };
+    });
+    ui_kit::checkbox(ui, "Group imported shapes", &mut prefs.import_group);
+    ui_kit::checkbox(ui, "Select imported shapes", &mut prefs.import_select);
+    ui_kit::checkbox(ui, "Allow import to tool layers", &mut prefs.import_tool_layers);
+    ui.add_space(t.space_12);
+    ui_kit::section_heading(ui, "Auto-save");
+    ui_kit::row(ui, "Every", |ui| {
+        ui_kit::number_field(ui, &mut prefs.autosave_minutes, 0.0..=240.0, 0.5, " min");
+    });
+    ui_kit::caption(ui, "Every", "0 turns auto-save off.");
 }
 
 #[cfg(test)]

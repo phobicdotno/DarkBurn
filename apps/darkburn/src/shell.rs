@@ -64,6 +64,8 @@ pub struct DarkBurn {
     pub notes_open: bool,
     /// A layer whose shapes flash on the canvas, and when the flash began (egui time, seconds).
     pub flash_layer: Option<(usize, f64)>,
+    /// Project files, auto-save and the system clipboard (files.rs).
+    pub files: crate::files::FileState,
 }
 
 impl DarkBurn {
@@ -93,6 +95,7 @@ impl DarkBurn {
             cut_settings_open: None,
             notes_open: false,
             flash_layer: None,
+            files: Default::default(),
         }
     }
 

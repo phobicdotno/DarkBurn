@@ -63,6 +63,14 @@ pub struct Prefs {
     pub recent: Vec<String>,
     /// Auto-save interval in minutes (0 = off).
     pub autosave_minutes: f32,
+    /// Pixels per inch of SVG files without units: 72 or 96.
+    pub svg_dpi: f32,
+    /// Imported shapes are grouped, one group per file.
+    pub import_group: bool,
+    /// Imported shapes are selected.
+    pub import_select: bool,
+    /// Imported colours may land on the tool layers T1 and T2.
+    pub import_tool_layers: bool,
 }
 
 impl Default for Prefs {
@@ -90,6 +98,10 @@ impl Default for Prefs {
             smooth: true,
             recent: Vec::new(),
             autosave_minutes: 5.0,
+            svg_dpi: 96.0,
+            import_group: true,
+            import_select: true,
+            import_tool_layers: false,
         }
     }
 }
@@ -124,6 +136,14 @@ impl Prefs {
                 *size = 400.0;
             }
         }
+        if self.svg_dpi != 72.0 {
+            self.svg_dpi = 96.0;
+        }
+        if !self.autosave_minutes.is_finite() {
+            self.autosave_minutes = d.autosave_minutes;
+        }
+        self.autosave_minutes = self.autosave_minutes.clamp(0.0, 240.0);
+        self.recent.truncate(crate::files::RECENT_MAX);
         for (id, state) in d.panels {
             self.panels.entry(id).or_insert(state);
         }
@@ -187,6 +207,9 @@ mod tests {
         assert_eq!(odd.page_width, 400.0);
         assert!(!odd.panels.contains_key("gone"));
         assert_eq!(odd.panels.len(), PANELS.len());
+        let odd = Prefs::from_json(r#"{"svg_dpi": 80, "autosave_minutes": -2}"#);
+        assert_eq!((odd.svg_dpi, odd.autosave_minutes), (96.0, 0.0));
+        assert_eq!(Prefs::from_json(r#"{"svg_dpi": 72}"#).svg_dpi, 72.0);
     }
 
     #[test]

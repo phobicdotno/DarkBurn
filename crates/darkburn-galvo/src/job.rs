@@ -771,15 +771,14 @@ fn validate(job: &Job) -> Result<(), CompileError> {
             LayerMode::Fill(f) | LayerMode::Flood(f) if f.interval_mm <= 0.0 => {
                 return Err(CompileError::Invalid(format!("Layer '{}' needs a line interval above zero.", l.name)));
             }
-            LayerMode::Sliced(s) => {
+            LayerMode::Sliced(s)
                 if s.depth.len() != (s.width_px * s.height_px) as usize
                     || s.width_px == 0
                     || s.height_px == 0
                     || s.slices == 0
-                    || s.interval_mm <= 0.0
-                {
-                    return Err(CompileError::Invalid(format!("Layer '{}' has an invalid 3D image.", l.name)));
-                }
+                    || s.interval_mm <= 0.0 =>
+            {
+                return Err(CompileError::Invalid(format!("Layer '{}' has an invalid 3D image.", l.name)));
             }
             _ => {}
         }
@@ -878,23 +877,22 @@ fn emit_sliced(
     body: &mut Vec<Step>,
     est: &mut Estimate,
 ) -> Result<(), CompileError> {
-    let run =
-        |lines: Vec<Vec<(Point, Point)>>, params: &MarkParams, z: f64, body: &mut Vec<Step>, est: &mut Estimate| -> Result<(), CompileError> {
-            if lines.is_empty() {
-                return Ok(());
-            }
-            body.push(Step::MoveZ { mm: z });
-            est.motion_s += MOTION_STEP_S;
-            let mut w = Writer::new(dev, field);
-            w.set_params(params);
-            for l in lines {
-                w.flood_line(&l)?;
-            }
-            let (p, e) = w.finish();
-            est.add(&e);
-            body.push(Step::List(p));
-            Ok(())
-        };
+    let run = |lines: Vec<Vec<(Point, Point)>>, params: &MarkParams, z: f64, body: &mut Vec<Step>, est: &mut Estimate| -> Result<(), CompileError> {
+        if lines.is_empty() {
+            return Ok(());
+        }
+        body.push(Step::MoveZ { mm: z });
+        est.motion_s += MOTION_STEP_S;
+        let mut w = Writer::new(dev, field);
+        w.set_params(params);
+        for l in lines {
+            w.flood_line(&l)?;
+        }
+        let (p, e) = w.finish();
+        est.add(&e);
+        body.push(Step::List(p));
+        Ok(())
+    };
     for _ in 0..layer.passes {
         for k in 1..=s.slices {
             run(sliced_masks(s, k), &layer.params, s.z_step_mm * (k - 1) as f64, body, est)?;
@@ -1185,7 +1183,7 @@ mod tests {
         assert_eq!(jy, y1, "pass 1 is horizontal");
         assert_ne!(jx, x1);
         // pass 2 vertical: find the first mark after half the marks
-        let all: Vec<_> = cmds.iter().copied().collect();
+        let all: Vec<_> = cmds.to_vec();
         let mid = all.iter().enumerate().filter(|(_, c)| matches!(c, ListCmd::MarkTo { .. })).map(|(i, _)| i).nth(5).unwrap();
         let ListCmd::MarkTo { x: x2, .. } = all[mid] else { unreachable!() };
         let ListCmd::JumpTo { x: jx2, .. } = all[..mid].iter().rev().find(|c| matches!(c, ListCmd::JumpTo { .. })).copied().unwrap() else {

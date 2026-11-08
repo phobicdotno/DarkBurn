@@ -398,7 +398,7 @@ impl GalvoEmulator {
                 }
                 return;
             };
-            if self.queue.len() % crate::codec::COMMANDS_PER_PACKET == 0 {
+            if self.queue.len().is_multiple_of(crate::codec::COMMANDS_PER_PACKET) {
                 self.packets_queued = self.packets_queued.saturating_sub(1);
             }
             self.log.executed += 1;

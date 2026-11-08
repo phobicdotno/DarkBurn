@@ -349,11 +349,16 @@ impl GalvoMachine {
 
     /// Moves external axis `axis` (0 or 1) to an absolute position in mm. Only when idle.
     pub fn move_axis(&self, axis: u8, mm: f64) -> Result<(), GalvoError> {
-        let s = self.connected()?;
+        axis_words(&self.settings, axis, mm).map_err(GalvoError::Invalid)?;
+        let mut s = self.snapshot.lock().expect("snapshot");
+        if s.connection != ConnectionState::Connected {
+            return Err(GalvoError::NotConnected);
+        }
         if s.activity != Activity::Idle {
             return Err(GalvoError::Busy);
         }
-        axis_words(&self.settings, axis, mm).map_err(GalvoError::Invalid)?;
+        s.activity = Activity::Job;
+        drop(s);
         self.send(Cmd::Utility(vec![Step::MoveAxis { axis, mm }]))
     }
 
@@ -991,8 +996,8 @@ impl Worker {
         self.link.write_port(0)?;
         if j.marking {
             self.link.single(SingleCmd::DisableLaser)?;
+            self.sh.armed.store(false, Ordering::SeqCst);
         }
-        self.sh.armed.store(false, Ordering::SeqCst);
         Ok(())
     }
 

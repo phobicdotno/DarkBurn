@@ -17,6 +17,8 @@
 //! No real USB device is ever opened unless the `usb` feature is on and
 //! `UsbTransport::open` is called by the application.
 
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 pub mod codec;
 pub mod cor;
 pub mod emulator;

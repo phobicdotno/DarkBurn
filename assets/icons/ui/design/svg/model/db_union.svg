@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Boolean union</title>
+  <path d="M8 8L40 8L40 40L8 40Z" fill="#328bd3"/>
+  <path d="M24 40A16 16 0 1 0 56 40A16 16 0 1 0 24 40Z" fill="#328bd3"/>
+  <path d="M40 24.4A16 16 0 0 1 40 56A16 16 0 0 1 24 40L8 40L8 8L40 8Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

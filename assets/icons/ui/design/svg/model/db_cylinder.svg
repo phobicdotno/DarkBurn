@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Cylinder correction</title>
+  <path d="M16 14A16 6 0 0 1 48 14L48 50A16 6 0 0 1 16 50Z" fill="#b8c3cf"/>
+  <path d="M16 14A16 6 0 0 1 48 14A16 6 0 0 1 16 14Z" fill="#e2e8ef"/>
+  <path d="M16 14A16 6 0 0 1 48 14A16 6 0 0 1 16 14ZM16 14L16 50A16 6 0 0 0 48 50L48 14" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M24 25L24 54M32 26L32 56M40 25L40 54" fill="none" stroke="#236ead" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

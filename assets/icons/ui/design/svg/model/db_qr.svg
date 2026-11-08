@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Create QR code</title>
+  <path d="M6 6L26 6L26 26L6 26Z" fill="#e2e8ef"/>
+  <path d="M6 6L26 6L26 26L6 26Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M12 12L20 12L20 20L12 20Z" fill="#34465b"/>
+  <path d="M38 6L58 6L58 26L38 26Z" fill="#e2e8ef"/>
+  <path d="M38 6L58 6L58 26L38 26Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M44 12L52 12L52 20L44 20Z" fill="#34465b"/>
+  <path d="M6 38L26 38L26 58L6 58Z" fill="#e2e8ef"/>
+  <path d="M6 38L26 38L26 58L6 58Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M12 44L20 44L20 52L12 52Z" fill="#34465b"/>
+  <path d="M38 38L46 38L46 46L38 46Z" fill="#236ead"/>
+  <path d="M50 38L58 38L58 46L50 46Z" fill="#236ead"/>
+  <path d="M44 46L52 46L52 52L44 52Z" fill="#236ead"/>
+  <path d="M38 52L46 52L46 58L38 58Z" fill="#236ead"/>
+  <path d="M52 52L58 52L58 58L52 58Z" fill="#236ead"/>
+</svg>

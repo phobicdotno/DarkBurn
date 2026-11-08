@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Preview</title>
+  <path d="M12 8L44 8A4 4 0 0 1 48 12L48 52A4 4 0 0 1 44 56L12 56A4 4 0 0 1 8 52L8 12A4 4 0 0 1 12 8Z" fill="#e2e8ef"/>
+  <path d="M12 8L44 8A4 4 0 0 1 48 12L48 52A4 4 0 0 1 44 56L12 56A4 4 0 0 1 8 52L8 12A4 4 0 0 1 12 8Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M16 20L40 20M16 30L32 30M16 40L28 40" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M34 34L58 46L34 58Z" fill="#328bd3"/>
+  <path d="M34 34L58 46L34 58Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

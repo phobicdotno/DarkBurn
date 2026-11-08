@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Capture image</title>
+  <path d="M6 22L18 22L22 14L42 14L46 22L58 22L58 52L6 52Z" fill="#b8c3cf"/>
+  <path d="M6 22L18 22L22 14L42 14L46 22L58 22L58 52L6 52Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="32" cy="36" r="10" fill="#b9ddf8"/>
+  <circle cx="32" cy="36" r="10" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="32" cy="36" r="4" fill="#236ead"/>
+</svg>

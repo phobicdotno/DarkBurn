@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Device settings</title>
+  <path d="M8 10L56 10L56 22L8 22Z" fill="#b8c3cf"/>
+  <path d="M8 10L56 10L56 22L8 22Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M24 22L40 22L36 32L28 32Z" fill="#e2e8ef"/>
+  <path d="M24 22L40 22L36 32L28 32Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M32 34L32 44" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M8 54L56 54" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="32" cy="49" r="3" fill="#c06f00"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Frame selection</title>
+  <path d="M8 8L42 8L42 38L8 38Z" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M14 14L36 14L36 32L14 32Z" fill="#b8c3cf"/>
+  <path d="M14 14L36 14L36 32L14 32Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M45 45L56 56" fill="none" stroke="#34465b" stroke-width="5.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="40" cy="40" r="9" fill="#b9ddf8"/>
+  <circle cx="40" cy="40" r="9" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

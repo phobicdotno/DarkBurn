@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Dock left</title>
+  <path d="M8 6L8 58" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M28 22L48 22L48 42L28 42Z" fill="#b8c3cf"/>
+  <path d="M28 22L48 22L48 42L28 42Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M56 32L16 32M20.95 28.61L16 32L20.95 35.39" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

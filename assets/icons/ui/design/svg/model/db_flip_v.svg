@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Flip vertical</title>
+  <path d="M6 32L58 32" fill="none" stroke="#6f879c" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M14 8L14 26L50 26Z" fill="#b8c3cf"/>
+  <path d="M14 8L14 26L50 26Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M14 56L14 38L50 38Z" fill="#328bd3"/>
+  <path d="M14 56L14 38L50 38Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

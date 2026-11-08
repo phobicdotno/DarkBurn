@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Add tabs</title>
+  <path d="M18.8 9.1A26 26 0 0 1 45.2 9.1M54.9 18.8A26 26 0 0 1 54.9 45.2M45.2 54.9A26 26 0 0 1 18.8 54.9M9.1 45.2A26 26 0 0 1 9.1 18.8" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M50 13L56 7M7 57L13 51M51 51L57 57M7 7L13 13" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

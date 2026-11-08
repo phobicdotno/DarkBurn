@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.0.10"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["DarkBurn contributors"]
+repository = "https://github.com/phobicdotno/DarkBurn"
+
+[workspace.dependencies]
+# SolidCraft shared UI crates, used as they are (MIT OR Apache-2.0, see ATTRIBUTION.md)
+solidcraft-theme       = { path = "../solidcraft/crates/theme" }
+solidcraft-ui-text     = { path = "../solidcraft/crates/ui-text" }
+solidcraft-ui-registry = { path = "../solidcraft/crates/ui-registry" }
+solidcraft-color       = { path = "../solidcraft/crates/color" }
+darkburn-ui = { path = "crates/darkburn-ui" }
+
+# Pinned to SolidCraft's versions (one egui in the graph)
+egui      = { version = "=0.37.0", features = ["default_fonts"] }
+eframe    = { version = "=0.37.0", default-features = false, features = ["persistence", "default_fonts", "wgpu", "accesskit", "links"] }
+egui-wgpu = "=0.37.0"
+wgpu      = { version = "=30.0.1", default-features = false, features = ["std", "wgsl"] }
+winit     = "=0.30.13"
+tiny-skia = { version = "=0.12.0", default-features = false, features = ["std", "simd"] }
+serde      = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+log = "0.4"
+web-time = "1"
+ron = "0.12"
+toml = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+
+[profile.dev.package."*"]
+opt-level = 2
+[profile.dev]
+opt-level = 1
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = "line-tables-only"

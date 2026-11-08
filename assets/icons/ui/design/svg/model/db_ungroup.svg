@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Ungroup</title>
+  <path d="M6 22L6 6L22 6M42 58L58 58L58 42" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-dasharray="5 5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M10 10L28 10L28 28L10 28Z" fill="#b8c3cf"/>
+  <path d="M10 10L28 10L28 28L10 28Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="44" cy="44" r="10" fill="#328bd3"/>
+  <circle cx="44" cy="44" r="10" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M26 38L16 48M17.11 42.1L16 48L21.9 46.89" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M38 26L48 16M46.89 21.9L48 16L42.1 17.11" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

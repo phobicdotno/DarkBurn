@@ -1,0 +1,231 @@
+//! The design canvas: rulers, the work area with its grid, and zoom and pan.
+
+use egui::{Align2, Color32, CursorIcon, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use serde::{Deserialize, Serialize};
+use solidcraft_theme::Tokens;
+
+use crate::prefs::Prefs;
+use crate::view::{self, View};
+
+/// Width of the rulers along the top and left edges.
+pub const RULER: f32 = 20.0;
+
+/// The canvas colours: the theme's own, or always light or always dark.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Backdrop {
+    #[default]
+    Theme,
+    Light,
+    Dark,
+}
+
+impl Backdrop {
+    pub const ALL: [Backdrop; 3] = [Backdrop::Theme, Backdrop::Light, Backdrop::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Backdrop::Theme => "Follow the theme",
+            Backdrop::Light => "Light",
+            Backdrop::Dark => "Dark",
+        }
+    }
+
+    fn tokens(self) -> Tokens {
+        match self {
+            Backdrop::Theme => Tokens::get(),
+            Backdrop::Light => Tokens::light(),
+            Backdrop::Dark => Tokens::dark(),
+        }
+    }
+}
+
+/// A view change asked for from a menu, button or key.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(clippy::enum_variant_names, reason = "named as the menu items are")]
+pub enum ViewCmd {
+    ZoomIn,
+    ZoomOut,
+    ZoomPage,
+}
+
+/// What the canvas reports back each frame.
+#[derive(Default)]
+pub struct Output {
+    /// The pointer's position in machine coordinates (mm), when it is over the canvas.
+    pub cursor: Option<Pos2>,
+}
+
+fn mix(a: Color32, b: Color32, k: f32) -> Color32 {
+    let k = k.clamp(0.0, 1.0);
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round() as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+/// Draw the canvas in `ui`'s whole rect and handle zoom and pan.
+pub fn show(ui: &mut Ui, prefs: &mut Prefs, pan_tool: bool, cmd: Option<ViewCmd>) -> Output {
+    let full = ui.max_rect();
+    let canvas = Rect::from_min_max(full.min + vec2(RULER, RULER), full.max);
+    let page = prefs.page();
+    let mut out = Output::default();
+    if !(canvas.width() > 1.0 && canvas.height() > 1.0) {
+        return out;
+    }
+    let view = &mut prefs.view;
+    if !view.placed {
+        view.zoom_to_page(canvas, page);
+    }
+    let id = ui.scope_id().with("canvas");
+    let response = ui.interact(canvas, id, Sense::click_and_drag());
+    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p));
+
+    // Zoom: wheel (plain or with Ctrl) and pinch about the pointer, keys and buttons about the
+    // centre.
+    if let Some(at) = hover {
+        let invert = prefs.invert_wheel;
+        let (mut factor, pinch) = ui.input(|i| {
+            let mut f = 1.0;
+            for e in &i.events {
+                if let egui::Event::MouseWheel { unit, delta, .. } = e {
+                    let points = match unit {
+                        egui::MouseWheelUnit::Point => delta.y,
+                        egui::MouseWheelUnit::Line => delta.y * 50.0,
+                        egui::MouseWheelUnit::Page => delta.y * 500.0,
+                    };
+                    f *= view::wheel_factor(points, invert);
+                }
+            }
+            (f, i.multi_touch().map(|t| t.zoom_delta))
+        });
+        if let Some(pinch) = pinch {
+            factor *= pinch;
+        }
+        if factor != 1.0 {
+            view.zoom_about(canvas, at, factor);
+        }
+    }
+    match cmd {
+        Some(ViewCmd::ZoomIn) => view.zoom_about(canvas, canvas.center(), view::ZOOM_STEP),
+        Some(ViewCmd::ZoomOut) => view.zoom_about(canvas, canvas.center(), 1.0 / view::ZOOM_STEP),
+        Some(ViewCmd::ZoomPage) => view.zoom_to_page(canvas, page),
+        None => {}
+    }
+
+    // Pan: middle drag, Space + drag, or any drag with the pan tool.
+    let space = ui.input(|i| i.key_down(egui::Key::Space)) && ui.memory(|m| m.focused().is_none());
+    let panning = response.dragged_by(egui::PointerButton::Middle) || ((space || pan_tool) && response.dragged_by(egui::PointerButton::Primary));
+    if panning {
+        view.pan(response.drag_delta());
+        ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+    } else if hover.is_some() && (space || pan_tool) {
+        ui.ctx().set_cursor_icon(CursorIcon::Grab);
+    } else if hover.is_some() {
+        ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+    }
+
+    let view = *view;
+    paint(ui, prefs, &view, full, canvas);
+    out.cursor = hover.map(|p| prefs.origin.to_machine(view.to_page(canvas, p), page));
+    out
+}
+
+fn paint(ui: &Ui, prefs: &Prefs, view: &View, full: Rect, canvas: Rect) {
+    let ct = prefs.backdrop.tokens();
+    let t = Tokens::get();
+    let page = prefs.page();
+    let painter = ui.painter().with_clip_rect(canvas);
+    let page_rect = view.page_rect(canvas, page);
+
+    // Surroundings, then the work area.
+    painter.rect_filled(canvas, 0.0, ct.viewport_bottom);
+    let page_fill = ct.field;
+    painter.rect_filled(page_rect, 0.0, page_fill);
+
+    // Grid: major lines, plus a finer grid when zoomed in far enough.
+    let (major, minor) = view::grid_steps(view.zoom);
+    if prefs.show_grid {
+        let k = 0.25 + 0.75 * prefs.grid_contrast;
+        let major_ink = mix(page_fill, ct.grid_major, k * 1.4);
+        let minor_ink = mix(page_fill, ct.grid, k * 1.25);
+        let grid = painter.with_clip_rect(canvas.intersect(page_rect));
+        let visible = Rect::from_min_max(view.to_page(canvas, canvas.min), view.to_page(canvas, canvas.max));
+        let lines = |step: f32, ink: Color32, skip_major: bool| {
+            for u in view::ticks(visible.left().max(0.0), visible.right().min(page.x), step) {
+                if skip_major && (u / major).round() * major == u {
+                    continue;
+                }
+                let x = view.to_screen(canvas, pos2(u, 0.0)).x;
+                grid.vline(x, page_rect.y_range(), Stroke::new(1.0, ink));
+            }
+            for v in view::ticks(visible.top().max(0.0), visible.bottom().min(page.y), step) {
+                if skip_major && (v / major).round() * major == v {
+                    continue;
+                }
+                let y = view.to_screen(canvas, pos2(0.0, v)).y;
+                grid.hline(page_rect.x_range(), y, Stroke::new(1.0, ink));
+            }
+        };
+        if let Some(minor) = minor {
+            lines(minor, minor_ink, true);
+        }
+        lines(major, major_ink, false);
+    }
+
+    // Page outline, centre cross and the origin corner.
+    painter.rect_stroke(page_rect, 0.0, Stroke::new(1.0, mix(ct.border, ct.text_dim, 0.4)), egui::StrokeKind::Outside);
+    let c = page_rect.center();
+    let arm = 8.0;
+    let cross = Stroke::new(1.0, ct.accent);
+    painter.line_segment([c - vec2(arm, 0.0), c + vec2(arm, 0.0)], cross);
+    painter.line_segment([c - vec2(0.0, arm), c + vec2(0.0, arm)], cross);
+    let o = prefs.origin;
+    let corner = pos2(if o.flips_x() { page_rect.right() } else { page_rect.left() }, if o.flips_y() { page_rect.bottom() } else { page_rect.top() });
+    painter.circle_filled(corner, 3.5, ct.accent);
+
+    // Rulers in machine coordinates.
+    let rp = ui.painter().with_clip_rect(full);
+    let top = Rect::from_min_max(pos2(canvas.left(), full.top()), pos2(full.right(), canvas.top()));
+    let left = Rect::from_min_max(pos2(full.left(), canvas.top()), pos2(canvas.left(), full.bottom()));
+    let corner_box = Rect::from_min_max(full.min, canvas.min);
+    for r in [top, left, corner_box] {
+        rp.rect_filled(r, 0.0, t.toolbar);
+    }
+    rp.hline(full.x_range(), canvas.top() - 0.5, Stroke::new(1.0, t.border));
+    rp.vline(canvas.left() - 0.5, full.y_range(), Stroke::new(1.0, t.border));
+    let font = FontId::proportional(t.font_micro);
+    let ink = t.text_dim;
+    let tick = Stroke::new(1.0, ink);
+    let small_step = minor.unwrap_or(major / 5.0);
+    let a = view.to_page(canvas, canvas.min);
+    let b = view.to_page(canvas, canvas.max);
+    // Horizontal ruler.
+    {
+        let clip = rp.with_clip_rect(top);
+        for u in view::ticks(a.x, b.x, small_step) {
+            let x = view.to_screen(canvas, pos2(u, 0.0)).x;
+            let big = ((u / major).round() * major - u).abs() < small_step * 0.01;
+            let h = if big { RULER * 0.55 } else { RULER * 0.22 };
+            clip.vline(x, (top.bottom() - h)..=top.bottom(), tick);
+            if big {
+                let m = if o.flips_x() { page.x - u } else { u };
+                clip.text(pos2(x + 3.0, top.top() + 1.0), Align2::LEFT_TOP, view::format_mm(m, major), font.clone(), ink);
+            }
+        }
+    }
+    // Vertical ruler, labels written top to bottom.
+    {
+        let clip = rp.with_clip_rect(left);
+        for v in view::ticks(a.y, b.y, small_step) {
+            let y = view.to_screen(canvas, pos2(0.0, v)).y;
+            let big = ((v / major).round() * major - v).abs() < small_step * 0.01;
+            let w = if big { RULER * 0.55 } else { RULER * 0.22 };
+            clip.hline((left.right() - w)..=left.right(), y, tick);
+            if big {
+                let m = if o.flips_y() { page.y - v } else { v };
+                let galley = clip.layout_no_wrap(view::format_mm(m, major), font.clone(), ink);
+                let at = pos2(left.left() + 2.0, y + 3.0 + galley.size().x);
+                clip.add(egui::epaint::TextShape::new(at, galley, ink).with_angle(-std::f32::consts::FRAC_PI_2));
+            }
+        }
+    }
+    rp.text(corner_box.center(), Align2::CENTER_CENTER, "mm", font, ink);
+}

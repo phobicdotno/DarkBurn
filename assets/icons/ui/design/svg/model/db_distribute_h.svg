@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Distribute horizontally</title>
+  <path d="M6 6L6 58M58 6L58 58" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M12 22L22 22L22 42L12 42Z" fill="#b8c3cf"/>
+  <path d="M12 22L22 22L22 42L12 42Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M27 14L37 14L37 50L27 50Z" fill="#328bd3"/>
+  <path d="M27 14L37 14L37 50L27 50Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M42 22L52 22L52 42L42 42Z" fill="#b8c3cf"/>
+  <path d="M42 22L52 22L52 42L42 42Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Weld</title>
+  <path d="M8 32A16 16 0 1 0 40 32A16 16 0 1 0 8 32Z" fill="#b8c3cf"/>
+  <path d="M24 32A16 16 0 1 0 56 32A16 16 0 1 0 24 32Z" fill="#b8c3cf"/>
+  <path d="M32 18.14A16 16 0 1 1 32 45.86A16 16 0 1 1 32 18.14Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M24 56L40 56M24 8L40 8" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

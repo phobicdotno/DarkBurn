@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>DarkBurn</title>
+  <path d="M32 26L58 41L32 56L6 41Z" fill="#e2e8ef"/>
+  <path d="M6 41L32 56L32 61L6 46Z" fill="#b8c3cf"/>
+  <path d="M58 41L32 56L32 61L58 46Z" fill="#8e9faf"/>
+  <path d="M32 26L58 41L32 56L6 41ZM6 41L6 46L32 61L58 46L58 41M32 56L32 61" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M18 43L32 35L44 42" fill="none" stroke="#c06f00" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M23 3L41 3L41 12L36 19L28 19L23 12Z" fill="#b8c3cf"/>
+  <path d="M23 3L41 3L41 12L36 19L28 19L23 12Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M32 21L32 33" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="32" cy="36" r="3.2" fill="#c06f00"/>
+</svg>

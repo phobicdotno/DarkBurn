@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Group</title>
+  <path d="M6 6L58 6L58 58L6 58Z" fill="none" stroke="#236ead" stroke-width="2.55" stroke-dasharray="5 5" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M14 14L32 14L32 32L14 32Z" fill="#b8c3cf"/>
+  <path d="M14 14L32 14L32 32L14 32Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="40" cy="40" r="10" fill="#328bd3"/>
+  <circle cx="40" cy="40" r="10" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Dock down</title>
+  <path d="M6 56L58 56" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M22 16L42 16L42 36L22 36Z" fill="#b8c3cf"/>
+  <path d="M22 16L42 16L42 36L22 36Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M32 8L32 48M28.61 43.05L32 48L35.39 43.05" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

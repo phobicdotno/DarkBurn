@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Rotary</title>
+  <path d="M14 18L46 18L46 46L14 46Z" fill="#b8c3cf"/>
+  <path d="M46 18A6 14 0 0 1 46 46A6 14 0 0 1 46 18Z" fill="#e2e8ef"/>
+  <path d="M14 18L46 18M14 46L46 46M14 18A6 14 0 0 0 14 46M46 18A6 14 0 0 1 46 46A6 14 0 0 1 46 18Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M4 32L60 32" fill="none" stroke="#6f879c" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M22 9A22 9 0 0 1 44 9" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M44 9L38 4M44 9L38 13" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

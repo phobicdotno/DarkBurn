@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Align horizontal centres</title>
+  <path d="M10 12L26 12L26 52L10 52Z" fill="#b8c3cf"/>
+  <path d="M10 12L26 12L26 52L10 52Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M38 20L54 20L54 44L38 44Z" fill="#b8c3cf"/>
+  <path d="M38 20L54 20L54 44L38 44Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M4 32L60 32" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

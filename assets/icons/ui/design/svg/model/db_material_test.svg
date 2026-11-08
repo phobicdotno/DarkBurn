@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Material test</title>
+  <path d="M6 6L58 6L58 58L6 58Z" fill="#e2e8ef"/>
+  <path d="M6 6L58 6L58 58L6 58Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M12 12L22 12L22 22L12 22Z" fill="#b8c3cf"/>
+  <path d="M27 12L37 12L37 22L27 22Z" fill="#8e9faf"/>
+  <path d="M42 12L52 12L52 22L42 22Z" fill="#34465b"/>
+  <path d="M12 27L22 27L22 37L12 37Z" fill="#b9ddf8"/>
+  <path d="M27 27L37 27L37 37L27 37Z" fill="#328bd3"/>
+  <path d="M42 27L52 27L52 37L42 37Z" fill="#236ead"/>
+  <path d="M12 42L22 42L22 52L12 52Z" fill="#f1d2af"/>
+  <path d="M27 42L37 42L37 52L27 52Z" fill="#c06f00"/>
+  <path d="M42 42L52 42L52 52L42 52Z" fill="#34465b"/>
+</svg>

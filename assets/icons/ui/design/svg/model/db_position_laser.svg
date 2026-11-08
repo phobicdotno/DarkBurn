@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Position laser</title>
+  <circle cx="32" cy="32" r="18" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M32 4L32 22M32 42L32 60M4 32L22 32M42 32L60 32" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="5" fill="#c06f00"/>
+</svg>

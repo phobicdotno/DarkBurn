@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Edit nodes</title>
+  <path d="M10 50L24 26M54 14L36 30" fill="none" stroke="#6f879c" stroke-width="2" stroke-dasharray="3 3" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M10 50C10 20 30 12 54 14" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M6 46L14 46L14 54L6 54Z" fill="#328bd3"/>
+  <path d="M6 46L14 46L14 54L6 54Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M50 10L58 10L58 18L50 18Z" fill="#328bd3"/>
+  <path d="M50 10L58 10L58 18L50 18Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="24" cy="26" r="3" fill="#e2e8ef"/>
+  <circle cx="24" cy="26" r="3" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="36" cy="30" r="3" fill="#e2e8ef"/>
+  <circle cx="36" cy="30" r="3" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

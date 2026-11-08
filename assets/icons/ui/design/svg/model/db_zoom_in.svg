@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Zoom in</title>
+  <path d="M38.5 38.5L54 54" fill="none" stroke="#34465b" stroke-width="5.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="27" cy="27" r="17" fill="#e2e8ef"/>
+  <circle cx="27" cy="27" r="17" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M20 27L34 27M27 20L27 34" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

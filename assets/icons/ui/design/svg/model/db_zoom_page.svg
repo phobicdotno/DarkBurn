@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Zoom to page</title>
+  <path d="M14 14L50 14L50 50L14 50Z" fill="#e2e8ef"/>
+  <path d="M14 14L50 14L50 50L14 50Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M6 16L6 6L16 6M48 6L58 6L58 16M58 48L58 58L48 58M16 58L6 58L6 48" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

@@ -9,23 +9,23 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 0 of 785 done.
+**Progress:** 28 of 785 done (5 partly).
 
 ---
 
 ## 0. DarkBurn shell (SolidCraft look and feel)
 
-- [ ] SHELL-01 Cargo workspace, Rust + egui/eframe pinned to SolidCraft's versions
-- [ ] SHELL-02 SolidCraft theme crate applied (dark and light tokens)
-- [ ] SHELL-03 Widget kit copied from SolidCraft into a `darkburn-ui` crate, with attribution
-- [ ] SHELL-04 Frameless window with SolidCraft-style app bar doubling as title bar
-- [ ] SHELL-05 Windows resize border and taskbar icon
-- [ ] SHELL-06 Ribbon or toolbar strip in SolidCraft style
-- [ ] SHELL-07 Fixed left, right and bottom panel areas with tabbed panels
-- [ ] SHELL-08 Status bar
-- [ ] SHELL-09 Preferences saved to disk, with safe start after a crash
-- [ ] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
-- [ ] SHELL-11 Theme picker (SolidCraft's bundled themes)
+- [x] SHELL-01 Cargo workspace, Rust + egui/eframe pinned to SolidCraft's versions
+- [x] SHELL-02 SolidCraft theme crate applied (dark and light tokens)
+- [x] SHELL-03 Widget kit copied from SolidCraft into a `darkburn-ui` crate, with attribution
+- [x] SHELL-04 Frameless window with SolidCraft-style app bar doubling as title bar
+- [x] SHELL-05 Windows resize border and taskbar icon
+- [x] SHELL-06 Ribbon or toolbar strip in SolidCraft style
+- [x] SHELL-07 Fixed left, right and bottom panel areas with tabbed panels
+- [x] SHELL-08 Status bar
+- [x] SHELL-09 Preferences saved to disk, with safe start after a crash
+- [x] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
+- [x] SHELL-11 Theme picker (SolidCraft's bundled themes)
 - [ ] SHELL-12 Windows installer (MSI) and app icon
 - [ ] SHELL-13 Update check
 
@@ -48,12 +48,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] FILE-12 Print, keep colours
 - [ ] FILE-13 Save processed bitmap
 - [ ] FILE-14 Save background camera capture
-- [ ] FILE-15 Open preferences folder
+- [x] FILE-15 Open preferences folder
 - [ ] FILE-16 Export preferences
 - [ ] FILE-17 Import preferences
 - [ ] FILE-18 Load preferences backup (backup browser)
 - [ ] FILE-19 Edit hotkeys
-- [ ] FILE-20 Exit
+- [x] FILE-20 Exit
 
 ### Edit
 - [ ] EDIT-01 Undo
@@ -84,7 +84,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EDIT-26 Image options: flatten image crop
 - [ ] EDIT-27 Image options: remove crop
 - [ ] EDIT-28 Image options: remove backup path
-- [ ] EDIT-29 Settings
+- [~] EDIT-29 Settings
 - [ ] EDIT-30 Device settings
 - [ ] EDIT-31 Machine settings
 
@@ -181,21 +181,21 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] LT-19 Material test, galvo variant
 
 ### Window
-- [ ] WIN-01 Reset to default layout
+- [x] WIN-01 Reset to default layout
 - [ ] WIN-02 Preview
-- [ ] WIN-03 Zoom to page
-- [ ] WIN-04 Zoom in
-- [ ] WIN-05 Zoom out
+- [x] WIN-03 Zoom to page
+- [x] WIN-04 Zoom in
+- [x] WIN-05 Zoom out
 - [ ] WIN-06 Frame selection
 - [ ] WIN-07 View style: wireframe coarse, wireframe smooth, filled coarse, filled smooth
 - [ ] WIN-08 Toggle wireframe and filled
-- [ ] WIN-09 Show or hide each panel and toolbar
+- [x] WIN-09 Show or hide each panel and toolbar
 
 ### Language
-- [ ] LANG-01 Language menu with names shown in their own language
+- [~] LANG-01 Language menu with names shown in their own language
 
 ### Help
-- [ ] HELP-01 About DarkBurn
+- [x] HELP-01 About DarkBurn
 - [ ] HELP-02 Quick help and context help on F1
 - [ ] HELP-03 Online documentation link
 - [ ] HELP-04 Generate support data
@@ -208,7 +208,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 2. Toolbars
 
 - [ ] TB-01 Main: new, open, save, import, undo, redo, cut, copy, paste, delete
-- [ ] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
+- [~] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
 - [ ] TB-03 Main: capture camera image, preview, settings, device settings
 - [ ] TB-04 Main can split in two on narrow screens
 - [ ] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
@@ -231,12 +231,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [ ] TB-23 Modes: rotary, print and cut, cylinder correction
 - [ ] TB-24 Docking: four directions, move as group, lock inner objects, padding
-- [ ] TB-25 All toolbars can be shown, hidden, docked and floated
+- [~] TB-25 All toolbars can be shown, hidden, docked and floated
 
 ## 3. Status bar
 
 - [ ] SB-01 Move, size, rotate and shear lock toggles
-- [ ] SB-02 Cursor position in current units
+- [x] SB-02 Cursor position in current units
 - [ ] SB-03 Selection bounds and object count
 - [ ] SB-04 Help text for the control under the mouse
 - [ ] SB-05 Layer and pass progress while a job runs
@@ -365,8 +365,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] FL-03 Calculate job time (Ruida)
 
 ### Panel layout
-- [ ] PANEL-01 Default right-side tab groups as in LightBurn
-- [ ] PANEL-02 Move, Art Library and File List hidden by default
+- [x] PANEL-01 Default right-side tab groups as in LightBurn
+- [x] PANEL-02 Move, Art Library and File List hidden by default
 - [ ] PANEL-03 Compact layout on small screens
 - [ ] PANEL-04 Panel layout saved per device
 
@@ -374,15 +374,15 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 5. Canvas
 
-- [ ] CANVAS-01 X and Y rulers
-- [ ] CANVAS-02 Grid with finer grid when zoomed in; grid contrast setting
-- [ ] CANVAS-03 Dark background option
-- [ ] CANVAS-04 Work area centre cross
+- [x] CANVAS-01 X and Y rulers
+- [x] CANVAS-02 Grid with finer grid when zoomed in; grid contrast setting
+- [x] CANVAS-03 Dark background option
+- [x] CANVAS-04 Work area centre cross
 - [ ] CANVAS-05 Full-screen crosshair cursor option
-- [ ] CANVAS-06 Page outline sized from device; origin corner flips axes
+- [x] CANVAS-06 Page outline sized from device; origin corner flips axes
 - [ ] CANVAS-07 Out-of-bounds and non-output shapes drawn faintly
-- [ ] CANVAS-08 Zoom by wheel, keys, zoom to page; option to invert wheel
-- [ ] CANVAS-09 Pan with space-drag, middle mouse, pan tool, auto-pan while dragging
+- [x] CANVAS-08 Zoom by wheel, keys, zoom to page; option to invert wheel
+- [~] CANVAS-09 Pan with space-drag, middle mouse, pan tool, auto-pan while dragging
 - [ ] CANVAS-10 Double middle click frames content
 - [ ] CANVAS-11 Click select, click inside filled shapes
 - [ ] CANVAS-12 Box select: left-to-right encloses, right-to-left crosses, colour coded

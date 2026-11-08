@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Start points</title>
+  <path d="M14 50L14 20A6 6 0 0 1 20 14L50 14" fill="none" stroke="#34465b" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="14" cy="50" r="6" fill="#328bd3"/>
+  <circle cx="14" cy="50" r="6" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M30 14L46 14M41.05 17.39L46 14L41.05 10.61" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

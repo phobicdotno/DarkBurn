@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Boolean intersection</title>
+  <path d="M8 8L40 8L40 40L8 40Z" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M24 40A16 16 0 1 0 56 40A16 16 0 1 0 24 40Z" fill="none" stroke="#6f879c" stroke-width="2.55" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M40 24.4L40 40L24 40A16 16 0 0 1 40 24.4Z" fill="#328bd3"/>
+  <path d="M40 24.4L40 40L24 40A16 16 0 0 1 40 24.4Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

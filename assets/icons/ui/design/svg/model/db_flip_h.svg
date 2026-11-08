@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Flip horizontal</title>
+  <path d="M32 6L32 58" fill="none" stroke="#6f879c" stroke-width="2" stroke-dasharray="4 4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M8 50L26 50L26 14Z" fill="#b8c3cf"/>
+  <path d="M8 50L26 50L26 14Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M56 50L38 50L38 14Z" fill="#328bd3"/>
+  <path d="M56 50L38 50L38 14Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

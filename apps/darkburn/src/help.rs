@@ -341,6 +341,9 @@ pub fn write_support_zip(path: &Path, prefs_json: &str, settings_dir: Option<&Pa
 
 /// Open `url` in the system browser. No other network access happens.
 pub fn open_url(url: &str) {
+    if cfg!(test) {
+        return; // UI tests never start a browser
+    }
     #[cfg(target_os = "windows")]
     let r = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
     #[cfg(target_os = "macos")]

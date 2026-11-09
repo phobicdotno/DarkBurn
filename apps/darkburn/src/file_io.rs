@@ -448,6 +448,9 @@ fn new_window(app: &mut DarkBurn, ctx: &egui::Context) {
 
 /// Starts another copy of DarkBurn (an extra window with its own project).
 pub fn spawn_window(paths: &[PathBuf]) -> Result<(), String> {
+    if cfg!(test) {
+        return Ok(()); // tests never start another copy
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe).arg("--secondary").args(paths).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
@@ -618,6 +621,9 @@ pub fn import_prefs(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 
 /// Starts the OS print of a PDF.
 pub fn os_print(path: &Path) -> Result<(), String> {
+    if cfg!(test) {
+        return Ok(()); // tests never print
+    }
     #[cfg(target_os = "windows")]
     let child = std::process::Command::new("powershell")
         .args([

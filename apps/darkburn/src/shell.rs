@@ -816,6 +816,9 @@ fn separator(ui: &Ui, bar: Rect, x: f32) {
 }
 
 fn open_folder(dir: &std::path::Path) {
+    if cfg!(test) {
+        return; // tests never open a file manager
+    }
     #[cfg(target_os = "windows")]
     let program = "explorer";
     #[cfg(target_os = "macos")]

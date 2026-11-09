@@ -492,7 +492,8 @@ struct Arboard(Option<arboard::Clipboard>);
 
 impl Arboard {
     fn open() -> Arboard {
-        Arboard(arboard::Clipboard::new().map_err(|e| log::warn!("no system clipboard: {e}")).ok())
+        // Tests never touch the real clipboard.
+        Arboard(if cfg!(test) { None } else { arboard::Clipboard::new().map_err(|e| log::warn!("no system clipboard: {e}")).ok() })
     }
 }
 

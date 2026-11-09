@@ -185,6 +185,13 @@ impl State {
         if self.rx.is_some() {
             return;
         }
+        if cfg!(test) {
+            // Tests never touch the network.
+            self.asked = asked;
+            self.open = asked;
+            self.result = Some(Outcome::Failed("no network in tests".into()));
+            return;
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         self.rx = Some(rx);
         self.asked = asked;

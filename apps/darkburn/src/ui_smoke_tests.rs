@@ -80,6 +80,30 @@ fn no_file_dialog_opens_for_real_and_the_scripted_ones_are_logged() {
     assert!(g.app().project_path.is_none(), "a cancelled dialog saves nothing");
 }
 
+/// Known gap (docs/BUGHUNT-NOTES.md): controls with no accessible name. Run with `--ignored`.
+#[test]
+#[ignore = "known gap: some controls have no accessible name; see docs/BUGHUNT-NOTES.md"]
+fn every_interactive_control_has_an_accessible_name() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    let mut bad = std::collections::BTreeSet::new();
+    for p in crate::panels::PANELS {
+        if !g.app().prefs.panel(p.id).visible {
+            g.run_command(&format!("panel.{}", p.id));
+        }
+    }
+    for p in crate::panels::PANELS {
+        show_tab(&mut g, p.id);
+        for n in g.a11y() {
+            let interactive = ["SpinButton", "Button", "CheckBox", "TextInput", "ComboBox", "Slider", "Link"].contains(&n.role.as_str());
+            if interactive && n.label.as_deref().is_none_or(str::is_empty) && n.value.as_deref().is_none_or(str::is_empty) {
+                bad.insert(format!("{} in panel {} at {:?}", n.role, p.id, n.rect));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{} controls have no accessible name:\n{}", bad.len(), bad.into_iter().collect::<Vec<_>>().join("\n"));
+}
+
 // ----- (a) every menu, every item -----
 
 /// What a menu shows for each leaf: the path of texts to click.
@@ -328,7 +352,7 @@ fn layout_cases(sizes: &[(f32, f32)]) {
     let mut all = Vec::new();
     for &(w, h) in sizes {
         for scale in [1.0, 2.0] {
-            for p in layout_at(w, h, scale, w <= 2560.0) {
+            for p in layout_at(w, h, scale, true) {
                 all.push(format!("{w}x{h} @{scale}: {p}"));
             }
         }
@@ -348,10 +372,7 @@ fn nothing_clips_at_2560x1440() {
 
 #[test]
 fn nothing_clips_at_3840x2160() {
-    if std::env::var_os("DARKBURN_UI_4K").is_none() {
-        eprintln!("skipped: set DARKBURN_UI_4K=1 to run the 3840x2160 layout check");
-        return;
-    }
+    // The 4K pictures are 8 million pixels each; they take a second to render and write.
     layout_cases(&[(3840.0, 2160.0)]);
 }
 

@@ -906,7 +906,10 @@ mod tests {
         // A frame with the reordered ribbon draws.
         let ctx = egui::Context::default();
         app.prefs.move_toolbar("modes", -5);
-        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() }, |ui| app.ui(ui));
+        let mut out = ctx.run_ui(
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() },
+            |ui| app.ui(ui),
+        );
         out.textures_delta.clear();
     }
 

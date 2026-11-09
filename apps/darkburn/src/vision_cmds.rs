@@ -1748,7 +1748,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         app.settings_dir = Some(dir.clone());
         run(&mut app, "camera.set", json!({ "camera_name": "Desk cam", "device_index": 2, "exposure": -5.0 })).unwrap();
-        let lens = darkburn_vision::lens::LensModel { name: "wide".into(), width: 640, height: 480, fx: 500.0, fy: 501.0, cx: 320.0, cy: 240.0, k: [0.1, -0.02, 0.0, 0.0], kind: darkburn_vision::lens::LensKind::Fisheye };
+        let lens = darkburn_vision::lens::LensModel {
+            name: "wide".into(),
+            width: 640,
+            height: 480,
+            fx: 500.0,
+            fy: 501.0,
+            cx: 320.0,
+            cy: 240.0,
+            k: [0.1, -0.02, 0.0, 0.0],
+            kind: darkburn_vision::lens::LensKind::Fisheye,
+        };
         app.vision.state.camera.lens = Some(lens.clone());
         run(&mut app, "camera.save_settings", json!({})).unwrap();
         assert!(dir.join("camera.json").exists());

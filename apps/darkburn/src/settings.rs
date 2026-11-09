@@ -415,20 +415,6 @@ fn defaults(ui: &mut Ui, prefs: &mut Prefs) {
     });
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn picker_offers_the_bundled_themes() {
-        let ids = super::theme_ids();
-        assert_eq!(&ids[..3], ["system", "dark", "light"]);
-        assert!(ids.len() > 20, "SolidCraft's bundled themes are offered: {ids:?}");
-        let mut unique = ids.clone();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(unique.len(), ids.len());
-    }
-}
-
 /// Which toolbars show and in what order (the ribbon cannot float or dock its groups, so order
 /// and visibility are what can be set).
 fn toolbars_section(ui: &mut egui::Ui, prefs: &mut Prefs) {
@@ -448,5 +434,19 @@ fn toolbars_section(ui: &mut egui::Ui, prefs: &mut Prefs) {
                 prefs.move_toolbar(id, 1);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn picker_offers_the_bundled_themes() {
+        let ids = super::theme_ids();
+        assert_eq!(&ids[..3], ["system", "dark", "light"]);
+        assert!(ids.len() > 20, "SolidCraft's bundled themes are offered: {ids:?}");
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len());
     }
 }

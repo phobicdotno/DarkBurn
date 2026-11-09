@@ -247,15 +247,9 @@ fn dropping_a_device_profile_and_an_image_on_the_window_adds_them() {
     std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm"><rect width="20" height="10"/></svg>"#).unwrap();
     let devices_before = rig.app.machine.devices.devices.len();
     let shapes_before = rig.app.editor.doc.len();
-    let files = [profile, svg]
-        .into_iter()
-        .map(|p| std::sync::Arc::new(Dropped(p)) as egui::DroppedFileHandle)
-        .collect::<Vec<_>>();
-    let input = egui::RawInput {
-        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))),
-        dropped_files: files,
-        ..Default::default()
-    };
+    let files = [profile, svg].into_iter().map(|p| std::sync::Arc::new(Dropped(p)) as egui::DroppedFileHandle).collect::<Vec<_>>();
+    let input =
+        egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(SCREEN.0, SCREEN.1))), dropped_files: files, ..Default::default() };
     let app = &mut rig.app;
     let mut out = rig.ctx.run_ui(input, |ui| crate::files::frame(ui.ctx(), app));
     out.textures_delta.clear();
@@ -278,11 +272,8 @@ fn the_settings_window_and_every_dialog_command_draw_in_a_full_window_frame() {
     rig.add_rect(KRect::new(10.0, 10.0, 40.0, 30.0), 0);
     let full_frame = |rig: &mut Rig| {
         rig.time += 0.016;
-        let input = egui::RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1500.0, 950.0))),
-            time: Some(rig.time),
-            ..Default::default()
-        };
+        let input =
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1500.0, 950.0))), time: Some(rig.time), ..Default::default() };
         let app = &mut rig.app;
         let mut out = rig.ctx.run_ui(input, |ui| app.ui(ui));
         out.textures_delta.clear();
@@ -470,7 +461,9 @@ fn the_measure_tool_reports_a_length_from_two_clicks() {
     assert_eq!(pts.len(), 2, "two points are held");
     // Snapping may move them a little; the distance is the 30-40-50 triangle's hypotenuse.
     assert!((pts[0].distance(pts[1]) - 50.0).abs() < 3.0, "{pts:?}");
-    let m = crate::api::execute_headless(&mut rig.app, "measure.points", &serde_json::json!({ "a": [pts[0].x, pts[0].y], "b": [pts[1].x, pts[1].y] })).unwrap();
+    let m =
+        crate::api::execute_headless(&mut rig.app, "measure.points", &serde_json::json!({ "a": [pts[0].x, pts[0].y], "b": [pts[1].x, pts[1].y] }))
+            .unwrap();
     assert!((m["distance"].as_f64().unwrap() - pts[0].distance(pts[1])).abs() < 1e-6, "{m}");
 }
 

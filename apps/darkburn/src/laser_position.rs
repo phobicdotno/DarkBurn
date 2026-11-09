@@ -53,7 +53,10 @@ fn anchor_arg(a: &Value) -> Result<Anchor, String> {
 /// Machine coordinates of design point `p` (the origin corner decides the axis directions).
 pub fn to_machine(app: &DarkBurn, p: Point) -> Point {
     let o = app.prefs.origin;
-    Point::new(if o.flips_x() { f64::from(app.prefs.page_width) - p.x } else { p.x }, if o.flips_y() { p.y } else { f64::from(app.prefs.page_height) - p.y })
+    Point::new(
+        if o.flips_x() { f64::from(app.prefs.page_width) - p.x } else { p.x },
+        if o.flips_y() { p.y } else { f64::from(app.prefs.page_height) - p.y },
+    )
 }
 
 /// The design point of machine coordinates `m` (the mapping is its own inverse).
@@ -121,9 +124,8 @@ pub fn run(app: &mut DarkBurn, _ctx: &egui::Context, id: &str) -> bool {
     if !handles(id) {
         return false;
     }
-    match api(app, id, &json!({})) {
-        Some(Err(m)) => app.shape_ui.status = Some(m),
-        _ => {}
+    if let Some(Err(m)) = api(app, id, &json!({})) {
+        app.shape_ui.status = Some(m);
     }
     true
 }

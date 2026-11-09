@@ -1322,7 +1322,11 @@ mod tests {
     fn hardware_commands_are_flagged_and_do_nothing() {
         for info in list().into_iter().filter(|i| i.hardware) {
             // The machine commands run, but api::execute lets an agent reach only the simulators.
-            assert!(!info.implemented || crate::machine_ui::handles(&info.id) || crate::laser_position::handles(&info.id), "{} touches hardware and must not run yet", info.id);
+            assert!(
+                !info.implemented || crate::machine_ui::handles(&info.id) || crate::laser_position::handles(&info.id),
+                "{} touches hardware and must not run yet",
+                info.id
+            );
         }
         assert!(describe("laser.controller_info").unwrap().hardware);
         assert!(!describe("edit.undo").unwrap().hardware);

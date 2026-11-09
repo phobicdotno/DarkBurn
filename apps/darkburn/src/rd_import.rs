@@ -3,8 +3,8 @@
 //! import warnings; they are not copied into the layers.
 
 use darkburn_import as di;
-use kurbo::{BezPath, Point};
 use darkburn_ruida::{RdJob, RdOp};
+use kurbo::{BezPath, Point};
 
 /// The extension of Ruida job files.
 pub const EXTENSION: &str = "rd";
@@ -82,8 +82,8 @@ fn to_imported(job: &RdJob) -> di::Imported {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use darkburn_ruida::{LayerSettings, RdLayer};
     use darkburn_ruida::swizzle::Magic;
+    use darkburn_ruida::{LayerSettings, RdLayer};
 
     fn job() -> RdJob {
         let square = vec![

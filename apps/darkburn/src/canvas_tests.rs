@@ -276,7 +276,7 @@ fn dropping_a_device_profile_and_an_image_on_the_window_adds_them() {
 fn the_settings_window_and_every_dialog_command_draw_in_a_full_window_frame() {
     let mut rig = Rig::new();
     rig.add_rect(KRect::new(10.0, 10.0, 40.0, 30.0), 0);
-    let mut full_frame = |rig: &mut Rig| {
+    let full_frame = |rig: &mut Rig| {
         rig.time += 0.016;
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1500.0, 950.0))),
@@ -297,6 +297,36 @@ fn the_settings_window_and_every_dialog_command_draw_in_a_full_window_frame() {
         assert!(n > 0, "{id} draws");
     }
     assert!(closed > 0);
+}
+
+#[test]
+fn clicking_with_the_position_laser_tool_moves_the_simulated_head() {
+    use crate::api::execute_headless;
+    use crate::machine_api::LaserState;
+    let mut rig = Rig::new();
+    let sim = rig.app.machine.devices.devices.iter().find(|d| d.kind == crate::devices::DeviceType::SimulatorGrbl).unwrap().id;
+    execute_headless(&mut rig.app, "device.select", &serde_json::json!({ "id": sim })).unwrap();
+    execute_headless(&mut rig.app, "machine.connect", &serde_json::json!({})).unwrap();
+    let wait = |rig: &mut Rig, f: &dyn Fn(&crate::machine_api::Snapshot) -> bool| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            rig.app.machine.tick();
+            if f(rig.app.machine.handle.snapshot()) {
+                return;
+            }
+            assert!(std::time::Instant::now() < end, "timed out");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    wait(&mut rig, &|s| s.state == LaserState::Ready);
+    rig.app.run(&rig.ctx.clone(), "tools.position_laser");
+    assert_eq!(rig.app.tool, crate::tools::Tool::PositionLaser);
+    rig.frame(vec![], Modifiers::NONE);
+    let at = rig.screen(Point::new(60.0, 40.0));
+    rig.mv(at);
+    rig.button(at, PointerButton::Primary, true);
+    rig.button(at, PointerButton::Primary, false);
+    wait(&mut rig, &|s| (s.machine_pos[0] - 60.0).abs() < 0.5 && (s.machine_pos[1] - 40.0).abs() < 0.5);
 }
 
 #[test]

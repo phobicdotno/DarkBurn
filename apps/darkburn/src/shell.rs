@@ -201,6 +201,7 @@ impl DarkBurn {
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
+            || crate::laser_position::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)

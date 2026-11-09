@@ -578,6 +578,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("hotkeys.")
         || id.starts_with("support.")
         || id.starts_with("help.topic")
+        || crate::laser_position::handles(id)
         || crate::job_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
@@ -753,7 +754,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.backward" => &["ARR-36"],
         "arrange.front" => &["ARR-37"],
         "arrange.back" => &["ARR-38"],
-        "arrange.lock" => &["ARR-39"],
+        "tools.position_laser" => &["TOOLS-09", "DRAW-20"],
+        "arrange.to_laser" => &["ARR-28"],
+        id if id.starts_with("arrange.laser_") => &["ARR-29"],
+        "arrange.lock" => &["ARR-39", "SHAPE-30"],
         "arrange.unlock" => &["ARR-40"],
         "shape.place" | "shape.translate" | "shape.resize" | "shape.rotate" => &["TB-12", "TB-14"],
         "shape.set_props" => &["SP-06"],

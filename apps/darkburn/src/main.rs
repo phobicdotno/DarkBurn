@@ -38,6 +38,7 @@ mod job_cmds;
 mod job_ui;
 mod keymap;
 mod laser_panel;
+mod laser_position;
 mod library;
 mod machine_api;
 #[cfg(test)]

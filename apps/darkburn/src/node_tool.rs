@@ -633,6 +633,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, xf: &Xf, m: Mo
         Tool::StartPoints => start_tool(&ctx, app, &mut st, response, xf, m, raw, free),
         Tool::RoundCorners => round_tool(&ctx, app, &mut st, response, xf, m, raw),
         Tool::Mirror | Tool::TwoPoint => pick_tool(&ctx, app, &mut st, response, xf, m, raw, free),
+        Tool::PositionLaser => crate::laser_position::interact(app, response, raw),
         _ => {}
     }
     if !matches!(st.gesture, Gesture::None) {

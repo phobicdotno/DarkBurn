@@ -35,18 +35,18 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### File
 - [x] FILE-01 New
-- [~] FILE-02 New window (second instance)
+- [x] FILE-02 New window (second instance)
 - [x] FILE-03 Recent projects list (24 entries)
 - [x] FILE-04 Open
 - [x] FILE-05 Import
 - [x] FILE-06 Show project notes
 - [x] FILE-07 Save
 - [x] FILE-08 Save As
-- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device)
+- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device) *(G-code works; RD, OUT and UD5 machine files wait on EXP-07)*
 - [x] FILE-10 Export
-- [~] FILE-11 Print, black only
-- [~] FILE-12 Print, keep colours
-- [~] FILE-13 Save processed bitmap
+- [x] FILE-11 Print, black only
+- [x] FILE-12 Print, keep colours
+- [x] FILE-13 Save processed bitmap
 - [x] FILE-14 Save background camera capture
 - [x] FILE-15 Open preferences folder
 - [x] FILE-16 Export preferences
@@ -69,22 +69,22 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EDIT-11 Convert to path
 - [x] EDIT-12 Convert to bitmap
 - [x] EDIT-13 Close path
-- [~] EDIT-14 Close selected paths with tolerance
-- [~] EDIT-15 Auto-join selected shapes
+- [x] EDIT-14 Close selected paths with tolerance
+- [x] EDIT-15 Auto-join selected shapes
 - [x] EDIT-16 Optimize selected shapes
 - [x] EDIT-17 Delete duplicates
 - [x] EDIT-18 Select open shapes
 - [x] EDIT-19 Select open shapes set to fill
 - [x] EDIT-20 Select all shapes in current layer
 - [x] EDIT-21 Select contained shapes
-- [~] EDIT-22 Image options: replace image
-- [~] EDIT-23 Image options: replace image to fit
+- [x] EDIT-22 Image options: replace image
+- [x] EDIT-23 Image options: replace image to fit
 - [x] EDIT-24 Image options: refresh image
 - [x] EDIT-25 Image options: apply crop path to image
 - [x] EDIT-26 Image options: flatten image crop
 - [x] EDIT-27 Image options: remove crop
 - [x] EDIT-28 Image options: remove backup path
-- [~] EDIT-29 Settings
+- [x] EDIT-29 Settings
 - [x] EDIT-30 Device settings
 - [x] EDIT-31 Machine settings
 
@@ -94,27 +94,27 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TOOLS-03 Rectangle
 - [x] TOOLS-04 Ellipse
 - [x] TOOLS-05 Polygon
-- [~] TOOLS-06 Edit nodes
-- [~] TOOLS-07 Add tabs
-- [~] TOOLS-08 Edit text
-- [ ] TOOLS-09 Position laser
-- [~] TOOLS-10 Measure
-- [~] TOOLS-11 Create QR code
-- [~] TOOLS-12 Offset shapes
+- [x] TOOLS-06 Edit nodes
+- [x] TOOLS-07 Add tabs
+- [x] TOOLS-08 Edit text
+- [x] TOOLS-09 Position laser
+- [x] TOOLS-10 Measure
+- [x] TOOLS-11 Create QR code
+- [x] TOOLS-12 Offset shapes
 - [x] TOOLS-13 Weld shapes
 - [x] TOOLS-14 Boolean union
 - [x] TOOLS-15 Boolean difference
 - [x] TOOLS-16 Boolean intersection
-- [~] TOOLS-17 Boolean assistant
+- [x] TOOLS-17 Boolean assistant
 - [x] TOOLS-18 Cut shapes
 - [x] TOOLS-19 Adjust image
 - [x] TOOLS-20 Trace image
 - [x] TOOLS-21 Apply path to text
 - [x] TOOLS-22 Apply mask to image
-- [~] TOOLS-23 Resize slots in selection
+- [x] TOOLS-23 Resize slots in selection
 - [x] TOOLS-24 Select shapes smaller than selected
-- [~] TOOLS-25 Warp selection (4 points)
-- [~] TOOLS-26 Deform selection (16 points)
+- [x] TOOLS-25 Warp selection (4 points)
+- [x] TOOLS-26 Deform selection (16 points)
 
 ### Arrange
 - [x] ARR-01 Group
@@ -122,10 +122,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-03 Auto-group
 - [x] ARR-04 Flip horizontal
 - [x] ARR-05 Flip vertical
-- [~] ARR-06 Mirror across line
+- [x] ARR-06 Mirror across line
 - [x] ARR-07 Rotate 90° clockwise
 - [x] ARR-08 Rotate 90° counter-clockwise
-- [~] ARR-09 Two-point rotate and scale
+- [x] ARR-09 Two-point rotate and scale
 - [x] ARR-10 Align left
 - [x] ARR-11 Align right
 - [x] ARR-12 Align top
@@ -141,14 +141,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-22 Distribute vertical spacing with padding
 - [x] ARR-23 Move horizontally together
 - [x] ARR-24 Move vertically together
-- [~] ARR-25 Nest selected
-- [~] ARR-26 Dock left, right, up, down
+- [x] ARR-25 Nest selected
+- [x] ARR-26 Dock left, right, up, down
 - [x] ARR-27 Move selection to one of 9 page positions
-- [ ] ARR-28 Move selection to laser position
-- [ ] ARR-29 Move laser to one of 9 selection positions
-- [~] ARR-30 Grid array
-- [~] ARR-31 Circular array
-- [~] ARR-32 Copy along path
+- [x] ARR-28 Move selection to laser position
+- [x] ARR-29 Move laser to one of 9 selection positions
+- [x] ARR-30 Grid array
+- [x] ARR-31 Circular array
+- [x] ARR-32 Copy along path
 - [x] ARR-33 Create rubber-band outline
 - [x] ARR-34 Break apart
 - [x] ARR-35 Push forward in draw order
@@ -157,7 +157,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-38 Push to back
 - [x] ARR-39 Lock selected shapes
 - [x] ARR-40 Unlock selected shapes
-- [~] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
+- [x] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
 - [~] LT-01 Print and cut: set first target
@@ -209,29 +209,29 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] TB-01 Main: new, open, save, import, undo, redo, cut, copy, paste, delete
 - [x] TB-02 Main: pan view toggle, zoom to page, zoom in, zoom out, frame selection
-- [ ] TB-03 Main: capture camera image, preview, settings, device settings
-- [~] TB-04 Main can split in two on narrow screens
-- [~] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
-- [~] TB-06 Arrange: make same width, make same height, move selection pop-up
-- [ ] TB-07 Arrange long variant
-- [~] TB-08 Tools (vertical, left edge): all creation tools
-- [~] TB-09 Modifiers: offset, weld, union, difference, intersection
-- [~] TB-10 Modifiers: grid array, circular array
-- [~] TB-11 Modifiers: start points tool, round corners tool with radius field
+- [x] TB-03 Main: capture camera image, preview, settings, device settings
+- [x] TB-04 Main can split in two on narrow screens
+- [x] TB-05 Arrange: group, ungroup, flips, mirror, align, distribute
+- [x] TB-06 Arrange: make same width, make same height, move selection pop-up
+- [x] TB-07 Arrange long variant
+- [x] TB-08 Tools (vertical, left edge): all creation tools
+- [x] TB-09 Modifiers: offset, weld, union, difference, intersection
+- [x] TB-10 Modifiers: grid array, circular array
+- [x] TB-11 Modifiers: start points tool, round corners tool with radius field
 - [x] TB-12 Numeric edits: X, Y, width, height, scale %, lock aspect
 - [x] TB-13 Numeric edits: 9-point anchor picker
 - [x] TB-14 Numeric edits: rotate field, mm or inch toggle
 - [x] TB-15 Numeric fields accept equations and unit suffixes
-- [~] TB-16 Text options: font picker with recent and favourite fonts and live preview
-- [~] TB-17 Text options: height, bold, italic, upper case, distort, welded
-- [~] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
-- [~] TB-19 Text options: variable text type, offset
+- [x] TB-16 Text options: font picker with recent and favourite fonts and live preview
+- [x] TB-17 Text options: height, bold, italic, upper case, distort, welded
+- [x] TB-18 Text options: letter spacing, line spacing, horizontal and vertical alignment
+- [x] TB-19 Text options: variable text type, offset
 - [x] TB-20 Cut palette: 30 colour layers and 2 tool layers
 - [x] TB-21 Cut palette: optional number labels on buttons
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [x] TB-23 Modes: rotary, print and cut, cylinder correction
-- [~] TB-24 Docking: four directions, move as group, lock inner objects, padding
-- [~] TB-25 All toolbars can be shown, hidden, docked and floated
+- [x] TB-24 Docking: four directions, move as group, lock inner objects, padding
+- [~] TB-25 All toolbars can be shown, hidden, docked and floated *(show, hide and order work, in the Window menu and Settings; the ribbon cannot split off, dock or float)*
 
 ## 3. Status bar
 
@@ -378,21 +378,21 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CANVAS-02 Grid with finer grid when zoomed in; grid contrast setting
 - [x] CANVAS-03 Dark background option
 - [x] CANVAS-04 Work area centre cross
-- [ ] CANVAS-05 Full-screen crosshair cursor option
+- [x] CANVAS-05 Full-screen crosshair cursor option
 - [x] CANVAS-06 Page outline sized from device; origin corner flips axes
 - [x] CANVAS-07 Out-of-bounds and non-output shapes drawn faintly
 - [x] CANVAS-08 Zoom by wheel, keys, zoom to page; option to invert wheel
-- [~] CANVAS-09 Pan with space-drag, middle mouse, pan tool, auto-pan while dragging
+- [x] CANVAS-09 Pan with space-drag, middle mouse, pan tool, auto-pan while dragging
 - [x] CANVAS-10 Double middle click frames content
 - [x] CANVAS-11 Click select, click inside filled shapes
 - [x] CANVAS-12 Box select: left-to-right encloses, right-to-left crosses, colour coded
 - [x] CANVAS-13 Tab and Shift+Tab cycle through objects
 - [x] CANVAS-14 Esc clears selection and returns to select tool
-- [~] CANVAS-15 Click tolerance setting; hidden and locked shapes not selectable
+- [x] CANVAS-15 Click tolerance setting; hidden and locked shapes not selectable
 - [x] CANVAS-16 Move, size, rotate and shear handles
 - [x] CANVAS-17 Rotation snapping with modifier keys
 - [x] CANVAS-18 Arrow-key nudge with three step sizes plus a fine step
-- [~] CANVAS-19 Keyboard rotate and flip shortcuts
+- [x] CANVAS-19 Keyboard rotate and flip shortcuts
 - [x] CANVAS-20 Grid snap that adapts to zoom
 - [x] CANVAS-21 Object snap to nodes, centres, midpoints, intersections, along lines and curves
 - [x] CANVAS-22 Snap modifiers: wider snap, show unsnapped, axis lock
@@ -402,7 +402,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CANVAS-26 Antialiasing and curve quality settings
 - [x] CANVAS-27 Reduce motion setting
 - [x] CANVAS-28 Hidden layer dims its images; flashing highlight of layer shapes
-- [~] CANVAS-29 Drag and drop project files, images and device profiles
+- [x] CANVAS-29 Drag and drop project files, images and device profiles
 - [x] CANVAS-30 System clipboard with SVG text, bitmaps and plain text detection
 - [x] CANVAS-31 Copy and paste between running instances
 - [x] CANVAS-32 Auto-save on an interval and restore after a crash
@@ -414,90 +414,90 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] DRAW-01 Line tool: straight segments by click, curves by click-drag
 - [x] DRAW-02 Line tool: 45° snap, length readout
-- [~] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
+- [x] DRAW-03 Line tool: connect to and extend existing shapes on the same layer
 - [x] DRAW-04 Rectangle with corner radius, including inward corners
-- [~] DRAW-05 Remove rounded corners
+- [x] DRAW-05 Remove rounded corners
 - [x] DRAW-06 Ellipse
 - [x] DRAW-07 Polygon with N sides
-- [~] DRAW-08 Text: multi-line, right-to-left, CJK input
-- [~] DRAW-09 Text: double-click to edit, edit several text objects at once
-- [~] DRAW-10 Text: edit text shapes dialog with zoom and pan
+- [x] DRAW-08 Text: multi-line, right-to-left, CJK input
+- [x] DRAW-09 Text: double-click to edit, edit several text objects at once
+- [x] DRAW-10 Text: edit text shapes dialog with zoom and pan
 - [x] DRAW-11 Text on a path, with distort option
 - [x] DRAW-12 Text: auto-weld, upper case, bold, italic
 - [x] DRAW-13 Text: single-line SHX fonts
-- [~] DRAW-14 Text: font favourites and recent fonts, default font and size
+- [x] DRAW-14 Text: font favourites and recent fonts, default font and size
 - [x] DRAW-15 Text: backup outline when a font is missing
 - [x] DRAW-16 QR code with text, URL, Wi-Fi and contact editors
 - [x] DRAW-17 QR code error correction level, size limit, editable later
-- [~] DRAW-18 Measure: length, arc angle and length, area, width and height
-- [~] DRAW-19 Measure: unit switch, remembers last position, axis snap
-- [ ] DRAW-20 Position laser: click to move the head
+- [x] DRAW-18 Measure: length, arc angle and length, area, width and height
+- [x] DRAW-19 Measure: unit switch, remembers last position, axis snap
+- [x] DRAW-20 Position laser: click to move the head
 - [x] DRAW-21 Barcode *(later)*
 - [ ] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
 
-- [~] NODE-01 Drag nodes and control handles
-- [~] NODE-02 Drag a line to turn it into a curve
-- [~] NODE-03 Ctrl+click inserts a node
-- [~] NODE-04 Select several nodes
-- [~] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
-- [~] NODE-06 Snap and join while dragging nodes
-- [~] NODE-07 Constrained drag with Shift
-- [~] NODE-08 Start node highlight
-- [~] NODE-09 Align selected nodes
-- [~] NODE-10 Start points tool: set start node and direction, show start and end markers
-- [~] NODE-11 Start points work on compound shapes
-- [~] NODE-12 Node highlight tool
+- [x] NODE-01 Drag nodes and control handles
+- [x] NODE-02 Drag a line to turn it into a curve
+- [x] NODE-03 Ctrl+click inserts a node
+- [x] NODE-04 Select several nodes
+- [x] NODE-05 Keys: insert, delete point, delete segment, corner, smooth, line, break, trim, extend
+- [x] NODE-06 Snap and join while dragging nodes
+- [x] NODE-07 Constrained drag with Shift
+- [x] NODE-08 Start node highlight
+- [x] NODE-09 Align selected nodes
+- [x] NODE-10 Start points tool: set start node and direction, show start and end markers
+- [x] NODE-11 Start points work on compound shapes
+- [~] NODE-12 Node highlight tool *(no separate Node Highlight debug tool; nodes and the start node are highlighted in Edit Nodes)*
 
 ## 8. Shape operations
 
 - [x] SHAPE-01 Convert to path, including variable text
 - [x] SHAPE-02 Convert to bitmap with DPI dialog
 - [x] SHAPE-03 Close path
-- [~] SHAPE-04 Close path with tolerance dialog
-- [~] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
+- [x] SHAPE-04 Close path with tolerance dialog
+- [x] SHAPE-05 Auto-join with tolerance, cancellable, safe at T-junctions
 - [x] SHAPE-06 Optimize shapes: fit lines and arcs, smoothing, before and after counts
 - [x] SHAPE-07 Delete duplicates
 - [x] SHAPE-08 Delete overlapping lines
 - [x] SHAPE-09 Break apart
 - [x] SHAPE-10 Weld
 - [x] SHAPE-11 Boolean union, difference and intersection with very fine precision
-- [~] SHAPE-12 Boolean assistant with preview and reset
-- [~] SHAPE-13 Offset: distance with units, inward, outward or both
-- [~] SHAPE-14 Offset: round, bevel or sharp corners
-- [~] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
-- [~] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
+- [x] SHAPE-12 Boolean assistant with preview and reset
+- [x] SHAPE-13 Offset: distance with units, inward, outward or both
+- [x] SHAPE-14 Offset: round, bevel or sharp corners
+- [x] SHAPE-15 Offset: delete original, select results, outer shapes only, open shapes
+- [x] SHAPE-16 Offset: live update; zoom and pan while the dialog is open
 - [x] SHAPE-17 Cut shapes, including through images
-- [~] SHAPE-18 Trim in node mode
-- [~] SHAPE-19 Round corners and fillet, including negative radius
-- [~] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
-- [~] SHAPE-21 Resize slots: colour-coded highlighting
-- [~] SHAPE-22 Warp with 4 points
-- [~] SHAPE-23 Deform with 16 points
-- [~] SHAPE-24 Two-point rotate and scale
-- [~] SHAPE-25 Mirror across line
+- [x] SHAPE-18 Trim in node mode
+- [x] SHAPE-19 Round corners and fillet, including negative radius
+- [x] SHAPE-20 Resize slots and tabs: width, depth, rectangle and round slots
+- [x] SHAPE-21 Resize slots: colour-coded highlighting
+- [x] SHAPE-22 Warp with 4 points
+- [x] SHAPE-23 Deform with 16 points
+- [x] SHAPE-24 Two-point rotate and scale
+- [x] SHAPE-25 Mirror across line
 - [x] SHAPE-26 Make same width and same height about the centre
 - [x] SHAPE-27 Rubber-band outline
 - [x] SHAPE-28 Apply path to text
 - [x] SHAPE-29 Apply mask to image, flatten and remove crop
-- [ ] SHAPE-30 Lock and unlock shapes
+- [x] SHAPE-30 Lock and unlock shapes
 
 ## 9. Arrays and arrangement
 
-- [~] ARRAY-01 Grid array by rows and columns or from target size
-- [~] ARRAY-02 Grid array spacing by gap or centre to centre
-- [~] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
-- [~] ARRAY-04 Grid array mirror alternates and reverse direction
-- [~] ARRAY-05 Virtual arrays that stay editable
-- [~] ARRAY-06 Variable text increments across arrays
-- [~] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
-- [~] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
-- [~] ARRAY-09 Nesting of selected shapes
+- [x] ARRAY-01 Grid array by rows and columns or from target size
+- [x] ARRAY-02 Grid array spacing by gap or centre to centre
+- [x] ARRAY-03 Grid array alternate row or column shift, hex layout, shift by half
+- [x] ARRAY-04 Grid array mirror alternates and reverse direction
+- [x] ARRAY-05 Virtual arrays that stay editable
+- [x] ARRAY-06 Variable text increments across arrays
+- [x] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
+- [x] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
+- [x] ARRAY-09 Nesting of selected shapes
 - [ ] ARRAY-10 True nest and quick nest *(later)*
 - [x] ARRAY-11 Auto-group groups shapes that sit inside each other
-- [~] ARRAY-12 Alignment helper for beginners
-- [~] ARRAY-13 Docking pushes selection against neighbours
+- [x] ARRAY-12 Alignment helper for beginners
+- [x] ARRAY-13 Docking pushes selection against neighbours
 - [x] ARRAY-14 9-point anchor used by position, size, scale and rotate fields
 - [ ] ARRAY-15 Pages window *(later)*
 
@@ -773,14 +773,14 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import
-- [~] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
+- [x] IMP-01 SVG: styles, fonts, symbols, text, clip paths, embedded images
 - [x] IMP-02 SVG: 72 or 96 DPI setting
-- [~] IMP-03 Adobe Illustrator files
+- [x] IMP-03 Adobe Illustrator files
 - [x] IMP-04 PDF with page choice and embedded images
 - [x] IMP-05 DXF: units, splines, blocks, text, layers, colours
 - [x] IMP-06 PLT / HPGL
-- [ ] IMP-07 Ruida RD files
-- [ ] IMP-08 SignCut files
+- [x] IMP-07 Ruida RD files
+- [ ] IMP-08 SignCut files *(SignCut is not publicly documented: stays unsupported, with a clear message)*
 - [x] IMP-09 PNG, JPG, BMP, GIF, TIFF, WebP
 - [x] IMP-10 Colour to layer mapping
 - [x] IMP-11 Group and select imported shapes options
@@ -797,18 +797,18 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] EXP-07 RD, OUT and UD5 machine files
 
 ### Other files
-- [ ] AUX-01 Material library files
-- [ ] AUX-02 Art library files
-- [ ] AUX-03 Device profile files
+- [x] AUX-01 Material library files
+- [x] AUX-02 Art library files
+- [x] AUX-03 Device profile files
 - [x] AUX-04 Preferences files
-- [ ] AUX-05 Machine settings backup files
-- [ ] AUX-06 Camera calibration files
-- [ ] AUX-07 Scanning offset files
+- [x] AUX-05 Machine settings backup files
+- [x] AUX-06 Camera calibration files
+- [x] AUX-07 Scanning offset files
 - [x] AUX-08 Hotkey files
 - [x] AUX-09 Galvo lens correction files
 - [x] AUX-10 CSV and text files for variable text
-- [ ] AUX-11 SHX fonts
-- [ ] AUX-12 Import LightBurn library, art, device and hotkey files *(decide)*
+- [x] AUX-11 SHX fonts
+- [ ] AUX-12 Import LightBurn library, art, device and hotkey files *(decide: not started; the LightBurn formats are not documented)*
 
 ---
 

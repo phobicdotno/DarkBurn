@@ -176,6 +176,8 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
         };
         let row = Rect::from_min_max(pos2(r.left(), r.top() + TAB_ROW_HEIGHT), pos2(r.right(), r.top() + TAB_ROW_HEIGHT + GROUP_HEIGHT));
         let mut shown_groups: Vec<&Group> = groups.iter().filter(|g| app.prefs.toolbar(g.toolbar)).collect();
+        // The user's toolbar order (stable: groups of one toolbar keep their order).
+        shown_groups.sort_by_key(|g| app.prefs.toolbar_rank(g.toolbar));
         let avail = row.width() - 8.0;
         let total = |compact: bool, gs: &[&Group]| -> f32 { gs.iter().map(|g| group_width(ui, g, compact)).sum() };
         let compact = total(false, &shown_groups) > avail;

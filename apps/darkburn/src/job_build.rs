@@ -1281,6 +1281,48 @@ mod tests {
     }
 
     #[test]
+    fn manual_tabs_reach_the_job() {
+        let off = |tabs: Vec<[f64; 2]>| {
+            let mut d = Document::new();
+            line_layer(&mut d, 1, 10.0, 80.0);
+            {
+                let s = d.layer_mut(1).main_mut();
+                s.tabs.enabled = true;
+                s.tabs.auto_spacing = false;
+                s.tabs.size = 2.0;
+            }
+            let mut sh = Shape::rect(Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1);
+            sh.tabs = tabs;
+            d.add(sh);
+            let b = build_job_simple(&input(d)).unwrap();
+            b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power == 0.0)).count()
+        };
+        assert_eq!(off(vec![]), 0, "no automatic tabs and no manual ones: solid cut");
+        assert!(off(vec![[0.0, -20.0]]) >= 1, "a manual tab leaves a gap");
+        assert!(off(vec![[0.0, -20.0], [20.0, 0.0]]) >= 2);
+    }
+
+    #[test]
+    fn forced_start_point_and_direction_reach_the_job() {
+        let first_move = |start: Option<[f64; 2]>, dir: darkburn_core::CutDirection| {
+            let mut d = Document::new();
+            line_layer(&mut d, 1, 10.0, 80.0);
+            let mut sh = Shape::rect(Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1);
+            sh.start_point = start;
+            sh.direction = dir;
+            d.add(sh);
+            let b = build_job_simple(&input(d)).unwrap();
+            let pts: Vec<Point> = b.toolpath.ops.iter().filter_map(Op::target).collect();
+            (pts[0], pts[1])
+        };
+        let (a, _) = first_move(Some([20.0, 0.0]), darkburn_core::CutDirection::Auto);
+        assert!(a.distance(Point::new(50.0, 30.0)) < 1e-6, "starts at the forced point: {a:?}");
+        let (_, cw1) = first_move(Some([0.0, -20.0]), darkburn_core::CutDirection::Clockwise);
+        let (_, ccw1) = first_move(Some([0.0, -20.0]), darkburn_core::CutDirection::CounterClockwise);
+        assert!(cw1.x < 30.0 && ccw1.x > 30.0, "directions differ: cw {cw1:?} ccw {ccw1:?}");
+    }
+
+    #[test]
     fn fill_layer_scans_lines() {
         let mut d = Document::new();
         {

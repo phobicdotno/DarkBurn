@@ -121,8 +121,13 @@ pub const COMMANDS: &[Cmd] = &[
     c("arrange.flip_h", "Flip Horizontal", "Ctrl+Shift+H", "db_flip_h"),
     c("arrange.flip_v", "Flip Vertical", "Ctrl+Shift+V", "db_flip_v"),
     c("arrange.mirror", "Mirror Across Line", "Ctrl+Shift+M", "mirror"),
-    c("arrange.rotate_cw", "Rotate 90° Clockwise", ".", ""),
-    c("arrange.rotate_ccw", "Rotate 90° Counter-Clockwise", ",", ""),
+    c("arrange.rotate_cw", "Rotate 90° Clockwise", "Shift+.", ""),
+    c("arrange.rotate_ccw", "Rotate 90° Counter-Clockwise", "Shift+,", ""),
+    a(
+        "arrange.rotate_by",
+        "Rotate by Angle",
+        r#"{"type":"object","properties":{"degrees":{"type":"number","description":"counter-clockwise, about the selection centre"}},"required":["degrees"]}"#,
+    ),
     c("arrange.two_point", "Two-Point Rotate / Scale", "Ctrl+2", ""),
     c("arrange.align_left", "Align Left", "L", ""),
     c("arrange.align_right", "Align Right", "R", ""),
@@ -209,6 +214,11 @@ pub const COMMANDS: &[Cmd] = &[
     c("laser.capture", "Capture Camera Image", "", "db_capture"),
     // Window
     c("window.reset_layout", "Reset to Default Layout", "", ""),
+    a(
+        "window.toolbar_move",
+        "Move a Toolbar",
+        r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id, for example arrange"},"delta":{"type":"integer","description":"places to move: negative is earlier"}},"required":["toolbar"]}"#,
+    ),
     c("window.preview", "Preview", "Alt+P", "db_preview"),
     c("view.zoom_page", "Zoom to Page", "Ctrl+0", "db_zoom_page"),
     c("view.zoom_in", "Zoom In", "Ctrl+=", "db_zoom_in"),
@@ -294,6 +304,8 @@ pub const COMMANDS: &[Cmd] = &[
     a("shape.add_line", "Add a Line", ""),
     a("shape.set_start_point", "Set Start Point", ""),
     a("shape.reverse_direction", "Reverse Direction", ""),
+    a("shape.set_direction", "Set Cut Direction", ""),
+    a("shape.clear_start_point", "Clear Start Point", ""),
     a("node.edit", "Edit Nodes", ""),
     a("tabs.add", "Add Tab", ""),
     a("tabs.remove", "Remove Tab", ""),
@@ -540,6 +552,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.lock"
             | "arrange.unlock"
             | "window.reset_layout"
+            | "window.toolbar_move"
             | "view.zoom_page"
             | "view.zoom_in"
             | "view.zoom_out"
@@ -565,6 +578,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("hotkeys.")
         || id.starts_with("support.")
         || id.starts_with("help.topic")
+        || crate::laser_position::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::vision_cmds::works(id)
@@ -741,7 +755,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.backward" => &["ARR-36"],
         "arrange.front" => &["ARR-37"],
         "arrange.back" => &["ARR-38"],
-        "arrange.lock" => &["ARR-39"],
+        "tools.position_laser" => &["TOOLS-09", "DRAW-20"],
+        "arrange.to_laser" => &["ARR-28"],
+        id if id.starts_with("arrange.laser_") => &["ARR-29"],
+        "arrange.lock" => &["ARR-39", "SHAPE-30"],
         "arrange.unlock" => &["ARR-40"],
         "shape.place" | "shape.translate" | "shape.resize" | "shape.rotate" => &["TB-12", "TB-14"],
         "shape.set_props" => &["SP-06"],
@@ -1309,7 +1326,10 @@ mod tests {
         for info in list().into_iter().filter(|i| i.hardware) {
             // The machine commands run, but api::execute lets an agent reach only the simulators.
             assert!(
-                !info.implemented || crate::machine_ui::handles(&info.id) || crate::key_cmds::works(&info.id),
+                !info.implemented
+                    || crate::machine_ui::handles(&info.id)
+                    || crate::key_cmds::works(&info.id)
+                    || crate::laser_position::handles(&info.id),
                 "{} touches hardware and must not run yet",
                 info.id
             );

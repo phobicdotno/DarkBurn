@@ -38,6 +38,26 @@ fn code_key(a: &DarkBurn, id: ShapeId) -> u64 {
 }
 
 #[test]
+fn an_shx_font_file_is_added_and_draws_single_line_text() {
+    use darkburn_text::shx::write_shapes_1_0;
+    let dir = std::env::temp_dir().join(format!("darkburn-shx-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let l = vec![0x84, 2, 0x8C, 1, 0x40, 2, 0x20, 0];
+    let path = dir.join("test.shx");
+    std::fs::write(&path, write_shapes_1_0("TESTFONT", 8, 2, &[(b'L' as u16, "L", l)])).unwrap();
+    let mut a = app();
+    let out = run(&mut a, "text.add_shx", json!({ "path": path.display().to_string() })).unwrap();
+    assert_eq!(out["glyphs"], 1);
+    let font = out["font"].as_str().unwrap().to_string();
+    assert!(a.prefs.shx_fonts.contains(&font), "listed in the font picker");
+    let id = add(&mut a, "L", json!({ "font": font }));
+    let bb = bbox(&a, id);
+    assert!(bb.height() > 5.0, "the L has height: {bb:?}");
+    assert!(run(&mut a, "text.add_shx", json!({ "path": dir.join("missing.shx").display().to_string() })).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn text_has_real_outlines_with_the_asked_height() {
     let mut a = app();
     let id = add(&mut a, "HEH", json!({}));
@@ -274,6 +294,23 @@ fn variable_text_works_inside_arrays() {
     assert!(keys[0] != keys[1] && keys[1] != keys[2], "each copy shows its own number");
     let r = run(&mut a, "job.generate", Value::Null).unwrap();
     assert!(r["cut_mm"].as_f64().unwrap() > 20.0);
+}
+
+#[test]
+fn variable_text_counts_up_in_real_arrays_too() {
+    for (cmd, args) in [
+        ("arrange.grid_array", json!({ "rows": 1, "cols": 3, "dx": 5, "dy": 5 })),
+        ("arrange.circular_array", json!({ "count": 3, "cx": 50, "cy": 50 })),
+    ] {
+        let mut a = app();
+        let id = add(&mut a, "{serial:2}", json!({ "variable": "serial", "x": 0, "y": 0 }));
+        select(&mut a, &[id]);
+        run(&mut a, cmd, args).unwrap();
+        let mut offsets: Vec<i64> =
+            a.editor.doc.iter().filter_map(|s| if let ShapeKind::Text(t) = &s.kind { Some(t.offset) } else { None }).collect();
+        offsets.sort();
+        assert_eq!(offsets, [0, 1, 2], "{cmd}: each copy has its own index");
+    }
 }
 
 #[test]

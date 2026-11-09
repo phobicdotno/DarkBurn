@@ -14,8 +14,8 @@
 //! SVG details: group transforms are flattened into the paths, `<use>`/symbols and CSS are
 //! resolved by usvg, text is turned into outlines with the system fonts, embedded PNG, JPEG,
 //! GIF and WebP images become image shapes, and clip paths are applied to filled shapes and
-//! images (as a crop). Open (stroke-only) paths are not cut by a clip path; one lying wholly
-//! outside its clip is dropped.
+//! images (as a crop). Stroke-only and open paths are cut where they cross the clip's edge and
+//! keep their curves; the cut-off parts are dropped.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -378,6 +378,11 @@ impl SvgReader<'_> {
                     if path.elements().is_empty() {
                         return;
                     }
+                } else {
+                    path = darkburn_geom::clip::clip_stroke(&path, clip, CLIP_TOLERANCE);
+                    if path.elements().is_empty() {
+                        return;
+                    }
                 }
             }
         }
@@ -715,6 +720,22 @@ mod tests {
         assert_eq!(imp.shapes.len(), 2, "the wholly clipped square is gone, the open line stays");
         let filled = imp.shapes.iter().find(|s| s.is_closed()).unwrap().bbox();
         assert!((filled.width() - 12.7).abs() < 1e-3 && (filled.height() - 25.4).abs() < 1e-3, "{filled:?}");
+        let line = imp.shapes.iter().find(|s| !s.is_closed()).unwrap().bbox();
+        assert!((line.width() - 12.7).abs() < 1e-3, "the stroke-only line is cut by the clip too: {line:?}");
+    }
+
+    #[test]
+    fn clipped_curves_and_circles_keep_their_curves_and_are_cut_at_the_edge() {
+        let doc = br##"<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96">
+            <clipPath id="c"><rect width="48" height="96"/></clipPath>
+            <g clip-path="url(#c)"><path d="M0 48 C 30 0, 66 0, 96 48" stroke="black" fill="none"/>
+            <circle cx="48" cy="60" r="20" stroke="black" fill="none"/></g></svg>"##;
+        let imp = svg(doc, &opts()).unwrap();
+        assert_eq!(imp.shapes.len(), 2);
+        for s in &imp.shapes {
+            assert!(s.bbox().x1 <= 12.7 + 1e-3, "nothing past the clip edge: {:?}", s.bbox());
+            assert!(s.outline().elements().iter().any(|e| matches!(e, kurbo::PathEl::CurveTo(..))), "still curves");
+        }
     }
 
     #[test]

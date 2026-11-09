@@ -6,6 +6,8 @@ mod api;
 mod art_library;
 mod canvas;
 mod canvas_input;
+#[cfg(test)]
+mod canvas_tests;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;
@@ -13,6 +15,7 @@ mod cut_settings;
 mod cuts_panel;
 mod devices;
 mod devices_ui;
+mod dock_geom;
 mod extras;
 mod file_io;
 mod files;
@@ -44,6 +47,7 @@ mod keymap;
 #[cfg(test)]
 mod keys_tests;
 mod laser_panel;
+mod laser_position;
 mod layer_defaults;
 mod library;
 mod machine_api;
@@ -77,6 +81,7 @@ mod panels;
 mod prefs;
 mod prefs_files;
 mod preview;
+mod rd_import;
 mod render;
 mod ribbon;
 mod rotary_read;

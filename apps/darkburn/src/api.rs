@@ -19,6 +19,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
     }
+    if let Some(result) = crate::laser_position::api(app, id, args) {
+        return result;
+    }
     if let Some(result) = crate::machine_ui::api(app, id, args) {
         return result;
     }
@@ -37,7 +40,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if !commands::works(id) {
         return Err(format!("{id} is not implemented in this build"));
     }
-    if !app.can_run(id) {
+    // A command that names its shape does not need it selected.
+    let names_shape = args.get("shape").and_then(Value::as_u64).is_some_and(|i| app.editor.doc.get(ShapeId(i)).is_some());
+    if !names_shape && !app.can_run(id) {
         return Err(format!("{id} has nothing to act on right now"));
     }
     if let Some(result) = with_args(app, id, args) {
@@ -119,6 +124,15 @@ fn changed(done: bool) -> Result<Value, String> {
 /// The commands that take arguments; None when `id` is not one of them.
 fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     Some(match id {
+        "window.toolbar_move" => (|| {
+            let tb = text(a, "toolbar")?;
+            if !crate::prefs::TOOLBARS.iter().any(|(t, _)| *t == tb) {
+                return Err(format!("unknown toolbar {tb}"));
+            }
+            let delta = opt_num(a, "delta").unwrap_or(-1.0) as i32;
+            let moved = app.prefs.move_toolbar(tb, delta);
+            Ok(json!({ "changed": moved, "order": app.prefs.full_toolbar_order() }))
+        })(),
         "selection.set" => (|| {
             let ids: Vec<ShapeId> =
                 a.get("ids").and_then(Value::as_array).ok_or("argument ids must be a list")?.iter().filter_map(Value::as_u64).map(ShapeId).collect();
@@ -426,7 +440,7 @@ mod tests {
     fn bad_requests_say_why() {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
-        assert!(run(&mut app, "tools.position_laser", Value::Null).unwrap_err().contains("machine"));
+        assert!(run(&mut app, "arrange.to_laser", Value::Null).unwrap_err().contains("laser"));
         assert!(run(&mut app, "tools.resize_slots", Value::Null).is_err());
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));

@@ -515,7 +515,7 @@ fn run_pick(app: &mut DarkBurn, pick: Pick) {
             let mut dialog = rfd::FileDialog::new()
                 .add_filter("All artwork and images", &all)
                 .add_filter("SVG", import::VECTOR_EXTENSIONS)
-                .add_filter("DXF, PDF, Illustrator, PLT", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg"])
+                .add_filter("DXF, PDF, Illustrator, PLT, RD", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "rd"])
                 .add_filter("LightBurn projects", &["lbrn", "lbrn2"])
                 .add_filter("Images", import::BITMAP_EXTENSIONS);
             if let Some(dir) = app.project_path.as_deref().and_then(Path::parent) {

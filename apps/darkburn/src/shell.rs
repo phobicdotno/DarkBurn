@@ -201,6 +201,7 @@ impl DarkBurn {
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
+            || crate::laser_position::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
             || crate::layer_defaults::run(self, ctx, id)
@@ -256,13 +257,12 @@ impl DarkBurn {
 
     /// The command whose shortcut was pressed this frame (the key press is used up).
     pub fn shortcut_command(&mut self, ctx: &egui::Context) -> Option<&'static str> {
-        use egui::Modifiers;
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return None;
         }
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
             // In the node tool the plain letter keys are node commands, not align commands.
-            if self.tool == Tool::Nodes && shortcut.modifiers == Modifiers::NONE {
+            if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
             }
             // egui matches a plain L when Alt+L is pressed; the keys must match exactly (a Shift
@@ -300,7 +300,7 @@ impl DarkBurn {
                 run = Some("view.zoom_in");
             } else if pressed(Modifiers::NONE, Key::Minus) {
                 run = Some("view.zoom_out");
-            } else if pressed(Modifiers::NONE, Key::Backspace) {
+            } else if self.tool != Tool::Nodes && pressed(Modifiers::NONE, Key::Backspace) {
                 run = Some("edit.delete");
             }
         }
@@ -922,6 +922,63 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_button_of_the_tools_column_works_and_picks_its_tool() {
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        for id in TOOLS {
+            assert!(commands::works(id), "{id}");
+            app.run(&ctx, id);
+            if let Some(cmd) = [
+                Tool::Select,
+                Tool::Line,
+                Tool::Rect,
+                Tool::Ellipse,
+                Tool::Polygon,
+                Tool::Nodes,
+                Tool::Tabs,
+                Tool::Text,
+                Tool::PositionLaser,
+                Tool::Measure,
+            ]
+            .into_iter()
+            .find(|t| t.command() == *id)
+            {
+                assert_eq!(app.tool, cmd, "{id} picks its tool");
+            }
+        }
+        assert!(app.text.qr.open, "the QR button opens the QR code dialog");
+    }
+
+    #[test]
+    fn toolbars_can_be_hidden_and_reordered_and_the_order_is_saved() {
+        let mut app = DarkBurn::new(Prefs::default());
+        let before = app.prefs.full_toolbar_order();
+        assert_eq!(before[0], "main");
+        let out = crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "arrange", "delta": -1 })).unwrap();
+        assert_eq!(out["changed"], true);
+        assert_eq!(app.prefs.full_toolbar_order()[0], "arrange");
+        assert!(app.prefs.toolbar_rank("arrange") < app.prefs.toolbar_rank("main"));
+        // At the start already: nothing moves. Unknown toolbars are refused.
+        let out = crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "arrange", "delta": -1 })).unwrap();
+        assert_eq!(out["changed"], false);
+        assert!(crate::api::execute_headless(&mut app, "window.toolbar_move", &serde_json::json!({ "toolbar": "nope" })).is_err());
+        // The order survives a save and load, and a layout reset restores the default.
+        let mut back: Prefs = serde_json::from_str(&app.prefs.to_json()).unwrap();
+        back.sanitise();
+        assert_eq!(back.full_toolbar_order()[0], "arrange");
+        app.prefs.reset_layout();
+        assert_eq!(app.prefs.full_toolbar_order(), before);
+        // A frame with the reordered ribbon draws.
+        let ctx = egui::Context::default();
+        app.prefs.move_toolbar("modes", -5);
+        let mut out = ctx.run_ui(
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() },
+            |ui| app.ui(ui),
+        );
+        out.textures_delta.clear();
+    }
 
     #[test]
     fn commands_toggle_panels_and_toolbars() {

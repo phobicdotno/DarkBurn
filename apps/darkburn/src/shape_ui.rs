@@ -36,6 +36,7 @@ pub const DIALOG_COMMANDS: &[&str] = &[
     "arrange.nest",
     "arrange.alignment_helper",
     "arrange.array_edit",
+    "arrange.move_selection",
 ];
 
 /// How long a status message stays up, in seconds.
@@ -1279,6 +1280,37 @@ fn nest_dialog(ctx: &Context, app: &mut DarkBurn) {
     finish(app, ctx, id, act, args, open);
 }
 
+/// The "Move selection" pop-up of the Arrange toolbar: nine places on the work area.
+const PAGE_SPOTS: [[(&str, &str); 3]; 3] = [
+    [("Upper left", "arrange.page_upper_left"), ("Top", "arrange.page_top"), ("Upper right", "arrange.page_upper_right")],
+    [("Left", "arrange.page_left"), ("Centre", "arrange.page_centre"), ("Right", "arrange.page_right")],
+    [("Lower left", "arrange.page_lower_left"), ("Bottom", "arrange.page_bottom"), ("Lower right", "arrange.page_lower_right")],
+];
+
+fn move_selection_popup(ctx: &Context, app: &mut DarkBurn) {
+    let can = selected_count(app) > 0;
+    let mut chosen: Option<&'static str> = None;
+    let open = window(ctx, "Move Selection", |ui| {
+        ui.label(if can { "Move the selection to a place on the work area." } else { "Select the shapes to move first." });
+        egui::Grid::new("move_selection_spots").spacing([6.0, 6.0]).show(ui, |ui| {
+            for row in PAGE_SPOTS {
+                for (label, id) in row {
+                    if ui.add_enabled(can, egui::Button::new(label).min_size(vec2(84.0, 26.0))).clicked() {
+                        chosen = Some(id);
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    });
+    if let Some(id) = chosen {
+        run_command(app, ctx, id, &Value::Null);
+        app.shape_ui.close();
+    } else if !open {
+        app.shape_ui.close();
+    }
+}
+
 fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut f = app.shape_ui.align.clone();
     let n = selected_count(app);
@@ -1451,6 +1483,7 @@ pub fn show(ctx: &Context, app: &mut DarkBurn) {
         Some("arrange.nest") => nest_dialog(ctx, app),
         Some("arrange.alignment_helper") => align_dialog(ctx, app),
         Some("arrange.array_edit") => array_edit_dialog(ctx, app),
+        Some("arrange.move_selection") => move_selection_popup(ctx, app),
         _ => {}
     }
 }
@@ -1597,6 +1630,74 @@ mod tests {
         assert_eq!((al["spacing"].as_f64(), al["path_shape"].as_u64()), (Some(5.0), Some(7)));
         let n = NestForm { custom: true, ..Default::default() }.args();
         assert!(n.get("width").is_some() && NestForm::default().args().get("width").is_none());
+    }
+
+    /// Press OK in a dialog: the form's arguments go through the command registry like the real button.
+    fn press_ok(app: &mut DarkBurn, ctx: &Context, id: &'static str, args: Value) {
+        app.shape_ui.open_dialog(id);
+        frame(ctx, app);
+        assert_eq!(app.shape_ui.open, Some(id), "{id} opens");
+        finish(app, ctx, id, Act::Ok, args, true);
+        assert!(app.shape_ui.open.is_none(), "{id} closed after OK: {:?}", app.shape_ui.error);
+    }
+
+    fn area(app: &DarkBurn) -> f64 {
+        app.editor.doc.iter().map(|s| darkburn_geom::path::area(&s.outline(), darkburn_geom::path::FillRule::NonZero, 0.01).abs()).sum()
+    }
+
+    #[test]
+    fn ok_in_each_dialog_changes_the_document_and_closes_it() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        let mut ids = Vec::new();
+        app.editor.edit("add", |d, sel| {
+            ids.push(d.add(Shape::rect(KRect::new(10.0, 10.0, 30.0, 30.0), 0.0, 1)));
+            ids.push(d.add(Shape::rect(KRect::new(20.0, 20.0, 50.0, 40.0), 0.0, 1)));
+            sel.set([ids[0]]);
+            true
+        });
+        // Offset.
+        let a0 = area(&app);
+        let f = OffsetForm { distance: 2.0, delete_original: true, ..Default::default() };
+        press_ok(&mut app, &ctx, "tools.offset", f.args());
+        assert!(area(&app) > a0 + 10.0, "the offset grew the shape");
+        assert_eq!(app.editor.doc.len(), 2, "the original was replaced");
+        // Boolean assistant: A minus B.
+        let sel: Vec<ShapeId> = app.editor.doc.iter().map(|s| s.id).collect();
+        let f = BoolForm { a: vec![sel[1]], b: vec![sel[0]], op: 3, keep: false };
+        press_ok(&mut app, &ctx, "tools.boolean_assistant", f.args());
+        assert_eq!(app.editor.doc.len(), 1, "two shapes became their intersection");
+        // Close with tolerance.
+        let mut open = BezPath::new();
+        open.move_to((100.0, 100.0));
+        open.line_to((120.0, 100.0));
+        open.line_to((120.0, 120.0));
+        open.line_to((100.0, 100.4));
+        let line = app.editor.edit("open", |d, sel| {
+            let id = d.add(Shape::path(open.clone(), 2));
+            sel.set([id]);
+            true
+        });
+        assert!(line);
+        press_ok(&mut app, &ctx, "edit.close_tolerance", json!({ "tolerance": 1.0 }));
+        let closed = app.editor.doc.iter().filter(|s| s.layer == 2).all(|s| s.is_closed());
+        assert!(closed, "the path was closed within the tolerance");
+        // Grid array (real copies), circular array and nesting.
+        let one = app.editor.doc.iter().next().unwrap().id;
+        app.editor.selection.set([one]);
+        let n0 = app.editor.doc.len();
+        let g = GridForm { rows: 2.0, cols: 3.0, virtual_array: false, ..Default::default() };
+        press_ok(&mut app, &ctx, "arrange.grid_array", g.args());
+        assert_eq!(app.editor.doc.len(), n0 + 5, "a 2 x 3 grid adds five copies");
+        let sel = app.editor.selected();
+        assert_eq!(sel.len(), 6, "the grid is selected afterwards");
+        let c = CircForm { count: 4.0, ..Default::default() };
+        press_ok(&mut app, &ctx, "arrange.circular_array", c.args());
+        let ok = app.editor.doc.iter().any(|s| s.array.is_some());
+        assert!(ok, "the circular array is a virtual array");
+        app.editor.selection.set(app.editor.doc.iter().map(|s| s.id));
+        press_ok(&mut app, &ctx, "arrange.nest", NestForm::default().args());
+        assert!(app.shape_ui.note.as_deref().is_some_and(|n| n.starts_with("Placed")), "{:?}", app.shape_ui.note);
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub use kurbo;
 pub mod array;
 pub mod boolean;
 pub mod cleanup;
+pub mod clip;
 pub mod fillet;
 pub mod hull;
 pub mod nest;
@@ -27,5 +28,6 @@ pub mod query;
 pub mod slots;
 pub mod tabs;
 pub mod transform;
+pub mod unfillet;
 
 pub use path::{Contour, Direction, FillRule, Polyline};

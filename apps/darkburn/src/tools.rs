@@ -43,6 +43,8 @@ pub enum Tool {
     TwoPoint,
     /// Place and type text (text_ui.rs).
     Text,
+    /// Click to move the laser head there (laser_position.rs).
+    PositionLaser,
 }
 
 impl Tool {
@@ -64,6 +66,7 @@ impl Tool {
             Tool::Mirror => "arrange.mirror",
             Tool::TwoPoint => "arrange.two_point",
             Tool::Text => "tools.text",
+            Tool::PositionLaser => "tools.position_laser",
         }
     }
 
@@ -78,6 +81,7 @@ impl Tool {
             Tool::Ellipse => "Drag an ellipse. Ctrl: circle, Shift: from the centre.",
             Tool::Polygon => "Drag a polygon from its centre. Shift keeps a corner on top.",
             Tool::Text => crate::text_ui::HINT,
+            Tool::PositionLaser => "Click to move the laser head to that point. Needs a connected laser.",
             other => crate::node_tool::hint(other),
         }
     }

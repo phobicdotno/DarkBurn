@@ -191,7 +191,7 @@ impl ArrayDef {
     }
 }
 
-fn advance_text(s: &mut Shape, n: i64) {
+pub fn advance_text(s: &mut Shape, n: i64) {
     match &mut s.kind {
         ShapeKind::Text(t) if t.variable != VariableText::Normal => t.offset += n,
         ShapeKind::Code(c) if c.variable => c.offset += n,

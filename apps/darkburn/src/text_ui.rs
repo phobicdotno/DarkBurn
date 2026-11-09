@@ -1549,6 +1549,57 @@ pub fn settings_section(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
 mod tests {
     use super::*;
 
+    /// The Text Options toolbar changes text through `apply` (-> `text.set`); every control's
+    /// arguments are exercised on a selected text shape, then the ribbon is drawn with them.
+    #[test]
+    fn text_options_controls_change_the_selected_text() {
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let out = crate::api::execute_headless(
+            &mut app,
+            "text.add",
+            &json!({ "text": "Ab12", "x": 10, "y": 10, "height": 10, "font": "IBM Plex Sans", "layer": 0 }),
+        )
+        .unwrap();
+        let id = ShapeId(out["id"].as_u64().unwrap());
+        app.editor.selection.set([id]);
+        let (ids, first) = selected_texts(&app);
+        assert_eq!(ids, vec![id]);
+        assert!(first.is_some(), "the toolbar sees a live text");
+        let get = |app: &DarkBurn| text_cmds::find_text(&app.editor.doc, id).cloned().unwrap();
+        for args in [
+            json!({ "height": 14.0 }),
+            json!({ "bold": true }),
+            json!({ "italic": true }),
+            json!({ "upper_case": true }),
+            json!({ "welded": true }),
+            json!({ "distort": true }),
+            json!({ "letter_spacing": 2.0 }),
+            json!({ "line_spacing": 3.0 }),
+            json!({ "align_x": "right" }),
+            json!({ "align_y": "middle" }),
+            json!({ "variable": "serial" }),
+            json!({ "offset": 5 }),
+        ] {
+            apply(&mut app, &ids, args);
+            assert!(app.note.is_none(), "{:?}", app.note);
+        }
+        let t = get(&app);
+        assert_eq!((t.height, t.bold, t.italic, t.upper_case, t.welded, t.distort), (14.0, true, true, true, true, true));
+        assert_eq!((t.letter_spacing, t.line_spacing, t.align_x, t.align_y), (2.0, 3.0, AlignX::Right, AlignY::Middle));
+        assert_eq!((t.variable, t.offset), (VariableText::Serial, 5));
+        // The font picker remembers recent and favourite fonts.
+        app.prefs.fonts.toggle_favourite("IBM Plex Sans");
+        assert!(app.prefs.fonts.favourites.iter().any(|f| f == "IBM Plex Sans"));
+        // The Text tab draws with the text selected.
+        app.prefs.ribbon_tab = "text".into();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1500.0, 900.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        }
+    }
+
     fn key(k: Key, shift: bool) -> egui::Event {
         egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers { shift, ..Default::default() } }
     }

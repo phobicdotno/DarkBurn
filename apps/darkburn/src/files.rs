@@ -132,7 +132,7 @@ fn proceed(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
                     .add_filter("Projects, artwork and images", &all)
                     .add_filter("DarkBurn project", &[project::EXTENSION])
                     .add_filter("LightBurn project", &["lbrn", "lbrn2"])
-                    .add_filter("DXF, PDF, Illustrator, PLT", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg"])
+                    .add_filter("DXF, PDF, Illustrator, PLT, RD", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "rd"])
                     .add_filter("SVG and images", &import::import_extensions());
                 if let Some(dir) = last_dir(&app.prefs) {
                     d = d.set_directory(dir);

@@ -30,6 +30,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.dock_up"
             | "arrange.dock_down"
             | "arrange.alignment_helper"
+            | "arrange.rotate_by"
     )
 }
 
@@ -47,6 +48,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.nest" => &["ARR-25", "ARRAY-09"],
         "arrange.dock_left" | "arrange.dock_right" | "arrange.dock_up" | "arrange.dock_down" => &["ARR-26", "TB-24", "ARRAY-13"],
         "arrange.alignment_helper" => &["ARRAY-12"],
+        "arrange.rotate_by" => &["CANVAS-19", "ARR-07", "ARR-08"],
         _ => &[],
     }
 }
@@ -193,8 +195,8 @@ fn place_array(e: &mut Editor, ids: &[ShapeId], def: ArrayDef, virtual_array: bo
                     let mut c = s.clone();
                     c.transform = *t * c.transform;
                     c.array = None;
+                    varray::advance_text(&mut c, i as i64);
                     out.push(d.add(c));
-                    let _ = i;
                 }
             }
         }
@@ -443,6 +445,8 @@ fn nest_cmd(e: &mut Editor, a: &Value, env: &Env) -> R {
 
 // ---------------------------------------------------------------- docking
 
+use crate::dock_geom::{self, Body};
+
 #[derive(Clone, Copy)]
 enum Dir {
     Left,
@@ -458,19 +462,6 @@ impl Dir {
             Dir::Right => Vec2::new(1.0, 0.0),
             Dir::Up => Vec2::new(0.0, 1.0),
             Dir::Down => Vec2::new(0.0, -1.0),
-        }
-    }
-
-    /// Distance `m` can travel before touching `o`, if `o` is in its way.
-    fn gap(self, m: Rect, o: Rect) -> Option<f64> {
-        const EPS: f64 = 1e-6;
-        let overlap_y = m.y0 < o.y1 - EPS && o.y0 < m.y1 - EPS;
-        let overlap_x = m.x0 < o.x1 - EPS && o.x0 < m.x1 - EPS;
-        match self {
-            Dir::Left => (overlap_y && o.x1 <= m.x0 + EPS).then_some(m.x0 - o.x1),
-            Dir::Right => (overlap_y && o.x0 >= m.x1 - EPS).then_some(o.x0 - m.x1),
-            Dir::Up => (overlap_x && o.y0 >= m.y1 - EPS).then_some(o.y0 - m.y1),
-            Dir::Down => (overlap_x && o.y1 <= m.y0 + EPS).then_some(m.y0 - o.y1),
         }
     }
 
@@ -495,11 +486,16 @@ impl Dir {
 }
 
 /// How far `m` moves in `dir` among `obstacles` (padding from shapes, none from the page edge).
-fn travel(dir: Dir, m: Rect, obstacles: &[Rect], page: Rect, padding: f64) -> f64 {
-    let hit = obstacles.iter().filter_map(|o| dir.gap(m, *o)).fold(f64::INFINITY, f64::min);
-    let edge = dir.to_edge(m, page);
+/// Shapes stop where their outlines touch, not their bounding boxes.
+fn travel(dir: Dir, m: &Body, obstacles: &[Body], page: Rect, padding: f64) -> f64 {
+    let hit = obstacles.iter().filter_map(|o| dock_geom::gap(dir.vector(), m, o)).fold(f64::INFINITY, f64::min);
+    let edge = dir.to_edge(m.bbox, page);
     let d = if hit.is_finite() && hit - padding <= edge { hit - padding } else { edge };
     d.max(0.0)
+}
+
+fn body_of(s: &Shape) -> Body {
+    Body::from_path(&s.outline(), s.bbox())
 }
 
 fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
@@ -507,13 +503,15 @@ fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
     let padding = num(a, "padding", env.padding).max(0.0);
     let as_group = flag(a, "as_group", env.dock_as_group);
     let lock_inner = flag(a, "lock_inner", env.dock_lock_inner);
-    let rects: Vec<(ShapeId, Rect)> = ids.iter().filter_map(|i| e.doc.get(*i).map(|s| (*i, s.bbox()))).collect();
-    let mut obstacles: Vec<Rect> = e.doc.iter().filter(|s| !ids.contains(&s.id)).map(Shape::bbox).collect();
+    let bodies: Vec<(ShapeId, Body)> = ids.iter().filter_map(|i| e.doc.get(*i).map(|s| (*i, body_of(s)))).collect();
+    let rects: Vec<(ShapeId, Rect)> = bodies.iter().map(|(i, b)| (*i, b.bbox)).collect();
+    let mut obstacles: Vec<Body> = e.doc.iter().filter(|s| !ids.contains(&s.id)).map(body_of).collect();
     let mut moves: Vec<(Vec<ShapeId>, Vec2)> = Vec::new();
     if as_group {
         let all: Vec<ShapeId> = rects.iter().map(|r| r.0).collect();
         let bb = rects.iter().map(|r| r.1).reduce(|a, b| a.union(b)).ok_or("nothing to dock")?;
-        moves.push((all, dir.vector() * travel(dir, bb, &obstacles, env.page, padding)));
+        let group = Body { bbox: bb, rings: bodies.iter().flat_map(|b| b.1.rings.iter().cloned()).collect() };
+        moves.push((all, dir.vector() * travel(dir, &group, &obstacles, env.page, padding)));
     } else {
         let contains = |outer: Rect, inner: Rect| outer.x0 <= inner.x0 && outer.y0 <= inner.y0 && outer.x1 >= inner.x1 && outer.y1 >= inner.y1;
         // Shapes inside another selected shape follow it when inner objects are locked.
@@ -539,10 +537,11 @@ fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
             }
         }
         leaders.sort_by(|a, b| dir.order(a.1).total_cmp(&dir.order(b.1)));
-        for (_, r, members) in leaders {
-            let dist = travel(dir, r, &obstacles, env.page, padding);
+        for (lid, _, members) in leaders {
+            let Some(body) = bodies.iter().find(|b| b.0 == lid).map(|b| b.1.clone()) else { continue };
+            let dist = travel(dir, &body, &obstacles, env.page, padding);
             let v = dir.vector() * dist;
-            obstacles.push(r + v);
+            obstacles.push(body.translated(v));
             moves.push((members, v));
         }
     }
@@ -559,6 +558,14 @@ fn dock(e: &mut Editor, a: &Value, env: &Env, dir: Dir) -> R {
     Ok(json!({ "changed": done && moved }))
 }
 
+/// Rotate the selection by `degrees` (counter-clockwise) about its centre.
+fn rotate_by(e: &mut Editor, a: &Value) -> R {
+    let ids = selected_items(e)?;
+    let degrees = num(a, "degrees", 0.0);
+    let done = e.edit("Rotate", |d, _| arrange::rotate(d, &ids, degrees));
+    ok(done, &ids)
+}
+
 pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
     Some(match id {
         "arrange.grid_array" => grid_array(e, a),
@@ -571,6 +578,7 @@ pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
         "arrange.array_flatten" => array_flatten(e, a),
         "arrange.array_duplicate" => array_duplicate(e, a),
         "arrange.nest" => nest_cmd(e, a, env),
+        "arrange.rotate_by" => rotate_by(e, a),
         "arrange.dock_left" => dock(e, a, env, Dir::Left),
         "arrange.dock_right" => dock(e, a, env, Dir::Right),
         "arrange.dock_up" => dock(e, a, env, Dir::Up),
@@ -691,6 +699,22 @@ mod tests {
             let b = s.bbox();
             assert!(b.x0 >= -1e-6 && b.y0 >= -1e-6 && b.x1 <= 100.0 + 1e-6 && b.y1 <= 100.0 + 1e-6, "{b:?}");
         }
+    }
+
+    #[test]
+    fn docking_follows_outlines_not_boxes() {
+        let mut app = app();
+        // A triangle pointing left: its box spans x 100..140 but its point is at the left.
+        let tri = run(&mut app, "shape.add_path", json!({ "svg_path": "M140 0 L140 100 L100 50 Z" })).unwrap();
+        let _ = tri;
+        // A small square near the top of the triangle's box, outside the outline there.
+        let s = add_rect(&mut app, 20.0, 90.0, 10.0, 10.0, 0);
+        select(&mut app, &[s]);
+        run(&mut app, "arrange.dock_right", json!({})).unwrap();
+        let x1 = app.editor.doc.get(s).unwrap().bbox().x1;
+        // By boxes it would stop at x = 100; by outline it slides into the triangle's notch
+        // and stops where the slanted edge crosses y = 90 (x = 132).
+        assert!(x1 > 110.0 && x1 < 140.0, "slid past the box edge at 100: stopped at {x1}");
     }
 
     #[test]

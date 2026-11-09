@@ -894,6 +894,10 @@ fn window(ctx: &Context, title: &str, add: impl FnOnce(&mut Ui)) -> bool {
         .default_pos(pos2((screen.right() - 340.0).max(0.0), 120.0))
         .default_width(300.0)
         .show(ctx, add);
+    // Escape closes the dialog, as it does for every other window in the app.
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        open = false;
+    }
     open
 }
 

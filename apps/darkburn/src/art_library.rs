@@ -356,6 +356,13 @@ pub fn handle_drop(app: &mut DarkBurn, ctx: &egui::Context, paths: &[PathBuf]) -
 }
 
 fn btn(ui: &mut Ui, text: &str, tip: &str, enabled: bool) -> bool {
+    // In a wrapped row a button that does not fit moves to the next row; left alone it would be
+    // squeezed into what is left of this one and break its label letter by letter.
+    let t = Tokens::get();
+    let need = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(t.font_label), t.text).size().x + 2.0 * t.space_12;
+    if ui.available_size_before_wrap().x < need {
+        ui.end_row();
+    }
     ui.add_enabled_ui(enabled, |ui| ui_kit::button(ui, text, ui_kit::Button::Small).backing_on_hover_text(tip).clicked()).inner
 }
 

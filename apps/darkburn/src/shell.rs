@@ -312,6 +312,8 @@ impl DarkBurn {
     /// The whole window for one frame.
     pub fn ui(&mut self, ui: &mut Ui) {
         let mut clicked: Option<String> = None;
+        // Forget last frame's published widget rectangles (else the registry grows every frame).
+        solidcraft_ui_registry::clear_handles();
         crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
@@ -672,9 +674,10 @@ impl DarkBurn {
                     let split = r.top() + (r.height() * 0.58).round();
                     let upper = Rect::from_min_max(r.min, pos2(r.right(), split));
                     let lower = Rect::from_min_max(pos2(r.left(), split + 1.0), r.max);
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(upper), |ui| self.tab_group(ui, Area::RightTop));
+                    // Each group has its own id: both draw a close button with the same id source.
+                    ui.scope_builder(egui::UiBuilder::new().id_salt("db_right_top").max_rect(upper), |ui| self.tab_group(ui, Area::RightTop));
                     ui.painter().hline(r.x_range(), split + 0.5, Stroke::new(1.0, t.border));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(lower), |ui| self.tab_group(ui, Area::RightBottom));
+                    ui.scope_builder(egui::UiBuilder::new().id_salt("db_right_bottom").max_rect(lower), |ui| self.tab_group(ui, Area::RightBottom));
                 }
                 (true, false) => self.tab_group(ui, Area::RightTop),
                 _ => self.tab_group(ui, Area::RightBottom),
@@ -847,6 +850,9 @@ fn separator(ui: &Ui, bar: Rect, x: f32) {
 }
 
 fn open_folder(dir: &std::path::Path) {
+    if cfg!(test) {
+        return; // tests never open a file manager
+    }
     #[cfg(target_os = "windows")]
     let program = "explorer";
     #[cfg(target_os = "macos")]

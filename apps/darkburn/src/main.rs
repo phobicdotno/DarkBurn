@@ -98,6 +98,10 @@ mod text_tests;
 mod text_ui;
 mod thumbnail;
 mod tools;
+#[cfg(test)]
+mod ui_harness;
+#[cfg(test)]
+mod ui_smoke_tests;
 mod updates;
 mod view;
 mod vision_cmds;

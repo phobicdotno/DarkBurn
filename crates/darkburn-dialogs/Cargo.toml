@@ -1,0 +1,13 @@
+[package]
+name = "darkburn-dialogs"
+description = "File pick dialogs for DarkBurn: the system dialogs (rfd) in the app, scripted answers in UI tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rfd = { workspace = true }

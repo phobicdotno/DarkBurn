@@ -45,7 +45,7 @@ darkburn-mcc = { path = "../../crates/darkburn-mcc" }
 kurbo = { workspace = true }
 image = { workspace = true }
 usvg = { workspace = true }
-rfd = { workspace = true }
+rfd = { package = "darkburn-dialogs", path = "../../crates/darkburn-dialogs" }
 tiny-skia = { workspace = true }
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 solidcraft-theme = { workspace = true }
@@ -76,3 +76,5 @@ embed-resource = "3.0.11"
 
 [dev-dependencies]
 zip = { workspace = true }
+# UI tests (src/ui_harness.rs): the real app in a headless egui harness, rendered offscreen with wgpu.
+egui_kittest = { version = "=0.37.0", features = ["wgpu", "eframe"] }

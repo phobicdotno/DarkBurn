@@ -185,8 +185,8 @@ impl State {
         if self.rx.is_some() {
             return;
         }
-        if cfg!(test) {
-            // Tests never touch the network.
+        if cfg!(test) && !url.starts_with("http://127.0.0.1") {
+            // Tests never touch the network (their own loopback server is fine).
             self.asked = asked;
             self.open = asked;
             self.result = Some(Outcome::Failed("no network in tests".into()));

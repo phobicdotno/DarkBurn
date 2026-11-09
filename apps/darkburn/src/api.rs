@@ -37,7 +37,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if !commands::works(id) {
         return Err(format!("{id} is not implemented in this build"));
     }
-    if !app.can_run(id) {
+    // A command that names its shape does not need it selected.
+    let names_shape = args.get("shape").and_then(Value::as_u64).is_some_and(|i| app.editor.doc.get(ShapeId(i)).is_some());
+    if !names_shape && !app.can_run(id) {
         return Err(format!("{id} has nothing to act on right now"));
     }
     if let Some(result) = with_args(app, id, args) {

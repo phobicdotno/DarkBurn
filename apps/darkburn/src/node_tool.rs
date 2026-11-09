@@ -1113,6 +1113,12 @@ fn measure_tool(
     ctx.data_mut(|d| d.insert_temp(measure_id(), mem));
 }
 
+/// The points the measure tool has so far (for tests).
+#[cfg(test)]
+pub fn measure_points(ctx: &egui::Context) -> Vec<Point> {
+    ctx.data_mut(|d| d.get_temp::<MeasureMem>(measure_id())).map(|m| m.pts).unwrap_or_default()
+}
+
 fn selection_lines(v: &Value, inches: bool) -> Vec<String> {
     let f = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
     vec![

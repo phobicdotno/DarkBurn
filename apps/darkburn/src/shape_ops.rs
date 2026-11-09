@@ -1006,6 +1006,8 @@ pub fn can_run(app: &DarkBurn, id: &str) -> Option<bool> {
         | "arrange.array_duplicate" => crate::shape_arrays::can_run(app, id),
         "arrange.auto_group" => true,
         "tools.nodes" | "tools.tabs" | "tools.measure" | "tools.start_points" | "tools.round_corners" => true,
+        // These take their points from the arguments, not from the selection.
+        "measure.points" | "measure.arc" | "shape.add_line" => true,
         _ => sel >= 1,
     })
 }

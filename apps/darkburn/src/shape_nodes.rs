@@ -642,6 +642,21 @@ mod tests {
     }
 
     #[test]
+    fn commands_with_their_own_points_or_shape_need_no_selection() {
+        let mut app = app();
+        let r = add_rect(&mut app, 0.0, 0.0, 100.0, 100.0, 4);
+        app.editor.selection.clear();
+        let m = run(&mut app, "measure.points", json!({ "a": [0, 0], "b": [30, 40] })).unwrap();
+        assert!((m["distance"].as_f64().unwrap() - 50.0).abs() < 1e-9, "{m}");
+        assert!(run(&mut app, "measure.arc", json!({ "a": [10, 0], "b": [0, 10], "c": [-10, 0] })).is_ok());
+        run(&mut app, "shape.add_line", json!({ "points": [[200, 0], [220, 0]] })).unwrap();
+        run(&mut app, "tabs.add", json!({ "shape": r.0, "x": 50, "y": 0 })).unwrap();
+        assert_eq!(app.editor.doc.get(r).unwrap().tabs.len(), 1);
+        run(&mut app, "shape.set_start_point", json!({ "shape": r.0, "x": 100, "y": 100 })).unwrap();
+        assert!(app.editor.doc.get(r).unwrap().start.is_some());
+    }
+
+    #[test]
     fn manual_and_auto_tabs() {
         let mut app = app();
         let r = add_rect(&mut app, 0.0, 0.0, 100.0, 100.0, 4);

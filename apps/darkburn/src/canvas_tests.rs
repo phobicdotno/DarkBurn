@@ -329,6 +329,169 @@ fn clicking_with_the_position_laser_tool_moves_the_simulated_head() {
     wait(&mut rig, &|s| (s.machine_pos[0] - 60.0).abs() < 0.5 && (s.machine_pos[1] - 40.0).abs() < 0.5);
 }
 
+fn click_mm(rig: &mut Rig, p: Point) {
+    let at = rig.screen(p);
+    rig.mv(at);
+    rig.button(at, PointerButton::Primary, true);
+    rig.button(at, PointerButton::Primary, false);
+}
+
+#[test]
+fn the_line_tool_draws_and_a_second_line_from_its_end_extends_it() {
+    let mut rig = Rig::new();
+    rig.app.set_tool(crate::tools::Tool::Line);
+    rig.frame(vec![], Modifiers::NONE);
+    for p in [(100.0, 100.0), (150.0, 100.0)] {
+        click_mm(&mut rig, Point::new(p.0, p.1));
+    }
+    rig.key(Key::Enter, Modifiers::NONE);
+    assert_eq!(rig.app.editor.doc.len(), 1, "one line drawn");
+    for p in [(150.0, 100.0), (150.0, 150.0)] {
+        click_mm(&mut rig, Point::new(p.0, p.1));
+    }
+    rig.key(Key::Enter, Modifiers::NONE);
+    assert_eq!(rig.app.editor.doc.len(), 1, "the new line started on the end of the first and joined it");
+    let bb = rig.app.editor.doc.iter().next().unwrap().bbox();
+    assert!((bb.width() - 50.0).abs() < 0.6 && (bb.height() - 50.0).abs() < 0.6, "{bb:?}");
+}
+
+#[test]
+fn the_rectangle_tool_draws_by_dragging_and_ctrl_makes_a_square() {
+    let mut rig = Rig::new();
+    rig.app.set_tool(crate::tools::Tool::Rect);
+    rig.frame(vec![], Modifiers::NONE);
+    rig.drag_mm(Point::new(100.0, 100.0), Point::new(160.0, 130.0), Modifiers::NONE);
+    let bb = rig.app.editor.doc.iter().next().unwrap().bbox();
+    assert!((bb.width() - 60.0).abs() < 0.6 && (bb.height() - 30.0).abs() < 0.6, "{bb:?}");
+    rig.drag_mm(Point::new(200.0, 200.0), Point::new(250.0, 220.0), Modifiers::COMMAND);
+    let sq = rig.app.editor.doc.iter().last().unwrap().bbox();
+    assert!((sq.width() - sq.height()).abs() < 0.6, "a square: {sq:?}");
+}
+
+#[test]
+fn the_mirror_and_two_point_tools_take_their_clicks_from_the_canvas() {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 120.0, 110.0), 0);
+    // Mirror across the vertical line x = 150: the rectangle lands at 180..200.
+    rig.app.run(&rig.ctx.clone(), "arrange.mirror");
+    assert_eq!(rig.app.tool, crate::tools::Tool::Mirror);
+    rig.frame(vec![], Modifiers::NONE);
+    click_mm(&mut rig, Point::new(150.0, 50.0));
+    click_mm(&mut rig, Point::new(150.0, 200.0));
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!((bb.x0 - 180.0).abs() < 0.6 && (bb.x1 - 200.0).abs() < 0.6, "{bb:?}");
+    assert_eq!(rig.app.tool, crate::tools::Tool::Select, "the tool puts itself away");
+    // Two-point rotate and scale: stretch a 50 mm span to 100 mm, keeping the first point.
+    rig.app.editor.selection.set([id]);
+    rig.app.run(&rig.ctx.clone(), "arrange.two_point");
+    rig.frame(vec![], Modifiers::NONE);
+    for p in [(180.0, 50.0), (230.0, 50.0), (180.0, 50.0), (280.0, 50.0)] {
+        click_mm(&mut rig, Point::new(p.0, p.1));
+    }
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!((bb.width() - 40.0).abs() < 1.0, "scaled by two: {bb:?}");
+}
+
+#[test]
+fn the_warp_tool_moves_a_corner_and_enter_applies_it() {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 140.0, 120.0), 0);
+    rig.app.run(&rig.ctx.clone(), "tools.warp");
+    assert_eq!(rig.app.tool, crate::tools::Tool::Warp);
+    rig.frame(vec![], Modifiers::NONE);
+    rig.drag_mm(Point::new(140.0, 120.0), Point::new(160.0, 150.0), Modifiers::CTRL);
+    rig.key(Key::Enter, Modifiers::NONE);
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!(bb.x1 > 150.0 && bb.y1 > 140.0, "the top-right corner was pulled out: {bb:?}");
+}
+
+#[test]
+fn double_clicking_a_text_shape_opens_it_for_editing() {
+    let mut rig = Rig::new();
+    let out = crate::api::execute_headless(
+        &mut rig.app,
+        "text.add",
+        &serde_json::json!({ "text": "Hello", "x": 100, "y": 100, "height": 10, "font": "IBM Plex Sans", "layer": 0 }),
+    )
+    .unwrap();
+    let id = ShapeId(out["id"].as_u64().unwrap());
+    rig.app.editor.selection.clear();
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    let at = rig.screen(bb.center());
+    rig.mv(at);
+    for _ in 0..2 {
+        rig.button(at, PointerButton::Primary, true);
+        rig.button(at, PointerButton::Primary, false);
+    }
+    rig.frame(vec![], Modifiers::NONE);
+    assert!(rig.app.text.typing.is_some() && rig.app.tool == crate::tools::Tool::Text, "the text went into edit mode");
+}
+
+#[test]
+fn the_tabs_start_points_and_round_corner_tools_work_from_clicks() {
+    // Tabs: a click on the outline adds a tab, a click on the tab takes it away.
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 160.0, 140.0), 0);
+    rig.app.run(&rig.ctx.clone(), "tools.tabs");
+    rig.frame(vec![], Modifiers::NONE);
+    click_mm(&mut rig, Point::new(130.0, 100.0));
+    assert_eq!(rig.app.editor.doc.get(id).unwrap().tabs.len(), 1, "a tab was added");
+    click_mm(&mut rig, Point::new(130.0, 100.0));
+    assert!(rig.app.editor.doc.get(id).unwrap().tabs.is_empty(), "clicking the tab removed it");
+
+    // Start points: a click near a corner starts the cut there; the shape stays a rectangle.
+    rig.app.run(&rig.ctx.clone(), "tools.start_points");
+    rig.frame(vec![], Modifiers::NONE);
+    click_mm(&mut rig, Point::new(160.0, 140.0));
+    let s = rig.app.editor.doc.get(id).unwrap();
+    assert!(matches!(s.kind, darkburn_core::ShapeKind::Rect { .. }));
+    let local = s.start.expect("start recorded");
+    let doc = s.transform * Point::new(local[0], local[1]);
+    assert!(doc.distance(Point::new(160.0, 140.0)) < 1.0, "at the clicked corner: {doc:?}");
+
+    // Round corners: the Modifiers radius is applied to the clicked corner.
+    rig.app.shape_ui.corner_radius = 5.0;
+    rig.app.run(&rig.ctx.clone(), "tools.round_corners");
+    rig.frame(vec![], Modifiers::NONE);
+    let before = rig.shape_nodes(id);
+    click_mm(&mut rig, Point::new(100.0, 100.0));
+    assert!(rig.shape_nodes(id) > before, "the corner became an arc");
+}
+
+#[test]
+fn the_measure_tool_reports_a_length_from_two_clicks() {
+    let mut rig = Rig::new();
+    rig.app.run(&rig.ctx.clone(), "tools.measure");
+    rig.frame(vec![], Modifiers::NONE);
+    click_mm(&mut rig, Point::new(100.0, 100.0));
+    click_mm(&mut rig, Point::new(130.0, 140.0));
+    rig.frame(vec![], Modifiers::NONE);
+    let pts = crate::node_tool::measure_points(&rig.ctx);
+    assert_eq!(pts.len(), 2, "two points are held");
+    // Snapping may move them a little; the distance is the 30-40-50 triangle's hypotenuse.
+    assert!((pts[0].distance(pts[1]) - 50.0).abs() < 3.0, "{pts:?}");
+    let m = crate::api::execute_headless(&mut rig.app, "measure.points", &serde_json::json!({ "a": [pts[0].x, pts[0].y], "b": [pts[1].x, pts[1].y] })).unwrap();
+    assert!((m["distance"].as_f64().unwrap() - pts[0].distance(pts[1])).abs() < 1e-6, "{m}");
+}
+
+#[test]
+fn typing_in_the_text_tool_makes_multi_line_text_with_any_script() {
+    let mut rig = Rig::new();
+    rig.app.set_tool(crate::tools::Tool::Text);
+    rig.frame(vec![], Modifiers::NONE);
+    click_mm(&mut rig, Point::new(100.0, 100.0));
+    for chunk in ["Hej", "\n", "\u{4e16}\u{754c}", "\n", "\u{5e9}\u{5dc}\u{5d5}\u{5dd}"] {
+        if chunk == "\n" {
+            rig.key(Key::Enter, Modifiers::NONE);
+        } else {
+            rig.frame(vec![Event::Text(chunk.to_string())], Modifiers::NONE);
+        }
+    }
+    rig.frame(vec![], Modifiers::NONE);
+    let t = rig.app.editor.doc.iter().find_map(|s| if let darkburn_core::ShapeKind::Text(t) = &s.kind { Some(t.text.clone()) } else { None });
+    assert_eq!(t.as_deref(), Some("Hej\n\u{4e16}\u{754c}\n\u{5e9}\u{5dc}\u{5d5}\u{5dd}"), "multi-line, CJK and right-to-left text were typed");
+}
+
 #[test]
 fn click_tolerance_decides_how_close_a_line_must_be() {
     let mut doc = darkburn_core::Document::new();

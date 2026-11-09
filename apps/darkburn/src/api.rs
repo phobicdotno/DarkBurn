@@ -409,7 +409,7 @@ mod tests {
     fn bad_requests_say_why() {
         let mut app = app();
         assert!(run(&mut app, "no.such", Value::Null).unwrap_err().contains("unknown"));
-        assert!(run(&mut app, "tools.position_laser", Value::Null).unwrap_err().contains("machine"));
+        assert!(run(&mut app, "arrange.to_laser", Value::Null).unwrap_err().contains("laser"));
         assert!(run(&mut app, "tools.resize_slots", Value::Null).is_err());
         assert!(run(&mut app, "shape.add_rect", json!({ "x": 0 })).unwrap_err().contains("y"));
         assert!(run(&mut app, "shape.rotate", json!({ "degrees": 5 })).unwrap_err().contains("selected"));

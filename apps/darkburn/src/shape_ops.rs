@@ -943,6 +943,7 @@ pub fn works(id: &str) -> bool {
             | "tools.deform"
             | "tools.round_corners"
             | "arrange.break_apart"
+            | "arrange.move_selection"
             | "arrange.auto_group"
             | "arrange.mirror"
             | "arrange.two_point"
@@ -974,6 +975,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "tools.deform" => &["TOOLS-26", "SHAPE-23"],
         "tools.round_corners" => &["TB-11", "SHAPE-19"],
         "arrange.break_apart" => &["ARR-34", "SHAPE-09"],
+        "arrange.move_selection" => &["TB-06"],
         "arrange.auto_group" => &["ARR-03", "ARRAY-11"],
         "arrange.mirror" => &["ARR-06", "SHAPE-25"],
         "arrange.two_point" => &["ARR-09", "SHAPE-24"],
@@ -997,7 +999,7 @@ pub fn can_run(app: &DarkBurn, id: &str) -> Option<bool> {
             sel >= 2 || (id == "arrange.nest" && sel >= 1)
         }
         "tools.boolean_assistant" => true,
-        "arrange.mirror" | "arrange.alignment_helper" => sel >= 1,
+        "arrange.mirror" | "arrange.alignment_helper" | "arrange.move_selection" => sel >= 1,
         "arrange.array_edit"
         | "arrange.array_add"
         | "arrange.array_remove"
@@ -1066,7 +1068,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<R> {
 
 /// Commands that only pick a canvas tool or open a dialog from the interface.
 fn is_tool_pick(id: &str) -> bool {
-    matches!(id, "tools.nodes" | "tools.tabs" | "tools.measure" | "tools.start_points" | "tools.alignment_helper")
+    matches!(id, "tools.nodes" | "tools.tabs" | "tools.measure" | "tools.start_points" | "tools.alignment_helper" | "arrange.move_selection")
 }
 
 /// Run `id` from a menu, button or key: dialog commands open their dialog, tool commands pick
@@ -1446,6 +1448,7 @@ pub(crate) mod tests {
             "arrange.array_flatten",
             "arrange.array_duplicate",
             "arrange.alignment_helper",
+            "arrange.move_selection",
             "node.edit",
             "tabs.add",
             "tabs.remove",

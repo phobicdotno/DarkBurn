@@ -486,6 +486,45 @@ fn typing_in_the_text_tool_makes_multi_line_text_with_any_script() {
 }
 
 #[test]
+fn every_ribbon_button_is_a_working_command_and_each_tab_draws() {
+    for id in crate::ribbon::command_ids() {
+        assert!(crate::commands::works(id), "the ribbon shows {id}, which does nothing yet");
+    }
+    let mut rig = Rig::new();
+    rig.add_rect(KRect::new(10.0, 10.0, 40.0, 30.0), 0);
+    let ctx = rig.ctx.clone();
+    for tab in ["home", "arrange", "modify", "text", "modes"] {
+        rig.app.prefs.ribbon_tab = tab.into();
+        for width in [1500.0, 700.0] {
+            rig.time += 0.016;
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 900.0))),
+                time: Some(rig.time),
+                ..Default::default()
+            };
+            let app = &mut rig.app;
+            let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+            out.textures_delta.clear();
+            assert!(!out.shapes.is_empty(), "{tab} at {width} draws");
+        }
+    }
+}
+
+#[test]
+fn the_move_selection_popup_opens_and_its_spots_move_the_selection() {
+    let mut rig = Rig::new();
+    let id = rig.add_rect(KRect::new(100.0, 100.0, 120.0, 110.0), 0);
+    let ctx = rig.ctx.clone();
+    rig.app.run(&ctx, "arrange.move_selection");
+    assert_eq!(rig.app.shape_ui.open, Some("arrange.move_selection"));
+    rig.frame(vec![], Modifiers::NONE);
+    rig.frame(vec![], Modifiers::NONE);
+    rig.app.run(&ctx, "arrange.page_lower_left");
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!(bb.x0.abs() < 1e-6 && bb.y0.abs() < 1e-6, "{bb:?}");
+}
+
+#[test]
 fn click_tolerance_decides_how_close_a_line_must_be() {
     let mut doc = darkburn_core::Document::new();
     let mut path = darkburn_core::kurbo::BezPath::new();

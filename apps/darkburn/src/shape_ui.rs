@@ -36,6 +36,7 @@ pub const DIALOG_COMMANDS: &[&str] = &[
     "arrange.nest",
     "arrange.alignment_helper",
     "arrange.array_edit",
+    "arrange.move_selection",
 ];
 
 /// How long a status message stays up, in seconds.
@@ -1279,6 +1280,37 @@ fn nest_dialog(ctx: &Context, app: &mut DarkBurn) {
     finish(app, ctx, id, act, args, open);
 }
 
+/// The "Move selection" pop-up of the Arrange toolbar: nine places on the work area.
+const PAGE_SPOTS: [[(&str, &str); 3]; 3] = [
+    [("Upper left", "arrange.page_upper_left"), ("Top", "arrange.page_top"), ("Upper right", "arrange.page_upper_right")],
+    [("Left", "arrange.page_left"), ("Centre", "arrange.page_centre"), ("Right", "arrange.page_right")],
+    [("Lower left", "arrange.page_lower_left"), ("Bottom", "arrange.page_bottom"), ("Lower right", "arrange.page_lower_right")],
+];
+
+fn move_selection_popup(ctx: &Context, app: &mut DarkBurn) {
+    let can = selected_count(app) > 0;
+    let mut chosen: Option<&'static str> = None;
+    let open = window(ctx, "Move Selection", |ui| {
+        ui.label(if can { "Move the selection to a place on the work area." } else { "Select the shapes to move first." });
+        egui::Grid::new("move_selection_spots").spacing([6.0, 6.0]).show(ui, |ui| {
+            for row in PAGE_SPOTS {
+                for (label, id) in row {
+                    if ui.add_enabled(can, egui::Button::new(label).min_size(vec2(84.0, 26.0))).clicked() {
+                        chosen = Some(id);
+                    }
+                }
+                ui.end_row();
+            }
+        });
+    });
+    if let Some(id) = chosen {
+        run_command(app, ctx, id, &Value::Null);
+        app.shape_ui.close();
+    } else if !open {
+        app.shape_ui.close();
+    }
+}
+
 fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut f = app.shape_ui.align.clone();
     let n = selected_count(app);
@@ -1451,6 +1483,7 @@ pub fn show(ctx: &Context, app: &mut DarkBurn) {
         Some("arrange.nest") => nest_dialog(ctx, app),
         Some("arrange.alignment_helper") => align_dialog(ctx, app),
         Some("arrange.array_edit") => array_edit_dialog(ctx, app),
+        Some("arrange.move_selection") => move_selection_popup(ctx, app),
         _ => {}
     }
 }

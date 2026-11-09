@@ -577,6 +577,49 @@ fn dragging_a_line_bends_it_into_a_curve_and_ctrl_click_adds_a_node() {
     assert_eq!(rig.shape_nodes(id), n + 1, "Ctrl+click inserted a node");
 }
 
+fn open_triangle_rig() -> (Rig, ShapeId) {
+    let mut rig = Rig::new();
+    let out = crate::api::execute_headless(&mut rig.app, "shape.add_path", &serde_json::json!({ "svg_path": "M100 100 L160 100 L130 140" })).unwrap();
+    let id = ShapeId(out["id"].as_u64().unwrap());
+    rig.app.editor.selection.set([id]);
+    rig.app.set_tool(crate::tools::Tool::Nodes);
+    rig.frame(vec![], Modifiers::NONE);
+    (rig, id)
+}
+
+fn box_select_nodes(rig: &mut Rig, a: Point, b: Point) {
+    let (a, b) = (rig.screen(a), rig.screen(b));
+    rig.mv(a);
+    rig.button(a, PointerButton::Primary, true);
+    for k in 1..=5 {
+        rig.mv(a + (b - a) * (k as f32 / 5.0));
+    }
+    rig.button(b, PointerButton::Primary, false);
+    rig.frame(vec![], Modifiers::NONE);
+}
+
+#[test]
+fn node_keys_delete_align_and_dropping_an_end_on_the_start_closes_the_shape() {
+    // Dropping the last node on the first closes the path (snap and join while dragging).
+    let (mut rig, id) = open_triangle_rig();
+    rig.drag_mm(Point::new(130.0, 140.0), Point::new(100.0, 100.0), Modifiers::NONE);
+    assert!(rig.app.editor.doc.get(id).unwrap().is_closed(), "the path closed");
+
+    // D deletes the selected node: a box round the apex, then the key.
+    let (mut rig, id) = open_triangle_rig();
+    let before = rig.shape_nodes(id);
+    box_select_nodes(&mut rig, Point::new(120.0, 150.0), Point::new(140.0, 135.0));
+    rig.key(Key::D, Modifiers::NONE);
+    assert_eq!(rig.shape_nodes(id), before - 1, "the apex node went");
+
+    // Alt+Left lines the selected nodes up on the leftmost one.
+    let (mut rig, id) = open_triangle_rig();
+    box_select_nodes(&mut rig, Point::new(90.0, 150.0), Point::new(170.0, 90.0));
+    rig.key(Key::ArrowLeft, Modifiers::ALT);
+    let bb = rig.app.editor.doc.get(id).unwrap().bbox();
+    assert!(bb.width() < 1.0, "all three nodes share one x: {bb:?}");
+}
+
 #[test]
 fn a_box_selects_several_nodes_and_they_move_together() {
     let (mut rig, id) = node_rig();

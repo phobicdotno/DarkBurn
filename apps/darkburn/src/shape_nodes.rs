@@ -642,6 +642,25 @@ mod tests {
     }
 
     #[test]
+    fn start_points_work_on_compound_shapes_one_sub_path_at_a_time() {
+        let mut app = app();
+        let c = run(&mut app, "shape.add_path", json!({ "svg_path": "M0 0 L20 0 L20 20 L0 20 Z M50 0 L70 0 L70 20 L50 20 Z" })).unwrap();
+        let id = ShapeId(c["id"].as_u64().unwrap());
+        select(&mut app, &[id]);
+        let starts = |app: &crate::shell::DarkBurn| -> Vec<Point> {
+            darkburn_geom::path::contours(&app.editor.doc.get(id).unwrap().outline()).iter().filter_map(|c| c.start()).collect()
+        };
+        assert_eq!(starts(&app), [Point::new(0.0, 0.0), Point::new(50.0, 0.0)]);
+        run(&mut app, "shape.set_start_point", json!({ "x": 70.0, "y": 20.0 })).unwrap();
+        assert_eq!(starts(&app), [Point::new(0.0, 0.0), Point::new(70.0, 20.0)], "only the nearest sub-path was turned");
+        run(&mut app, "shape.set_start_point", json!({ "x": 20.0, "y": 20.0, "all": true })).unwrap();
+        let s = starts(&app);
+        assert_eq!(s[0], Point::new(20.0, 20.0), "with all, every sub-path starts at its nearest point: {s:?}");
+        let m = marker_path(&app.editor.doc, id).unwrap();
+        assert_eq!(darkburn_geom::path::contours(&m).len(), 2, "the markers see both sub-paths");
+    }
+
+    #[test]
     fn commands_with_their_own_points_or_shape_need_no_selection() {
         let mut app = app();
         let r = add_rect(&mut app, 0.0, 0.0, 100.0, 100.0, 4);

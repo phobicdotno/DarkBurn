@@ -885,6 +885,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_button_of_the_tools_column_works_and_picks_its_tool() {
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        for id in TOOLS {
+            assert!(commands::works(id), "{id}");
+            app.run(&ctx, id);
+            if let Some(cmd) = [Tool::Select, Tool::Line, Tool::Rect, Tool::Ellipse, Tool::Polygon, Tool::Nodes, Tool::Tabs, Tool::Text, Tool::PositionLaser, Tool::Measure]
+                .into_iter()
+                .find(|t| t.command() == *id)
+            {
+                assert_eq!(app.tool, cmd, "{id} picks its tool");
+            }
+        }
+        assert!(app.text.qr.open, "the QR button opens the QR code dialog");
+    }
+
+    #[test]
     fn toolbars_can_be_hidden_and_reordered_and_the_order_is_saved() {
         let mut app = DarkBurn::new(Prefs::default());
         let before = app.prefs.full_toolbar_order();

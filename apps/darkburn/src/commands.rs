@@ -294,7 +294,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "shape.set_props",
         "Set Shape Properties",
-        r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"}}}"#,
+        r#"{"type":"object","properties":{"name":{"type":"string"},"locked":{"type":"boolean"},"priority":{"type":"integer"},"power_scale":{"type":"number"},"direction":{"enum":["auto","clockwise","counter_clockwise","reversed"]},"start_point":{"type":["array","null"],"items":{"type":"number"},"minItems":2,"maxItems":2}}}"#,
     ),
     a(
         "shape.set_corner_radius",
@@ -580,6 +580,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("help.topic")
         || crate::laser_position::handles(id)
         || crate::job_cmds::works(id)
+        || crate::key_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -822,6 +823,8 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::machine_ext::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
+        v.extend_from_slice(crate::key_cmds::COMMANDS);
+        v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
@@ -1323,7 +1326,10 @@ mod tests {
         for info in list().into_iter().filter(|i| i.hardware) {
             // The machine commands run, but api::execute lets an agent reach only the simulators.
             assert!(
-                !info.implemented || crate::machine_ui::handles(&info.id) || crate::laser_position::handles(&info.id),
+                !info.implemented
+                    || crate::machine_ui::handles(&info.id)
+                    || crate::key_cmds::works(&info.id)
+                    || crate::laser_position::handles(&info.id),
                 "{} touches hardware and must not run yet",
                 info.id
             );

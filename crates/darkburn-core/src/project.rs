@@ -246,25 +246,25 @@ mod tests {
 
     #[test]
     fn start_and_direction_overrides_round_trip_and_old_files_load() {
-        use crate::shape::PathDirection;
+        use crate::shape::CutDirection;
         let mut d = Document::new();
         let mut r = Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1);
-        r.start = Some([5.0, 0.0]);
-        r.direction = Some(PathDirection::Clockwise);
+        r.start_point = Some([5.0, 0.0]);
+        r.direction = CutDirection::Clockwise;
         r.tabs = vec![[1.0, 2.0]];
         let id = d.add(r);
         let bytes = save(&d, "t", None).unwrap();
         let back = load(&bytes).unwrap().doc;
         let s = back.get(id).unwrap();
-        assert_eq!(s.start, Some([5.0, 0.0]));
-        assert_eq!(s.direction, Some(PathDirection::Clockwise));
+        assert_eq!(s.start_point, Some([5.0, 0.0]));
+        assert_eq!(s.direction, CutDirection::Clockwise);
         assert_eq!(s.tabs, vec![[1.0, 2.0]]);
         // A version 2 file has neither field and opens with defaults.
         let mut d2 = Document::new();
         let id2 = d2.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 1));
         let b2 = save(&d2, "t", None).unwrap();
         let s2 = load(&b2).unwrap().doc;
-        assert!(s2.get(id2).unwrap().start.is_none() && s2.get(id2).unwrap().direction.is_none());
+        assert!(s2.get(id2).unwrap().start_point.is_none() && s2.get(id2).unwrap().direction == CutDirection::Auto);
     }
 
     #[test]

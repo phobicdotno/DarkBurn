@@ -82,6 +82,10 @@ pub struct GcodeSettings {
     pub end_script: String,
     pub variables: Vec<(String, String)>,
     pub comments: bool,
+    /// Z moves are always written as distances (`G91 G0 Z.. G90`).
+    pub z_relative_only: bool,
+    /// Write every Z move even when Z is already there (Optimize Z moves off).
+    pub z_always: bool,
 }
 
 impl GcodeSettings {
@@ -107,6 +111,8 @@ impl GcodeSettings {
             end_script: String::new(),
             variables: Vec::new(),
             comments: true,
+            z_relative_only: false,
+            z_always: false,
         }
     }
 
@@ -559,16 +565,23 @@ impl<'a> Emitter<'a> {
             },
             Op::ZMove { z } => {
                 let zr = round(*z, self.s.decimals);
-                let word = if self.relative {
+                let word = if self.relative || self.s.z_relative_only {
                     let dz = round(zr - self.z.unwrap_or(0.0), self.s.decimals);
-                    if dz == 0.0 && self.z.is_some() { None } else { Some(fmt(dz, self.s.decimals)) }
-                } else if self.z != Some(zr) {
+                    if dz == 0.0 && self.z.is_some() && !self.s.z_always { None } else { Some(fmt(dz, self.s.decimals)) }
+                } else if self.z != Some(zr) || self.s.z_always {
                     Some(fmt(zr, self.s.decimals))
                 } else {
                     None
                 };
                 if let Some(w) = word {
-                    out.push(format!("G0 Z{w}"));
+                    if self.s.z_relative_only && !self.relative {
+                        // Z always moves by distance: switch to relative for this one move.
+                        out.push("G91".into());
+                        out.push(format!("G0 Z{w}"));
+                        out.push("G90".into());
+                    } else {
+                        out.push(format!("G0 Z{w}"));
+                    }
                 }
                 self.z = Some(zr);
             }
@@ -584,6 +597,8 @@ mod tests {
 
     fn layer(constant: bool, raster: bool) -> IrLayer {
         IrLayer {
+            dsp: Default::default(),
+            dot: None,
             layer_index: 0,
             sublayer: 0,
             name: "C00".into(),

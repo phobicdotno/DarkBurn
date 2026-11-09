@@ -83,6 +83,9 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
     let mut job = ruida::RdJob::default();
     let mut cur: Option<usize> = None;
     let mut speed = 100.0;
+    let mut laser2_only = false;
+    let mut dot_layer = false;
+    let mut pos = tp.start;
     let at = |p: Point| p + shift;
     for op in &tp.ops {
         match op {
@@ -90,19 +93,33 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                 let l = tp.layers.get(*layer).ok_or("the job refers to a layer it does not have")?;
                 let index = job.layers.len().min(127) as u8;
                 speed = l.speed;
+                // Laser 1 / laser 2 / both tubes: a tube that is not used gets no power.
+                let (min_power, max_power) = match (l.laser, l.dsp.power2) {
+                    (2, Some([lo, hi])) => ([0.0, lo], [0.0, hi]),
+                    (_, Some([lo, hi])) => ([l.min_power, lo], [l.max_power, hi]),
+                    _ => ([l.min_power, 0.0], [l.max_power, 0.0]),
+                };
                 job.layers.push(ruida::RdLayer {
                     settings: ruida::LayerSettings {
                         index,
                         speed_mm_s: l.speed.max(0.1),
-                        min_power: [l.min_power, l.min_power],
-                        max_power: [l.max_power, l.max_power],
+                        min_power,
+                        max_power,
                         color: 0,
-                        frequency_hz: None,
+                        frequency_hz: l.dsp.pwm_hz,
                         air_assist: l.air,
-                        dot_mode: None,
+                        dot_mode: l.dot.map(|(ms, spacing)| ruida::DotMode { dot_time_ms: ms, spacing_mm: spacing }),
                     },
                     ops: Vec::new(),
                 });
+                // The layer's U axis offset is applied before its first move.
+                if l.dsp.u_offset != 0.0
+                    && let Some(layer) = job.layers.last_mut()
+                {
+                    layer.ops.push(ruida::RdOp::U(l.dsp.u_offset));
+                }
+                laser2_only = l.laser == 2;
+                dot_layer = l.dot.is_some();
                 cur = Some(job.layers.len() - 1);
             }
             Op::Rapid { to } | Op::Overscan { to, .. } => {
@@ -113,11 +130,18 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                 let i = cur.ok_or("the job cuts before it starts a layer")?;
                 let p = at(*to);
                 job.layers[i].ops.push(if *power > 0.0 {
-                    ruida::RdOp::Cut { to: p, power: Some(*power), speed: Some(*s) }
+                    // The per-cut power override is for laser 1; laser 2 layers use the layer's power.
+                    ruida::RdOp::Cut { to: p, power: (!laser2_only).then_some(*power), speed: Some(*s) }
                 } else {
                     ruida::RdOp::Move(p)
                 });
                 speed = *s;
+            }
+            // Dot mode: the controller fires the dots itself, so each dot is a zero-length cut.
+            Op::Dwell { power, .. } if dot_layer && *power > 0.0 => {
+                if let Some(i) = cur {
+                    job.layers[i].ops.push(ruida::RdOp::Cut { to: pos + shift, power: (!laser2_only).then_some(*power), speed: Some(speed) });
+                }
             }
             Op::ZMove { z } => {
                 if let Some(i) = cur {
@@ -125,6 +149,9 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                 }
             }
             _ => {}
+        }
+        if let Some(t) = op.target() {
+            pos = t;
         }
     }
     let _ = speed;
@@ -254,15 +281,23 @@ pub fn frame(app: &mut DarkBurn, kind: FrameKind) -> Result<Value, String> {
         return crate::machine_ext::run(app, "machine.galvo_frame", &json!({ "repeat": false }), crate::machine_ui::Source::Api)
             .unwrap_or_else(|| Err("no galvo frame".into()));
     }
-    let input = job_cmds::build_input(app);
+    let mut input = job_cmds::build_input(app);
+    let dev = app.machine.active();
+    let laser = (dev.settings.gcode.laser_on_when_framing && dev.family() == Family::Grbl)
+        .then(|| app.machine.fire_percent.min(dev.settings.fire_max_percent));
+    let check_bounds = dev.settings.dsp.check_bounds_when_framing && dev.family() == Family::Ruida;
+    if laser.is_some() {
+        // The laser itself walks the frame: no red-dot offset.
+        input.device.pointer_offset = [0.0, 0.0];
+    }
     let tp = job_build::build_frame(&input, kind, 100.0, None).map_err(|e| e.to_string())?;
+    if check_bounds {
+        job_build::check_frame_bounds(&input, &tp)?;
+    }
     let points = work_points(app, &tp);
     if points.len() < 2 {
         return Err("There is nothing to frame.".into());
     }
-    let dev = app.machine.active();
-    let laser = (dev.settings.gcode.laser_on_when_framing && dev.family() == Family::Grbl)
-        .then(|| app.machine.fire_percent.min(dev.settings.fire_max_percent));
     app.machine.handle.frame_outline(points.clone(), FrameSpec { feed: 3000.0, laser_percent: laser }).map_err(|e| e.to_string())?;
     Ok(json!({ "ok": true, "points": points.len() }))
 }

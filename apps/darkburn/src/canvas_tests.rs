@@ -436,7 +436,7 @@ fn the_tabs_start_points_and_round_corner_tools_work_from_clicks() {
     click_mm(&mut rig, Point::new(160.0, 140.0));
     let s = rig.app.editor.doc.get(id).unwrap();
     assert!(matches!(s.kind, darkburn_core::ShapeKind::Rect { .. }));
-    let local = s.start.expect("start recorded");
+    let local = s.start_point.expect("start recorded");
     let doc = s.transform * Point::new(local[0], local[1]);
     assert!(doc.distance(Point::new(160.0, 140.0)) < 1.0, "at the clicked corner: {doc:?}");
 
@@ -497,11 +497,8 @@ fn every_ribbon_button_is_a_working_command_and_each_tab_draws() {
         rig.app.prefs.ribbon_tab = tab.into();
         for width in [1500.0, 700.0] {
             rig.time += 0.016;
-            let input = egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 900.0))),
-                time: Some(rig.time),
-                ..Default::default()
-            };
+            let input =
+                egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(width, 900.0))), time: Some(rig.time), ..Default::default() };
             let app = &mut rig.app;
             let mut out = ctx.run_ui(input, |ui| app.ui(ui));
             out.textures_delta.clear();

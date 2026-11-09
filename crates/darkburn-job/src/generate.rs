@@ -108,6 +108,8 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
                 air: s.air,
                 laser: s.laser,
                 raster: matches!(s.mode, CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill | CutMode::Image),
+                dsp: s.dsp,
+                dot: s.line.dot_mode.map(|d| (d.time_ms, d.spacing)),
             });
             let modes: &[CutMode] = match s.mode {
                 CutMode::FillLine => &[CutMode::Fill, CutMode::Line],

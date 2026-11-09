@@ -673,7 +673,11 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
                 run_command(ctx, app, "job.material_test_presets", &serde_json::json!({ "action": "export", "path": path.to_string_lossy() }));
             }
         }
-        Some("frame") => app.run(ctx, "job.frame"),
+        Some("frame") => {
+            if let Err(e) = crate::material_test::frame_test(app) {
+                app.job.message = Some(job_cmds::Message { title: "Material test".into(), text: e });
+            }
+        }
         _ => {}
     }
     match action {
@@ -838,6 +842,7 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ("Cut selected graphics", "cut_selected", s.cut_selected),
         ("Use selection origin", "use_selection_origin", s.use_selection_origin),
         ("Show last position", "show_last_position", s.show_last_position),
+        ("Return to start when done", "return_to_start", s.finish == darkburn_job::FinishPosition::StartPosition),
         ("Optimize cut path", "optimize", s.planner.optimize),
     ];
     for (label, key, on) in toggles.iter_mut() {

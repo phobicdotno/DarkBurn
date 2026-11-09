@@ -31,6 +31,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::vision_cmds::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::layer_defaults::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }
@@ -195,6 +198,23 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
             let ids = selected(app)?;
             let (name, locked) = (a.get("name").and_then(Value::as_str).map(str::to_string), a.get("locked").and_then(Value::as_bool));
             let (priority, power) = (a.get("priority").and_then(Value::as_i64), opt_num(a, "power_scale"));
+            // Forced cut direction and start point (a document point, or null to clear it).
+            let direction = match a.get("direction").and_then(Value::as_str) {
+                None => None,
+                Some("auto") => Some(darkburn_core::CutDirection::Auto),
+                Some("clockwise") => Some(darkburn_core::CutDirection::Clockwise),
+                Some("counter_clockwise") => Some(darkburn_core::CutDirection::CounterClockwise),
+                Some("reversed") => Some(darkburn_core::CutDirection::Reversed),
+                Some(other) => return Err(format!("unknown direction {other}")),
+            };
+            let start: Option<Option<Point>> = match a.get("start_point") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(v) => {
+                    let xy = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some((a[0].as_f64()?, a[1].as_f64()?)));
+                    Some(Some(xy.map(|(x, y)| Point::new(x, y)).ok_or("start_point must be [x, y] or null")?))
+                }
+            };
             changed(app.editor.edit("Shape properties", |d, _| {
                 let mut any = false;
                 for id in &ids {
@@ -210,6 +230,15 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                     }
                     if let Some(p) = power {
                         s.power_scale = p.clamp(0.0, 1000.0);
+                    }
+                    if let Some(dir) = direction {
+                        s.direction = dir;
+                    }
+                    if let Some(sp) = start {
+                        s.start_point = sp.map(|p| {
+                            let l = s.transform.inverse() * p;
+                            [l.x, l.y]
+                        });
                     }
                     any = true;
                 }

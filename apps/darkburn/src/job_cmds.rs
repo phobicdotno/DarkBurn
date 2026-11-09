@@ -352,14 +352,18 @@ pub fn build_input(app: &DarkBurn) -> BuildInput {
     // The selected device profile decides the bed, origin corner, axes and Z.
     let mut device = app.machine.active().job_device();
     device.swap_xy |= app.job.gcode.swap_xy;
+    device.tolerance = crate::settings_wiring::output_tolerance_mm(&app.prefs.opts);
+    let mut settings = current_settings(app).with_device_finish(app.job.gcode.return_to_finish);
+    settings.discard_out_of_bounds = crate::settings_wiring::discard_out_of_bounds(&settings, &app.prefs.opts);
     BuildInput {
         doc: app.editor.doc.clone(),
         selection: app.editor.selected(),
-        settings: current_settings(app),
+        settings,
         device,
         user_origin: app.job.user_origin,
         head: app.job.head,
         motion: app.job.additional,
+        tuning: None,
     }
 }
 
@@ -1160,7 +1164,7 @@ mod tests {
     fn material_test_through_commands_with_undo_and_presets() {
         let mut a = app();
         let r = run(&mut a, "job.material_test", json!({ "columns": 3, "rows": 2, "x_min": 100, "x_max": 300, "y_min": 20, "y_max": 60 })).unwrap();
-        assert_eq!(r["shapes"].as_array().unwrap().len(), 6 + 5);
+        assert_eq!(r["shapes"].as_array().unwrap().len(), 6 + 5 + 2);
         assert_eq!(a.editor.doc.layer(0).main().speed, 100.0);
         assert_eq!(a.editor.doc.layer(2).main().speed, 300.0);
         run(&mut a, "edit.undo", Value::Null).unwrap();

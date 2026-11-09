@@ -173,7 +173,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-11 Interval test
 - [x] LT-12 Material test
 - [x] LT-13 Centre finder
-- [ ] LT-14 Feeder setup
+- [x] LT-14 Feeder setup
 - [x] LT-15 Cylinder correction
 - [x] LT-16 Get controller info
 - [x] LT-17 Repeat marking (galvo)
@@ -239,7 +239,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SB-02 Cursor position in current units
 - [x] SB-03 Selection bounds and object count
 - [x] SB-04 Help text for the control under the mouse
-- [ ] SB-05 Layer and pass progress while a job runs
+- [x] SB-05 Layer and pass progress while a job runs
 - [x] SB-06 Auto-save status
 
 ---
@@ -298,7 +298,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LIB-06 Link layer to entry; unlink when entry deleted
 - [x] LIB-07 Create entry from layer
 - [x] LIB-08 Edit cut, edit description, duplicate, delete
-- [~] LIB-09 Library chosen per device
+- [x] LIB-09 Library chosen per device
 
 ### Console
 - [x] CON-01 Scrolling log and command line
@@ -336,11 +336,11 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CAMP-07 Overlay width, height, X shift, Y shift
 
 ### Variable Text
-- [~] VTP-01 Start, end, current, advance by
-- [~] VTP-02 Previous and next
-- [~] VTP-03 Auto-advance
-- [~] VTP-04 Test, reset, bake
-- [~] VTP-05 CSV file browse and clear
+- [x] VTP-01 Start, end, current, advance by
+- [x] VTP-02 Previous and next
+- [x] VTP-03 Auto-advance
+- [x] VTP-04 Test, reset, bake
+- [x] VTP-05 CSV file browse and clear
 
 ### Shape Properties
 - [x] SP-01 Property grid for the selected shape
@@ -357,7 +357,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ART-03 Search
 - [x] ART-04 Drag in from the desktop; add selection
 - [x] ART-05 Rename; replace on duplicate
-- [~] ART-06 Shared between running instances
+- [x] ART-06 Shared between running instances
 
 ### File List (DSP controllers)
 - [x] FL-01 List files on controller
@@ -368,7 +368,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PANEL-01 Default right-side tab groups as in LightBurn
 - [x] PANEL-02 Move, Art Library and File List hidden by default
 - [x] PANEL-03 Compact layout on small screens
-- [~] PANEL-04 Panel layout saved per device
+- [x] PANEL-04 Panel layout saved per device
 
 ---
 
@@ -507,15 +507,15 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Layer model
 - [x] LAYER-01 30 colour layers and 2 tool layers that never output
-- [~] LAYER-02 Tool layers can optionally be framed
+- [x] LAYER-02 Tool layers can optionally be framed
 - [x] LAYER-03 Per layer: name, mode, output, show, air, priority, speed, max power, min power, passes
 - [x] LAYER-04 Sub-layers: up to 11 per layer with their own settings
 - [x] LAYER-05 Sub-layers: add, duplicate, remove, reorder, enable, disable
 - [x] LAYER-06 Layer list shows "Multi" when sub-layers exist
-- [ ] LAYER-07 Default layer settings per device: make default, make default for all, reset
-- [ ] LAYER-08 Load default layer settings on new project option
-- [~] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
-- [~] LAYER-10 Layers linked to material library entries
+- [x] LAYER-07 Default layer settings per device: make default, make default for all, reset
+- [x] LAYER-08 Load default layer settings on new project option
+- [x] LAYER-09 Per shape overrides: cut order priority, power scale, start point and direction
+- [x] LAYER-10 Layers linked to material library entries
 
 ### Modes
 - [x] MODE-01 Line
@@ -525,43 +525,43 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] MODE-05 Image (bitmaps only)
 
 ### Shared settings
-- [~] CUT-01 Speed in mm/s or mm/min
-- [~] CUT-02 Max power and min power
-- [~] CUT-03 Number of passes
+- [x] CUT-01 Speed in mm/s or mm/min
+- [x] CUT-02 Max power and min power
+- [x] CUT-03 Number of passes
 - [x] CUT-04 Output on or off
 - [~] CUT-05 Air assist, with DSP modes for by layer or with laser
-- [~] CUT-06 Laser 1 and laser 2 choice and per-tube power
-- [~] CUT-07 Constant power mode (GRBL M3)
+- [x] CUT-06 Laser 1 and laser 2 choice and per-tube power
+- [x] CUT-07 Constant power mode (GRBL M3)
 - [x] CUT-08 Layer name
 - [x] CUT-09 Warning for very high DPI
 - [x] CUT-10 Equations in every number field
 
 ### Line mode
-- [~] LINE-01 Z offset and Z step per pass
-- [~] LINE-02 Kerf offset for closed shapes
-- [~] LINE-03 Perforation mode with cut and skip lengths
-- [~] LINE-04 Tabs: enable, even spacing with min and max count, tab size
-- [~] LINE-05 Tabs: partly cut tabs with tab power, skip inner shapes
-- [~] LINE-06 Tabs: manual placement with the add tabs tool
-- [~] LINE-07 Start and end pause time
-- [~] LINE-08 Cut-through start and end with pause power
-- [~] LINE-09 Overcut distance
-- [~] LINE-10 PWM frequency override (Ruida)
+- [x] LINE-01 Z offset and Z step per pass
+- [x] LINE-02 Kerf offset for closed shapes
+- [x] LINE-03 Perforation mode with cut and skip lengths
+- [x] LINE-04 Tabs: enable, even spacing with min and max count, tab size
+- [x] LINE-05 Tabs: partly cut tabs with tab power, skip inner shapes
+- [x] LINE-06 Tabs: manual placement with the add tabs tool
+- [x] LINE-07 Start and end pause time
+- [x] LINE-08 Cut-through start and end with pause power
+- [x] LINE-09 Overcut distance
+- [x] LINE-10 PWM frequency override (Ruida)
 - [~] LINE-11 PPI mode (Trocen)
-- [~] LINE-12 Lead in and lead out: length, angle, line or arc
-- [~] LINE-13 Dot mode: time and spacing
-- [~] LINE-14 U axis offset (Ruida)
+- [x] LINE-12 Lead in and lead out: length, angle, line or arc
+- [x] LINE-13 Dot mode: time and spacing
+- [x] LINE-14 U axis offset (Ruida)
 
 ### Fill mode
-- [~] FILL-01 Bi-directional fill
-- [~] FILL-02 Cross-hatch
-- [~] FILL-03 Overscan as % or distance, with distance readout
-- [~] FILL-04 Line interval and lines per inch, linked
-- [~] FILL-05 Scan angle, with angle increase per pass
-- [~] FILL-06 Fill all shapes at once, fill groups together, fill shapes one by one
-- [~] FILL-07 Ramp length and ramp outer edge
-- [~] FILL-08 Flood fill
-- [~] FILL-09 Offset fill specifics: spiral path, power scale respected
+- [x] FILL-01 Bi-directional fill
+- [x] FILL-02 Cross-hatch
+- [x] FILL-03 Overscan as % or distance, with distance readout
+- [x] FILL-04 Line interval and lines per inch, linked
+- [x] FILL-05 Scan angle, with angle increase per pass
+- [x] FILL-06 Fill all shapes at once, fill groups together, fill shapes one by one
+- [x] FILL-07 Ramp length and ramp outer edge
+- [x] FILL-08 Flood fill
+- [x] FILL-09 Offset fill specifics: spiral path, power scale respected
 
 ### Image mode
 - [x] IMGL-01 Image mode picker
@@ -588,10 +588,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Material test
 - [x] MT-01 Grid of speed × power cells
 - [x] MT-02 Alternative axes: interval, frequency, Q-pulse
-- [~] MT-03 Min and max, rows and columns, labels and units
+- [x] MT-03 Min and max, rows and columns, labels and units
 - [x] MT-04 Label layer settings
 - [x] MT-05 Presets: save, load, import, export
-- [~] MT-06 Frame the test before running
+- [x] MT-06 Frame the test before running
 - [x] MT-07 Works on G-code, DSP and galvo devices
 
 ---
@@ -638,20 +638,20 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PREV-08 Save preview image, optionally transparent
 - [~] PREV-09 Start here: run, send or save from any point in the job
 - [x] PREV-10 Layer and pass readout
-- [ ] PREV-11 Read controller acceleration and speeds to make the estimate accurate
+- [x] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 
 ## 13. Job origin and coordinates
 
 - [x] ORIG-01 Absolute coordinates
 - [x] ORIG-02 Current position
-- [~] ORIG-03 User origin: set and clear
+- [x] ORIG-03 User origin: set and clear
 - [x] ORIG-04 Job origin at 9 positions
 - [x] ORIG-05 Use selection origin
-- [ ] ORIG-06 Red-dot pointer offset
-- [~] ORIG-07 Machine origin corner per device
-- [ ] ORIG-08 Negative-coordinate (CNC) machine mode
-- [ ] ORIG-09 Swap X and Y
-- [~] ORIG-10 Return to finish position
+- [x] ORIG-06 Red-dot pointer offset
+- [x] ORIG-07 Machine origin corner per device
+- [x] ORIG-08 Negative-coordinate (CNC) machine mode
+- [x] ORIG-09 Swap X and Y
+- [x] ORIG-10 Return to finish position
 
 ## 14. Cut planner
 
@@ -667,7 +667,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PLAN-10 Remove overlapping lines with distance
 - [x] PLAN-11 Set as default and reset
 - [x] PLAN-12 Saved in the project
-- [~] PLAN-13 Manual cut order and forced start points respected
+- [x] PLAN-13 Manual cut order and forced start points respected
 - [x] PLAN-14 Progress and cancel
 
 ---
@@ -832,7 +832,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
 - [x] ROT-05 Mirror output
 - [~] ROT-06 Test rotation
-- [ ] ROT-07 Read settings from controller (Ruida)
+- [x] ROT-07 Read settings from controller (Ruida)
 - [x] ROT-08 Rotary toggle on the main window
 
 ## 19. Print and cut
@@ -862,8 +862,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-04 Feeder setup
 - [x] OTHER-05 Cylinder correction, including concave
 - [x] OTHER-06 Pre-job checklist editor
-- [ ] OTHER-07 Project notes dialog shown on open
-- [ ] OTHER-08 Hotkey editor
+- [x] OTHER-07 Project notes dialog shown on open
+- [x] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
 - [ ] OTHER-10 Taper warp *(later)*
 
@@ -886,22 +886,22 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Editor
 - [x] SET-11 Beginner mode
 - [x] SET-12 Auto-save interval
-- [~] SET-13 Check for updates
-- [~] SET-14 Open files in the running copy
-- [~] SET-15 Default states for cut selected and use selection origin
-- [~] SET-16 Save job origin and cut selected in the project
+- [x] SET-13 Check for updates
+- [x] SET-14 Open files in the running copy
+- [x] SET-15 Default states for cut selected and use selection origin
+- [x] SET-16 Save job origin and cut selected in the project
 - [x] SET-17 Remember move, size, rotate and shear lock states
-- [~] SET-18 Ignore out-of-bounds shapes
+- [x] SET-18 Ignore out-of-bounds shapes
 - [~] SET-19 Ignore Start when the monitor is off
-- [~] SET-20 Load default layers on new project
+- [x] SET-20 Load default layers on new project
 - [~] SET-21 Built-in or system file dialogs
 - [~] SET-22 Sounds on error and on job finished
-- [~] SET-23 Save job log
+- [x] SET-23 Save job log
 - [x] SET-24 Use system clipboard
 - [x] SET-25 Nudge distances for normal, Ctrl and Shift
-- [~] SET-26 Default font, height, auto-weld
+- [x] SET-26 Default font, height, auto-weld
 - [x] SET-27 Shared default preferences file for makerspaces
-- [~] SET-28 Excluded serial ports
+- [x] SET-28 Excluded serial ports
 
 ### Files
 - [x] SET-29 SVG DPI
@@ -911,7 +911,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-33 Import hidden Illustrator layers
 - [x] SET-34 Group and select imported shapes
 - [x] SET-35 Allow import to tool layers
-- [~] SET-36 Output curve tolerance
+- [x] SET-36 Output curve tolerance
 
 ### Camera
 - [~] SET-37 Capture system, resolution, colour view
@@ -919,13 +919,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 23. Device settings
 
 - [x] DS-01 Work area size and origin corner
-- [~] DS-02 Negative-coordinate machine mode
-- [~] DS-03 Red-dot pointer offset
-- [~] DS-04 Z: enable, reverse, relative moves only, optimize moves
+- [x] DS-02 Negative-coordinate machine mode
+- [x] DS-03 Red-dot pointer offset
+- [x] DS-04 Z: enable, reverse, relative moves only, optimize moves
 - [~] DS-05 Tab pulse width
 - [x] DS-06 Job checklist on and editor
 - [x] DS-07 Overwrite files by default
-- [~] DS-08 Scanning offset table
+- [x] DS-08 Scanning offset table
 - [x] DS-09 G-code: auto-home on start, swap X/Y
 - [x] DS-10 G-code: fast whitespace scan and its speed
 - [x] DS-11 G-code: $J jogging, DTR, fire button, laser on when framing
@@ -934,18 +934,18 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DS-14 G-code: start and end scripts
 - [x] DS-15 G-code: G0 for overscan, S with every G1
 - [x] DS-16 DSP: U axis, laser 2, filename increment, disable start
-- [~] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
+- [x] DS-17 DSP: check bounds when framing, network timeout, connection type and IP
 - [x] DS-18 Galvo: all galvo settings from section 15
-- [~] DS-19 Simulation: acceleration and speed values for the time estimate
+- [x] DS-19 Simulation: acceleration and speed values for the time estimate
 - [ ] DS-20 Frame continuously *(later)*
 
 ## 24. Keyboard
 
 - [~] KEY-01 Every default shortcut from the menus above
-- [ ] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [ ] KEY-03 Numpad jogging
-- [ ] KEY-04 Node edit single-key commands
-- [ ] KEY-05 Align single-key commands
+- [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
+- [~] KEY-03 Numpad jogging
+- [x] KEY-04 Node edit single-key commands
+- [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
 - [x] KEY-07 F1 context help
 - [x] KEY-08 All shortcuts remappable
@@ -954,7 +954,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 - [x] I18N-01 Translation system
 - [x] I18N-02 English
-- [~] I18N-03 Norwegian
+- [x] I18N-03 Norwegian
 - [ ] I18N-04 The other 22 LightBurn languages
 - [ ] I18N-05 Machine error messages translated
 

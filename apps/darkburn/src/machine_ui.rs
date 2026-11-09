@@ -129,6 +129,7 @@ pub const COMMANDS: &[Cmd] = &[
     a("device.remove", "Remove a Device", r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#),
     a("device.export", "Export a Device Profile", r#"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#),
     a("device.import", "Import a Device Profile", r#"{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}"#),
+    a("device.read_motion", "Read Speeds and Acceleration From the Controller", ""),
     a("laser.devices", "Devices", ""),
 ];
 
@@ -185,6 +186,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "machine.file_upload" | "machine.file_overwrite" => &["FL-02", "RUIDA-05"],
         "machine.dsp_read" | "machine.dsp_write" => &["RUIDA-09", "RUIDA-10", "MOVE-18"],
         "edit.device_settings" => &["EDIT-30"],
+        "device.read_motion" => &["PREV-11", "DS-19"],
         "device.list" | "device.select" | "device.duplicate" | "device.remove" | "device.export" | "device.import" => &["DEV-01", "DEV-04", "DEV-05"],
         _ => &[],
     }
@@ -879,6 +881,21 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
             if m.select_device(did) { Ok(json!({ "active": did })) } else { Err(format!("no device {did}")) }
         }
+        "device.read_motion" => {
+            let snap = m.handle.snapshot().clone();
+            let base = m.active().settings.additional;
+            let new = crate::motion_read::from_snapshot(&snap, base)
+                .ok_or("The controller has not reported its settings yet. Connect and read the machine settings first.")?;
+            if let Some(dev) = m.devices.active_mut() {
+                dev.settings.additional = new;
+            }
+            if let Some((draft, _)) = m.dlg.settings.as_mut()
+                && m.devices.active == Some(draft.id)
+            {
+                draft.settings.additional = new;
+            }
+            Ok(json!({ "accel": new.accel, "engrave_accel": new.engrave_accel, "max_speed": new.max_speed, "rapid_speed": new.rapid_speed }))
+        }
         "device.duplicate" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
             m.devices.duplicate(did).map(|n| json!({ "id": n })).ok_or_else(|| format!("no device {did}"))
@@ -960,6 +977,9 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     sync_job_state(app);
     crate::machine_job::update_head(app);
     let events = app.machine.tick();
+    crate::settings_wiring::on_machine_events(app, &events);
+    let excluded = app.prefs.opts.excluded_ports.clone();
+    crate::settings_wiring::filter_ports(&mut app.machine.ports, &excluded);
     if !events.is_empty() || app.machine.handle.snapshot().state.is_working() || app.machine.handle.snapshot().state == LaserState::Connecting {
         ctx.request_repaint();
     }

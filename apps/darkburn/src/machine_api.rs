@@ -144,6 +144,8 @@ pub struct ConnectConfig {
     pub overwrite_default: Option<ruida::OverwriteChoice>,
     /// GRBL simulator only: homing is enabled, so the machine starts locked in alarm until homed.
     pub sim_homing: bool,
+    /// Ruida: how long to wait for an acknowledgement or a reply, ms (DS-17).
+    pub net_timeout_ms: Option<u32>,
     /// The device profile for the G-code firmwares of `darkburn-gcodebots` (Smoothieware,
     /// Marlin, Snapmaker, custom). `None` for GRBL and Ruida.
     pub gcode: Option<Arc<darkburn_gcodebots::DeviceProfile>>,
@@ -165,6 +167,7 @@ impl Default for ConnectConfig {
             sim_time_scale: 4.0,
             overwrite_default: None,
             sim_homing: false,
+            net_timeout_ms: None,
             gcode: None,
             galvo: None,
         }
@@ -1342,7 +1345,15 @@ impl RuidaAdapter {
         simulator: bool,
         sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     ) -> Self {
-        let machine = ruida::RuidaMachine::new(transport, ruida::MachineConfig::default());
+        let machine = ruida::RuidaMachine::new(
+            transport,
+            ruida::MachineConfig {
+                timeout: cfg
+                    .net_timeout_ms
+                    .map_or(ruida::MachineConfig::default().timeout, |ms| Duration::from_millis(u64::from(ms.clamp(100, 60_000)))),
+                ..ruida::MachineConfig::default()
+            },
+        );
         let wc = ruida::WorkerConfig { status_interval: Some(Duration::from_millis(if simulator { 60 } else { 500 })) };
         let mut h = ruida::RuidaHandle::spawn(machine, wc);
         let id = h.request(ruida::Request::Connect);
@@ -1392,7 +1403,8 @@ impl RuidaAdapter {
     }
 
     fn bed(&self) -> Option<(f64, f64)> {
-        self.snap.bed.or_else(|| self.snap.ruida.settings.as_ref().and_then(|s| s.bed_size_mm()))
+        // One axis may have been read before the other: a half-known bed is no bed.
+        self.snap.bed.filter(|(w, h)| *w > 0.0 && *h > 0.0).or_else(|| self.snap.ruida.settings.as_ref().and_then(|s| s.bed_size_mm()))
     }
 
     fn finish_job(&mut self) {

@@ -359,12 +359,12 @@ fn files(ui: &mut Ui, prefs: &mut Prefs) {
 fn text(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::section_heading(ui, &tr("settings.default_text", "Default text"));
     ui_kit::row(ui, &tr("settings.font", "Font"), |ui| {
-        let mut v = prefs.opts.font_name.clone();
+        let mut v = prefs.fonts.default_family.clone();
         if ui_kit::field(ui, &mut v) {
-            prefs.opts.font_name = v;
+            prefs.fonts.default_family = v;
         }
     });
-    ui_kit::row(ui, &tr("settings.font_height", "Height"), |ui| length_field(ui, &mut prefs.opts.font_height, 0.1, 1000.0, 0.5, " mm"));
+    ui_kit::row(ui, &tr("settings.font_height", "Height"), |ui| length_field(ui, &mut prefs.fonts.default_size, 0.1, 1000.0, 0.5, " mm"));
     ui_kit::checkbox(ui, &tr("settings.auto_weld", "Weld text automatically"), &mut prefs.opts.auto_weld);
 }
 

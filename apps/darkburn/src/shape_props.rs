@@ -3,7 +3,7 @@
 
 use darkburn_core::layer::{LAYER_COUNT, layer_label};
 use darkburn_core::shape::{AlignX, AlignY};
-use darkburn_core::{Document, Shape, ShapeId, ShapeKind, TextShape};
+use darkburn_core::{CutDirection, Document, Shape, ShapeId, ShapeKind, TextShape};
 use darkburn_ui::ui_kit;
 use egui::{Id, RichText, Ui};
 use solidcraft_theme::Tokens;
@@ -92,6 +92,28 @@ impl Grid<'_> {
             let ids = self.ids.clone();
             let ctx = ui.ctx().clone();
             numeric::commit(&mut self.app.editor, &ctx, Id::unique(("sp_text", label)), label, merge, |d, _| set_each(d, &ids, get, |s| set(s, &v)));
+        }
+    }
+
+    /// The forced start point: shows whether one is set and clears it. The node tool sets it.
+    fn start_point(&mut self, ui: &mut Ui) {
+        let Some((set, mixed)) = common(&self.shapes, |s| Some(s.start_point.is_some())) else { return };
+        let mut clear = false;
+        ui_kit::row(ui, "Start point", |ui| {
+            ui.label(if mixed {
+                "Mixed"
+            } else if set {
+                "Set"
+            } else {
+                "Automatic"
+            });
+            if (set || mixed) && ui_kit::button(ui, "Clear", ui_kit::Button::Small).clicked() {
+                clear = true;
+            }
+        });
+        if clear {
+            let ids = self.ids.clone();
+            self.app.editor.edit("Clear start point", |d, _| set_each(d, &ids, |s| Some(s.start_point.is_some()), |s| s.start_point = None));
         }
     }
 
@@ -194,6 +216,15 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
         |s, v| s.priority = numeric::whole(v).clamp(-1000, 1000) as i32,
     );
     g.number(ui, "Power scale", Num::new(0.0..=100.0, 1, " %").speed(0.5), |s| Some(s.power_scale), |s, v| s.power_scale = v.clamp(0.0, 100.0));
+    let dirs: Vec<&str> = CutDirection::ALL.iter().map(|d| d.label()).collect();
+    g.choice(
+        ui,
+        "Cut direction",
+        &dirs,
+        |s| CutDirection::ALL.iter().position(|d| *d == s.direction),
+        |s, i| s.direction = CutDirection::ALL.get(i).copied().unwrap_or_default(),
+    );
+    g.start_point(ui);
 
     let has = |g: &Grid, f: fn(&ShapeKind) -> bool| g.shapes.iter().any(|s| f(&s.kind));
     if has(&g, |k| matches!(k, ShapeKind::Rect { .. })) {

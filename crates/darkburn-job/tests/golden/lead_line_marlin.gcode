@@ -1,0 +1,13 @@
+; DarkBurn job for Marlin
+G21
+G90
+M3 I S0
+; Layer C00 Leads - Line 10 mm/s 60%
+G0 X17.879 Y17.879
+G1 X20 Y20 F600 S153
+G1 X30
+G1 Y30
+G1 X20
+G1 Y20
+G1 X18
+M5

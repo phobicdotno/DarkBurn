@@ -384,7 +384,7 @@ fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
                 1 => gcode_page(ui, &mut d),
                 2 => dsp_page(ui, &mut d),
                 4 => crate::galvo_ui::settings_page(ui, &mut d, &mut app.machine.ext.galvo_message),
-                _ => additional_page(ui, &mut d),
+                _ => additional_page(ui, &mut d, app),
             }
             for e in &errs {
                 ui_kit::status_line(ui, e, StatusTone::Error);
@@ -447,8 +447,8 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Z axis");
     ui_kit::checkbox(ui, "Z axis enabled", &mut d.settings.z_enabled);
     ui_kit::checkbox(ui, "Reverse Z", &mut d.settings.z_reverse);
-    ui_kit::checkbox(ui, "Relative Z moves only", &mut d.settings.z_relative_only);
-    ui_kit::checkbox(ui, "Optimize Z moves", &mut d.settings.z_optimize);
+    ui_kit::checkbox(ui, "Relative Z moves only", &mut d.settings.gcode.z_relative_only);
+    ui_kit::checkbox(ui, "Optimize Z moves", &mut d.settings.gcode.z_optimize);
     ui_kit::row(ui, "Tab pulse width", |ui| {
         ui_kit::number_field(ui, &mut d.settings.tab_pulse_width, 0.001..=10.0, 0.01, " mm");
     });
@@ -658,7 +658,7 @@ fn dsp_page(ui: &mut Ui, d: &mut Device) {
     note(ui, "Job start and end delays are set on the controller (Machine Settings).");
 }
 
-fn additional_page(ui: &mut Ui, d: &mut Device) {
+fn additional_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     note(ui, "Acceleration and speed numbers used for the time estimate and the preview. Machine Settings shows what the controller itself uses.");
     let a = &mut d.settings.additional;
     ui_kit::row(ui, "Cut acceleration", |ui| {
@@ -679,6 +679,15 @@ fn additional_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::row(ui, "Z speed", |ui| {
         ui_kit::number_field(ui, &mut a.z_speed, 0.1..=500.0, 0.1, " mm/s");
     });
+    if app.machine.handle.is_connected() {
+        // Read-only: takes the numbers from the settings already read from the controller.
+        if ui_kit::button(ui, "Read from the controller", ui_kit::Button::Small).clicked() {
+            match crate::motion_read::from_snapshot(app.machine.handle.snapshot(), d.settings.additional) {
+                Some(new) => d.settings.additional = new,
+                None => app.machine.fail("The controller has not reported its settings yet. Open Machine Settings first."),
+            }
+        }
+    }
 }
 
 // ----- Machine Settings [EDIT-31, GRBL-07, RUIDA-07, RUIDA-09, RUIDA-10] -----------------------------

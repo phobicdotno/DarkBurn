@@ -1912,4 +1912,43 @@ mod tests {
         }
         assert_eq!(app.editor.doc.len(), 1, "drawing changes nothing");
     }
+
+    /// KEY-04: the single letters work on the selected nodes through the real key handler.
+    #[test]
+    fn node_letter_keys_edit_the_selected_node() {
+        let ctx = egui::Context::default();
+        let press = |app: &mut DarkBurn, st: &mut State, key: Key| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
+                events: vec![egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }],
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| node_keys(ui.ctx(), app, st, None, 1.0));
+            out.textures_delta.clear();
+        };
+        let mut app = DarkBurn::new(Prefs::default());
+        app.editor.edit("add", |d, sel| {
+            let id = d.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0));
+            sel.set([id]);
+            true
+        });
+        let sid = app.editor.selected()[0];
+        // Make it a path first, as the node tool does.
+        let path = crate::shape_ops::shape_path(&app.editor.doc, sid).unwrap();
+        assert!(commit(&mut app, "To path", vec![(sid, path)]));
+        let count = |app: &DarkBurn| cleanup::node_count(&crate::shape_ops::shape_path(&app.editor.doc, sid).unwrap());
+        let mut st = State::default();
+        assert_eq!(count(&app), 4);
+        st.nodes = vec![(sid, NodeRef::new(0, 1))];
+        press(&mut app, &mut st, Key::D);
+        assert_eq!(count(&app), 3, "D deletes the node");
+        st.nodes = vec![(sid, NodeRef::new(0, 1))];
+        press(&mut app, &mut st, Key::B);
+        assert!(!contours(&crate::shape_ops::shape_path(&app.editor.doc, sid).unwrap())[0].closed, "B breaks the path open");
+        let before = count(&app);
+        st.nodes.clear();
+        st.seg = Some((sid, 0, 0));
+        press(&mut app, &mut st, Key::I);
+        assert_eq!(count(&app), before + 1, "I inserts a node on the selected segment");
+    }
 }

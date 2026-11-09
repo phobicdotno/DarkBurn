@@ -21,7 +21,7 @@ use std::sync::mpsc::{Receiver, channel};
 
 use darkburn_core::kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use darkburn_core::layer::{self, CutSetting, LaserSelect, Layer, Mode};
-use darkburn_core::{Document, ImageShape, PathDirection, Shape, ShapeId, ShapeKind};
+use darkburn_core::{Document, ImageShape, Shape, ShapeId, ShapeKind};
 use darkburn_job as job;
 use darkburn_job::gcode::{AirCommand, Flavor, GcodeSettings, MarlinPower};
 use darkburn_job::{
@@ -51,11 +51,27 @@ pub struct JobDevice {
     pub swap_xy: bool,
     /// The machine has a Z axis: Z offset and step per pass are written.
     pub z_enabled: bool,
+    /// Z moves go the other way (DS-04).
+    pub z_reverse: bool,
+    /// Where the red-dot pointer sits relative to the laser spot, machine axes, mm (ORIG-06, DS-03).
+    pub pointer_offset: [f64; 2],
+    /// Curve flattening tolerance for the job, mm (SET-36).
+    pub tolerance: f64,
 }
 
 impl Default for JobDevice {
     fn default() -> Self {
-        JobDevice { bed_w: 400.0, bed_h: 400.0, origin: Corner::BottomLeft, negative_coords: false, swap_xy: false, z_enabled: false }
+        JobDevice {
+            bed_w: 400.0,
+            bed_h: 400.0,
+            origin: Corner::BottomLeft,
+            negative_coords: false,
+            swap_xy: false,
+            z_enabled: false,
+            z_reverse: false,
+            pointer_offset: [0.0, 0.0],
+            tolerance: TOLERANCE,
+        }
     }
 }
 
@@ -114,6 +130,10 @@ pub struct DeviceGcodeSettings {
     pub tool_index: Option<u8>,
     /// Go back to the start (or origin) when the job ends (ORIG-10).
     pub return_to_finish: bool,
+    /// Z moves are written as distances (DS-04).
+    pub z_relative_only: bool,
+    /// Skip Z moves to the height the head is already at (DS-04).
+    pub z_optimize: bool,
 }
 
 impl Default for DeviceGcodeSettings {
@@ -139,6 +159,8 @@ impl Default for DeviceGcodeSettings {
             marlin_power: MarlinPower::Inline,
             tool_index: None,
             return_to_finish: false,
+            z_relative_only: false,
+            z_optimize: true,
         }
     }
 }
@@ -153,6 +175,8 @@ impl DeviceGcodeSettings {
         g.s_every_g1 = self.s_every_g1;
         g.marlin_power = self.marlin_power;
         g.tool_index = self.tool_index;
+        g.z_relative_only = self.z_relative_only;
+        g.z_always = !self.z_optimize;
         g.start_script = self.start_script.clone();
         if self.auto_home && matches!(self.flavor, Flavor::Grbl | Flavor::GrblHal | Flavor::FluidNc) {
             g.start_script = format!("$H\n{}", g.start_script);
@@ -304,6 +328,15 @@ impl JobProjectSettings {
         }
     }
 
+    /// The device's "return to the start when the job ends" turns the finish position on when
+    /// the project has none of its own (ORIG-10).
+    pub fn with_device_finish(mut self, return_to_finish: bool) -> JobProjectSettings {
+        if return_to_finish && self.finish == FinishPosition::Stay {
+            self.finish = FinishPosition::StartPosition;
+        }
+        self
+    }
+
     /// Store in `doc` (the caller wraps this in an undo step).
     pub fn store(&self, doc: &mut Document) {
         doc.job_settings = serde_json::to_value(self).ok();
@@ -325,6 +358,8 @@ pub struct BuildInput {
     /// starts from the current position).
     pub head: Option<Point>,
     pub motion: AdditionalSettings,
+    /// Scan tuning of the device; `None` uses the one the app has set.
+    pub tuning: Option<crate::scan_offsets::ScanTuning>,
 }
 
 /// Why no job was built.
@@ -388,6 +423,8 @@ struct Collected {
     bounds: Option<Rect>,
     selection_bounds: Option<Rect>,
     frame_paths: Vec<BezPath>,
+    /// Outlines on tool layers that are framed with the job.
+    tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
 }
@@ -414,6 +451,11 @@ fn overscan(s: &CutSetting) -> job::Overscan {
 
 /// Map one cut setting (a layer's main settings or a sub-layer) to the job engine's.
 pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutSettings {
+    map_settings_with(s, layer, z_enabled, &crate::scan_offsets::ScanTuning::default())
+}
+
+/// [`map_settings`] with the device's scan tuning (fast skip over blank stretches, DS-08).
+pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning: &crate::scan_offsets::ScanTuning) -> job::CutSettings {
     let lead = |l: &layer::Lead| {
         l.enabled.then_some(job::Lead {
             length: l.length.max(0.0),
@@ -434,6 +476,12 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
         air: layer.air,
         laser: if s.laser == LaserSelect::Laser2 { 2 } else { 1 },
         constant_power: s.constant_power,
+        dsp: job::DspSettings {
+            pwm_hz: s.pwm_override.then(|| (s.pwm_khz.clamp(0.1, 1000.0) * 1000.0).round() as u32),
+            ppi: s.ppi_enabled.then_some(s.ppi.max(1.0)),
+            u_offset: s.u_offset,
+            power2: (s.laser != LaserSelect::Laser1).then_some([s.min_power_2.clamp(0.0, 100.0), s.max_power_2.clamp(0.0, 100.0)]),
+        },
         z: job::ZSettings { enabled: z_enabled && (s.z_offset != 0.0 || s.z_step != 0.0), offset: s.z_offset, step_per_pass: s.z_step },
         ..job::CutSettings::default()
     };
@@ -477,7 +525,12 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
         ramp_outer_edge: s.ramp_outer,
         ..job::FillSettings::default()
     };
-    c.image = job::ImageSettings { bidirectional: s.bidirectional, overscan: overscan(s), skip_blanks: true, rapid_gap: 10.0 };
+    c.image = job::ImageSettings {
+        bidirectional: s.bidirectional,
+        overscan: overscan(s),
+        skip_blanks: tuning.fast_skip,
+        rapid_gap: tuning.skip_mm.max(0.1),
+    };
     c
 }
 
@@ -526,6 +579,7 @@ fn image_inputs(
     leaves: &[(&Shape, Option<u32>)],
     s: &CutSetting,
     cache: &mut HashMap<String, Arc<darkburn_raster::GrayF>>,
+    tuning: &crate::scan_offsets::ScanTuning,
 ) -> Vec<job::ImageInput> {
     let settings = darkburn_raster::ImageSettings {
         mode: raster_mode(s),
@@ -560,7 +614,9 @@ fn image_inputs(
         processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
     }
     let mut out = Vec::new();
-    let build = |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
+    let build = |mut plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
+        // The device's scanning offset table moves forward and reverse lines apart (DS-08).
+        crate::scan_offsets::shift_plans(&mut plans, s.speed, &tuning.offsets);
         for plan in plans {
             let lines = plan
                 .lines
@@ -590,19 +646,6 @@ fn image_inputs(
         }
     }
     out
-}
-
-/// Manual tabs, forced start point and forced direction of a shape (`leaf` has its group's
-/// transform folded in) go to the job input.
-pub fn apply_shape_overrides(si: &mut ShapeInput, leaf: &Shape) {
-    si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
-    si.start_point = leaf.start.map(|t| leaf.transform * Point::new(t[0], t[1]));
-    si.direction = leaf.direction.map(|d| match d {
-        PathDirection::AsDrawn => job::ForcedDirection::AsDrawn,
-        PathDirection::Reversed => job::ForcedDirection::Reversed,
-        PathDirection::Clockwise => job::ForcedDirection::Clockwise,
-        PathDirection::CounterClockwise => job::ForcedDirection::CounterClockwise,
-    });
 }
 
 fn kerf_of(layer: &Layer) -> (f64, bool) {
@@ -639,9 +682,11 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
+    let mut tool_frame: Vec<BezPath> = Vec::new();
     let mut kerf_note = [false; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
+    let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
@@ -655,6 +700,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
+                // Tool layers never burn, but may be framed with the job (LAYER-02).
+                if l.is_tool() && l.frame && !leaf.is_image() {
+                    tool_frame.push(leaf.outline());
+                }
                 continue;
             }
             let bbox = leaf.bbox();
@@ -673,7 +722,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let entry = layers[li].get_or_insert_with(|| {
-                let settings = l.settings.iter().map(|s| map_settings(s, l, input.device.z_enabled)).collect();
+                let settings = l.settings.iter().map(|s| map_settings_with(s, l, input.device.z_enabled, &tuning)).collect();
                 LayerInput {
                     index: li,
                     name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
@@ -695,7 +744,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             let (kerf, differ) = kerf_of(l);
             if kerf != 0.0 {
-                path = darkburn_geom::offset::kerf_offset(&path, kerf, TOLERANCE);
+                path = darkburn_geom::offset::kerf_offset(&path, kerf, input.device.tolerance);
                 kerf_note[li] |= differ;
             }
             if let Some(m) = &vision_map {
@@ -703,10 +752,18 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             frame_paths.push(path.clone());
             let mut si = ShapeInput::new(path);
+            // Tabs placed with the Add tabs tool are stored in the shape's local coordinates.
+            si.start_point = leaf.start_point.map(|p| leaf.transform * Point::new(p[0], p[1]));
+            si.direction = match leaf.direction {
+                darkburn_core::CutDirection::Auto => None,
+                darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
+                darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
+                darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
+            };
+            si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
             si.group = group;
             si.priority = leaf.priority;
             si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
-            apply_shape_overrides(&mut si, &leaf);
             entry.shapes.push(si);
         }
     }
@@ -736,7 +793,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         match image_setting {
             Some(s) => {
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, s, &mut cache);
+                entry.images = image_inputs(doc, &refs, s, &mut cache, &tuning);
             }
             None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
         }
@@ -747,11 +804,12 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     list.sort_by_key(|l| (l.priority, l.index));
 
     // Bounds of what burns, flattened the way the engine does it.
+    let tol = input.device.tolerance;
     let mut bounds: Option<Rect> = None;
     let mut add = |p: Point| bounds = Some(bounds.map_or(Rect::from_points(p, p), |r| r.union_pt(p)));
     for l in &list {
         for s in &l.shapes {
-            for poly in job::geom::flatten(&s.path, TOLERANCE) {
+            for poly in job::geom::flatten(&s.path, tol) {
                 poly.pts.iter().for_each(|p| add(*p));
             }
         }
@@ -764,7 +822,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
         }
     }
-    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, warnings, dropped })
+    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -803,12 +861,37 @@ fn inverse_ops(tp: &Toolpath, t: Affine) -> Toolpath {
     Toolpath { space: job::CoordSpace::Design, layers: tp.layers.clone(), ops, start: inv * tp.start }
 }
 
+/// Z moves the other way round (DS-04 "Reverse Z").
+pub fn reverse_z(mut tp: Toolpath) -> Toolpath {
+    for op in &mut tp.ops {
+        if let Op::ZMove { z } = op {
+            *z = -*z;
+        }
+    }
+    tp
+}
+
+/// Fast scan over white space (DS-10): laser-off moves inside fill and image scans run at
+/// `speed` (mm/s) instead of the scan speed. Overscan moves keep the scan speed.
+pub fn fast_whitespace(tp: &Toolpath, speed: f64) -> Toolpath {
+    let mut out = tp.clone();
+    let mut raster = false;
+    for op in &mut out.ops {
+        match op {
+            Op::LayerStart { layer } => raster = tp.layers.get(*layer).is_some_and(|l| l.raster),
+            Op::Cut { speed: s, power, .. } if raster && *power == 0.0 && speed > *s => *s = speed,
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
     let origin = origin_for(input, c.selection_bounds)?;
-    let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: TOLERANCE, comments: true };
+    let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: input.device.tolerance, comments: true };
     let mut scaled = |f: f32| report(0.3 + 0.7 * f);
     let mut progress = Progress::new(cancel, Some(&mut scaled));
     let toolpath = match job::generate(&c.job, &opts, &mut progress) {
@@ -817,6 +900,7 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
         Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
     };
     let design = inverse_ops(&toolpath, origin.transform(bounds));
+    let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
     let mut warnings = c.warnings;
     if c.dropped > 0 {
         warnings.push(format!("{} shape(s) outside the work area were left out.", c.dropped));
@@ -839,6 +923,16 @@ fn check_work_area(input: &BuildInput, tp: &Toolpath) -> BoundsReport {
             None => BoundsReport::default(),
         },
         job::CoordSpace::Design => check_bounds(tp, input.device.area()),
+    }
+}
+
+/// Refuse a frame that leaves the work area (DS-17 "check bounds when framing").
+pub fn check_frame_bounds(input: &BuildInput, frame: &Toolpath) -> Result<(), String> {
+    let report = check_work_area(input, frame);
+    if report.is_ok() {
+        Ok(())
+    } else {
+        Err(format!("The frame leaves the work area ({} moves). Move the design inside the work area first.", report.violations.len()))
     }
 }
 
@@ -900,18 +994,23 @@ impl BuildTask {
 
 // ----- G-code ---------------------------------------------------------------------------------
 
+/// The device's own changes to a toolpath before it is written as G-code.
+fn for_device(tp: Toolpath, dev: &DeviceGcodeSettings) -> Toolpath {
+    if dev.fast_whitespace_scan { fast_whitespace(&tp, dev.fast_whitespace_speed.max(1.0)) } else { tp }
+}
+
 /// G-code for the job, or for the job from operation `from_op` on.
 pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings) -> String {
     let settings = dev.to_gcode();
     match from_op {
-        Some(op) => job::gcode::emit(&job.toolpath_from(op), &settings),
-        None => job::gcode::emit(&job.toolpath, &settings),
+        Some(op) => job::gcode::emit(&for_device(job.toolpath_from(op), dev), &settings),
+        None => job::gcode::emit(&for_device(job.toolpath.clone(), dev), &settings),
     }
 }
 
 /// G-code lines to stream to a controller.
 pub fn gcode_lines(tp: &Toolpath, dev: &DeviceGcodeSettings) -> Vec<String> {
-    job::gcode::lines(tp, &dev.to_gcode()).collect()
+    job::gcode::lines(&for_device(tp.clone(), dev), &dev.to_gcode()).collect()
 }
 
 /// File extensions the G-code save offers (EXP-06).
@@ -984,8 +1083,17 @@ pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Optio
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
     let origin = origin_for(input, c.selection_bounds)?;
     let points = match kind {
-        FrameKind::Rectangle => frame_rect_points(bounds),
-        FrameKind::RubberBand => frame_rubber_points(&c.frame_paths, TOLERANCE),
+        FrameKind::Rectangle => {
+            let mut r = bounds;
+            for p in &c.tool_frame {
+                r = r.union(darkburn_core::kurbo::Shape::bounding_box(p));
+            }
+            frame_rect_points(r)
+        }
+        FrameKind::RubberBand => {
+            let all: Vec<BezPath> = c.frame_paths.iter().chain(&c.tool_frame).cloned().collect();
+            frame_rubber_points(&all, input.device.tolerance)
+        }
         FrameKind::Selection => {
             if input.selection.is_empty() {
                 return Err(BuildError::NothingSelected);
@@ -993,7 +1101,12 @@ pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Optio
             frame_rect_points(c.selection_bounds.ok_or(BuildError::NothingSelected)?)
         }
     };
-    Ok(frame_toolpath(&points, &origin, bounds, speed, power))
+    let tp = frame_toolpath(&points, &origin, bounds, speed, power);
+    // Framing with the red dot (laser off): move the head so the dot, not the laser, lands on the frame.
+    Ok(match (power, input.device.pointer_offset) {
+        (None, [dx, dy]) if dx != 0.0 || dy != 0.0 => job::origin::pointer_offset(&tp, darkburn_core::kurbo::Vec2::new(-dx, -dy)),
+        _ => tp,
+    })
 }
 
 /// Summary numbers of a simulated job.
@@ -1044,6 +1157,7 @@ mod tests {
             user_origin: None,
             head: None,
             motion: AdditionalSettings::default(),
+            tuning: None,
         }
     }
 
@@ -1190,21 +1304,21 @@ mod tests {
 
     #[test]
     fn forced_start_point_and_direction_reach_the_job() {
-        let first_move = |start: Option<[f64; 2]>, dir: Option<PathDirection>| {
+        let first_move = |start: Option<[f64; 2]>, dir: darkburn_core::CutDirection| {
             let mut d = Document::new();
             line_layer(&mut d, 1, 10.0, 80.0);
             let mut sh = Shape::rect(Rect::new(10.0, 10.0, 50.0, 50.0), 0.0, 1);
-            sh.start = start;
+            sh.start_point = start;
             sh.direction = dir;
             d.add(sh);
             let b = build_job_simple(&input(d)).unwrap();
             let pts: Vec<Point> = b.toolpath.ops.iter().filter_map(Op::target).collect();
             (pts[0], pts[1])
         };
-        let (a, _) = first_move(Some([20.0, 0.0]), None);
+        let (a, _) = first_move(Some([20.0, 0.0]), darkburn_core::CutDirection::Auto);
         assert!(a.distance(Point::new(50.0, 30.0)) < 1e-6, "starts at the forced point: {a:?}");
-        let (_, cw1) = first_move(Some([0.0, -20.0]), Some(PathDirection::Clockwise));
-        let (_, ccw1) = first_move(Some([0.0, -20.0]), Some(PathDirection::CounterClockwise));
+        let (_, cw1) = first_move(Some([0.0, -20.0]), darkburn_core::CutDirection::Clockwise);
+        let (_, ccw1) = first_move(Some([0.0, -20.0]), darkburn_core::CutDirection::CounterClockwise);
         assert!(cw1.x < 30.0 && ccw1.x > 30.0, "directions differ: cw {cw1:?} ccw {ccw1:?}");
     }
 

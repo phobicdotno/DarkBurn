@@ -9,6 +9,8 @@ mod canvas_input;
 #[cfg(test)]
 mod canvas_tests;
 mod commands;
+#[cfg(test)]
+mod completion_ui_tests;
 mod cut_settings;
 mod cuts_panel;
 mod devices;
@@ -35,10 +37,18 @@ mod import;
 mod instance;
 mod job_build;
 mod job_cmds;
+#[cfg(test)]
+mod job_device_tests;
+#[cfg(test)]
+mod job_field_tests;
 mod job_ui;
+mod key_cmds;
 mod keymap;
+#[cfg(test)]
+mod keys_tests;
 mod laser_panel;
 mod laser_position;
+mod layer_defaults;
 mod library;
 mod machine_api;
 #[cfg(test)]
@@ -59,6 +69,7 @@ mod mcp_inspect;
 #[cfg(test)]
 mod mcp_tests;
 mod mcp_ui;
+mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;
@@ -73,14 +84,17 @@ mod preview;
 mod rd_import;
 mod render;
 mod ribbon;
+mod rotary_read;
 mod scan_offsets;
 mod settings;
+mod settings_wiring;
 mod shape_arrays;
 mod shape_nodes;
 mod shape_ops;
 mod shape_props;
 mod shape_ui;
 mod shell;
+mod sounds;
 mod startup;
 mod text_cmds;
 mod text_render;

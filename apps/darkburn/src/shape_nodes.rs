@@ -2,7 +2,7 @@
 //! and measuring. Part of the shape-editing commands; see `shape_ops.rs`.
 
 use darkburn_core::kurbo::{BezPath, Point, Vec2};
-use darkburn_core::{Document, Editor, PathDirection, Shape, ShapeId, ShapeKind};
+use darkburn_core::{CutDirection, Document, Editor, Shape, ShapeId, ShapeKind};
 use darkburn_geom::cleanup;
 use darkburn_geom::node::{self, NodeRef};
 use darkburn_geom::path as gpath;
@@ -80,7 +80,7 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
         }
         "shape.reverse_direction" | "shape.clear_start_point" => r#"{"type":"object","properties":{"shape":{"type":"integer"}}}"#,
         "shape.set_direction" => {
-            r#"{"type":"object","properties":{"shape":{"type":"integer"},"direction":{"enum":["none","as_drawn","reversed","clockwise","counter_clockwise"]}},"required":["direction"]}"#
+            r#"{"type":"object","properties":{"shape":{"type":"integer"},"direction":{"enum":["auto","reversed","clockwise","counter_clockwise"]}},"required":["direction"]}"#
         }
         "measure.selection" => r#"{"type":"object","properties":{}}"#,
         "measure.points" => r#"{"type":"object","properties":{"a":{"type":"array"},"b":{"type":"array"}},"required":["a","b"]}"#,
@@ -274,14 +274,14 @@ fn tabs_auto(e: &mut Editor, a: &Value) -> R {
 pub fn marker_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     let s = doc.get(id)?;
     let mut path = shape_path(doc, id)?;
-    if let Some(st) = s.start {
+    if let Some(st) = s.start_point {
         path = gpath::set_start_point(&path, s.transform * Point::new(st[0], st[1]), false);
     }
     path = match s.direction {
-        Some(PathDirection::Reversed) => gpath::reverse(&path),
-        Some(PathDirection::Clockwise) => gpath::set_direction(&path, gpath::Direction::Clockwise),
-        Some(PathDirection::CounterClockwise) => gpath::set_direction(&path, gpath::Direction::CounterClockwise),
-        _ => path,
+        CutDirection::Reversed => gpath::reverse(&path),
+        CutDirection::Clockwise => gpath::set_direction(&path, gpath::Direction::Clockwise),
+        CutDirection::CounterClockwise => gpath::set_direction(&path, gpath::Direction::CounterClockwise),
+        CutDirection::Auto => path,
     };
     Some(path)
 }
@@ -302,12 +302,18 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
                 if q != path {
                     any |= set_shape_path(d, *id, q);
                 }
+                // Remember the point too, so the cut planner keeps it when it orders the job.
+                if let Some(s) = d.get_mut(*id) {
+                    let local = s.transform.inverse() * p;
+                    s.start_point = Some([local.x, local.y]);
+                    any = true;
+                }
             }
             if let Some(s) = d.get_mut(*id) {
                 let local = s.transform.inverse() * at;
                 let new = Some([local.x, local.y]);
-                if s.start != new {
-                    s.start = new;
+                if s.start_point != new {
+                    s.start_point = new;
                     any = true;
                 }
             }
@@ -326,13 +332,13 @@ fn reverse(e: &mut Editor, a: &Value) -> R {
             if is_path && let Some(path) = shape_path(d, *id) {
                 any |= set_shape_path(d, *id, gpath::reverse(&path));
                 if let Some(s) = d.get_mut(*id) {
-                    s.direction = None;
+                    s.direction = CutDirection::Auto;
                 }
             } else if let Some(s) = d.get_mut(*id)
                 && !s.is_group()
                 && !s.is_image()
             {
-                s.direction = Some(if s.direction == Some(PathDirection::Reversed) { PathDirection::AsDrawn } else { PathDirection::Reversed });
+                s.direction = if s.direction == CutDirection::Reversed { CutDirection::Auto } else { CutDirection::Reversed };
                 any = true;
             }
         }
@@ -341,16 +347,15 @@ fn reverse(e: &mut Editor, a: &Value) -> R {
     ok(done, &ids)
 }
 
-/// Force the cut direction (`as_drawn`, `reversed`, `clockwise`, `counter_clockwise`) or clear
-/// the override (`none`) on the selected shapes. The geometry is not changed.
+/// Force the cut direction (`reversed`, `clockwise`, `counter_clockwise`) or clear the override
+/// (`auto`, `none`) on the selected shapes. The geometry is not changed.
 fn set_direction(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let dir = match word(a, "direction", "none") {
-        "as_drawn" => Some(PathDirection::AsDrawn),
-        "reversed" => Some(PathDirection::Reversed),
-        "clockwise" => Some(PathDirection::Clockwise),
-        "counter_clockwise" => Some(PathDirection::CounterClockwise),
-        "none" => None,
+        "reversed" => CutDirection::Reversed,
+        "clockwise" => CutDirection::Clockwise,
+        "counter_clockwise" => CutDirection::CounterClockwise,
+        "none" | "auto" | "as_drawn" => CutDirection::Auto,
         other => return Err(format!("unknown direction {other}")),
     };
     let done = e.edit("Set cut direction", |d, _| {
@@ -375,9 +380,9 @@ fn clear_start(e: &mut Editor, a: &Value) -> R {
         let mut any = false;
         for id in &ids {
             if let Some(s) = d.get_mut(*id)
-                && s.start.is_some()
+                && s.start_point.is_some()
             {
-                s.start = None;
+                s.start_point = None;
                 any = true;
             }
         }
@@ -602,25 +607,25 @@ mod tests {
         run(&mut app, "shape.set_start_point", json!({ "x": 10.2, "y": 5.0 })).unwrap();
         let sh = app.editor.doc.get(r).unwrap();
         assert!(matches!(sh.kind, ShapeKind::Rect { .. }), "still a rectangle");
-        let st = sh.start.expect("start recorded");
+        let st = sh.start_point.expect("start recorded");
         assert!((st[0] - 5.0).abs() < 1e-6 || (st[0] - 10.0).abs() < 1e-6 || (st[0] + 5.0).abs() < 1e-6, "{st:?}");
         let mp = marker_path(&app.editor.doc, r).unwrap();
         let first = gpath::start_point(&mp).unwrap();
         assert!(first.distance(Point::new(10.0, 5.0)) < 1e-6, "marker starts at the click: {first:?}");
         run(&mut app, "shape.reverse_direction", json!({})).unwrap();
-        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::Reversed));
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, CutDirection::Reversed);
         run(&mut app, "shape.reverse_direction", json!({})).unwrap();
-        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::AsDrawn));
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, CutDirection::Auto);
         run(&mut app, "shape.set_direction", json!({ "direction": "clockwise" })).unwrap();
-        assert_eq!(app.editor.doc.get(r).unwrap().direction, Some(PathDirection::Clockwise));
+        assert_eq!(app.editor.doc.get(r).unwrap().direction, CutDirection::Clockwise);
         assert!(run(&mut app, "shape.set_direction", json!({ "direction": "sideways" })).is_err());
         run(&mut app, "shape.set_direction", json!({ "direction": "none" })).unwrap();
         run(&mut app, "shape.clear_start_point", json!({})).unwrap();
         let sh = app.editor.doc.get(r).unwrap();
-        assert!(sh.start.is_none() && sh.direction.is_none());
+        assert!(sh.start_point.is_none() && sh.direction == CutDirection::Auto);
         // Undo restores the override.
         app.editor.undo();
-        assert!(app.editor.doc.get(r).unwrap().start.is_some());
+        assert!(app.editor.doc.get(r).unwrap().start_point.is_some());
     }
 
     #[test]
@@ -672,7 +677,7 @@ mod tests {
         run(&mut app, "tabs.add", json!({ "shape": r.0, "x": 50, "y": 0 })).unwrap();
         assert_eq!(app.editor.doc.get(r).unwrap().tabs.len(), 1);
         run(&mut app, "shape.set_start_point", json!({ "shape": r.0, "x": 100, "y": 100 })).unwrap();
-        assert!(app.editor.doc.get(r).unwrap().start.is_some());
+        assert!(app.editor.doc.get(r).unwrap().start_point.is_some());
     }
 
     #[test]

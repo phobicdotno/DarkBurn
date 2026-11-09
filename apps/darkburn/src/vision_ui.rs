@@ -453,6 +453,28 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
         d.by_circumference = by == 1;
         field(ui, if d.by_circumference { "Circumference" } else { "Diameter" }, &mut d.size, " mm");
         ui_kit::checkbox(ui, "Mirror (turn the other way)", &mut d.mirror);
+        ui.horizontal(|ui| {
+            let connected = app.machine.handle.is_connected();
+            if button(ui, "Read from controller", "Ask a connected Ruida controller for its rotary settings") && connected {
+                crate::machine_ui::run_with(app, "machine.dsp_read", &json!({ "what": "u_axis" }));
+            }
+            let known = app.machine.handle.snapshot().ruida.u_axis.and_then(|u| crate::rotary_read::from_controller(&u));
+            if let Some((steps, diameter)) = known
+                && button(ui, "Use the controller's values", "Pulses per rotation and rotary diameter as read")
+            {
+                if steps > 0.0 {
+                    d.steps = steps;
+                }
+                if diameter > 0.0 {
+                    if d.chuck {
+                        d.by_circumference = false;
+                        d.size = diameter;
+                    } else {
+                        d.roller = diameter;
+                    }
+                }
+            }
+        });
         ui_kit::section_heading(ui, "Galvo");
         ui_kit::row(ui, "Split the job", |ui| ui_kit::dropdown(ui, "vision_rot_split", &mut d.split, &["Off", "By slice", "By shape"]));
         if d.split > 0 {
@@ -557,6 +579,11 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
                 ui.add(egui::DragValue::new(&mut d.laser[i][1]).speed(0.1).prefix("Y ").suffix(" mm"));
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, false));
+                }
+                if button(ui, "Head", "Take the position of the laser head as the controller reports it") && app.machine.handle.is_connected() {
+                    let s = app.machine.handle.snapshot();
+                    let p = if s.family == crate::machine_api::Family::Grbl { s.work_pos } else { s.machine_pos };
+                    d.laser[i] = [p[0], p[1]];
                 }
             });
             ui.horizontal(|ui| {

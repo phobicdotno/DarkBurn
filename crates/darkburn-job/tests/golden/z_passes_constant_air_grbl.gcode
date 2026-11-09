@@ -1,0 +1,28 @@
+; DarkBurn job for GRBL
+G21
+G90
+M3 S0
+; Layer C00 Z - Line 5 mm/s 90% x3
+M8
+; Pass 1
+G0 Z1
+G0 X5 Y5
+G1 X10 F300 S900
+G1 Y10
+G1 X5
+G1 Y5
+; Pass 2
+G0 Z0.5
+G1 X10
+G1 Y10
+G1 X5
+G1 Y5
+; Pass 3
+G0 Z0
+G1 X10
+G1 Y10
+G1 X5
+G1 Y5
+M9
+M5
+M2

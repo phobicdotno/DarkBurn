@@ -1025,6 +1025,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     if remembered {
         p.numeric_inches = dev.state.inches;
         p.show_grid = dev.state.show_grid;
+        p.grid_spacing = dev.state.grid_spacing as f32;
     }
     p.page_width = dev.width_mm as f32;
     p.page_height = dev.height_mm as f32;
@@ -1052,9 +1053,12 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
 /// Copy what the app holds for the current device into the device record.
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
+    let spacing = f64::from(app.prefs.grid_spacing);
     if let Some(d) = app.machine.devices.get_mut(id) {
         d.state.inches = inches;
         d.state.show_grid = grid;
+        // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.
+        d.state.grid_spacing = (spacing * 1000.0).round() / 1000.0;
         d.state.panel_layout = layout;
     }
 }

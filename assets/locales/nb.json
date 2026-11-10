@@ -477,6 +477,8 @@
   "settings.grid_contrast": "Rutenettkontrast",
   "settings.grid_snap": "Magnetavstand for rutenett",
   "settings.grid_snap_auto": "0 følger zoomen.",
+  "settings.grid_spacing": "Rutenettavstand",
+  "settings.grid_spacing_auto": "0 følger zoomen.",
   "settings.height": "Høyde",
   "settings.icon_size": "Verktøylinjeikoner",
   "settings.ignore_oob": "Ignorer former utenfor arbeidsområdet",

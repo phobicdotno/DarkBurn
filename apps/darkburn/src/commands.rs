@@ -478,7 +478,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "setting.set",
         "Change a Setting",
-        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
+        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, grid_spacing (mm, 0 follows the zoom), grid_contrast (0 to 1), backdrop (theme, light or dark), theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
     ),
 ];
 

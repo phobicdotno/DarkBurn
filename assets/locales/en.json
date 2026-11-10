@@ -477,6 +477,8 @@
   "settings.grid_contrast": "Grid contrast",
   "settings.grid_snap": "Grid snap distance",
   "settings.grid_snap_auto": "0 follows the zoom.",
+  "settings.grid_spacing": "Grid spacing",
+  "settings.grid_spacing_auto": "0 follows the zoom.",
   "settings.height": "Height",
   "settings.icon_size": "Toolbar icons",
   "settings.ignore_oob": "Ignore shapes outside the work area",

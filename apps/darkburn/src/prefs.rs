@@ -40,6 +40,8 @@ pub struct Prefs {
     pub backdrop: Backdrop,
     /// How strong the grid lines are, 0 to 1.
     pub grid_contrast: f32,
+    /// The distance between grid lines in mm; 0 follows the zoom.
+    pub grid_spacing: f32,
     pub show_grid: bool,
     /// Scrolling towards the user zooms in instead of out.
     pub invert_wheel: bool,
@@ -108,6 +110,7 @@ impl Default for Prefs {
             theme: "warning-label".into(),
             backdrop: Backdrop::Theme,
             grid_contrast: 0.5,
+            grid_spacing: 10.0,
             show_grid: true,
             invert_wheel: false,
             page_width: 400.0,
@@ -170,6 +173,10 @@ impl Prefs {
             self.grid_contrast = d.grid_contrast;
         }
         self.grid_contrast = self.grid_contrast.clamp(0.0, 1.0);
+        if !(self.grid_spacing.is_finite()) {
+            self.grid_spacing = d.grid_spacing;
+        }
+        self.grid_spacing = self.grid_spacing.clamp(0.0, 1000.0);
         for size in [&mut self.page_width, &mut self.page_height] {
             if !(size.is_finite() && *size >= 1.0 && *size <= 10_000.0) {
                 *size = 400.0;

@@ -298,6 +298,10 @@ fn display(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::row(ui, &tr("settings.grid_contrast", "Grid contrast"), |ui| {
         ui_kit::slider(ui, &mut prefs.grid_contrast, 0.0..=1.0, ui_kit::Slider { format: |v| format!("{:.0} %", v * 100.0), ..Default::default() });
     });
+    ui_kit::row(ui, &tr("settings.grid_spacing", "Grid spacing"), |ui| {
+        ui_kit::number_field(ui, &mut prefs.grid_spacing, 0.0..=1000.0, 1.0, " mm");
+    });
+    ui_kit::caption(ui, &tr("settings.grid_spacing", "Grid spacing"), &tr("settings.grid_spacing_auto", "0 follows the zoom."));
     ui_kit::checkbox(ui, &tr("settings.show_grid", "Show the grid"), &mut prefs.show_grid);
     ui_kit::checkbox(ui, &tr("settings.invert_wheel", "Invert the mouse wheel zoom"), &mut prefs.invert_wheel);
     ui_kit::checkbox(ui, &tr("settings.palette_labels", "Numbers on the cut palette"), &mut prefs.palette_labels);

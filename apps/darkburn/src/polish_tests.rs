@@ -142,3 +142,151 @@ fn settings_window_has_the_sound_and_job_log_controls_and_they_work() {
     assert_eq!(crate::misc_cmds::take_revealed(), std::slice::from_ref(&dir));
     g.close_dialogs();
 }
+
+// ----- SET-05: dark background, grid contrast, grid spacing ------------------------------------
+
+/// The pixels of the row `y_mm` below the page's top edge, between its left and right edges.
+fn page_row(g: &mut Gui, y_mm: f32) -> Vec<[u8; 3]> {
+    g.frames(2);
+    let (w, _) = {
+        let a = g.app();
+        (a.prefs.page_width, a.prefs.page_height)
+    };
+    let scale = g.scale();
+    let from = g.mm_to_screen(0.0, y_mm);
+    let to = g.mm_to_screen(w, y_mm);
+    let img = g.render_image();
+    let y = ((from.y * scale) as u32).min(img.height() - 1);
+    let (x0, x1) =
+        (((from.x * scale).ceil() as u32 + 2).min(img.width() - 1), ((to.x * scale).floor() as u32).saturating_sub(2).min(img.width() - 1));
+    (x0..x1)
+        .map(|x| {
+            let p = img.get_pixel(x, y).0;
+            [p[0], p[1], p[2]]
+        })
+        .collect()
+}
+
+/// The most common colour of a row (the page between the grid lines).
+fn fill_of(row: &[[u8; 3]]) -> [u8; 3] {
+    let mut counts = std::collections::HashMap::new();
+    for p in row {
+        *counts.entry(*p).or_insert(0usize) += 1;
+    }
+    counts.into_iter().max_by_key(|(_, n)| *n).map(|(p, _)| p).unwrap()
+}
+
+fn distance(a: [u8; 3], b: [u8; 3]) -> i32 {
+    (0..3).map(|i| (i32::from(a[i]) - i32::from(b[i])).abs()).sum()
+}
+
+/// How many grid lines cross the row: runs of pixels that are not the page's own colour.
+fn lines_in(row: &[[u8; 3]]) -> usize {
+    let fill = fill_of(row);
+    let mut n = 0;
+    let mut inside = false;
+    for p in row {
+        let line = distance(*p, fill) > 6;
+        if line && !inside {
+            n += 1;
+        }
+        inside = line;
+    }
+    n
+}
+
+fn strongest_line(row: &[[u8; 3]]) -> i32 {
+    let fill = fill_of(row);
+    row.iter().map(|p| distance(*p, fill)).max().unwrap_or(0)
+}
+
+/// A design-only window with only the canvas in the way of the page: no panels on the right.
+fn canvas_gui() -> Gui {
+    let mut g = Gui::standard();
+    g.exec("setting.set", json!({ "key": "grid_contrast", "value": 1.0 }));
+    g.frames(2);
+    g
+}
+
+#[test]
+fn grid_spacing_setting_changes_the_lines_on_the_canvas() {
+    let mut g = canvas_gui();
+    assert_eq!(g.app().prefs.grid_spacing, 10.0, "10 mm by default");
+    // 7 mm below the top edge: between two horizontal lines for every spacing used here.
+    let at_10 = lines_in(&page_row(&mut g, 7.0));
+    g.exec("setting.set", json!({ "key": "grid_spacing", "value": 50.0 }));
+    let at_50 = lines_in(&page_row(&mut g, 7.0));
+    g.exec("setting.set", json!({ "key": "grid_spacing", "value": 100.0 }));
+    let at_100 = lines_in(&page_row(&mut g, 7.0));
+    g.screenshot("grid-spacing-100");
+    // A 400 mm page: lines inside it at 10, 20 .. 390, at 50 .. 350, at 100 .. 300.
+    assert_eq!((at_10, at_50, at_100), (39, 7, 3), "lines across the page");
+    // Hidden grid: no lines at all.
+    g.exec("setting.set", json!({ "key": "show_grid", "value": false }));
+    assert_eq!(lines_in(&page_row(&mut g, 7.0)), 0);
+}
+
+#[test]
+fn grid_contrast_setting_makes_the_lines_stronger_or_fainter() {
+    let mut g = canvas_gui();
+    let strong = strongest_line(&page_row(&mut g, 7.0));
+    g.exec("setting.set", json!({ "key": "grid_contrast", "value": 0.0 }));
+    let faint = strongest_line(&page_row(&mut g, 7.0));
+    assert!(faint > 0, "the faintest grid is still there");
+    assert!(strong > faint * 2, "full contrast {strong} against the faintest {faint}");
+}
+
+#[test]
+fn background_setting_makes_the_canvas_dark_or_light_whatever_the_theme() {
+    let mut g = canvas_gui();
+    let luma = |p: [u8; 3]| i32::from(p[0]) + i32::from(p[1]) + i32::from(p[2]);
+    g.exec("setting.set", json!({ "key": "backdrop", "value": "dark" }));
+    let dark = luma(fill_of(&page_row(&mut g, 7.0)));
+    g.exec("setting.set", json!({ "key": "backdrop", "value": "light" }));
+    let light = luma(fill_of(&page_row(&mut g, 7.0)));
+    g.screenshot("backdrop-light");
+    assert!(dark < 3 * 90, "a dark page: {dark}");
+    assert!(light > 3 * 170, "a light page: {light}");
+    // The light theme with the dark background is still dark.
+    g.exec("setting.set", json!({ "key": "theme", "value": "light" }));
+    g.exec("setting.set", json!({ "key": "backdrop", "value": "dark" }));
+    let dark_in_light = luma(fill_of(&page_row(&mut g, 7.0)));
+    assert!(dark_in_light < 3 * 90, "{dark_in_light}");
+    assert!(execute_headless(&mut g.app(), "setting.set", &json!({ "key": "backdrop", "value": "pink" })).is_err());
+}
+
+#[test]
+fn display_settings_page_has_the_background_contrast_and_spacing_controls() {
+    let mut g = Gui::standard();
+    g.app().settings_open = true;
+    g.frames(2);
+    g.click_label("Display");
+    for label in ["Background", "Grid contrast", "Grid spacing", "Show the grid"] {
+        assert!(g.has_text(label), "{label}; texts: {:?}", g.visible_texts());
+    }
+    assert!(g.has_text("0 follows the zoom."), "the spacing row explains 0: {:?}", g.visible_texts());
+    g.close_dialogs();
+}
+
+#[test]
+fn each_device_remembers_its_grid_spacing() {
+    use crate::devices::Device;
+    let mut a = DarkBurn::new(Prefs::default());
+    crate::machine_ui::adopt_device_state(&mut a);
+    let first = a.machine.devices.active.unwrap();
+    run(&mut a, "setting.set", json!({ "key": "grid_spacing", "value": 25.0 })).unwrap();
+    let mut d = Device::new(DeviceType::Grbl);
+    d.name = "Fine grid".into();
+    d.state.grid_spacing = 2.5;
+    d.state.panel_layout = serde_json::to_string(&a.prefs.panels).ok();
+    let id = a.machine.devices.add(d);
+    a.machine.select_device(id);
+    crate::machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.prefs.grid_spacing, 2.5, "the new device's spacing is on the canvas");
+    assert_eq!(a.machine.devices.get(first).unwrap().state.grid_spacing, 25.0, "the old device kept its own");
+    a.prefs.grid_spacing = 0.1;
+    a.machine.select_device(first);
+    crate::machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.prefs.grid_spacing, 25.0);
+    assert_eq!(a.machine.devices.get(id).unwrap().state.grid_spacing, 0.1, "no float noise in the device file");
+}

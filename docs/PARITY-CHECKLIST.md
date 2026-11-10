@@ -876,7 +876,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-02 Curve quality, antialiasing, filled rendering, reduce motion
 - [x] SET-03 Font size and toolbar icon size
 - [x] SET-04 Cursor and node size
-- [~] SET-05 Dark background, grid contrast, grid spacing
+- [x] SET-05 Dark background, grid contrast, grid spacing
 - [x] SET-06 Grid snap distance, object snap distance, snapping on or off
 - [x] SET-07 Click tolerance
 - [x] SET-08 Full-screen cursor, centre cross, palette labels

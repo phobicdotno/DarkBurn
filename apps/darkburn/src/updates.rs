@@ -101,6 +101,24 @@ fn allowed_address(url: &str) -> bool {
     ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| url.strip_prefix(p).is_some_and(|rest| rest.starts_with([':', '/'])))
 }
 
+/// Where a redirect from `from` to `location` leads, when the check may go there: the address
+/// rule holds for every hop, and a secure address never steps down to plain http (not to this
+/// computer either: a server on the internet has no business pointing the check at it).
+fn next_hop(from: &str, location: &str) -> Result<String, String> {
+    let location = location.trim();
+    let to = if location.starts_with('/') && !location.starts_with("//") {
+        let after_scheme = from.find("://").map_or(0, |i| i + 3);
+        let origin_end = from[after_scheme..].find('/').map_or(from.len(), |i| after_scheme + i);
+        format!("{}{location}", &from[..origin_end])
+    } else {
+        location.to_owned()
+    };
+    if !allowed_address(&to) || (from.starts_with("https://") && !to.starts_with("https://")) {
+        return Err("the update address sent the check on to an address that does not start with https://".into());
+    }
+    Ok(to)
+}
+
 /// Read a releases document.
 pub fn parse_release(body: &str, current: &str) -> Outcome {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -136,12 +154,32 @@ pub fn check(url: &str, current: &str) -> Outcome {
         .timeout_global(Some(Duration::from_secs(10)))
         .timeout_connect(Some(Duration::from_secs(5)))
         .user_agent(USER_AGENT)
-        .max_redirects(3)
+        // Redirects are followed here, one at a time, so every hop is checked (`next_hop`).
+        .max_redirects(0)
+        .max_redirects_will_error(false)
         .build()
         .into();
-    let mut response = match agent.get(url).header("Accept", "application/json").call() {
-        Ok(r) => r,
-        Err(e) => return Outcome::Failed(e.to_string()),
+    let mut url = url.to_owned();
+    let mut hops = 0;
+    let mut response = loop {
+        let response = match agent.get(&url).header("Accept", "application/json").call() {
+            Ok(r) => r,
+            Err(e) => return Outcome::Failed(e.to_string()),
+        };
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            break response;
+        }
+        let Some(location) = response.headers().get("location").and_then(|l| l.to_str().ok()) else {
+            return Outcome::Failed(format!("HTTP {} without an address to go to", response.status().as_u16()));
+        };
+        hops += 1;
+        if hops > 3 {
+            return Outcome::Failed("the update address sent the check on too many times".into());
+        }
+        url = match next_hop(&url, location) {
+            Ok(to) => to,
+            Err(e) => return Outcome::Failed(e),
+        };
     };
     let status = response.status().as_u16();
     match status {
@@ -414,6 +452,67 @@ mod tests {
         assert!(matches!(check(&format!("http://127.0.0.1:{port}/x"), "0.0.24"), Outcome::Failed(_)));
         assert!(matches!(check("http://example.com/x", "0.0.24"), Outcome::Failed(m) if m.contains("https")), "plain http is only for loopback");
         assert!(matches!(check("ftp://127.0.0.1/x", "0.0.24"), Outcome::Failed(_)));
+    }
+
+    /// A loopback server that answers every request with a redirect to `to`.
+    fn redirect_to(to: String) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                let Ok((mut s, _)) = listener.accept() else { return };
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        format!("http://127.0.0.1:{}/releases/latest", addr.port())
+    }
+
+    /// The address rule holds for every hop: a server cannot send the check on to an address
+    /// that would have been refused as the setting. The "other" address here is this computer
+    /// under a name the rule does not allow (127.0.0.2), so nothing leaves it.
+    #[test]
+    fn a_redirect_to_an_address_that_is_not_allowed_is_not_followed() {
+        let Ok(listener) = TcpListener::bind("127.0.0.2:0") else { return };
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let target = format!("http://127.0.0.2:{port}/releases/latest");
+        assert!(!allowed_address(&target));
+        let o = check(&redirect_to(target), "0.0.24");
+        assert!(matches!(&o, Outcome::Failed(m) if m.contains("https")), "{o:?}");
+        assert!(listener.accept().is_err(), "the check went on to the address it was redirected to");
+    }
+
+    #[test]
+    fn a_redirect_to_an_allowed_address_is_followed() {
+        let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0"}"#, 1);
+        let o = check(&redirect_to(url), "0.0.24");
+        assert!(matches!(&o, Outcome::Available { latest, .. } if latest == "99.0.0"), "{o:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        // A chain that never ends is given up.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let me = format!("http://127.0.0.1:{}/x", listener.local_addr().unwrap().port());
+        let to = me.clone();
+        std::thread::spawn(move || {
+            for _ in 0..10 {
+                let Ok((mut s, _)) = listener.accept() else { return };
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        assert!(matches!(check(&me, "0.0.24"), Outcome::Failed(_)));
+    }
+
+    #[test]
+    fn a_secure_address_never_steps_down_to_plain_http() {
+        assert!(next_hop("https://example.com/a", "https://example.org/b").is_ok());
+        assert_eq!(next_hop("https://example.com/a/b", "/c").unwrap(), "https://example.com/c");
+        assert!(next_hop("https://example.com/a", "http://example.com/a").is_err());
+        assert!(next_hop("https://example.com/a", "http://127.0.0.1:8080/a").is_err(), "a server cannot point the check at this computer");
+        assert!(next_hop("http://127.0.0.1:5/a", "http://127.0.0.1:6/a").is_ok());
+        assert!(next_hop("http://127.0.0.1:5/a", "ftp://x/a").is_err());
     }
 
     #[test]

@@ -279,6 +279,10 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
     let mut new: options::Options = serde_json::from_value(all).map_err(|e| format!("{key}: {e}"))?;
     new.sanitise();
     app.prefs.opts = new;
+    if key == "show_rotary_toggles" {
+        // The rotary and cylinder toggles are the Modes toolbar.
+        app.prefs.toolbars.insert("modes".into(), app.prefs.opts.show_rotary_toggles);
+    }
     Ok(())
 }
 

@@ -365,7 +365,8 @@ pub fn write_autosave(dir: &Path, doc: &darkburn_core::Document, project: Option
     Ok(())
 }
 
-/// The auto-save is now unneeded (saved, or the project let go).
+/// The auto-save is now unneeded (saved, or the project let go). An extra window has none: the
+/// files belong to the first window.
 fn discard_autosave(app: &mut DarkBurn) {
     wait_for_autosave(app);
     if let Some(dir) = &app.settings_dir
@@ -660,8 +661,8 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
             }
             ui_kit::Action::Apply => {
                 app.files.ask_save = None;
-                // Let the project go without saving it.
-                app.editor.mark_saved();
+                // Let the project go without saving it. It stays marked as changed until
+                // something takes its place: the open may still be cancelled or fail.
                 proceed(app, ctx, then);
             }
             ui_kit::Action::Cancel => app.files.ask_save = None,
@@ -1162,5 +1163,29 @@ mod tests {
         let ctx = egui::Context::default();
         run(&mut a, &ctx, "file.notes");
         assert!(a.notes_open);
+    }
+
+    /// "Don't save" lets the project go only when something takes its place: when the file to
+    /// open turns out to be unreadable the project is still open and still unsaved.
+    #[test]
+    fn dont_save_keeps_the_project_unsaved_when_the_open_fails() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        let junk = g.temp("junk.dbrn");
+        std::fs::write(&junk, b"not a project").unwrap();
+        {
+            let mut a = g.app();
+            add_rect(&mut a);
+            assert!(a.editor.is_modified());
+            a.files.ask_save = Some(Then::Open(Some(junk.clone())));
+        }
+        g.frames(2);
+        g.click_label("Don't save");
+        g.frames(2);
+        let a = g.app();
+        assert!(a.files.message.as_ref().is_some_and(|(t, _)| t == "Could not open"), "{:?}", a.files.message);
+        assert_eq!(a.editor.doc.len(), 1, "the project is still open");
+        assert!(a.editor.is_modified(), "and it still has unsaved changes, so closing asks again");
+        assert_eq!(title(&a), "Untitled* - DarkBurn");
     }
 }

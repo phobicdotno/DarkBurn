@@ -102,6 +102,8 @@ pub struct Options {
     pub sound_error: bool,
     pub sound_done: bool,
     pub job_log: bool,
+    /// The folder the job log is written to (empty: DarkBurn's settings folder).
+    pub job_log_dir: String,
     pub system_clipboard: bool,
     /// Arrow key nudge distances in mm: plain, with Ctrl, with Shift.
     pub nudge: f64,
@@ -154,6 +156,7 @@ impl Default for Options {
             sound_error: false,
             sound_done: false,
             job_log: false,
+            job_log_dir: String::new(),
             system_clipboard: true,
             nudge: 1.0,
             nudge_ctrl: 0.1,

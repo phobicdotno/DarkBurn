@@ -231,9 +231,6 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
         ui.add(egui::TextEdit::singleline(&mut prefs.opts.update_url).hint_text(crate::updates::DEFAULT_URL).desired_width(320.0));
     });
     ui_kit::checkbox(ui, &tr("settings.running_copy", "Open files in the running copy"), &mut prefs.files.single_instance);
-    ui_kit::checkbox(ui, &tr("settings.sound_error", "Play a sound on errors"), &mut prefs.opts.sound_error);
-    ui_kit::checkbox(ui, &tr("settings.sound_done", "Play a sound when a job finishes"), &mut prefs.opts.sound_done);
-    ui_kit::checkbox(ui, &tr("settings.job_log", "Save a log of each job"), &mut prefs.opts.job_log);
     ui_kit::checkbox(ui, &tr("settings.system_clipboard", "Use the system clipboard"), &mut prefs.opts.system_clipboard);
     ui_kit::row(ui, &tr("settings.file_dialogs", "File dialogs"), |ui| {
         pick_enum(ui, "file_dialogs", &mut prefs.opts.file_dialogs, &[FileDialogs::System, FileDialogs::BuiltIn], |d| match d {
@@ -242,11 +239,51 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
         });
     });
     ui.add_space(t.space_12);
+    jobs_section(ui, prefs);
+    ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.autosave", "Auto-save"));
     ui_kit::row(ui, &tr("settings.every", "Every"), |ui| {
         ui_kit::number_field(ui, &mut prefs.autosave_minutes, 0.0..=240.0, 0.5, " min");
     });
     ui_kit::caption(ui, &tr("settings.every", "Every"), &tr("settings.autosave_off", "0 turns auto-save off."));
+}
+
+/// Sounds and the job log [SET-22, SET-23, LASER-25, LASER-26].
+fn jobs_section(ui: &mut Ui, prefs: &mut Prefs) {
+    ui_kit::section_heading(ui, &tr("settings.sounds_log", "Sounds and job log"));
+    ui_kit::checkbox(ui, &tr("settings.sound_error", "Play a sound on errors"), &mut prefs.opts.sound_error);
+    ui_kit::checkbox(ui, &tr("settings.sound_done", "Play a sound when a job finishes"), &mut prefs.opts.sound_done);
+    ui.horizontal_wrapped(|ui| {
+        if ui_kit::button(ui, tr("settings.try_error", "Try the error sound"), ui_kit::Button::Small).clicked() {
+            crate::misc_cmds::request("job.sound_test", serde_json::json!({ "sound": "error" }));
+        }
+        if ui_kit::button(ui, tr("settings.try_done", "Try the finished sound"), ui_kit::Button::Small).clicked() {
+            crate::misc_cmds::request("job.sound_test", serde_json::json!({ "sound": "done" }));
+        }
+    });
+    ui_kit::checkbox(ui, &tr("settings.job_log", "Save a log of each job"), &mut prefs.opts.job_log);
+    ui_kit::row(ui, &tr("settings.job_log_dir", "Job log folder"), |ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut prefs.opts.job_log_dir)
+                .hint_text(tr("settings.job_log_dir_hint", "DarkBurn's settings folder"))
+                .desired_width(320.0),
+        );
+    });
+    ui.horizontal_wrapped(|ui| {
+        if ui_kit::button(ui, tr("settings.job_log_choose", "Choose the log folder"), ui_kit::Button::Small).clicked()
+            && let Some(dir) = rfd::FileDialog::new().pick_folder()
+        {
+            prefs.opts.job_log_dir = dir.display().to_string();
+        }
+        if ui_kit::button(ui, tr("settings.job_log_show", "Show the job log"), ui_kit::Button::Small).clicked() {
+            crate::misc_cmds::request("job.log_show", serde_json::Value::Null);
+        }
+    });
+    ui_kit::caption(
+        ui,
+        &tr("settings.job_log_dir", "Job log folder"),
+        &tr("settings.job_log_text", "A row per job in job_log.csv: start, duration, file, device, result."),
+    );
 }
 
 fn display(ui: &mut Ui, prefs: &mut Prefs) {

@@ -581,6 +581,7 @@ pub fn works(id: &str) -> bool {
         || crate::laser_position::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
+        || crate::misc_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -775,6 +776,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_out" => &["WIN-05"],
         "view.zoom_page" => &["WIN-03"],
         _ if crate::machine_ui::handles(id) => crate::machine_ui::checklist(id),
+        _ if crate::misc_cmds::works(id) => crate::misc_cmds::checklist(id),
         "help.about" => &["HELP-01"],
         "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
         "help.docs" => &["HELP-03"],
@@ -824,6 +826,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::machine_ext::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
+        v.extend_from_slice(crate::misc_cmds::COMMANDS);
         v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());

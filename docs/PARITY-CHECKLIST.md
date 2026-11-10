@@ -284,8 +284,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LASER-22 Rotary and cylinder correction toggles, mode status text
 - [x] LASER-23 Option to disable Start on machines that take uploads
 - [x] LASER-24 Pre-job checklist before start
-- [ ] LASER-25 Sounds on job finished and on error
-- [ ] LASER-26 Job log saved as CSV
+- [x] LASER-25 Sounds on job finished and on error
+- [x] LASER-26 Job log saved as CSV
 - [x] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
 - [x] LASER-28 Warning when closing during a running job
 
@@ -895,7 +895,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] SET-19 Ignore Start when the monitor is off
 - [x] SET-20 Load default layers on new project
 - [~] SET-21 Built-in or system file dialogs
-- [~] SET-22 Sounds on error and on job finished
+- [x] SET-22 Sounds on error and on job finished
 - [x] SET-23 Save job log
 - [x] SET-24 Use system clipboard
 - [x] SET-25 Nudge distances for normal, Ctrl and Shift

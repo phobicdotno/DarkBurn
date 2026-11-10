@@ -566,7 +566,20 @@ impl DarkBurn {
         let host = Container::new(ui.ctx(), Surface::ApplicationBar);
         let panel = host.edge("db_status", Edge::Bottom).exact_size(STATUS_BAR_HEIGHT).show_separator_line(false);
         let frame = host.edge_frame(t.app_bar);
-        let selection = self.editor.doc.bbox_of(&self.editor.selected()).map(|r| (r, self.editor.selection.len()));
+        // In machine coordinates, like the pointer position beside it, the rulers and the X and Y
+        // fields: with the origin at the rear or the right they differ from the document's.
+        let work_area = crate::numeric_edits::Frame {
+            origin: self.prefs.origin,
+            width: f64::from(self.prefs.page_width),
+            height: f64::from(self.prefs.page_height),
+        };
+        let selection = self.editor.doc.bbox_of(&self.editor.selected()).map(|r| {
+            let (a, b) = (
+                work_area.to_machine(darkburn_core::kurbo::Point::new(r.x0, r.y0)),
+                work_area.to_machine(darkburn_core::kurbo::Point::new(r.x1, r.y1)),
+            );
+            (darkburn_core::kurbo::Rect::from_points(a, b), self.editor.selection.len())
+        });
         host.show_edge(ui, panel, frame, |ui| {
             let r = ui.max_rect();
             let font = FontId::proportional(t.font_small);

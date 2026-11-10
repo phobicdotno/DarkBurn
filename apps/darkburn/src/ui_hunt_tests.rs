@@ -184,3 +184,26 @@ fn the_canvas_menu_opens_the_preview_and_shows_the_keys_in_use() {
     g.frames(2);
     assert!(g.app().job.preview.open, "Preview in the canvas menu opens the preview");
 }
+
+/// The status bar gives the selection's corners in machine coordinates, like the pointer
+/// position next to it and the X and Y fields, wherever the origin is.
+#[test]
+fn the_status_bar_gives_the_selection_in_machine_coordinates() {
+    let status = |g: &Gui| g.visible_texts().into_iter().find(|t| t.starts_with("Min ")).expect("the selection is in the status bar");
+    let mut g = Gui::standard();
+    g.sample_design();
+    let bb = g.app().editor.doc.bbox().unwrap();
+    assert_eq!((bb.x0, bb.y0, bb.x1, bb.y1), (20.0, 20.0, 200.0, 70.0));
+    assert!(status(&g).starts_with("Min 20.00, 20.00  Max 200.00, 70.00  (180.00 × 50.00 mm)"), "{}", status(&g));
+    // Origin at the rear right of the 400 x 400 mm work area: X counts from the right, Y from the back.
+    g.app().prefs.origin = crate::view::Origin::RearRight;
+    g.frames(2);
+    assert!(status(&g).starts_with("Min 200.00, 330.00  Max 380.00, 380.00  (180.00 × 50.00 mm)"), "{}", status(&g));
+    // The pointer over the selection's front-left corner reads the same numbers.
+    let corner = g.mm_to_screen(20.0, 400.0 - 20.0);
+    g.hover_pos(corner);
+    g.frames(2);
+    let pointer = g.visible_texts().into_iter().find(|t| t.starts_with("x: ")).unwrap();
+    let numbers: Vec<f64> = pointer.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+    assert!((numbers[0] - 380.0).abs() < 1.0 && (numbers[1] - 380.0).abs() < 1.0, "{pointer}");
+}

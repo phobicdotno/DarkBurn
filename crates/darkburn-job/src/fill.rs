@@ -29,9 +29,16 @@ pub struct ScanRow {
 /// Rows lie on the global grid `y = (k + 0.5) * interval` of the rotated frame, so separate
 /// scans line up. Returns rows in the scan frame; map back with `Affine::rotate(angle)`.
 pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f64, power: f64) -> Vec<ScanRow> {
+    scan_polygons_powers(polys, &vec![power; polys.len()], rule, interval, angle)
+}
+
+/// [`scan_polygons`] with a power for each polygon: a filled stretch burns at the power of the
+/// smallest polygon it lies in (the shape itself, not the shapes around it).
+pub fn scan_polygons_powers(polys: &[&[Point]], powers: &[f64], rule: FillRule, interval: f64, angle: f64) -> Vec<ScanRow> {
     let interval = interval.max(1e-3);
-    let mut edges: Vec<(Point, Point, i32)> = Vec::new();
-    for poly in polys {
+    let areas: Vec<f64> = polys.iter().map(|p| geom::signed_area(p).abs()).collect();
+    let mut edges: Vec<(Point, Point, i32, usize)> = Vec::new();
+    for (pi, poly) in polys.iter().enumerate() {
         let n = poly.len();
         for i in 0..n {
             let a = geom::rotate_point(poly[i], -angle);
@@ -39,13 +46,13 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
             if (a.y - b.y).abs() < 1e-12 {
                 continue;
             }
-            if a.y < b.y { edges.push((a, b, 1)) } else { edges.push((b, a, -1)) }
+            if a.y < b.y { edges.push((a, b, 1, pi)) } else { edges.push((b, a, -1, pi)) }
         }
     }
     if edges.is_empty() {
         return Vec::new();
     }
-    edges.sort_by(|a, b| a.0.y.partial_cmp(&b.0.y).unwrap());
+    edges.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     let ymin = edges[0].0.y;
     let ymax = edges.iter().map(|e| e.1.y).fold(f64::MIN, f64::max);
     let k0 = (ymin / interval - 0.5).ceil() as i64;
@@ -53,7 +60,9 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
     let mut rows = Vec::new();
     let mut active: Vec<usize> = Vec::new();
     let mut next = 0;
-    let mut xs: Vec<(f64, i32)> = Vec::new();
+    let mut xs: Vec<(f64, i32, usize)> = Vec::new();
+    // Winding of each polygon at the current x (only the polygons crossed so far on this row).
+    let mut winds: Vec<(usize, i32)> = Vec::new();
     for k in k0..=k1 {
         let y = (k as f64 + 0.5) * interval;
         while next < edges.len() && edges[next].0.y <= y {
@@ -63,39 +72,41 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
         active.retain(|&e| edges[e].1.y > y);
         xs.clear();
         for &e in &active {
-            let (a, b, w) = edges[e];
+            let (a, b, w, pi) = edges[e];
             if y >= a.y && y < b.y {
-                xs.push((a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y), w));
+                xs.push((a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y), w, pi));
             }
         }
-        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        let mut runs = Vec::new();
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut runs: Vec<ScanRun> = Vec::new();
         let mut wind = 0;
         let mut inside = false;
         let mut x_start = 0.0;
-        for &(x, w) in &xs {
+        winds.clear();
+        for &(x, w, pi) in &xs {
+            if inside && x - x_start > EPS {
+                // The stretch up to this crossing lies in the polygons with a winding.
+                let owner = winds.iter().filter(|(_, n)| *n != 0).map(|(p, _)| *p).min_by(|a, b| areas[*a].total_cmp(&areas[*b]));
+                let power = owner.map_or(0.0, |p| powers[p]);
+                match runs.last_mut() {
+                    // Merge runs that touch.
+                    Some(m) if x_start - m.x1 < EPS && m.power == power => m.x1 = x,
+                    _ => runs.push(ScanRun { x0: x_start, x1: x, power, ramp_start: true, ramp_end: true }),
+                }
+            }
             wind += w;
-            let now = match rule {
+            match winds.iter_mut().find(|(p, _)| *p == pi) {
+                Some((_, n)) => *n += w,
+                None => winds.push((pi, w)),
+            }
+            inside = match rule {
                 FillRule::EvenOdd => !inside,
                 FillRule::NonZero => wind != 0,
             };
-            if now && !inside {
-                x_start = x;
-            } else if !now && inside && x - x_start > EPS {
-                runs.push(ScanRun { x0: x_start, x1: x, power, ramp_start: true, ramp_end: true });
-            }
-            inside = now;
+            x_start = x;
         }
-        // Merge runs that touch.
-        let mut merged: Vec<ScanRun> = Vec::new();
-        for r in runs {
-            match merged.last_mut() {
-                Some(m) if r.x0 - m.x1 < EPS => m.x1 = r.x1,
-                _ => merged.push(r),
-            }
-        }
-        if !merged.is_empty() {
-            rows.push(ScanRow { y, runs: merged });
+        if !runs.is_empty() {
+            rows.push(ScanRow { y, runs });
         }
     }
     rows
@@ -209,6 +220,7 @@ pub fn emit_rows(rows: &[(ScanRow, bool)], e: &RowEmit, out: &mut Vec<Op>) {
 fn emit_run(r: &ScanRun, dir: f64, y: f64, e: &RowEmit, f: &dyn Fn(f64, f64) -> Point, out: &mut Vec<Op>) {
     let len = (r.x1 - r.x0).abs();
     let (ramp_len, min_power) = e.ramp;
+    let min_power = min_power.min(r.power);
     let ramp_in = ramp_len > 0.0 && r.ramp_start && r.power > 0.0;
     let ramp_out = ramp_len > 0.0 && r.ramp_end && r.power > 0.0;
     let ends = ramp_in as u32 + ramp_out as u32;

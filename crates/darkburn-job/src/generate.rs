@@ -70,14 +70,15 @@ enum UnitKind {
         depth: usize,
         tabs: Vec<Point>,
     },
+    /// `scales`: the power scale of each polygon's shape.
     Fill {
         polys: Vec<Vec<Point>>,
-        scale: f64,
+        scales: Vec<f64>,
         reversible: bool,
     },
     Offset {
         polys: Vec<Vec<Point>>,
-        scale: f64,
+        scales: Vec<f64>,
     },
     Image {
         image: usize,
@@ -377,13 +378,13 @@ fn fill_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], sta
     let clusters = fill::fill_clusters(&closed, &shape_of, &groups, b.settings.fill.grouping);
     for c in clusters {
         let cpolys: Vec<Vec<Point>> = c.iter().map(|&i| closed[i].clone()).collect();
-        let scale = c.iter().map(|&i| layer.shapes[shape_of[i]].power_scale).fold(0.0, f64::max);
+        let scales: Vec<f64> = c.iter().map(|&i| layer.shapes[shape_of[i]].power_scale).collect();
         let group = layer.shapes[shape_of[c[0]]].group;
         let priority = c.iter().map(|&i| layer.shapes[shape_of[i]].priority).min().unwrap_or(0);
         let kind = if b.mode == CutMode::OffsetFill {
-            UnitKind::Offset { polys: cpolys, scale }
+            UnitKind::Offset { polys: cpolys, scales }
         } else {
-            UnitKind::Fill { polys: cpolys, scale, reversible: b.settings.fill.bidirectional }
+            UnitKind::Fill { polys: cpolys, scales, reversible: b.settings.fill.bidirectional }
         };
         let unit = Unit { block: bi, kind };
         let mut ops = Vec::new();
@@ -440,8 +441,8 @@ fn emit_unit(unit: &Unit, p: &Planned, items: &[PlanItem], b: &Block, layer: &La
 fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point, out: &mut Vec<Op>) {
     let f = &s.fill;
     match &unit.kind {
-        UnitKind::Fill { polys, scale, .. } => {
-            let power = s.max_power * scale;
+        UnitKind::Fill { polys, scales, .. } => {
+            let powers: Vec<f64> = scales.iter().map(|k| s.max_power * k).collect();
             let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
             let base = f.angle_deg + f.angle_step_per_pass * (pass - 1) as f64;
             let mut angles = vec![base];
@@ -450,7 +451,7 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
             }
             for deg in angles {
                 let a = deg.to_radians();
-                let mut rows = fill::scan_polygons(&refs, f.fill_rule, f.interval, a, power);
+                let mut rows = fill::scan_polygons_powers(&refs, &powers, f.fill_rule, f.interval, a);
                 fill::mark_ramps(&mut rows, f.ramp_outer_edge);
                 let mut ordered = fill::order_rows(rows, f.bidirectional, f.flood_fill, f.interval);
                 if p.reversed {
@@ -466,13 +467,12 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                     speed: s.speed,
                     overscan: f.overscan.distance(s.speed),
                     rapid_gap: f.rapid_gap,
-                    ramp: (f.ramp_length, s.min_power.min(power)),
+                    ramp: (f.ramp_length, s.min_power),
                 };
                 fill::emit_rows(&ordered, &e, out);
             }
         }
-        UnitKind::Offset { polys, scale } => {
-            let power = s.max_power * scale;
+        UnitKind::Offset { polys, scales } => {
             let parents = fill::parents(polys);
             let mut pos = from;
             for (pi, poly) in polys.iter().enumerate() {
@@ -481,6 +481,7 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                 if depth % 2 == 1 {
                     continue;
                 }
+                let power = s.max_power * scales[pi];
                 let rings = fill::offset_rings(poly, f.interval);
                 for (k, ring) in rings.iter().enumerate() {
                     let st = planner::choose_start(ring, pos, false);
@@ -607,6 +608,61 @@ mod tests {
         assert_eq!(rapids, 1);
         let cuts = tp.ops.iter().filter(|o| matches!(o, Op::Cut { .. })).count();
         assert_eq!(cuts, 5 * 4 + 4);
+    }
+
+    /// The powers the laser fires at left and right of x = 50.
+    fn powers_by_side(tp: &Toolpath) -> (Vec<f64>, Vec<f64>) {
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        let mut pos = Point::ZERO;
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                let side = if pos.midpoint(*to).x < 50.0 { &mut left } else { &mut right };
+                if !side.contains(power) {
+                    side.push(*power);
+                }
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        (left, right)
+    }
+
+    #[test]
+    fn every_shape_of_a_fill_keeps_its_own_power_scale() {
+        for mode in [CutMode::Fill, CutMode::OffsetFill] {
+            let mut s = CutSettings::fill(100.0, 80.0, 1.0);
+            s.mode = mode;
+            let full = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+            let mut half = ShapeInput::new(rect_path(100.0, 0.0, 10.0, 10.0));
+            half.power_scale = 0.5;
+            let tp = run(LayerInput::new(0, "A", s).with_shape(full).with_shape(half), &JobOptions::default());
+            assert_eq!(powers_by_side(&tp), (vec![80.0], vec![40.0]), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_hole_with_another_power_scale_stays_a_hole() {
+        let outer = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+        let mut hole = ShapeInput::new(rect_path(3.0, 3.0, 4.0, 4.0));
+        hole.power_scale = 0.5;
+        let tp = run(LayerInput::new(0, "A", CutSettings::fill(100.0, 80.0, 1.0)).with_shape(outer).with_shape(hole), &JobOptions::default());
+        let mut pos = Point::ZERO;
+        let mut burnt = 0.0;
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                assert_eq!(*power, 80.0, "the ring burns at the outer shape's power");
+                burnt += pos.distance(*to);
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        assert!((burnt - (100.0 - 16.0)).abs() < 1e-6, "{burnt}");
     }
 
     #[test]

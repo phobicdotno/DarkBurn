@@ -152,6 +152,16 @@ pub struct EmulatorStats {
     pub laser_switch_ons: usize,
     /// Highest S value (after override) the laser fired at.
     pub max_laser_s: f64,
+    /// Every move that started with the laser on, in order (when `record_lines`).
+    pub burns: Vec<Burn>,
+}
+
+/// A move the laser was on for: machine positions in mm and the S value of the block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Burn {
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub s: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -641,6 +651,9 @@ impl GrblEmulator {
                 Some(block) => {
                     let start = self.mpos;
                     let length = dist(start, block.target);
+                    if self.cfg.record_lines && block.power > 0.0 && block.dwell <= 0.0 && length > 0.0 {
+                        self.stats.burns.push(Burn { from: [start[0], start[1]], to: [block.target[0], block.target[1]], s: block.power });
+                    }
                     self.current = Some(Active { block, start, length, done: 0.0, dwell_left: block.dwell });
                     if block.jog {
                         self.state = State::Jog;

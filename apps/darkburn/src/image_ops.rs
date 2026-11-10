@@ -490,6 +490,9 @@ pub fn artwork_png(gray: &GrayF) -> Result<Vec<u8>, String> {
 /// Replaces the non-image shapes `ids` with one bitmap of them at `args.dpi`.
 pub fn convert_to_bitmap(e: &mut Editor, ids: &[ShapeId], args: &ConvertArgs) -> Result<ShapeId, String> {
     let dpi = finite(args.dpi, 5.0, 4800.0, "DPI")?;
+    if let Some(l) = args.layer.filter(|l| *l >= darkburn_core::LAYER_COUNT) {
+        return Err(format!("layer {l} does not exist (0 to {})", darkburn_core::LAYER_COUNT - 1));
+    }
     let mut paths = Vec::new();
     let mut closed = true;
     let mut layer = None;
@@ -930,6 +933,20 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Bug hunt 7 (monkey seed 1005): `layer: 32` put the picture on a layer that does not exist.
+    #[test]
+    fn convert_to_bitmap_refuses_a_layer_that_does_not_exist() {
+        let mut e = Editor::new();
+        let r = e.doc.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 20.0), 0.0, 4));
+        let before = e.doc.clone();
+        let err = convert_to_bitmap(&mut e, &[r], &ConvertArgs { dpi: 50.0, layer: Some(32), ..Default::default() }).unwrap_err();
+        assert!(err.contains("layer 32"), "{err}");
+        assert_eq!(e.doc, before);
+        assert!(!e.history.can_undo());
+        let new = convert_to_bitmap(&mut e, &[r], &ConvertArgs { dpi: 50.0, layer: Some(31), ..Default::default() }).unwrap();
+        assert_eq!(e.doc.get(new).unwrap().layer, 31);
     }
 
     #[test]

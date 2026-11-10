@@ -539,6 +539,11 @@ fn measure_id() -> egui::Id {
     egui::Id::unique("darkburn_measure_memory")
 }
 
+/// Escape for the tool: an open dialog or window gets the key first (it closes), as on the canvas.
+fn take_escape(ctx: &egui::Context) -> Option<Modifiers> {
+    if crate::escape::window_open(ctx) { None } else { take_key(ctx, Key::Escape) }
+}
+
 fn press_origin(ui: &Ui, xf: &Xf) -> Option<Point> {
     ui.input(|i| i.pointer.press_origin()).map(|p| xf.to_doc(p))
 }
@@ -880,7 +885,7 @@ fn nodes_tool(
     }
     // Escape cancels a gesture in progress.
     if !matches!(st.gesture, Gesture::None) {
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             cancel_gesture(app, st);
         }
         return;
@@ -1103,7 +1108,7 @@ fn measure_tool(
             mem.inches = !mem.inches;
             st.sel_info.0 = u64::MAX;
         }
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             if mem.pts.is_empty() {
                 app.set_tool(Tool::Select);
             }
@@ -1176,7 +1181,7 @@ fn warp_tool(
             w.perspective = !w.perspective;
             changed = true;
         }
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             if matches!(st.gesture, Gesture::Warp(_)) {
                 st.gesture = Gesture::None;
             }
@@ -1293,7 +1298,7 @@ fn pick_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
         st.snapped = info;
         q
     });
-    if free && take_key(ctx, Key::Escape).is_some() {
+    if free && take_escape(ctx).is_some() {
         if st.pick.is_empty() {
             app.set_tool(Tool::Select);
         }

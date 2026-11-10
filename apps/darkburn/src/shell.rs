@@ -10,6 +10,7 @@ use solidcraft_theme::Tokens;
 
 use crate::canvas::{self, ViewCmd};
 use crate::commands::{self, Entry};
+use crate::dock_layout::{self, Dock};
 use crate::panels::{self, Area, PANELS};
 use crate::prefs::{Prefs, TOOLBARS};
 use crate::ribbon;
@@ -651,14 +652,42 @@ impl DarkBurn {
         }
         let t = Tokens::get();
         let host = Container::new(ui.ctx(), Surface::Panel);
-        let (edge, salt, size, range) = match area {
-            Area::Left => (Edge::Left, "db_dock_left", 260.0, 180.0..=520.0),
-            Area::Bottom => (Edge::Bottom, "db_dock_bottom", 180.0, 100.0..=480.0),
-            _ => (Edge::Right, "db_dock_right", 380.0, 300.0..=640.0),
+        let (edge, salt, dock) = match area {
+            Area::Left => (Edge::Left, "db_dock_left", Dock::Left),
+            Area::Bottom => (Edge::Bottom, "db_dock_bottom", Dock::Bottom),
+            _ => (Edge::Right, "db_dock_right", Dock::Right),
         };
+        let right_follows = dock == Dock::Left && !(self.visible_in(Area::RightTop).is_empty() && self.visible_in(Area::RightBottom).is_empty());
+        let (size, dragging) = self.dock_size(ui, dock, right_follows);
+        let range = dragging.clone().unwrap_or(size..=size);
         let panel = host.edge(salt, edge).resizable(true).default_size(size).size_range(range);
         let frame = host.edge_frame(t.panel);
-        host.show_edge(ui, panel, frame, |ui| self.tab_group(ui, area));
+        let shown = host.show_edge(ui, panel, frame, |ui| {
+            // The dock is as big as it was made, whatever the panel inside it needs.
+            ui.expand_to_include_rect(ui.max_rect());
+            self.tab_group(ui, area)
+        });
+        self.dock_shown(dock, size, dragging.is_some(), shown.response.rect);
+    }
+
+    /// The size dock `dock` gets this frame, and the sizes it may be dragged to while the pointer
+    /// is down (egui's panel follows the pointer inside them). See `dock_layout`.
+    fn dock_size(&self, ui: &Ui, dock: Dock, other_side: bool) -> (f32, Option<std::ops::RangeInclusive<f32>>) {
+        let room = ui.available_rect_before_wrap();
+        let available = if dock == Dock::Bottom { room.height() } else { room.width() };
+        let limits = dock_layout::limits(dock, available, dock.reserve(other_side));
+        let size = dock_layout::fit(dock_layout::wanted(&self.prefs.dock_sizes, dock), limits);
+        let dragging = ui.input(|i| i.pointer.primary_down());
+        (size, dragging.then_some(limits.0..=limits.1))
+    }
+
+    /// After a dock was drawn: a size that differs from the one asked for is the user dragging its
+    /// edge, and becomes the size the dock keeps.
+    fn dock_shown(&mut self, dock: Dock, asked: f32, dragging: bool, rect: Rect) {
+        let shown = if dock == Dock::Bottom { rect.height() } else { rect.width() };
+        if dragging && (shown - asked).abs() > 0.5 {
+            self.prefs.dock_sizes.insert(dock.key().to_string(), shown);
+        }
     }
 
     fn right_docks(&mut self, ui: &mut Ui) {
@@ -669,13 +698,16 @@ impl DarkBurn {
         }
         let t = Tokens::get();
         let host = Container::new(ui.ctx(), Surface::Panel);
-        let panel = host.edge("db_dock_right", Edge::Right).resizable(true).default_size(380.0).size_range(300.0..=640.0);
+        let (size, dragging) = self.dock_size(ui, Dock::Right, false);
+        let range = dragging.clone().unwrap_or(size..=size);
+        let panel = host.edge("db_dock_right", Edge::Right).resizable(true).default_size(size).size_range(range);
         let frame = host.edge_frame(t.panel);
-        host.show_edge(ui, panel, frame, |ui| {
+        let shown = host.show_edge(ui, panel, frame, |ui| {
+            ui.expand_to_include_rect(ui.max_rect());
             let r = ui.max_rect();
             match (top, bottom) {
                 (true, true) => {
-                    let split = r.top() + (r.height() * 0.58).round();
+                    let split = r.top() + dock_layout::split(r.height());
                     let upper = Rect::from_min_max(r.min, pos2(r.right(), split));
                     let lower = Rect::from_min_max(pos2(r.left(), split + 1.0), r.max);
                     // Each group has its own id: both draw a close button with the same id source.
@@ -687,6 +719,7 @@ impl DarkBurn {
                 _ => self.tab_group(ui, Area::RightBottom),
             }
         });
+        self.dock_shown(Dock::Right, size, dragging.is_some(), shown.response.rect);
     }
 
     /// One area's tabs and the active panel's contents.
@@ -696,6 +729,7 @@ impl DarkBurn {
         let Some(first) = shown.first() else { return };
         let active = self.prefs.active_tab.get(&area).filter(|id| shown.iter().any(|p| p.id == id.as_str())).cloned().unwrap_or(first.id.to_string());
         let r = ui.max_rect();
+        solidcraft_ui_registry::publish_rect(&format!("panel:area:{area:?}"), r);
         let header = Rect::from_min_size(r.min, vec2(r.width(), PANEL_HEADER));
         ui.painter().rect_filled(header, 0.0, t.panel_header);
         ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));

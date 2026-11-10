@@ -620,6 +620,7 @@ fn console(ui: &mut Ui, app: &mut DarkBurn) {
                 .hint_text(if can_send { "Type a command" } else { "Console is for G-code machines" })
                 .desired_width(ui.available_width() - 60.0),
         );
+        crate::a11y::text(ui, &r, "Console command");
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             send = true;
             r.request_focus();
@@ -646,6 +647,13 @@ fn console(ui: &mut Ui, app: &mut DarkBurn) {
         for i in 0..6 {
             let text = app.machine.active().state.macros[i].clone();
             let label = macro_label(i, &text);
+            // A button that does not fit moves to the next row; squeezed into what is left of this
+            // one it would break its label in the middle of a word.
+            let t = Tokens::get();
+            let need = ui.painter().layout_no_wrap(label.clone(), egui::FontId::proportional(t.font_label), t.text).size().x + 2.0 * t.space_12;
+            if ui.available_size_before_wrap().x < need {
+                ui.end_row();
+            }
             let r = ui.add_enabled_ui(can_send && !text.trim().is_empty(), |ui| {
                 ui_kit::button(ui, label, Button::Small).backing_on_hover_text(if text.trim().is_empty() {
                     "Empty. Right-click to edit.".to_string()

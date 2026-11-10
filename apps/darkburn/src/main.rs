@@ -1,6 +1,7 @@
 //! DarkBurn: laser cutter and engraver. The desktop host: window, settings and startup.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod a11y;
 mod actions;
 mod api;
 mod art_library;
@@ -19,6 +20,8 @@ mod cuts_panel;
 mod devices;
 mod devices_ui;
 mod dock_geom;
+mod dock_layout;
+mod escape;
 mod extras;
 mod file_io;
 mod files;
@@ -110,6 +113,8 @@ mod text_tests;
 mod text_ui;
 mod thumbnail;
 mod tools;
+#[cfg(test)]
+mod ui_bug_tests;
 #[cfg(test)]
 mod ui_harness;
 #[cfg(test)]

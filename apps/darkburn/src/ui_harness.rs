@@ -54,6 +54,8 @@ pub struct A11y {
     pub label: Option<String>,
     pub value: Option<String>,
     pub rect: Rect,
+    /// The widget's egui id (the accessibility node id is the same number).
+    pub id: u64,
 }
 
 /// One piece of text painted on screen, topmost last.
@@ -302,7 +304,7 @@ impl Gui {
             let Some(b) = ak.bounding_box() else { continue };
             let ppp = self.scale;
             let rect = Rect::from_min_max(pos2(b.x0 as f32 / ppp, b.y0 as f32 / ppp), pos2(b.x1 as f32 / ppp, b.y1 as f32 / ppp));
-            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect });
+            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect, id: ak.locate().0.0 });
         }
         out
     }
@@ -687,7 +689,8 @@ impl Gui {
     /// Things on screen that clip or overflow the window, one line each:
     /// - published controls (ribbon, tools, menus, panel tabs, status) not wholly inside the screen;
     /// - painted text that runs past the screen edge, or is cut off at the side by a clip
-    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted);
+    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted,
+    ///   nor is a ruler number cut off where the ruler ends);
     /// - ribbon buttons or panel tabs that overlap each other;
     /// - dialog windows not wholly inside the screen.
     pub fn layout_problems(&self) -> Vec<String> {
@@ -711,7 +714,14 @@ impl Gui {
                 }
             }
         }
+        // The rulers beside the canvas cut a number off where the ruler ends: that is how a ruler looks.
+        let canvas = self.rect_of("canvas");
+        let on_ruler =
+            |r: Rect| canvas.is_some_and(|c| (c.top() - 24.0..c.top()).contains(&r.top()) || (c.left() - 24.0..c.left()).contains(&r.left()));
         for p in self.painted() {
+            if on_ruler(p.full) && p.text.trim().parse::<f64>().is_ok() {
+                continue;
+            }
             if p.broken_word {
                 out.push(format!("text {:?} {:?} is broken in the middle of a word", p.text, p.full));
             } else if outside(screen, p.full) {

@@ -337,7 +337,8 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
 /// A click on the canvas while a position is being picked fills in that field.
 fn take_pick(ctx: &Context, app: &mut DarkBurn) {
     let Some((i, design)) = app.vision.ui.pnc.pick else { return };
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Escape stops the pick and is used up: the window the pick came from stays open.
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.vision.ui.pnc.pick = None;
         return;
     }
@@ -361,14 +362,19 @@ fn take_pick(ctx: &Context, app: &mut DarkBurn) {
 fn window(ctx: &Context, title: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
     let mut open = true;
     let screen = ctx.content_rect();
+    let id = Id::unique(("vision_window", title));
     egui::Window::new(title)
-        .id(Id::unique(("vision_window", title)))
+        .id(id)
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
         .default_pos(pos2((screen.right() - width - 330.0).max(60.0), 100.0))
         .default_width(width)
         .show(ctx, add);
+    // Escape closes the window, as it does for every other window in the app.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
     open
 }
 
@@ -384,13 +390,21 @@ fn note(ui: &mut Ui, text: &str) {
 
 fn field(ui: &mut Ui, label: &str, v: &mut f64, unit: &str) {
     ui_kit::row(ui, label, |ui| {
-        ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit));
+        let r = ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit));
+        crate::a11y::number(ui, &r, label);
     });
+}
+
+/// One axis of a position: a number field named for what it places ("Head at X").
+fn coord(ui: &mut Ui, what: &str, axis: &str, v: &mut f64, speed: f64) {
+    let r = ui.add(egui::DragValue::new(v).speed(speed).prefix(format!("{axis} ")).suffix(" mm"));
+    crate::a11y::number(ui, &r, &format!("{what} {axis}"));
 }
 
 fn count_field(ui: &mut Ui, label: &str, v: &mut usize, range: std::ops::RangeInclusive<usize>) {
     ui_kit::row(ui, label, |ui| {
-        ui.add(egui::DragValue::new(v).range(range));
+        let r = ui.add(egui::DragValue::new(v).range(range));
+        crate::a11y::number(ui, &r, label);
     });
 }
 
@@ -575,8 +589,8 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui_kit::section_heading(ui, names[i]);
             ui.horizontal(|ui| {
                 ui.label("Laser");
-                ui.add(egui::DragValue::new(&mut d.laser[i][0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.laser[i][1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("{} laser", names[i]), "X", &mut d.laser[i][0], 0.1);
+                coord(ui, &format!("{} laser", names[i]), "Y", &mut d.laser[i][1], 0.1);
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, false));
                 }
@@ -588,8 +602,8 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             });
             ui.horizontal(|ui| {
                 ui.label("Design");
-                ui.add(egui::DragValue::new(&mut d.design[i][0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.design[i][1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("{} design", names[i]), "X", &mut d.design[i][0], 0.1);
+                coord(ui, &format!("{} design", names[i]), "Y", &mut d.design[i][1], 0.1);
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, true));
                 }
@@ -682,8 +696,8 @@ fn wizard_section(ui: &mut Ui, app: &mut DarkBurn, d: &mut PncDraft) {
                 );
             }
             ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut d.wiz[0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.wiz[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, "Measured position", "X", &mut d.wiz[0], 0.1);
+                coord(ui, "Measured position", "Y", &mut d.wiz[1], 0.1);
                 if button(ui, "Set", "") {
                     ev = Some(PnCEvent::Measured(Point::new(d.wiz[0], d.wiz[1])));
                 }
@@ -735,8 +749,8 @@ fn wizard_section(ui: &mut Ui, app: &mut DarkBurn, d: &mut PncDraft) {
 fn place_fields(ui: &mut Ui, d: &mut TestDraft) {
     ui.horizontal(|ui| {
         ui.label("Lower left at");
-        ui.add(egui::DragValue::new(&mut d.x).speed(0.5).prefix("X ").suffix(" mm"));
-        ui.add(egui::DragValue::new(&mut d.y).speed(0.5).prefix("Y ").suffix(" mm"));
+        coord(ui, "Lower left at", "X", &mut d.x, 0.5);
+        coord(ui, "Lower left at", "Y", &mut d.y, 0.5);
     });
     count_field(ui, "First layer", &mut d.first_layer, 0..=29);
     count_field(ui, "Label layer", &mut d.label_layer, 0..=29);
@@ -822,8 +836,8 @@ fn centre_dialog(ctx: &Context, app: &mut DarkBurn) {
         for (i, p) in d.pts.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(format!("Edge {}", i + 1));
-                ui.add(egui::DragValue::new(&mut p[0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut p[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("Edge {}", i + 1), "X", &mut p[0], 0.1);
+                coord(ui, &format!("Edge {}", i + 1), "Y", &mut p[1], 0.1);
                 if d_len_ok(i) && button(ui, "Remove", "") {
                     remove = Some(i);
                 }
@@ -1056,7 +1070,8 @@ fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui_kit::checkbox(ui, "Flip left-right", &mut d.flip_x);
             ui_kit::checkbox(ui, "Flip top-bottom", &mut d.flip_y);
             ui.label("Turns");
-            ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3));
+            let r = ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3));
+            crate::a11y::number(ui, &r, "Turns");
         });
         match tex {
             Some((id, size)) => {
@@ -1123,13 +1138,13 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         }
         ui.horizontal(|ui| {
             ui.label("Head at");
-            ui.add(egui::DragValue::new(&mut d.head[0]).speed(0.1).prefix("X ").suffix(" mm"));
-            ui.add(egui::DragValue::new(&mut d.head[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+            coord(ui, "Head at", "X", &mut d.head[0], 0.1);
+            coord(ui, "Head at", "Y", &mut d.head[1], 0.1);
         });
         ui.horizontal(|ui| {
             ui.label("Mark at");
-            ui.add(egui::DragValue::new(&mut d.bed[0]).speed(0.1).prefix("X ").suffix(" mm"));
-            ui.add(egui::DragValue::new(&mut d.bed[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+            coord(ui, "Mark at", "X", &mut d.bed[0], 0.1);
+            coord(ui, "Mark at", "Y", &mut d.bed[1], 0.1);
         });
         ui.horizontal(|ui| {
             if ui.add_enabled(d.pending.is_some(), egui::Button::new("Add mark")).clicked()
@@ -1332,7 +1347,8 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui_kit::checkbox(ui, "Colour", &mut c.state.color);
     ui_kit::checkbox(ui, "Crop to page", &mut c.crop_to_page);
     ui_kit::row(ui, "Fade", |ui| {
-        ui.add(egui::Slider::new(&mut c.state.fade, 0.0..=0.95).show_value(false));
+        let r = ui.add(egui::Slider::new(&mut c.state.fade, 0.0..=0.95).show_value(false));
+        crate::a11y::slider(ui, &r, "Fade");
     });
     let mut wp = c.overlay.width_mm.map_or(100.0, |w| w / covers.width * 100.0);
     let mut hp = c.overlay.height_mm.map_or(100.0, |h| h / covers.height * 100.0);

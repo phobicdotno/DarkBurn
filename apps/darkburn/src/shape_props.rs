@@ -81,10 +81,12 @@ impl Grid<'_> {
         let Some((first, mixed)) = common(&self.shapes, get) else { return };
         let mut v = if mixed { String::new() } else { first };
         let resp = ui_kit::row(ui, label, |ui| {
-            ui.add_sized(
+            let r = ui.add_sized(
                 egui::vec2(ui.available_width(), Tokens::get().control_height),
                 egui::TextEdit::singleline(&mut v).id(Id::unique(("sp_text", label))).hint_text(if mixed { "Mixed" } else { "" }),
-            )
+            );
+            crate::a11y::text(ui, &r, label);
+            r
         });
         if resp.changed() {
             // Typing goes on as one undo step while the field keeps focus.

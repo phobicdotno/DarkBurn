@@ -228,7 +228,8 @@ fn general(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::checkbox(ui, &tr("settings.beginner", "Beginner mode (hides advanced cut settings)"), &mut prefs.cut_beginner);
     ui_kit::checkbox(ui, &tr("settings.check_updates", "Check for updates"), &mut prefs.opts.check_updates);
     ui_kit::row(ui, &tr("settings.update_url", "Update address"), |ui| {
-        ui.add(egui::TextEdit::singleline(&mut prefs.opts.update_url).hint_text(crate::updates::DEFAULT_URL).desired_width(320.0));
+        let r = ui.add(egui::TextEdit::singleline(&mut prefs.opts.update_url).hint_text(crate::updates::DEFAULT_URL).desired_width(320.0));
+        crate::a11y::name_from_row(ui, &r, egui::Role::TextInput);
     });
     ui_kit::checkbox(ui, &tr("settings.running_copy", "Open files in the running copy"), &mut prefs.files.single_instance);
     ui_kit::checkbox(ui, &tr("settings.sound_error", "Play a sound on errors"), &mut prefs.opts.sound_error);

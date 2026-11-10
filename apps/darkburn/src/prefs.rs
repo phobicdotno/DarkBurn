@@ -50,6 +50,8 @@ pub struct Prefs {
     pub panels: BTreeMap<String, PanelState>,
     /// The tab in front in each panel area.
     pub active_tab: BTreeMap<Area, String>,
+    /// The size the user dragged each dock to ("left", "right", "bottom"); none: the default.
+    pub dock_sizes: BTreeMap<String, f32>,
     pub toolbars: BTreeMap<String, bool>,
     /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
     pub toolbar_order: Vec<String>,
@@ -115,6 +117,7 @@ impl Default for Prefs {
             origin: Origin::FrontLeft,
             panels,
             active_tab,
+            dock_sizes: BTreeMap::new(),
             toolbars,
             toolbar_order: Vec::new(),
             ribbon_tab: "home".into(),
@@ -192,6 +195,7 @@ impl Prefs {
             self.panels.entry(id).or_insert(state);
         }
         self.panels.retain(|id, _| PANELS.iter().any(|p| p.id == id));
+        self.dock_sizes.retain(|_, size| size.is_finite() && *size > 0.0);
         for (id, on) in d.toolbars {
             self.toolbars.entry(id).or_insert(on);
         }
@@ -208,6 +212,7 @@ impl Prefs {
         let d = Prefs::default();
         self.panels = d.panels;
         self.active_tab = d.active_tab;
+        self.dock_sizes = d.dock_sizes;
         self.toolbars = d.toolbars;
         self.toolbar_order = Vec::new();
         self.ribbon_tab = d.ribbon_tab;

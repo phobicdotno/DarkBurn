@@ -86,8 +86,12 @@ impl EmuConfig {
 /// What a test can inspect.
 #[derive(Clone, Debug, Default)]
 pub struct EmuStats {
-    /// Every command line received (comments stripped, as text).
+    /// Every command line taken in (comments stripped, as text). A line that waits for room
+    /// in the planner is not in here yet.
     pub lines: Vec<String>,
+    /// Every line that has arrived on the serial input, taken in or still waiting: what the
+    /// driver has sent.
+    pub arrived: Vec<String>,
     /// Distance travelled with the laser powered during `G1` moves, mm.
     pub burned_mm: f64,
     /// Distance travelled with the laser powered during `G0` moves, mm (a driver or translator bug).
@@ -357,6 +361,7 @@ impl LineEmulator {
                     self.rx.clear();
                     let line = line.trim();
                     if !line.is_empty() {
+                        self.stats.arrived.push(line.to_owned());
                         self.inbox.push_back(line.to_owned());
                     }
                 }

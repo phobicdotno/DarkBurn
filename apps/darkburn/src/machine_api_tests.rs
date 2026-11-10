@@ -1,7 +1,8 @@
 //! Headless tests of [`MachineHandle`] against both emulators. No real port, USB or network
 //! connection is ever opened (test builds refuse real links).
 
-use std::time::Duration;
+use std::ops::{Deref, DerefMut};
+use std::time::{Duration, Instant};
 
 use kurbo::{Point, Rect};
 
@@ -16,18 +17,76 @@ fn spec(family: Family, scale: f64) -> ConnectSpec {
     s
 }
 
-fn connected(family: Family, scale: f64) -> MachineHandle {
-    let mut h = MachineHandle::new();
+/// A machine handle for tests that never drops an event.
+///
+/// [`MachineHandle::poll`] hands each event out once, and one poll can return several: a slow
+/// test thread may get `JobStarted` and `JobFinished` together. A wait that looked only at the
+/// latest batch would then lose every event behind the one it was waiting for. Here every
+/// polled event is kept until [`wait_event`] has matched it.
+struct Sim {
+    h: MachineHandle,
+    /// Events polled and not yet matched by [`wait_event`], oldest first.
+    unseen: Vec<MachineEvent>,
+}
+
+impl Sim {
+    fn new() -> Sim {
+        Sim { h: MachineHandle::new(), unseen: Vec::new() }
+    }
+
+    /// Polls until `pred` holds or `timeout` passes. `pred` gets the snapshot and every event
+    /// that no [`wait_event`] has matched yet (not only the newest ones).
+    fn wait_for(&mut self, timeout: Duration, mut pred: impl FnMut(&Snapshot, &[MachineEvent]) -> bool) -> bool {
+        let end = Instant::now() + timeout;
+        loop {
+            let new = self.h.poll();
+            self.unseen.extend(new);
+            if pred(self.h.snapshot(), &self.unseen) {
+                return true;
+            }
+            if Instant::now() >= end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Deref for Sim {
+    type Target = MachineHandle;
+    fn deref(&self) -> &MachineHandle {
+        &self.h
+    }
+}
+
+impl DerefMut for Sim {
+    fn deref_mut(&mut self) -> &mut MachineHandle {
+        &mut self.h
+    }
+}
+
+fn connected(family: Family, scale: f64) -> Sim {
+    let mut h = Sim::new();
     h.connect(&spec(family, scale), None).unwrap();
     assert!(h.wait_for(T, |s, _| s.connected()), "{family:?} simulator connects");
     h
 }
 
-fn wait_event(h: &mut MachineHandle, f: impl Fn(&MachineEvent) -> bool) -> bool {
-    h.wait_for(T, |_, ev| ev.iter().any(&f))
+/// Waits for the next event that matches `f`. That event and the ones before it are then
+/// done with; later ones stay for the next wait, so two waits in a row see events in order.
+fn wait_event(h: &mut Sim, f: impl Fn(&MachineEvent) -> bool) -> bool {
+    let mut at = None;
+    let found = h.wait_for(T, |_, ev| {
+        at = ev.iter().position(&f);
+        at.is_some()
+    });
+    if let Some(i) = at {
+        h.unseen.drain(..=i);
+    }
+    found
 }
 
-fn ready(h: &mut MachineHandle) {
+fn ready(h: &mut Sim) {
     let ok = h.wait_for(T, |s, _| s.state == LaserState::Ready);
     if !ok {
         for c in h.console() {
@@ -39,7 +98,7 @@ fn ready(h: &mut MachineHandle) {
 
 #[test]
 fn real_links_are_refused_without_consent_and_in_tests() {
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     let real = ConnectSpec { link: Link::Serial { port: "COM3".into(), baud: 115_200 }, config: ConnectConfig::default() };
     assert!(matches!(h.connect(&real, None), Err(MachineError::Refused(_))));
     assert!(matches!(h.connect(&real, Some(RealLinkConsent::from_user_click())), Err(MachineError::Refused(_))));
@@ -51,7 +110,7 @@ fn real_links_are_refused_without_consent_and_in_tests() {
 
 #[test]
 fn commands_fail_cleanly_when_not_connected() {
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     assert_eq!(h.stop(), Err(MachineError::NotConnected));
     assert_eq!(h.pause(), Err(MachineError::NotConnected));
     assert_eq!(h.home(), Err(MachineError::NotConnected));
@@ -115,7 +174,7 @@ fn grbl_pause_resume_stop() {
 fn grbl_home_jog_move_origin_and_position() {
     let mut s = spec(Family::Grbl, 200.0);
     s.config.sim_homing = true;
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     h.connect(&s, None).unwrap();
     assert!(h.wait_for(T, |s, _| s.state == LaserState::Alarm), "homing enabled: locked until homed");
     assert!(matches!(h.jog_step(JogSpec { dx: 1.0, feed: 100.0, ..Default::default() }), Err(MachineError::Alarm)));
@@ -216,6 +275,20 @@ fn ruida_simulator_runs_a_job_with_progress() {
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobStarted)));
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_))), "job finished");
     assert!(h.wait_for(T, |s, _| s.state == LaserState::Ready && s.job.is_none()));
+}
+
+#[test]
+fn events_that_arrive_together_are_each_waited_for_in_turn() {
+    // What one poll can hand a slow test thread: the start and the end of a job together.
+    let mut h = Sim::new();
+    h.unseen = vec![MachineEvent::FilesListed, MachineEvent::JobStarted, MachineEvent::JobFinished(JobProgress::default()), MachineEvent::Homed];
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobStarted)));
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_))), "the end is still there after waiting for the start");
+    assert!(matches!(h.unseen[..], [MachineEvent::Homed]), "matched events are used up, later ones stay: {:?}", h.unseen);
+    // A wait on the state leaves the events alone.
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Disconnected));
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::Homed)));
+    assert!(h.unseen.is_empty());
 }
 
 #[test]

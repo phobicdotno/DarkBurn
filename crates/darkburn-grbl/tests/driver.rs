@@ -206,6 +206,35 @@ fn synchronous_mode_sends_one_line_at_a_time() {
     emu.with(|e| assert!(e.stats().rx_peak <= longest));
 }
 
+/// Without laser mode (`$32=0`) a feed hold leaves the spindle output, the laser, on: the
+/// pause has to switch it off, and the resume brings it back.
+#[test]
+fn pause_without_laser_mode_switches_the_laser_off() {
+    let emu = emulator(EmulatorConfig::atomstack().with_setting(32, 0.0).with_time_scale(20.0));
+    let m = connect(&emu, ConnectOptions::default());
+    let job = Job::from_text("G21 G90\nM3 S500\nG1 X300 F3000\nG1 Y300\nG1 X0\nG1 Y0\nM5");
+    m.start_job(job).unwrap();
+    wait_emu(&emu, "running with laser", |e| e.state_name() == "Run" && e.laser_on());
+    m.pause().unwrap();
+    wait_snap(&m, "Hold:0", |s| s.status.state == MachineState::Hold(0));
+    wait_emu(&emu, "laser off in the pause", |e| !e.laser_on());
+    // It stays off however long the pause lasts (the stop byte is a toggle).
+    std::thread::sleep(Duration::from_millis(300));
+    emu.with(|e| {
+        assert_eq!(e.state_name(), "Hold:0");
+        assert!(!e.laser_on(), "laser off for the whole pause");
+    });
+    m.resume().unwrap();
+    wait_emu(&emu, "running again", |e| e.state_name() == "Run" && e.laser_on());
+    // A second pause switches it off again.
+    m.pause().unwrap();
+    wait_snap(&m, "Hold:0 again", |s| s.status.state == MachineState::Hold(0));
+    wait_emu(&emu, "laser off in the second pause", |e| !e.laser_on());
+    m.resume().unwrap();
+    wait_event(&m, |e| matches!(e, Event::JobFinished(_)));
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
 #[test]
 fn pause_and_resume() {
     let emu = emulator(EmulatorConfig::atomstack().with_time_scale(20.0));

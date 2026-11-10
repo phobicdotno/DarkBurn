@@ -7,3 +7,4 @@ Fix: Shapes of a deleted layer no longer come back inside an editable array
 Fix: Hiding a layer deselects its shapes
 Fix: Unlocking everything no longer selects shapes on hidden layers
 Fix: With the system clipboard turned off, Paste no longer takes what other programs copied
+Fix: Paste takes the newest copy when you copy the same picture or shapes again in another program

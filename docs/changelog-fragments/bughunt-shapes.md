@@ -8,3 +8,4 @@ Fix: Deleting the last nodes of a shape removes the shape instead of leaving an 
 Fix: A mistyped array count or spacing gives a message instead of freezing or closing the program
 Fix: Union, Difference, Weld, Cut Shapes and Offset no longer delete a selected picture or line they did not use
 Fix: Text no longer vanishes when it is put on a path with no length
+Fix: Bent text on a path follows the curve on every edge of a letter

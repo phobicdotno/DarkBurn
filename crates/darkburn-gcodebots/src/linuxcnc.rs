@@ -81,9 +81,11 @@ pub fn write_program(job_lines: &[String], p: &DeviceProfile, o: &LinuxCncOption
         cluster: false,
         inches: p.gcode.units == crate::profile::Units::Inches,
         start_script: format!("G17 G21 G90 G94 G54{blend}\n{}", p.gcode.start_script),
+        // The program end is written last, below: one in the end script (the device is made
+        // with one) would stop the program before the laser is switched off after it.
         end_script: format!(
             "{}\n{}",
-            p.gcode.end_script,
+            p.gcode.end_script.lines().filter(|l| !matches!(l.trim().to_ascii_uppercase().as_str(), "M2" | "M30")).collect::<Vec<_>>().join("\n"),
             match o.power {
                 LinuxCncPower::AnalogM67 { channel } => format!("M67 E{channel} Q0"),
                 LinuxCncPower::Spindle => "M5".to_owned(),
@@ -144,6 +146,7 @@ mod tests {
         // Power goes off before the rapid.
         assert!(t.contains("G1 X30\nM67 E0 Q0\nG0 X0 Y0\n"), "{t}");
         assert!(t.ends_with("M2\n"));
+        assert_eq!(t.lines().filter(|l| *l == "M2").count(), 1, "the program ends once: {t}");
         assert!(check_program(&t, &o).is_empty(), "{:?}", check_program(&t, &o));
     }
 

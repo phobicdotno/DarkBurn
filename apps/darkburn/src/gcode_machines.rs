@@ -346,6 +346,15 @@ pub fn neutral_gcode(base: &DeviceGcodeSettings) -> DeviceGcodeSettings {
 /// Translate GRBL-style lines for `dev`. LinuxCNC gets a complete `.ngc` program.
 pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     let p = to_profile(dev);
+    // The job builder ends its GRBL-style text with `M2`. The device writes its own end after
+    // it (end script, laser off, and for LinuxCNC the program end), and a controller that knows
+    // `M2` stops reading there: the job's own program end is left out.
+    let is_end = |l: &String| l.trim().eq_ignore_ascii_case("M2") || l.trim().eq_ignore_ascii_case("M30");
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+    let lines = match last {
+        Some(i) if is_end(&lines[i]) => &lines[..i],
+        _ => lines,
+    };
     if p.kind == gp::DeviceKind::LinuxCnc {
         let o = gc::linuxcnc::LinuxCncOptions::for_profile(&p);
         return gc::linuxcnc::write_program(lines, &p, &o).lines().map(str::to_owned).collect();

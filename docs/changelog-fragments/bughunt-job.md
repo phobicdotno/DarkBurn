@@ -9,3 +9,4 @@ Fix: Reduce travel moves now also shortens the path between shapes that are not 
 Fix: The order of Layer, Group and Priority in Order by now counts: group first finishes each group before the next
 Fix: A picture is now placed and framed by its own rectangle, white edges included, instead of by its first and last dot
 Fix: Offset fill no longer burns across holes, and fills a shape inside a hole only once
+Fix: Offset fill now fills letters and other shapes with arms or narrow necks completely, with rings around holes

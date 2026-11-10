@@ -180,19 +180,6 @@ pub fn point_at(pts: &[Point], s: f64) -> (Point, Vec2) {
     (pts[n - 1], dir)
 }
 
-/// Where segment `a`-`b` crosses segment `c`-`d`, as the fraction of the way from `a` to `b`
-/// (strictly between the ends of `a`-`b`). Parallel segments do not cross.
-pub fn segment_hit(a: Point, b: Point, c: Point, d: Point) -> Option<f64> {
-    let (r, s) = (b - a, d - c);
-    let den = r.cross(s);
-    if den.abs() < 1e-12 {
-        return None;
-    }
-    let t = (c - a).cross(s) / den;
-    let u = (c - a).cross(r) / den;
-    (t > 0.0 && t < 1.0 && (0.0..=1.0).contains(&u)).then_some(t)
-}
-
 /// Unit vector (or zero).
 pub fn unit(v: Vec2) -> Vec2 {
     let l = v.hypot();
@@ -216,58 +203,6 @@ pub fn corner_angle(pts: &[Point], i: usize) -> f64 {
         return 0.0;
     }
     a.dot(b).clamp(-1.0, 1.0).acos()
-}
-
-/// Inward offset of a simple polygon by `d` (miter joins). Returns `None` once the polygon
-/// collapses. Edges that flip direction are dropped and the offset is recomputed, which handles
-/// most concave shapes; self-intersections of very irregular shapes are not resolved.
-pub fn offset_inward(pts: &[Point], d: f64) -> Option<Vec<Point>> {
-    let ccw = signed_area(pts) > 0.0;
-    let mut poly: Vec<Point> = if ccw { pts.to_vec() } else { pts.iter().rev().copied().collect() };
-    let orig_area = signed_area(&poly).abs();
-    for _ in 0..pts.len() + 1 {
-        let n = poly.len();
-        if n < 3 {
-            return None;
-        }
-        let mut out = Vec::with_capacity(n);
-        for i in 0..n {
-            let p0 = poly[(i + n - 1) % n];
-            let p1 = poly[i];
-            let p2 = poly[(i + 1) % n];
-            let e0 = unit(p1 - p0);
-            let e1 = unit(p2 - p1);
-            // Left normals point inside for CCW polygons.
-            let n0 = Vec2::new(-e0.y, e0.x);
-            let n1 = Vec2::new(-e1.y, e1.x);
-            let bis = n0 + n1;
-            let cos_half = (bis.hypot() / 2.0).max(0.2);
-            let m = unit(bis) * (d / cos_half);
-            out.push(if bis.hypot() < EPS { p1 + n0 * d } else { p1 + m });
-        }
-        // Drop edges whose direction flipped.
-        let mut keep = vec![true; n];
-        let mut flipped = false;
-        for i in 0..n {
-            let a = poly[i];
-            let b = poly[(i + 1) % n];
-            let oa = out[i];
-            let ob = out[(i + 1) % n];
-            if (b - a).dot(ob - oa) <= 0.0 {
-                keep[(i + 1) % n] = false;
-                flipped = true;
-            }
-        }
-        if !flipped {
-            let area = signed_area(&out);
-            if area <= 1e-9 || area >= orig_area {
-                return None;
-            }
-            return Some(if ccw { out } else { out.into_iter().rev().collect() });
-        }
-        poly = poly.iter().zip(&keep).filter(|(_, k)| **k).map(|(p, _)| *p).collect();
-    }
-    None
 }
 
 /// Rotate a point about the origin.

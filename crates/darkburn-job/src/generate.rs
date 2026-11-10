@@ -504,70 +504,95 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
             }
         }
         UnitKind::Offset { polys, scales } => {
-            let parents = fill::parents(polys);
-            let boxes: Vec<Rect> = polys.iter().map(|p| geom::bbox(p)).collect();
+            let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
+            let interval = f.interval.max(1e-3);
+            // Every ring with its level and bounds; `None` once it is burned.
+            let mut rings: Vec<Option<(usize, Vec<Point>, Rect)>> = Vec::new();
+            let mut by_level: Vec<Vec<usize>> = Vec::new();
+            for (level, level_rings) in fill::offset_levels(&refs, interval).into_iter().enumerate() {
+                by_level.push((rings.len()..rings.len() + level_rings.len()).collect());
+                rings.extend(level_rings.into_iter().map(|r| {
+                    let bb = geom::bbox(&r);
+                    Some((level, r, bb))
+                }));
+            }
+            let areas: Vec<f64> = polys.iter().map(|p| geom::signed_area(p).abs()).collect();
+            // The shape a ring belongs to: the smallest one around it.
+            let owner = |p: Point| (0..polys.len()).filter(|&q| geom::point_in_polygon(p, &polys[q])).min_by(|a, b| areas[*a].total_cmp(&areas[*b]));
+            // How far `pos` is from ring `i`, and where on the ring (arc length) that is.
+            let reach = |rings: &[Option<(usize, Vec<Point>, Rect)>], i: usize, pos: Point, within: f64| -> Option<(f64, f64)> {
+                let (_, pts, bb) = rings[i].as_ref()?;
+                let dx = (bb.x0 - pos.x).max(pos.x - bb.x1).max(0.0);
+                let dy = (bb.y0 - pos.y).max(pos.y - bb.y1).max(0.0);
+                if dx.hypot(dy) > within {
+                    return None;
+                }
+                let mut closed = pts.clone();
+                closed.push(pts[0]);
+                let (at, dist) = geom::nearest_arclen(&closed, pos);
+                (dist <= within).then_some((dist, at))
+            };
             let mut pos = from;
-            for (pi, poly) in polys.iter().enumerate() {
-                // Rings of outer shapes only.
-                let depth = std::iter::successors(parents[pi], |&q| parents[q]).count();
-                if depth % 2 == 1 {
-                    continue;
+            let mut level: Option<usize> = None;
+            for _ in 0..rings.len() {
+                // The spiral goes on inwards while the next ring is a step away; the step from a
+                // ring `d` inside the edge to the next one stays inside the shape while it is no
+                // longer than the interval plus twice `d`.
+                let mut next: Option<(usize, f64, f64, bool)> = None;
+                if let Some(l) = level
+                    && let Some(inner) = by_level.get(l + 1)
+                {
+                    let mut within = interval * (2 * l + 2) as f64 + EPS;
+                    for &i in inner {
+                        if let Some((dist, at)) = reach(&rings, i, pos, within) {
+                            within = dist;
+                            next = Some((i, dist, at, true));
+                        }
+                    }
                 }
-                // The shapes inside this one: its holes and whatever lies in them. The rings burn
-                // only outside of those (an island in a hole has rings of its own).
-                let inner: Vec<usize> = (0..polys.len()).filter(|&q| std::iter::successors(parents[q], |&a| parents[a]).any(|a| a == pi)).collect();
-                let power = s.max_power * scales[pi];
-                // A move of a ring, cut where it crosses a hole.
-                let cut = |a: Point, b: Point, out: &mut Vec<Op>| {
-                    if inner.is_empty() {
-                        out.push(Op::Cut { to: b, speed: s.speed, power });
-                        return;
-                    }
-                    let seg = Rect::from_points(a, b);
-                    let mut ts: Vec<f64> = vec![0.0, 1.0];
-                    for &q in &inner {
-                        if seg.x1 < boxes[q].x0 || seg.x0 > boxes[q].x1 || seg.y1 < boxes[q].y0 || seg.y0 > boxes[q].y1 {
-                            continue;
-                        }
-                        let n = polys[q].len();
-                        ts.extend((0..n).filter_map(|i| geom::segment_hit(a, b, polys[q][i], polys[q][(i + 1) % n])));
-                    }
-                    ts.sort_by(f64::total_cmp);
-                    for w in ts.windows(2) {
-                        let (p0, p1) = (a.lerp(b, w[0]), a.lerp(b, w[1]));
-                        if p0.distance(p1) < EPS {
-                            continue;
-                        }
-                        let mid = p0.midpoint(p1);
-                        if !inner.iter().any(|&q| geom::point_in_polygon(mid, &polys[q])) {
-                            out.push(Op::Cut { to: p1, speed: s.speed, power });
-                        } else if p0.distance(p1) > f.rapid_gap {
-                            out.push(Op::Rapid { to: p1 });
-                        } else {
-                            out.push(Op::Cut { to: p1, speed: s.speed, power: 0.0 });
+                if next.is_none() {
+                    let mut within = f64::INFINITY;
+                    for i in 0..rings.len() {
+                        if let Some((dist, at)) = reach(&rings, i, pos, within)
+                            && next.is_none_or(|n| dist < n.1)
+                        {
+                            within = dist;
+                            next = Some((i, dist, at, false));
                         }
                     }
-                    // Rounding may leave the last piece a hair short of the corner.
-                    if out.last().and_then(Op::target).is_none_or(|t| t.distance(b) > EPS) {
-                        out.push(Op::Cut { to: b, speed: s.speed, power: 0.0 });
-                    }
-                };
-                let rings = fill::offset_rings(poly, f.interval);
-                for (k, ring) in rings.iter().enumerate() {
-                    let st = planner::choose_start(ring, pos, false);
-                    let n = ring.len();
-                    let first = ring[st];
-                    if k == 0 {
-                        out.push(Op::Rapid { to: first });
-                    } else {
-                        // Step inwards with the laser on: an inward spiral.
-                        cut(pos, first, out);
-                    }
-                    for m in 1..=n {
-                        cut(ring[(st + m - 1) % n], ring[(st + m) % n], out);
-                    }
-                    pos = first;
                 }
+                let Some((i, _, at, step)) = next else { break };
+                let Some((l, mut pts, _)) = rings[i].take() else { break };
+                let own = owner(pts[0]);
+                let power = s.max_power * own.map_or(1.0, |q| scales[q]);
+                // Rings run the way their shape was drawn.
+                let mut at = at;
+                if own.is_some_and(|q| (geom::signed_area(&polys[q]) > 0.0) != (geom::signed_area(&pts) > 0.0)) {
+                    let mut closed = pts.clone();
+                    closed.push(pts[0]);
+                    at = geom::polyline_length(&closed) - at;
+                    pts.reverse();
+                }
+                // Start at the point of the ring nearest to where the head is.
+                let mut closed = pts.clone();
+                closed.push(pts[0]);
+                let pieces = geom::split_at(&closed, &[at]);
+                let first = pieces[1][0];
+                if step {
+                    // Step inwards with the laser on: an inward spiral.
+                    out.push(Op::Cut { to: first, speed: s.speed, power });
+                } else {
+                    out.push(Op::Rapid { to: first });
+                }
+                let mut last = first;
+                for p in pieces[1].iter().skip(1).chain(pieces[0].iter().skip(1)) {
+                    if p.distance(last) > EPS {
+                        out.push(Op::Cut { to: *p, speed: s.speed, power });
+                        last = *p;
+                    }
+                }
+                pos = first;
+                level = Some(l);
             }
         }
         _ => {}

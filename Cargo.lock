@@ -1184,6 +1184,7 @@ dependencies = [
 name = "darkburn-job"
 version = "0.0.329"
 dependencies = [
+ "darkburn-geom",
  "kurbo 0.13.1",
  "serde",
  "serde_json",

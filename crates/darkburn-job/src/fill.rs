@@ -314,20 +314,52 @@ pub fn parents(polys: &[Vec<Point>]) -> Vec<Option<usize>> {
         .collect()
 }
 
-/// Concentric inward rings for offset fill, outermost first, at `interval / 2`,
-/// `interval * 1.5`, ... from the edge.
-pub fn offset_rings(poly: &[Point], interval: f64) -> Vec<Vec<Point>> {
+/// The rings of an offset fill of the area inside `polys` (even-odd, so a shape inside another
+/// is a hole), level by level: level `k` holds the closed rings `interval / 2 + k * interval`
+/// inside the edge. A shape with arms, a neck or holes has as many rings on a level as it has
+/// parts left at that depth; rings run around holes too.
+pub fn offset_levels(polys: &[&[Point]], interval: f64) -> Vec<Vec<Vec<Point>>> {
+    use darkburn_geom::offset::{Join, OffsetOptions, OffsetSide, offset};
     let interval = interval.max(1e-3);
-    let mut rings = Vec::new();
+    let mut path = kurbo::BezPath::new();
+    for poly in polys.iter().filter(|p| p.len() >= 3) {
+        path.move_to(poly[0]);
+        poly[1..].iter().for_each(|p| path.line_to(*p));
+        path.close_path();
+    }
+    let tol = (interval / 10.0).clamp(0.002, 0.02);
+    let mut levels = Vec::new();
+    let mut count = 0usize;
     let mut d = interval / 2.0;
-    while rings.len() < 100_000 {
-        match geom::offset_inward(poly, d) {
-            Some(r) => rings.push(r),
-            None => break,
+    while count < 100_000 {
+        let opts = OffsetOptions {
+            distance: d,
+            side: OffsetSide::Inward,
+            join: Join::Round,
+            fill_rule: darkburn_geom::FillRule::EvenOdd,
+            tol,
+            ..Default::default()
+        };
+        let rings: Vec<Vec<Point>> = offset(std::slice::from_ref(&path), &opts)
+            .inward
+            .iter()
+            .flat_map(|p| geom::flatten(p, tol))
+            .filter(|p| p.closed && p.pts.len() >= 3 && geom::signed_area(&p.pts).abs() > 1e-9)
+            .map(|p| p.pts)
+            .collect();
+        if rings.is_empty() {
+            break;
         }
+        count += rings.len();
+        levels.push(rings);
         d += interval;
     }
-    rings
+    levels
+}
+
+/// The rings of one shape for offset fill, outermost first (see [`offset_levels`]).
+pub fn offset_rings(poly: &[Point], interval: f64) -> Vec<Vec<Point>> {
+    offset_levels(&[poly], interval).into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -410,6 +442,84 @@ mod tests {
         for r in &rings {
             for p in r {
                 assert!(geom::point_in_polygon(*p, &l));
+            }
+        }
+    }
+
+    #[test]
+    fn rings_split_where_a_neck_closes_and_run_around_holes() {
+        let p = |x: f64, y: f64| Point::new(x, y);
+        // Two 10 mm squares joined by a neck 2 mm wide.
+        let dumbbell = vec![
+            p(0.0, 0.0),
+            p(10.0, 0.0),
+            p(10.0, 4.0),
+            p(20.0, 4.0),
+            p(20.0, 0.0),
+            p(30.0, 0.0),
+            p(30.0, 10.0),
+            p(20.0, 10.0),
+            p(20.0, 6.0),
+            p(10.0, 6.0),
+            p(10.0, 10.0),
+            p(0.0, 10.0),
+        ];
+        let levels = offset_levels(&[&dumbbell], 1.0);
+        assert_eq!(levels.len(), 5, "both squares are filled to their middle");
+        assert_eq!(levels.iter().map(Vec::len).collect::<Vec<_>>(), vec![1, 2, 2, 2, 2], "one ring through the neck, then one for each square");
+        // A plate with a hole: one ring inside the edge and one around the hole.
+        let plate = square(0.0, 0.0, 20.0);
+        let hole = square(5.0, 5.0, 10.0);
+        let levels = offset_levels(&[&plate, &hole], 1.0);
+        assert_eq!(levels.len(), 3, "5 mm of plate between edge and hole");
+        assert_eq!(levels[0].len(), 2);
+        for ring in levels.iter().flatten() {
+            for q in ring {
+                assert!(geom::point_in_polygon(*q, &plate) && !geom::point_in_polygon(*q, &hole), "{q:?}");
+            }
+        }
+    }
+
+    /// Every ring of an offset fill lies inside the shape, at its distance from the edge.
+    #[test]
+    fn rings_of_shapes_with_arms_stay_inside() {
+        let p = |x: f64, y: f64| Point::new(x, y);
+        let shapes: Vec<(&str, Vec<Point>)> = vec![
+            ("U", vec![p(0.0, 0.0), p(30.0, 0.0), p(30.0, 40.0), p(20.0, 40.0), p(20.0, 20.0), p(10.0, 20.0), p(10.0, 40.0), p(0.0, 40.0)]),
+            ("T", vec![p(10.0, 0.0), p(20.0, 0.0), p(20.0, 30.0), p(30.0, 30.0), p(30.0, 36.0), p(0.0, 36.0), p(0.0, 30.0), p(10.0, 30.0)]),
+            (
+                "E",
+                vec![
+                    p(0.0, 0.0),
+                    p(20.0, 0.0),
+                    p(20.0, 4.0),
+                    p(8.0, 4.0),
+                    p(8.0, 10.0),
+                    p(16.0, 10.0),
+                    p(16.0, 14.0),
+                    p(8.0, 14.0),
+                    p(8.0, 20.0),
+                    p(20.0, 20.0),
+                    p(20.0, 24.0),
+                    p(0.0, 24.0),
+                ],
+            ),
+        ];
+        for (name, poly) in shapes {
+            let mut closed = poly.clone();
+            closed.push(poly[0]);
+            let levels = offset_levels(&[&poly], 1.0);
+            assert!(levels.len() >= 2, "{name}");
+            for (k, ring) in levels.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |r| (k, r))) {
+                let d = 0.5 + k as f64;
+                let n = ring.len();
+                for i in 0..n {
+                    for q in [ring[i], ring[i].midpoint(ring[(i + 1) % n])] {
+                        let dist = geom::nearest_arclen(&closed, q).1;
+                        assert!(geom::point_in_polygon(q, &poly), "{name}: ring {k} leaves the shape at {q:?}");
+                        assert!(dist > d - 0.03, "{name}: ring {k} at {q:?} is {dist} mm from the edge, not {d}");
+                    }
+                }
             }
         }
     }

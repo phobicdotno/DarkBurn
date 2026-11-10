@@ -125,6 +125,8 @@ impl Default for ConnectOptions {
 const MIN_POLL: Duration = Duration::from_millis(200);
 const POLL_STALE: Duration = Duration::from_secs(1);
 const STOP_STEP_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long `disconnect` (and dropping the handle) waits for the worker to finish.
+const DISCONNECT_WAIT: Duration = Duration::from_secs(1);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Errors returned straight from [`GrblMachine`] methods.
@@ -586,12 +588,23 @@ impl SettingsBackup {
 }
 
 enum Cmd {
-    Line { text: String, origin: Origin },
-    Lines { lines: Vec<String>, origin: Origin },
+    Line {
+        text: String,
+        origin: Origin,
+    },
+    /// `keep_fire`: the lines switch an accessory only, so the fire button stays as it is.
+    Lines {
+        lines: Vec<String>,
+        origin: Origin,
+        keep_fire: bool,
+    },
     Realtime(Vec<u8>),
     StartJob(Job, JobKind),
     Stop,
-    Fire { s: f64, until: Instant },
+    Fire {
+        s: f64,
+        until: Instant,
+    },
     FireOff,
     JogCancel,
     SetShowAll(bool),
@@ -671,7 +684,17 @@ impl GrblMachine {
     fn shutdown(&mut self) {
         let _ = self.cmds.send(Cmd::Disconnect);
         if let Some(h) = self.worker.take() {
-            let _ = h.join();
+            // The worker stops the job and turns the laser off before it lets the link go. With
+            // a controller that no longer answers that takes several seconds of waiting, and
+            // the caller is usually the UI thread: wait a little, then let the worker finish
+            // the same steps on its own. It closes the link when it is done.
+            let end = Instant::now() + DISCONNECT_WAIT;
+            while !h.is_finished() && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            }
         }
     }
 
@@ -838,6 +861,7 @@ impl GrblMachine {
             self.send(Cmd::Lines {
                 lines: vec!["M5".into(), format!("G21 G91 G1{axes} F{}", fmt_num(step.feed)), "G90".into()],
                 origin: Origin::Internal(Tag::Plain),
+                keep_fire: false,
             })
         }
     }
@@ -1078,7 +1102,18 @@ impl GrblMachine {
         if lines.is_empty() {
             return Ok(());
         }
-        self.send(Cmd::Lines { lines, origin: Origin::Macro })
+        self.send(Cmd::Lines { lines, origin: Origin::Macro, keep_fire: false })
+    }
+
+    /// Runs the lines that switch an accessory (air assist: `M8`, `M9` or the device's own
+    /// commands). Unlike [`run_macro`](Self::run_macro) it leaves the fire button as it is.
+    pub fn run_accessory(&self, text: &str) -> Result<(), GrblError> {
+        self.free()?;
+        let lines: Vec<String> = text.lines().filter_map(clean_line).collect();
+        if lines.is_empty() {
+            return Ok(());
+        }
+        self.send(Cmd::Lines { lines, origin: Origin::Macro, keep_fire: true })
     }
 
     /// Echo every sent line (including job lines) and its `ok`.
@@ -1495,11 +1530,13 @@ impl Worker {
                     self.queue.push_back(Outgoing::new(text, origin));
                 }
             }
-            Cmd::Lines { lines, origin } => {
+            Cmd::Lines { lines, origin, keep_fire } => {
                 if busy {
                     self.reject("Busy, macro not run.");
                 } else {
-                    self.fire_off_before_command();
+                    if !keep_fire {
+                        self.fire_off_before_command();
+                    }
                     for text in lines {
                         if origin == Origin::Macro {
                             self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
@@ -2183,7 +2220,15 @@ impl Worker {
                         self.stop_reset()?;
                     }
                 }
-                StopPhase::AwaitStatus => self.finish_stop(),
+                StopPhase::AwaitStatus => {
+                    // The reset byte went out before this status request, and the controller
+                    // takes both straight off the wire: one that answers the request has also
+                    // reset, with or without a start-up message. Its buffer is empty.
+                    self.in_flight.clear();
+                    self.in_flight_bytes = 0;
+                    self.motion_pending = false;
+                    self.finish_stop();
+                }
                 StopPhase::Reset => {}
             }
         }

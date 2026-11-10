@@ -549,6 +549,27 @@ fn custom_pause_between_cuts_does_not_fire_on_resume() {
     m.disconnect();
 }
 
+/// A job that does not end with its own laser off (a G-code file run as it is) on a machine
+/// that holds the laser on: the driver's own laser off comes before its move to the finish
+/// position, not after it.
+#[test]
+fn the_finish_move_of_a_job_never_burns() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+    let mut p = marlin_profile();
+    p.gcode.marlin_power = MarlinPowerMode::M3;
+    let (m, mut log) = connect(&p, &emu);
+    let lines = ["G21", "G90", "G0 X10 Y10", "M3 S128", "G1 X20 Y10 F3000"].map(str::to_owned);
+    m.start_job(Job::from_lines(lines).with_total(5).with_finish(darkburn_grbl::FinishPosition::Origin)).unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    emu.with(|e| {
+        assert_eq!(e.stats().rapid_burn_mm, 0.0, "the move to the finish position burned: {:?}", e.stats().lines);
+        assert!((e.stats().burned_mm - 10.0).abs() < 1e-6);
+        assert!(!e.laser_armed());
+        assert!(e.machine_position()[0].abs() < 1e-6 && e.machine_position()[1].abs() < 1e-6, "the head is at the finish position");
+    });
+    m.disconnect();
+}
+
 #[test]
 fn marlin_settings_m503_m92_m500() {
     let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin));

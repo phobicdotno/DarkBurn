@@ -1678,6 +1678,11 @@ impl Worker {
                 job.tail_built = true;
                 let mut tail = VecDeque::new();
                 let fin = job.finish;
+                // Laser off before the move to the finish position: a controller that holds
+                // the last power would burn a line all the way there.
+                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
+                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
+                }
                 match fin {
                     FinishPosition::Stay => {}
                     FinishPosition::Origin => {
@@ -1688,9 +1693,6 @@ impl Worker {
                         tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail, urgent: false });
                         tail.push_back(Out { text: format!("G0 X{} Y{}", num(p.x), num(p.y)), tag: Tag::JobTail, urgent: false });
                     }
-                }
-                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
-                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
                 }
                 let sync = self.cfg.finish_sync.trim();
                 if !sync.is_empty() {

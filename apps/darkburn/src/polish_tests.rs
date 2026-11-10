@@ -710,3 +710,112 @@ fn material_test_galvo_command_opens_the_window_on_the_galvo_values() {
     assert!(g.app().editor.doc.len() > 25, "25 cells and their labels");
     g.close_dialogs();
 }
+
+// ----- GALVO-19: drill mode ---------------------------------------------------------------------
+
+/// A galvo simulator device with a 20 mm square on layer 0, set to drill.
+fn drill_app(dwell_ms: f64, spacing_mm: f64) -> DarkBurn {
+    let mut a = DarkBurn::new(Prefs::default());
+    galvo_device(&mut a, crate::galvo_settings::Source::Fiber);
+    run(&mut a, "shape.add_rect", json!({ "x": 40, "y": 40, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    run(&mut a, "layer.set_mode", json!({ "layer": 0, "mode": "line" })).unwrap();
+    let g = &mut a.editor.doc.layer_mut(0).main_mut().galvo;
+    g.drill = true;
+    g.drill_dwell_ms = dwell_ms;
+    g.drill_spacing_mm = spacing_mm;
+    a
+}
+
+#[test]
+fn a_line_layer_set_to_drill_becomes_a_drill_layer_and_other_modes_do_not() {
+    use darkburn_galvo::LayerMode;
+    let mut a = drill_app(2.0, 5.0);
+    let dev = a.machine.active().clone();
+    let b = crate::galvo_job::build_job(&a.editor.doc, &dev).unwrap();
+    assert_eq!(b.job.layers.len(), 1);
+    assert!(matches!(b.job.layers[0].mode, LayerMode::Drill(d) if near(d.dwell_ms, 2.0) && near(d.spacing_mm, 5.0)), "{:?}", b.job.layers[0].mode);
+    let c = crate::galvo_job::compile(&b.job, &dev).unwrap();
+    let cmds = c.list_commands();
+    let shots = cmds.iter().filter(|c| matches!(c, darkburn_galvo::ListCmd::LaserOnPoint { dwell: 200 })).count();
+    assert_eq!(shots, 16, "80 mm round every 5 mm, 2 ms each");
+    assert!(!cmds.iter().any(|c| matches!(c, darkburn_galvo::ListCmd::MarkTo { .. })), "no line is traced");
+    // The switch is only for line layers: a fill stays a fill.
+    run(&mut a, "layer.set_mode", json!({ "layer": 0, "mode": "fill" })).unwrap();
+    let b = crate::galvo_job::build_job(&a.editor.doc, &dev).unwrap();
+    assert!(matches!(b.job.layers[0].mode, LayerMode::Fill(_)));
+    // Off again: a traced line.
+    run(&mut a, "layer.set_mode", json!({ "layer": 0, "mode": "line" })).unwrap();
+    a.editor.doc.layer_mut(0).main_mut().galvo.drill = false;
+    let b = crate::galvo_job::build_job(&a.editor.doc, &dev).unwrap();
+    assert!(matches!(b.job.layers[0].mode, LayerMode::Line));
+}
+
+#[test]
+fn drill_settings_are_saved_in_the_project() {
+    let a = drill_app(7.5, 1.25);
+    let bytes = darkburn_core::project::save(&a.editor.doc, "test", None).unwrap();
+    let back = darkburn_core::project::load(&bytes).unwrap().doc;
+    let g = back.layer(0).main().galvo;
+    assert!(g.drill && near(g.drill_dwell_ms, 7.5) && near(g.drill_spacing_mm, 1.25));
+    // A project from before drill mode opens with it off.
+    let old: darkburn_core::layer::Galvo = serde_json::from_str(r#"{"frequency_khz":40.0}"#).unwrap();
+    assert!(!old.drill && near(old.drill_dwell_ms, 1.0));
+}
+
+#[test]
+fn a_drill_job_runs_on_the_galvo_emulator_as_shots_in_place() {
+    use std::sync::Arc;
+    let mut a = drill_app(1.0, 0.0);
+    let mut settings = a.machine.active().settings.galvo.clone();
+    settings.require_framing = false;
+    a.machine.devices.get_mut(a.machine.devices.active.unwrap()).unwrap().settings.galvo = settings.clone();
+    let (adapter, emu) = crate::galvo_machine::simulator_with_handle(Arc::new(settings));
+    a.machine.handle.attach_simulator(Box::new(adapter), crate::machine_api::Link::SimulatorGalvo);
+    tick_until(&mut a, "galvo ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    // Not armed: nothing fires.
+    assert!(run(&mut a, "machine.start", Value::Null).is_err());
+    assert!(emu.lock().unwrap().log().shots.is_empty());
+    run(&mut a, "machine.galvo_arm", json!({ "on": true })).unwrap();
+    run(&mut a, "machine.start", Value::Null).unwrap();
+    tick_until(&mut a, "drilled", |a| finished(a) == 1);
+    let e = emu.lock().unwrap();
+    let log = e.log();
+    assert_eq!(log.shots.len(), 4, "the four corners: {:?}", log.shots);
+    assert!(log.shots.iter().all(|s| s.emitting && s.dwell == 100), "1 ms each with the laser on");
+    assert!(!log.motions.iter().any(|m| m.mark && m.emitting), "nothing traced");
+    assert!(!e.laser_enabled(), "off afterwards");
+}
+
+#[test]
+fn cut_settings_window_has_the_drill_controls_on_a_galvo_device_only() {
+    let label = "Drill mode (fire at points along the outline)";
+    let mut g = Gui::standard();
+    g.app().cut_settings_open = Some(0);
+    g.frames(2);
+    assert!(!g.has_text(label), "a G-code device has no galvo settings");
+    g.close_dialogs();
+    galvo_device(&mut g.app(), crate::galvo_settings::Source::Fiber);
+    g.exec("layer.set_mode", json!({ "layer": 0, "mode": "line" }));
+    g.frames(2);
+    g.app().cut_settings_open = Some(0);
+    g.frames(2);
+    g.click_label("Advanced");
+    // The galvo settings come after the other advanced ones: scroll down to them.
+    let at = g.find_text("Advanced").expect("the tab").center() + egui::vec2(0.0, 200.0);
+    for _ in 0..12 {
+        if g.has_text(label) {
+            break;
+        }
+        g.scroll(at, egui::vec2(0.0, -300.0));
+    }
+    g.screenshot("cut-settings-drill");
+    assert!(g.has_text(label), "texts: {:?}", g.visible_texts());
+    assert!(!g.has_text("Drill time"));
+    g.click_label(label);
+    assert!(g.has_text("Drill time"), "texts: {:?}", g.visible_texts());
+    g.scroll(at, egui::vec2(0.0, -120.0));
+    assert!(g.has_text("Point spacing"), "texts: {:?}", g.visible_texts());
+    g.screenshot("cut-settings-drill-on");
+    assert!(g.app().editor.doc.layer(0).main().galvo.drill, "the layer is set to drill");
+    g.close_dialogs();
+}

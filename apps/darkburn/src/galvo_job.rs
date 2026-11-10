@@ -135,6 +135,14 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                 job.layers.push(gl);
             };
             match s.mode {
+                Mode::Line if s.galvo.drill => push(
+                    LayerMode::Drill(galvo::DrillSettings {
+                        dwell_ms: s.galvo.drill_dwell_ms.clamp(0.01, 60_000.0),
+                        spacing_mm: s.galvo.drill_spacing_mm.max(0.0),
+                    }),
+                    "",
+                    paths.clone(),
+                ),
                 Mode::Line => push(LayerMode::Line, "", paths.clone()),
                 Mode::Fill | Mode::OffsetFill => {
                     if s.mode == Mode::OffsetFill {

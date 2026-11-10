@@ -481,3 +481,37 @@ fn no_answer_fails_the_connection() {
     assert!(matches!(m.snapshot().connection, ConnectionState::Failed(_)));
     assert_eq!(m.arm(), Err(GalvoError::NotConnected));
 }
+
+#[test]
+fn drill_job_fires_at_each_point_and_only_when_armed() {
+    let mut job = Job::new();
+    job.layers.push(Layer::new(
+        "D",
+        LayerMode::Drill(DrillSettings { dwell_ms: 3.0, spacing_mm: 5.0 }),
+        MarkParams { power_pct: 80.0, ..Default::default() },
+        vec![rect(-10.0, -10.0, 20.0, 20.0)],
+    ));
+    let compiled = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    let mut r = rig(dev());
+    assert_eq!(r.m.start_job(compiled.clone(), StartOptions::default()), Err(GalvoError::NotArmed));
+    r.emu(|e| assert!(e.log().shots.is_empty()));
+    r.m.arm().unwrap();
+    r.m.start_job(compiled, StartOptions::default()).unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::JobFinished { .. })), "{:?}", r.events);
+    r.emu(|e| {
+        let log = e.log();
+        assert_eq!(log.shots.len(), 16, "80 mm round every 5 mm");
+        assert_eq!(log.points, 16);
+        assert!(log.shots.iter().all(|s| s.emitting && s.dwell == 300), "3 ms each, laser on: {:?}", log.shots);
+        assert_eq!(e.emitting_marks(), 0, "nothing is drawn between the points");
+        // 16 different places.
+        let mut places: Vec<(u16, u16)> = log.shots.iter().map(|s| s.at).collect();
+        places.sort();
+        places.dedup();
+        assert_eq!(places.len(), 16);
+        // 80 % power on a fibre source.
+        assert_eq!(log.shots[0].current, (0.8f64 * 4095.0).round() as u16);
+        assert!(log.time_us >= 16.0 * 3000.0, "the dwell is counted in the run time");
+        assert!(!e.laser_enabled() && !e.mo_open(), "all off afterwards");
+    });
+}

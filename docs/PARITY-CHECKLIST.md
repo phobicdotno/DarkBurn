@@ -753,7 +753,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] GALVO-16 3D sliced image
 - [x] GALVO-17 Lens correction test and scale calibration
 - [x] GALVO-18 Import EZCad config
-- [ ] GALVO-19 Drill mode
+- [x] GALVO-19 Drill mode *(on the emulator; the point command's time unit needs checking on a real board)*
 
 ### User's machines (acceptance targets)
 - [ ] TARGET-01 Atomstack 400×400 mm, GRBL over USB serial at 115200 baud, end to end
@@ -892,9 +892,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-16 Save job origin and cut selected in the project
 - [x] SET-17 Remember move, size, rotate and shear lock states
 - [x] SET-18 Ignore out-of-bounds shapes
-- [~] SET-19 Ignore Start when the monitor is off
+- [~] SET-19 Ignore Start when the monitor is off *(the setting is stored; telling that the monitor is off needs a Windows power notification, which cannot be had without `unsafe` code)*
 - [x] SET-20 Load default layers on new project
-- [~] SET-21 Built-in or system file dialogs
+- [~] SET-21 Built-in or system file dialogs *(system dialogs only: the Built-in choice is stored but there is no built-in file browser yet)*
 - [x] SET-22 Sounds on error and on job finished
 - [x] SET-23 Save job log
 - [x] SET-24 Use system clipboard
@@ -941,9 +941,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 24. Keyboard
 
-- [~] KEY-01 Every default shortcut from the menus above
+- [~] KEY-01 Every default shortcut from the menus above *(missing: F2 as a second Start key, Z and diagonal jog keys, Y and N in message boxes)*
 - [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [~] KEY-03 Numpad jogging
+- [~] KEY-03 Numpad jogging *(Ctrl+Alt+arrows jog instead: egui does not tell numpad keys from the others)*
 - [x] KEY-04 Node edit single-key commands
 - [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
@@ -961,13 +961,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 26. Platform
 
 - [x] PLAT-01 Windows file association and single running copy
-- [ ] PLAT-02 Explorer thumbnails for project files
-- [ ] PLAT-03 Recent files in the Windows jump list
+- [ ] PLAT-02 Explorer thumbnails for project files *(needs a COM shell extension, which cannot be written without `unsafe` code; the project file does hold a thumbnail)*
+- [ ] PLAT-03 Recent files in the Windows jump list *(the jump list is set through COM calls, which need `unsafe` code)*
 - [x] PLAT-04 Debug log
 - [x] PLAT-05 Support data bundle
 - [x] PLAT-06 Crash restore file
 - [x] PLAT-07 Automatic preference backups
-- [~] PLAT-08 Print support
+- [~] PLAT-08 Print support *(prints through a PDF handed to the system: no printer choice or page setup, and 1:1 scale depends on the PDF viewer)*
 - [ ] PLAT-09 macOS build
 - [ ] PLAT-10 Linux build
 - [ ] PLAT-11 REST API *(later)*

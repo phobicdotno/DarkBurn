@@ -9,3 +9,4 @@ Preview: Run from here and Send from here are only offered on machines that can 
 A galvo no longer marks the whole job when asked to start part way.
 Material Test (galvo): small filled cells, speed against frequency, sized for the lens field.
 The material test warns when the device cannot do what the grid varies.
+Galvo drill mode: a line layer can fire at points along the outline, with a drill time and point spacing.

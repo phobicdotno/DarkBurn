@@ -1,2 +1,4 @@
 Fix: shapes with their own power scale keep it when filled together with other shapes
 Fix: the scanning offset now moves image lines the right way when a job is scanned from the top, and leaves one-way scans alone
+Fix: a layer without a Z offset no longer runs at the height the layer before it left the head at
+Fix: Marlin and LinuxCNC jobs no longer switch the laser on for moves too short to write

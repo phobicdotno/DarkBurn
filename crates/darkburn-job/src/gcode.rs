@@ -438,14 +438,10 @@ impl<'a> Emitter<'a> {
     }
 
     fn cut(&mut self, g: &str, to: Point, extra: Option<String>, speed: f64, power: f64, out: &mut Vec<String>) {
+        // Nothing moves (the move is shorter than the last decimal): write nothing at all, so
+        // no power command switches the laser on while the head stands still.
+        let Some(w) = self.xy(to) else { return };
         let sw = self.power_for_move(power, out);
-        let Some(w) = self.xy(to) else {
-            // Nothing moves; keep power state but do not write an empty move.
-            if sw.is_some() {
-                self.power = None;
-            }
-            return;
-        };
         let mut line = format!("{g} {w}");
         if let Some(e) = extra {
             line.push(' ');
@@ -635,6 +631,28 @@ mod tests {
         let g = emit(&tp(sq(), true), &GcodeSettings { comments: false, s_every_g1: true, ..GcodeSettings::grbl() });
         assert!(g.contains("M3 S0\n"));
         assert!(g.contains("G1 Y11 S500\n"));
+    }
+
+    #[test]
+    fn a_move_too_short_to_write_does_not_switch_the_laser_on() {
+        // A cut shorter than the last decimal, between two travel moves.
+        let ops = vec![
+            Op::Rapid { to: Point::new(1.0, 1.0) },
+            Op::Cut { to: Point::new(1.0001, 1.0), speed: 10.0, power: 50.0 },
+            Op::Rapid { to: Point::new(5.0, 5.0) },
+        ];
+        for power in [MarlinPower::M3, MarlinPower::M106] {
+            let s = GcodeSettings { comments: false, marlin_power: power, ..GcodeSettings::new(Flavor::Marlin) };
+            let g = emit(&tp(ops.clone(), false), &s);
+            assert!(!g.contains("M3 S") && !g.contains("M106"), "the laser would fire standing still: {g}");
+        }
+        let g = emit(&tp(ops.clone(), false), &GcodeSettings { comments: false, ..GcodeSettings::new(Flavor::LinuxCnc) });
+        assert!(!g.contains("Q50"), "{g}");
+        // The power is still written with the next real move.
+        let mut more = ops;
+        more.push(Op::Cut { to: Point::new(9.0, 5.0), speed: 10.0, power: 50.0 });
+        let g = emit(&tp(more, false), &GcodeSettings { comments: false, ..GcodeSettings::grbl() });
+        assert!(g.contains("G1 X9 F600 S500\n"), "{g}");
     }
 
     #[test]

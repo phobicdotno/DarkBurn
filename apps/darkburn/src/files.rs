@@ -34,6 +34,9 @@ pub enum Then {
     New,
     /// Open a project: the given file, or one picked in a dialog.
     Open(Option<PathBuf>),
+    /// Put in place the file that was read in the background (kept by `file_io`): the project
+    /// was changed while it was being read.
+    OpenRead,
     Exit,
 }
 
@@ -120,9 +123,20 @@ fn guard(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
     }
 }
 
+/// Ask "Save changes?" before the file that `file_io` has read takes the project's place.
+pub fn ask_before_read_file(app: &mut DarkBurn) {
+    app.files.ask_save = Some(Then::OpenRead);
+}
+
+/// What the "Save changes?" window is waiting to do, if it is open.
+pub fn asking(app: &DarkBurn) -> Option<&Then> {
+    app.files.ask_save.as_ref()
+}
+
 fn proceed(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
     match then {
         Then::New => new_project(app),
+        Then::OpenRead => crate::file_io::open_held(app),
         Then::Open(path) => {
             let path = path.or_else(|| {
                 let mut all: Vec<&str> = vec![project::EXTENSION];

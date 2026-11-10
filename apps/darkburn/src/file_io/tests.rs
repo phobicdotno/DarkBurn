@@ -572,6 +572,48 @@ fn opening_in_the_background_replaces_the_project_with_a_lightburn_file() {
     assert_eq!(a.editor.doc.notes, "from the old file");
 }
 
+/// File > Open reads artwork on a worker thread and the window stays usable meanwhile. What is
+/// done to the project in that time is not thrown away without a question.
+#[test]
+fn edits_made_while_a_file_is_read_are_asked_about_before_it_opens() {
+    use crate::ui_harness::Gui;
+    let mut g = Gui::standard();
+    let f = g.temp("a.lbrn");
+    std::fs::write(&f, LBRN_V0.as_bytes()).unwrap();
+    let rect = json!({ "x": 20, "y": 30, "width": 40, "height": 20, "layer": 1 });
+    let open_and_edit = |g: &mut Gui| {
+        {
+            let mut a = g.app();
+            start_open(&mut a, f.clone());
+            run(&mut a, "shape.add_rect", rect.clone()).unwrap();
+        }
+        for _ in 0..500 {
+            g.frames(1);
+            if g.app().fio.job.is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the file was never read");
+    };
+    open_and_edit(&mut g);
+    assert_eq!(g.app().editor.doc.len(), 1, "the rectangle drawn while the file was read is still there");
+    assert_eq!(crate::files::asking(&g.app()), Some(&crate::files::Then::OpenRead));
+    g.frames(2);
+    g.click_label("Cancel");
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.len(), 1, "Cancel keeps the project");
+    assert!(g.app().fio.held.is_none() && crate::files::asking(&g.app()).is_none());
+    // Again, and this time the project is let go.
+    open_and_edit(&mut g);
+    assert_eq!(g.app().editor.doc.len(), 2);
+    g.frames(2);
+    g.click_label("Don't save");
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.notes, "from the old file");
+    assert_eq!(g.app().editor.doc.len(), 2, "the two shapes of the file");
+}
+
 #[test]
 fn a_pdf_with_pages_waits_for_the_page_choice_in_the_background() {
     let dir = TempDir::new("jobpdf");

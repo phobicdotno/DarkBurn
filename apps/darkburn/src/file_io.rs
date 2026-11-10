@@ -48,6 +48,10 @@ pub struct FileIo {
     pub secondary: bool,
     next_tick: Option<Instant>,
     started: bool,
+    /// The project's revision when File > Open began reading a file in the background.
+    open_revision: Option<u64>,
+    /// A file that was read while the project was changed: it waits for "Save changes?".
+    held: Option<Box<Loaded>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -161,6 +165,7 @@ pub fn start_open(app: &mut DarkBurn, path: PathBuf) {
         device_profile_hook(app, &path);
         return;
     }
+    app.fio.open_revision = Some(app.editor.revision());
     start_job(app, vec![path], None, true, None);
 }
 
@@ -231,10 +236,26 @@ fn queue_pages(app: &mut DarkBurn, needs: Vec<(PathBuf, usize)>, at: Option<Poin
 fn finish_open(app: &mut DarkBurn, results: Results) {
     for (path, result) in results {
         match result {
+            // The window stayed usable while the file was read. Anything done to the project in
+            // that time would be thrown away with it, so the question is asked (again).
+            Ok(ReadOutcome::Loaded(loaded)) if app.fio.open_revision.take().is_some_and(|r| r != app.editor.revision()) => {
+                app.fio.held = Some(loaded);
+                crate::files::ask_before_read_file(app);
+            }
             Ok(ReadOutcome::Loaded(loaded)) => open_loaded(app, *loaded),
             Ok(ReadOutcome::NeedsPage(n)) => queue_pages(app, vec![(path, n)], None, true),
-            Err(e) => crate::files::show_message(app, "Could not open", format!("{}: {e}", path.display())),
+            Err(e) => {
+                app.fio.open_revision = None;
+                crate::files::show_message(app, "Could not open", format!("{}: {e}", path.display()));
+            }
         }
+    }
+}
+
+/// The answer to "Save changes?" lets the project go: the file read in the background opens.
+pub fn open_held(app: &mut DarkBurn) {
+    if let Some(loaded) = app.fio.held.take() {
+        open_loaded(app, *loaded);
     }
 }
 
@@ -472,6 +493,10 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
         open_arguments(app, ctx, pending);
     }
     poll_job(app);
+    // "Save changes?" was answered with Cancel: the file that was read is let go.
+    if app.fio.held.is_some() && crate::files::asking(app) != Some(&crate::files::Then::OpenRead) {
+        app.fio.held = None;
+    }
     if app.fio.job.is_some() {
         ctx.request_repaint_after(Duration::from_millis(100));
     }

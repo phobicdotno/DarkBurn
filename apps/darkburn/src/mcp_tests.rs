@@ -216,6 +216,9 @@ impl Backend for Spy {
     fn events(&mut self, since: u64) -> Result<EventPage, CommandError> {
         self.inner.events(since)
     }
+    fn confirmation_scope(&mut self) -> String {
+        self.inner.confirmation_scope()
+    }
     fn request_confirmation(&mut self, id: &str, c: &str, s: &str) -> Result<(), CommandError> {
         self.inner.request_confirmation(id, c, s)
     }
@@ -754,4 +757,270 @@ fn a_wrong_token_never_gets_a_backend() {
     assert_eq!(e.code, ErrorCode::Transport);
     let ok = win.on_ui(|g| g.inner().inspect("design", 0).map(|v| v["shape_count"].clone()).ok());
     assert_eq!(ok, Some(json!(0)), "the design is untouched");
+}
+
+// ----- third bug hunt: side doors around the gate ------------------------------------------------------
+
+/// Ask for `id`, let the user click Confirm, and return the token.
+fn confirmed_token(gate: &mut Gate<Spy>, id: &str, args: Value) -> String {
+    let e = gate.execute(id, args).unwrap_err();
+    assert_eq!(e.code, ErrorCode::ConfirmationRequired, "{}", e.message);
+    let pid = e.pending_id.unwrap();
+    gate.resolve_confirmation(&pid, true).unwrap();
+    let PendingState::Done { result: Ok(v), .. } = gate.pending(&pid).unwrap() else { panic!("confirmed") };
+    v["confirmation_token"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn a_job_start_the_user_confirmed_does_not_start_a_design_changed_since() {
+    let policy = McpPolicy { allow_hardware: true, ..McpPolicy::default() };
+    let start = |gate: &mut Gate<Spy>, token: &str| {
+        gate.execute_ctx("job.start", json!({}), &CallContext { tool: "execute".into(), confirmation_token: Some(token.to_string()) })
+    };
+    // The design changes after the user's click: a new shape, more power, another device.
+    let changes: [(&str, Value); 4] = [
+        ("shape.add_rect", json!({"x": 300, "y": 300, "width": 50, "height": 50})),
+        ("layer.set_param", json!({"layer": 0, "field": "max_power", "value": 100})),
+        ("layer.set_cut_settings", json!({"layer": 0, "settings": {"passes": 9}})),
+        ("job.set_origin", json!({"start_from": "current_position"})),
+    ];
+    for (change, args) in changes {
+        let (mut gate, seen, _app) = spy_gate(policy);
+        gate.execute("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+        let token = confirmed_token(&mut gate, "job.start", json!({}));
+        gate.execute(change, args).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+        seen.borrow_mut().clear();
+        let e = start(&mut gate, &token).unwrap_err();
+        assert_eq!(e.code, ErrorCode::ConfirmationInvalid, "{change}: {}", e.message);
+        assert!(seen.borrow().is_empty(), "{change}: the changed job reached the machine code");
+    }
+    // Another device selected after the click.
+    let (mut gate, seen, app) = spy_gate(policy);
+    let other = app.borrow_mut().machine.devices.add(crate::devices::Device::new(crate::devices::DeviceType::ALL[0]));
+    let token = confirmed_token(&mut gate, "job.start", json!({}));
+    app.borrow_mut().machine.select_device(other);
+    let e = start(&mut gate, &token).unwrap_err();
+    assert_eq!(e.code, ErrorCode::ConfirmationInvalid, "{}", e.message);
+    assert!(seen.borrow().is_empty());
+    // Nothing changed (looking at the design is not a change): the token starts the job.
+    let (mut gate, seen, _app) = spy_gate(policy);
+    gate.execute("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+    let token = confirmed_token(&mut gate, "job.start", json!({}));
+    gate.inspect("design", 2).unwrap();
+    seen.borrow_mut().clear();
+    let _ = start(&mut gate, &token);
+    assert_eq!(seen.borrow().as_slice(), ["job.start"]);
+}
+
+/// Connect the GRBL simulator and start a slow job on it, the way the user would from the window.
+fn slow_job_on_the_simulator(app: &SharedApp) {
+    let mut a = app.borrow_mut();
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == crate::devices::DeviceType::SimulatorGrbl).unwrap().id;
+    crate::api::execute_headless(&mut a, "device.select", &json!({ "id": id })).unwrap();
+    crate::api::execute_headless(&mut a, "machine.connect", &json!({})).unwrap();
+    drop(a);
+    wait_state(app, "ready", |s| s == crate::machine_api::LaserState::Ready);
+    let lines = ["G21 G90".to_owned(), "M4 S100".to_owned()].into_iter().chain((0..200).map(|i| format!("G1 X{} Y10 F300", 10 + (i % 2) * 30)));
+    let mut job = crate::machine_api::JobRequest::gcode(lines.collect());
+    job.name = "slow".into();
+    app.borrow_mut().machine.begin_start(job).unwrap();
+    wait_state(app, "busy", |s| s == crate::machine_api::LaserState::Busy);
+}
+
+fn machine_state(app: &SharedApp) -> crate::machine_api::LaserState {
+    let mut a = app.borrow_mut();
+    a.machine.tick();
+    a.machine.handle.snapshot().state
+}
+
+fn wait_state(app: &SharedApp, what: &str, f: impl Fn(crate::machine_api::LaserState) -> bool) {
+    let end = std::time::Instant::now() + Duration::from_secs(20);
+    while !f(machine_state(app)) {
+        assert!(std::time::Instant::now() < end, "timed out waiting for {what}; state {:?}", machine_state(app));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn the_always_allowed_pause_never_resumes_a_paused_job() {
+    use crate::machine_api::LaserState;
+    // Machines are off for agents: only stop, pause and emergency stop get through.
+    let (mut gate, _seen, app) = spy_gate(McpPolicy::default());
+    slow_job_on_the_simulator(&app);
+    gate.execute("job.pause", json!({})).unwrap();
+    wait_state(&app, "paused", |s| s == LaserState::Paused);
+    // Pause again: the laser must stay off. Resuming is machine.resume, which is denied.
+    for id in ["job.pause", "machine.pause", "job.pause"] {
+        let _ = gate.execute(id, json!({}));
+        for _ in 0..40 {
+            assert_eq!(machine_state(&app), LaserState::Paused, "{id} set the paused job going again");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    assert_eq!(gate.execute("machine.resume", json!({})).unwrap_err().code, ErrorCode::Denied);
+    gate.execute("job.stop", json!({})).unwrap();
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn emergency_stop_is_open_to_an_agent_whatever_the_policy() {
+    use crate::machine_api::LaserState;
+    let mut b = backend();
+    let c = b.describe_command("machine.emergency_stop").unwrap().unwrap();
+    assert_eq!(c.hardware_class, Some(HardwareClass::Stop));
+    let (mut gate, seen, app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
+    slow_job_on_the_simulator(&app);
+    gate.execute("machine.emergency_stop", json!({})).unwrap_or_else(|e| panic!("emergency stop was refused: {}", e.message));
+    assert_eq!(seen.borrow().as_slice(), ["machine.emergency_stop"]);
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn an_agent_cannot_ask_for_a_real_connection_through_reset_connection() {
+    let app = shared();
+    {
+        let mut a = app.borrow_mut();
+        let id = a.machine.devices.add(crate::devices::Device {
+            name: "Real".into(),
+            connection: crate::devices::ConnectionKind::Tcp,
+            host: "192.168.1.77".into(),
+            ..crate::devices::Device::new(crate::devices::DeviceType::Grbl)
+        });
+        a.machine.devices.select(id);
+    }
+    // Even with machines allowed, an agent only connects simulators (as machine.connect says).
+    let mut b = McpBackend::new(app.clone(), egui::Context::default(), false);
+    for id in ["machine.connect", "machine.reset_connection"] {
+        let e = b.execute(id, json!({})).unwrap_err();
+        assert!(e.message.contains("simulator"), "{id}: {}", e.message);
+        assert!(app.borrow().machine.dlg.confirm_connect.is_none(), "{id} put the Connect question for a real machine on the user's screen");
+    }
+}
+
+#[test]
+fn device_setup_is_closed_to_an_agent_until_machines_are_allowed() {
+    // Machines are off for agents. What a job sends (start and end script, S range), where a
+    // device connects, which device is the active one and the galvo timings are the machine's
+    // setup, not the design: none of it may change.
+    let (mut gate, seen, app) = spy_gate(McpPolicy::default());
+    let sim = app.borrow().machine.devices.devices.iter().find(|d| d.is_simulator()).unwrap().id;
+    let before = (app.borrow().job.gcode.clone(), app.borrow().machine.devices.devices.len(), app.borrow().machine.devices.active);
+    let tries: &[(&str, Value)] = &[
+        ("job.set_gcode_settings", json!({"start_script": "M3 S1000", "s_max": 1000000})),
+        ("device.set_connection", json!({"host": "192.168.1.50", "port": 23})),
+        ("device.import", json!({"text": "{}"})),
+        ("device.add", json!({"type": "GRBL"})),
+        ("device.duplicate", json!({"id": sim})),
+        ("device.remove", json!({"id": sim})),
+        ("device.select", json!({"id": sim})),
+        ("device.adopt_detected", json!({})),
+        ("device.bridge_setup", json!({"host": "192.168.1.50"})),
+        ("device.read_motion", json!({})),
+        ("galvo.settings_set", json!({"values": {}})),
+        ("galvo.import_ezcad", json!({"path": "x.cfg"})),
+        ("galvo.repeat_marking", json!({"count": 100})),
+    ];
+    for (id, args) in tries {
+        let c = gate.describe_command(id).unwrap().unwrap_or_else(|| panic!("{id} is registered"));
+        assert_eq!(c.hardware_class, Some(HardwareClass::Config), "{id}");
+        let e = gate.execute(id, args.clone()).expect_err(&format!("{id} must not run by default"));
+        assert_eq!(e.code, ErrorCode::Denied, "{id}: {}", e.message);
+    }
+    assert!(seen.borrow().is_empty(), "nothing reached the backend: {:?}", seen.borrow());
+    let after = (app.borrow().job.gcode.clone(), app.borrow().machine.devices.devices.len(), app.borrow().machine.devices.active);
+    assert!(before == after, "the device setup changed");
+    // Reading it stays open.
+    for id in ["device.list", "device.detected", "gcode.scripts", "device.automation_status"] {
+        gate.execute(id, json!({})).unwrap_or_else(|e| panic!("{id}: {}", e.message));
+    }
+}
+
+#[test]
+fn an_agent_cannot_cut_the_users_connection_by_selecting_another_device() {
+    use crate::machine_api::LaserState;
+    let (mut gate, _seen, app) = spy_gate(McpPolicy::default());
+    slow_job_on_the_simulator(&app);
+    let other = app.borrow().machine.devices.devices.iter().find(|d| Some(d.id) != app.borrow().machine.devices.active).unwrap().id;
+    let _ = gate.execute("device.select", json!({ "id": other }));
+    for _ in 0..40 {
+        assert_eq!(machine_state(&app), LaserState::Busy, "the running job lost its machine");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    gate.execute("job.stop", json!({})).unwrap();
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn showing_the_job_log_folder_counts_as_writing_files() {
+    // The folder is a setting an agent may change; showing it creates it.
+    let dir = std::env::temp_dir().join(format!("darkburn-hunt3-log-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (mut gate, _seen, _app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
+    gate.execute("settings.set", json!({"key": "opts.job_log_dir", "value": dir.join("made/by/agent").to_string_lossy()})).unwrap();
+    let e = gate.execute("job.log_show", json!({})).expect_err("file writes are off");
+    assert_eq!(e.code, ErrorCode::Denied, "{}", e.message);
+    assert!(!dir.exists(), "a folder was made with file writes off");
+    let _ = crate::misc_cmds::take_revealed();
+}
+
+#[test]
+fn huge_numbers_from_an_agent_never_leave_a_design_that_cannot_be_saved() {
+    let big = 1e308;
+    let tries: Vec<(&str, Value)> = vec![
+        ("shape.add_rect", json!({"x": big, "y": 0, "width": big, "height": 10})),
+        ("shape.add_rect", json!({"x": -big, "y": -big, "width": big, "height": big})),
+        ("shape.add_ellipse", json!({"x": big, "y": big, "width": big, "height": big})),
+        ("shape.add_polygon", json!({"cx": big, "cy": -big, "sides": 5, "radius": big})),
+        ("shape.add_path", json!({"svg_path": "M0 0 L1e308 1e308 L-1e308 5 Z"})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.translate", json!({"dx": big, "dy": big})),
+        ("shape.translate", json!({"dx": big, "dy": big})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.place", json!({"x": big, "y": -big})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.resize", json!({"width": big, "height": big})),
+        ("shape.resize", json!({"width": 1e-300, "height": 1e-300})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.rotate", json!({"degrees": big})),
+        ("shape.set_props", json!({"power_scale": big, "priority": 9007199254740991i64, "start_point": [big, big]})),
+        ("shape.set_corner_radius", json!({"radius": big})),
+        ("layer.set_param", json!({"layer": 0, "field": "speed", "value": big})),
+        ("layer.set_param", json!({"layer": 0, "field": "interval", "value": 1e-300})),
+        ("layer.set_cut_settings", json!({"layer": 0, "settings": {"speed": big, "interval": 1e-300, "passes": 4000000000u64}})),
+    ];
+    let mut b = backend();
+    let app = b.app_for_test();
+    for (id, args) in &tries {
+        let r = b.execute(id, args.clone());
+        let a = app.borrow();
+        for s in a.editor.doc.iter() {
+            let bb = s.bbox();
+            assert!(
+                bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite(),
+                "{id} {args} (answered {r:?}) left a shape with no real size or place: {bb:?}"
+            );
+        }
+    }
+    // What is left saves and opens again as the same design.
+    let dir = std::env::temp_dir().join(format!("darkburn-hunt3-huge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("huge.dbrn");
+    b.execute("file.save_as", json!({"path": file.to_string_lossy()})).unwrap();
+    let saved = app.borrow().editor.doc.clone();
+    b.execute("file.open", json!({"path": file.to_string_lossy()})).unwrap_or_else(|e| panic!("the saved design does not open: {}", e.message));
+    assert_eq!(app.borrow().editor.doc.len(), saved.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_region_screenshot_of_a_window_with_no_pixels_is_an_error_not_a_crash() {
+    // A window that is minimized or zero pixels high hands over an empty picture.
+    let region = Some(Region { x: 10.0, y: 10.0, width: 50.0, height: 50.0 });
+    for size in [[0, 0], [0, 40], [40, 0]] {
+        let empty = egui::ColorImage::filled(size, egui::Color32::BLACK);
+        assert!(crate::mcp_backend::png_of(&empty, region, 1.0).is_err(), "{size:?}");
+        assert!(crate::mcp_backend::png_of(&empty, None, 1.0).is_err(), "{size:?}");
+    }
+    let small = egui::ColorImage::filled([40, 30], egui::Color32::BLACK);
+    assert!(crate::mcp_backend::png_of(&small, region, 1.0).is_ok());
 }

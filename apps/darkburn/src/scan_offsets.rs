@@ -15,6 +15,7 @@
 #![allow(dead_code, reason = "the job builder reads the tuning through scan_plans_for_layer once it lands")]
 
 use std::path::Path;
+#[cfg(not(test))]
 use std::sync::RwLock;
 
 use darkburn_raster::ScanPlan;
@@ -182,18 +183,39 @@ impl ScanTuning {
     }
 }
 
+#[cfg(not(test))]
 static CURRENT: RwLock<Option<ScanTuning>> = RwLock::new(None);
 
+// In tests each thread has its own tuning, so tests that set it cannot change it under each other.
+#[cfg(test)]
+thread_local! {
+    static CURRENT_TEST: std::cell::RefCell<Option<ScanTuning>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The tuning scans use now.
+#[cfg(not(test))]
 pub fn current() -> ScanTuning {
     CURRENT.read().ok().and_then(|g| g.clone()).unwrap_or_default()
 }
 
+/// The tuning scans use now.
+#[cfg(test)]
+pub fn current() -> ScanTuning {
+    CURRENT_TEST.with(|c| c.borrow().clone()).unwrap_or_default()
+}
+
 /// Changes the tuning scans use.
+#[cfg(not(test))]
 pub fn set(t: ScanTuning) {
     if let Ok(mut g) = CURRENT.write() {
         *g = Some(t);
     }
+}
+
+/// Changes the tuning scans use.
+#[cfg(test)]
+pub fn set(t: ScanTuning) {
+    CURRENT_TEST.with(|c| *c.borrow_mut() = Some(t));
 }
 
 /// Moves the lines of `plans` for the offset at `speed` (mm/s): forward lines back by half the

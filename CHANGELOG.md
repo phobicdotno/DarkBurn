@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.352 (build 6)
+## v0.0.360 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -329,6 +329,14 @@
 - Fix: A picture is now placed and framed by its own rectangle, white edges included, instead of by its first and last dot
 - Fix: Offset fill no longer burns across holes, and fills a shape inside a hole only once
 - Fix: Offset fill now fills letters and other shapes with arms or narrow necks completely, with rings around holes
+- Fix: a job start you confirmed for an AI agent no longer starts if the design or the machine was changed after you clicked Confirm
+- Fix: the confirmation window for an AI agent shows the whole command, and an agent cannot stack up confirmation windows
+- Fix: an AI agent cannot get to a Gweike machine by switching devices in the middle of a batch
+- Fix: an AI agent cannot write fake lines into the AI agents log
+- Fix: an AI agent's pause can no longer set a paused job going again, and emergency stop is always open to an agent
+- Fix: an AI agent cannot change devices, connections or the start and end G-code until you allow it to control machines
+- Fix: a command from an AI agent that timed out, or whose agent was closed, no longer runs later on its own
+- Fix: commands with absurdly large numbers from an AI agent are refused instead of breaking the design
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

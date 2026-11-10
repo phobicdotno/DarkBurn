@@ -113,6 +113,14 @@ pub trait Backend {
         Ok(Value::Array(Vec::new()))
     }
 
+    /// What a job start depends on besides the command's arguments, as one text: the design, the
+    /// selection, the active device and its settings. The gate ties a confirmation to it, so a
+    /// token the human gave for one design on one machine does not start another. The default is
+    /// empty (nothing to tie to).
+    fn confirmation_scope(&mut self) -> String {
+        String::new()
+    }
+
     /// Show the human a dialog "AI agent wants to: `summary`" with Confirm and Cancel, tagged
     /// `pending_id`. When the human clicks, the app calls [`crate::Gate::resolve_confirmation`].
     /// Called only by the gate. The default refuses, so nothing can start without a dialog.

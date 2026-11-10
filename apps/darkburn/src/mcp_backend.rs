@@ -35,6 +35,21 @@ pub type SharedApp = Rc<RefCell<DarkBurn>>;
 const MAX_CHECKPOINTS: usize = 8;
 const MAX_EVENTS: usize = 2000;
 const SHOT_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_SCOPES: usize = 16;
+/// The largest number a command takes from an agent. Sizes and places are millimetres, so this
+/// is a million kilometres; past it sums of two arguments stop being numbers at all (1e308 +
+/// 1e308 is infinity) and a shape made from them has no size or place and cannot be saved.
+const MAX_NUMBER: f64 = 1e12;
+
+/// The first number in `v` that is beyond [`MAX_NUMBER`].
+fn number_out_of_range(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64().filter(|x| !(x.abs() <= MAX_NUMBER)),
+        Value::Array(items) => items.iter().find_map(number_out_of_range),
+        Value::Object(fields) => fields.values().find_map(number_out_of_range),
+        _ => None,
+    }
+}
 
 enum Work {
     /// `job.generate`: the summary of the built job.
@@ -74,6 +89,30 @@ pub struct McpBackend {
     seq: u64,
     next_id: u64,
     dialogs: Vec<String>,
+    /// What a job start depended on each time the user was asked to confirm one: a name, the
+    /// design and the rest (see [`job_setup`]).
+    scopes: Vec<(String, darkburn_core::Document, String)>,
+}
+
+/// Everything a started job depends on besides the design itself, as text: the selection, the
+/// active device with all its settings, the G-code and motion settings, the origin and where
+/// the job starts.
+fn job_setup(app: &DarkBurn) -> String {
+    let json = |v: Value| v.to_string();
+    let device = app.machine.devices.active.and_then(|id| app.machine.devices.export_profile(id)).unwrap_or_default();
+    format!(
+        "{:?}|{:?}|{device}|{}|{}|{}|{:?}|{:?}|{:?}|{}|{}",
+        app.machine.devices.active,
+        app.editor.selected(),
+        json(serde_json::to_value(&app.job.gcode).unwrap_or(Value::Null)),
+        json(serde_json::to_value(app.job.additional).unwrap_or(Value::Null)),
+        json(serde_json::to_value(&app.job.default_planner).unwrap_or(Value::Null)),
+        app.job.user_origin,
+        app.job.start_op,
+        app.job.start_op_revision,
+        app.prefs.opts.output_tolerance,
+        app.prefs.opts.ignore_out_of_bounds,
+    )
 }
 
 fn err_of(m: String) -> CommandError {
@@ -227,6 +266,7 @@ impl McpBackend {
             seq: 0,
             next_id: 1,
             dialogs,
+            scopes: Vec::new(),
         }
     }
 
@@ -380,8 +420,11 @@ impl McpBackend {
     }
 }
 
-fn png_of(image: &egui::ColorImage, region: Option<Region>, ppp: f32) -> Result<Vec<u8>, String> {
+pub(crate) fn png_of(image: &egui::ColorImage, region: Option<Region>, ppp: f32) -> Result<Vec<u8>, String> {
     let [w, h] = image.size;
+    if w == 0 || h == 0 {
+        return Err("the window has no picture right now (is it minimized?)".into());
+    }
     let (x0, y0, cw, ch) = match region {
         Some(r) if r.width > 0.0 && r.height > 0.0 => {
             let x0 = ((r.x * ppp).max(0.0) as usize).min(w.saturating_sub(1));
@@ -591,6 +634,25 @@ impl Backend for McpBackend {
         Ok(crate::mcp_ui::crash_reports(app.settings_dir.as_deref(), limit))
     }
 
+    fn confirmation_scope(&mut self) -> String {
+        let Ok(app) = self.app.try_borrow() else {
+            // The state cannot be read: a name nothing else has, so no confirmation covers it.
+            return self.id("busy");
+        };
+        let setup = job_setup(&app);
+        if let Some((name, ..)) = self.scopes.iter().find(|(_, doc, s)| *s == setup && *doc == app.editor.doc) {
+            return name.clone();
+        }
+        let doc = app.editor.doc.clone();
+        drop(app);
+        let name = self.id("state");
+        self.scopes.push((name.clone(), doc, setup));
+        if self.scopes.len() > MAX_SCOPES {
+            self.scopes.remove(0);
+        }
+        name
+    }
+
     fn request_confirmation(&mut self, pending_id: &str, command: &str, summary: &str) -> Result<(), CommandError> {
         // The dialog is drawn by the window from the gate's open confirmations; here it is only
         // noted and the window woken.
@@ -618,13 +680,16 @@ impl McpBackend {
         if let Some(why) = mcp_catalog::refused(id) {
             return Err(CommandError::new(ErrorCode::NotSupported, format!("`{id}`: {why}")));
         }
+        if let Some(n) = number_out_of_range(&args) {
+            return Err(CommandError::invalid(format!("`{id}`: {n:e} is out of range: numbers go from -{MAX_NUMBER:e} to {MAX_NUMBER:e}")));
+        }
         if id == "job.generate" {
             return self.start_build("generating the job", Work::Generate, None);
         }
         let app_rc = self.app.clone();
         let mut app = app_rc.try_borrow_mut().map_err(|_| CommandError::failed("the app is busy: try again"))?;
         if self.headless
-            && mcp_catalog::is_hardware(id)
+            && mcp_catalog::acts_on_machine(id)
             && mcp_catalog::hardware_class(id) != Some(darkburn_mcp::HardwareClass::Stop)
             && !simulator_only(&app, &args)
         {

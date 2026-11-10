@@ -19,6 +19,7 @@ pub fn is_rd(name: &std::path::Path) -> bool {
 }
 
 /// Read `.rd` bytes as an imported drawing in millimetres, Y up.
+#[cfg(test)]
 pub fn import(bytes: &[u8]) -> Result<di::Imported, String> {
     import_with_settings(bytes).map(|(imported, _)| imported)
 }

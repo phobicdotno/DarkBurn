@@ -78,6 +78,10 @@ pub struct TestDraft {
     first_layer: usize,
     label_layer: usize,
     text: String,
+    /// The test's numbers as the window shows them. They are the window's own until Create
+    /// stores them with the project.
+    focus: Option<darkburn_vision::testpatterns::FocusTestParams>,
+    interval: Option<darkburn_vision::testpatterns::IntervalTestParams>,
 }
 
 #[derive(Default, Clone)]
@@ -266,10 +270,10 @@ fn open_dialog(app: &mut DarkBurn, d: Dlg) {
             u.pnc = d;
         }
         Dlg::Focus => {
-            u.focus = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, text: String::new() };
+            u.focus = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, ..Default::default() };
         }
         Dlg::Interval => {
-            u.interval = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, text: String::new() };
+            u.interval = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, ..Default::default() };
         }
         Dlg::Centre => {
             u.centre = CentreDraft { pts: vec![[0.0, 0.0]; 3], mark: true, text: String::new() };
@@ -404,9 +408,15 @@ fn coord(ui: &mut Ui, what: &str, axis: &str, v: &mut f64, speed: f64) {
 
 fn count_field(ui: &mut Ui, label: &str, v: &mut usize, range: std::ops::RangeInclusive<usize>) {
     ui_kit::row(ui, label, |ui| {
-        let r = ui.add(egui::DragValue::new(v).range(range));
+        let r = ui.add(egui::DragValue::new(v).range(range).custom_parser(whole_number(ui.ctx())));
         crate::a11y::number(ui, &r, label);
     });
+}
+
+/// What a whole-number field reads: a number or a sum, rounded to the nearest whole number.
+fn whole_number(ctx: &Context) -> impl Fn(&str) -> Option<f64> + use<> {
+    let typed = ui_kit::typed_number(ctx, "");
+    move |text: &str| typed(text).map(f64::round)
 }
 
 fn result_line(ui: &mut Ui, text: &str) {
@@ -756,7 +766,7 @@ fn place_fields(ui: &mut Ui, d: &mut TestDraft) {
 
 fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.vision.ui.focus);
-    let mut p = app.vision.state.focus;
+    let mut p = d.focus.unwrap_or(app.vision.state.focus);
     let mut closing = false;
     let open = window(ctx, "Focus Test", 340.0, |ui| {
         note(ui, "Draws a line for each height. Each line sits on its own layer with that Z offset. Burn it, then pick the sharpest line.");
@@ -781,7 +791,7 @@ fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
         result_line(ui, &d.text);
     });
-    app.vision.state.focus = p;
+    d.focus = Some(p);
     app.vision.ui.focus = d;
     if !open || closing {
         close(app);
@@ -790,7 +800,7 @@ fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 fn interval_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.vision.ui.interval);
-    let mut p = app.vision.state.interval;
+    let mut p = d.interval.unwrap_or(app.vision.state.interval);
     let mut closing = false;
     let open = window(ctx, "Interval Test", 340.0, |ui| {
         note(ui, "Draws a filled block for each line interval, each on its own layer. Burn it, then pick the interval that looks best.");
@@ -815,7 +825,7 @@ fn interval_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
         result_line(ui, &d.text);
     });
-    app.vision.state.interval = p;
+    d.interval = Some(p);
     app.vision.ui.interval = d;
     if !open || closing {
         close(app);
@@ -951,18 +961,51 @@ fn clickable_picture(ui: &mut Ui, tex: egui::TextureId, size: (u32, u32), marks:
     let resp = ui.add(egui::Image::new(egui::load::SizedTexture::new(tex, vec2(w, h))).sense(Sense::click()));
     let r = resp.rect;
     for (i, m) in marks.iter().enumerate() {
-        let c = pos2(r.left() + m.x as f32 / size.0 as f32 * r.width(), r.top() + m.y as f32 / size.1 as f32 * r.height());
+        let c = pixel_on_screen(r, size, *m);
         ui.painter().circle_stroke(c, 7.0, Stroke::new(2.0, Color32::from_rgb(255, 60, 60)));
         ui.painter().text(c + vec2(9.0, -9.0), Align2::LEFT_BOTTOM, (i + 1).to_string(), FontId::proportional(12.0), Color32::from_rgb(255, 60, 60));
     }
     if resp.clicked() {
-        let p = resp.interact_pointer_pos()?;
-        return Some(Point::new(
-            f64::from((p.x - r.left()) / r.width()) * f64::from(size.0),
-            f64::from((p.y - r.top()) / r.height()) * f64::from(size.1),
-        ));
+        return Some(pixel_at(r, size, resp.interact_pointer_pos()?));
     }
     None
+}
+
+/// The pixel position under the screen point `p` of a picture of `size` pixels drawn in `r`.
+/// Pixel centres are on whole numbers, as everywhere in the camera code: the picture's corner
+/// is at (-0.5, -0.5).
+fn pixel_at(r: Rect, size: (u32, u32), p: egui::Pos2) -> Point {
+    Point::new(f64::from((p.x - r.left()) / r.width()) * f64::from(size.0) - 0.5, f64::from((p.y - r.top()) / r.height()) * f64::from(size.1) - 0.5)
+}
+
+/// Where the pixel position `m` is drawn; the opposite of [`pixel_at`].
+fn pixel_on_screen(r: Rect, size: (u32, u32), m: Point) -> egui::Pos2 {
+    pos2(r.left() + (m.x as f32 + 0.5) / size.0 as f32 * r.width(), r.top() + (m.y as f32 + 0.5) / size.1 as f32 * r.height())
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    /// A click in the middle of a drawn pixel is that pixel's whole-number position, the way the
+    /// detectors and the lens code count pixels; it used to be half a pixel further on.
+    #[test]
+    fn a_click_on_the_middle_of_a_pixel_is_that_pixel() {
+        // 4 x 2 pixels drawn 100 points to the pixel
+        let r = Rect::from_min_size(pos2(10.0, 20.0), vec2(400.0, 200.0));
+        let first = pixel_at(r, (4, 2), pos2(60.0, 70.0));
+        assert!(first.x.abs() < 1e-6 && first.y.abs() < 1e-6, "{first:?}");
+        let last = pixel_at(r, (4, 2), pos2(360.0, 170.0));
+        assert!((last.x - 3.0).abs() < 1e-6 && (last.y - 1.0).abs() < 1e-6, "{last:?}");
+        // The same convention as the sampler: the value read at the clicked position is the pixel's own.
+        let mut img = image::GrayImage::new(4, 2);
+        img.put_pixel(3, 1, image::Luma([200]));
+        let got = darkburn_vision::imageops::sample_bilinear(&img, last.x, last.y);
+        assert_eq!(got.map(|p| p[0]), Some(200));
+        // A mark is drawn where it was clicked.
+        let back = pixel_on_screen(r, (4, 2), last);
+        assert!((back - pos2(360.0, 170.0)).length() < 1e-3, "{back:?}");
+    }
 }
 
 fn lens_dialog(ctx: &Context, app: &mut DarkBurn) {
@@ -1068,7 +1111,7 @@ fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui_kit::checkbox(ui, "Flip left-right", &mut d.flip_x);
             ui_kit::checkbox(ui, "Flip top-bottom", &mut d.flip_y);
             ui.label("Turns");
-            let r = ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3));
+            let r = ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3).custom_parser(whole_number(ui.ctx())));
             crate::a11y::number(ui, &r, "Turns");
         });
         match tex {
@@ -1123,7 +1166,7 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
     let open = window(ctx, "Head Camera Alignment", 560.0, |ui| {
         note(
             ui,
-            "For a camera on the laser head. Move the head so a known mark is in view, click the mark in the picture, enter where the head was and where the mark truly is, then add it. Use four or more marks spread across the picture.",
+            "For a camera on the laser head. Move the head so a known mark is in view, click the mark in the picture, enter where the head was (the position the laser reports) and where the mark is in the design, then add it. Use four or more marks spread across the picture.",
         );
         match tex {
             Some((id, size)) => {

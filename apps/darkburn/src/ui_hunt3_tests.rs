@@ -94,3 +94,54 @@ fn the_barcode_dialog_keeps_ok_for_data_the_code_can_hold() {
     assert!(!g.app().text.qr.open, "OK works once the data fits: {:?}", g.visible_texts());
     assert_eq!(g.app().editor.doc.len(), 1);
 }
+
+/// Focus Test and Interval Test: the numbers in the window are the window's own until Create.
+/// Close keeps nothing; Create stores them with the project. A whole-number field takes a sum.
+#[test]
+fn the_test_windows_keep_their_numbers_to_themselves_until_create() {
+    let mut g = Gui::standard();
+    g.frames(2);
+    g.app().editor.mark_saved();
+    let state = |g: &Gui| {
+        let app = g.app();
+        (app.vision.state.focus, app.vision.state.interval, app.editor.is_modified())
+    };
+    let before = state(&g);
+
+    g.run_command("laser.focus_test");
+    g.settle();
+    type_into(&mut g, "SpinButton", "Z start", "-7");
+    type_into(&mut g, "SpinButton", "Lines", "10 + 5");
+    g.frames(2);
+    assert!(g.app().vision.state.focus == before.0, "typing in the window changed the project's setup");
+    g.click_label("Close");
+    g.frames(3);
+    assert!(!g.dialog_open());
+    assert!(state(&g) == before, "Close kept numbers that were only typed");
+    // Opened again it shows the stored numbers, not the ones typed last time.
+    g.run_command("laser.focus_test");
+    g.settle();
+    type_into(&mut g, "SpinButton", "Lines", "10 + 5");
+    g.click_label("Create");
+    g.frames(3);
+    assert_eq!(g.app().vision.state.focus.steps, 15, "the Lines field takes a sum and Create stores it");
+    assert_eq!(g.app().vision.state.focus.z_start, before.0.z_start, "the Z start typed before Close came back");
+    assert!(!g.app().editor.doc.is_empty(), "Create drew the test");
+    g.click_label("Close");
+    g.frames(3);
+
+    g.run_command("laser.interval_test");
+    g.settle();
+    type_into(&mut g, "SpinButton", "Gap", "9");
+    g.frames(2);
+    assert!(g.app().vision.state.interval == before.1, "typing in the window changed the project's setup");
+    g.click_label("Close");
+    g.frames(3);
+    assert!(g.app().vision.state.interval == before.1, "Close kept numbers that were only typed");
+    g.run_command("laser.interval_test");
+    g.settle();
+    type_into(&mut g, "SpinButton", "Gap", "9");
+    g.click_label("Create");
+    g.frames(3);
+    assert_eq!(g.app().vision.state.interval.gap, 9.0);
+}

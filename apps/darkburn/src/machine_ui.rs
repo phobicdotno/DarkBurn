@@ -299,8 +299,6 @@ pub struct MachineUi {
     pub upload_name: String,
     /// Closing is allowed although a job runs (the user said so).
     pub close_ok: bool,
-    pub rotary_on: bool,
-    pub cylinder_on: bool,
     /// Dialogs and fields of the G-code, galvo and Gweike pieces (`machine_ext.rs`).
     pub ext: crate::machine_ext::ExtUi,
     /// The automation socket, the bridge wizard and the detected laser (`connections.rs`).
@@ -340,8 +338,6 @@ impl MachineUi {
             file_sel: BTreeSet::new(),
             upload_name: "DARKBURN".into(),
             close_ok: false,
-            rotary_on: false,
-            cylinder_on: false,
             ext: Default::default(),
             conn: Default::default(),
             last_events: Vec::new(),
@@ -573,6 +569,23 @@ pub fn arrow_to_axes(dir_x: i8, dir_y: i8, origin: Corner, invert_keypad: bool) 
     (dir_x * sx, dir_y * sy)
 }
 
+/// [`arrow_to_axes`] for a device: the axes are the ones its jobs are built with, so a machine
+/// with negative coordinates or swapped X and Y also jogs the way the arrow points.
+pub fn arrow_to_machine(dir_x: i8, dir_y: i8, dev: &Device, invert_keypad: bool) -> (i8, i8) {
+    let c = dev.job_device().geometry().affine().as_coeffs();
+    let (dx, dy) = (f64::from(dir_x), f64::from(if invert_keypad { -dir_y } else { dir_y }));
+    let sign = |v: f64| {
+        if v > 0.5 {
+            1
+        } else if v < -0.5 {
+            -1
+        } else {
+            0
+        }
+    };
+    (sign(c[0] * dx + c[2] * dy), sign(c[1] * dx + c[3] * dy))
+}
+
 // ----- Commands ------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -694,6 +707,15 @@ fn run_gcode_file(app: &mut DarkBurn, a: &Value, src: Source) -> Result<Value, S
     job.name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "gcode".into());
     if app.machine.handle.snapshot().family != Family::Grbl {
         return Err("Run G-code is for G-code machines.".into());
+    }
+    // A job DarkBurn saved with absolute coordinates holds bed positions, but the controller
+    // reads them from its origin once one is set: the job would land shifted by that much.
+    let offset = crate::machine_job::work_offset(app);
+    if offset.hypot() > 1e-6 && crate::machine_job::gcode_in_machine_coordinates(&text) {
+        return Err(format!(
+            "This file was saved in bed coordinates, and the machine has an origin set: it would run {:.2} mm, {:.2} mm away from where it was drawn. Use Clear origin first, or start the job from the project.",
+            offset.x, offset.y
+        ));
     }
     match app.machine.begin_start(job)? {
         StartOutcome::Started => Ok(json!({ "ok": true })),
@@ -1084,19 +1106,21 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     p.sanitise();
     // Each device keeps its own material and cut library [LIB-09, LAYER-10].
     app.extras.library.switch_device(&dev.name, &app.prefs);
+    // Its own saved positions (before the capture below, which would hand it the last device's).
+    app.machine.jog.saved = dev.state.saved_positions;
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
     }
-    app.machine.rotary_on = false;
-    app.machine.cylinder_on = false;
 }
 
 /// Copy what the app holds for the current device into the device record.
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
+    let saved = app.machine.jog.saved.clone();
     if let Some(d) = app.machine.devices.get_mut(id) {
+        d.state.saved_positions = saved;
         d.state.inches = inches;
         d.state.show_grid = grid;
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.

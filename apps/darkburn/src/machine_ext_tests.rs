@@ -569,6 +569,68 @@ fn galvo_job_maps_layers_to_line_fill_flood_and_sliced() {
 }
 
 #[test]
+fn galvo_job_keeps_power_scale_priority_kerf_and_start_points() {
+    use darkburn_core::ShapeId;
+    use darkburn_core::kurbo::{PathEl, Point, Shape as _};
+    let (mut a, id) = galvo_app();
+    let dev = a.machine.devices.get(id).unwrap().clone();
+    let rect = |a: &mut DarkBurn, x: f64, y: f64, w: f64, layer: usize| {
+        ShapeId(run(a, "shape.add_rect", json!({ "x": x, "y": y, "width": w, "height": w, "layer": layer })).unwrap()["id"].as_u64().unwrap())
+    };
+    let first = rect(&mut a, 10.0, 10.0, 30.0, 0);
+    let second = rect(&mut a, 50.0, 10.0, 30.0, 0);
+    a.editor.doc.layer_mut(0).main_mut().max_power = 40.0;
+    let build = |a: &DarkBurn| crate::galvo_job::build_job(&crate::galvo_job::job_document(a).unwrap(), &dev).unwrap().job;
+    let start_of = |l: &galvo::Layer| match l.geometry[0].elements()[0] {
+        PathEl::MoveTo(p) => p,
+        other => panic!("a path starts with a move: {other:?}"),
+    };
+    // Nothing special set: one layer with both squares, as before.
+    let plain = build(&a);
+    assert_eq!(plain.layers.len(), 1);
+    assert_eq!((plain.layers[0].geometry.len(), plain.layers[0].params.power_pct), (2, 40.0));
+
+    // Power scale: the second square is marked at half the layer's power.
+    a.editor.doc.get_mut(second).unwrap().power_scale = 50.0;
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| (l.geometry.len(), l.params.power_pct)).collect::<Vec<_>>(), vec![(1, 40.0), (1, 20.0)]);
+    assert!(j.layers[1].geometry[0].bounding_box().x1 > 0.0, "the half-power layer holds the second square");
+
+    // Cut order priority, when the optimization settings order by it: the lower number first.
+    a.editor.doc.get_mut(first).unwrap().priority = 5;
+    a.editor.doc.get_mut(second).unwrap().priority = 1;
+    assert_eq!(build(&a).layers[0].params.power_pct, 40.0, "priority is not an order key yet");
+    crate::job_cmds::update_settings(&mut a, "order", |s| s.planner.order_by = vec![darkburn_job::OrderKey::Priority]);
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| l.params.power_pct).collect::<Vec<_>>(), vec![20.0, 40.0]);
+
+    // A forced start point: the outline starts there (the middle of the first square's right side).
+    let local = a.editor.doc.get(first).unwrap().transform.inverse() * Point::new(40.0, 25.0);
+    a.editor.doc.get_mut(first).unwrap().start_point = Some([local.x, local.y]);
+    let j = build(&a);
+    let p = start_of(&j.layers[1]);
+    assert!(p.distance(Point::new(40.0 - 55.0, 25.0 - 55.0)) < 1e-6, "{p:?}");
+    assert_eq!(j.layers[1].geometry[0].elements().iter().filter(|e| matches!(e, PathEl::ClosePath)).count(), 1, "still closed");
+
+    // Kerf offset: the outline grows by the kerf on every side.
+    let before = build(&a).bounds(0.01).unwrap();
+    a.editor.doc.layer_mut(0).main_mut().kerf = 0.5;
+    let after = build(&a).bounds(0.01).unwrap();
+    assert!((after.width() - before.width() - 1.0).abs() < 1e-6 && (after.height() - before.height() - 1.0).abs() < 1e-6, "{before:?} {after:?}");
+
+    // Fill: a hole with another power scale stays a hole, and is not filled a second time.
+    let outer = rect(&mut a, 10.0, 50.0, 30.0, 1);
+    let hole = rect(&mut a, 20.0, 60.0, 10.0, 1);
+    run(&mut a, "layer.set_mode", json!({ "layer": 1, "mode": "fill" })).unwrap();
+    a.editor.doc.get_mut(hole).unwrap().power_scale = 50.0;
+    let _ = outer;
+    let j = build(&a);
+    let fills: Vec<&galvo::Layer> = j.layers.iter().filter(|l| matches!(l.mode, galvo::LayerMode::Fill(_))).collect();
+    assert_eq!(fills.len(), 1, "{:?}", fills.iter().map(|l| (l.geometry.len(), l.params.power_pct)).collect::<Vec<_>>());
+    assert_eq!(fills[0].geometry.len(), 2, "the outline and its hole");
+}
+
+#[test]
 fn galvo_device_settings_edit_import_and_compile() {
     let (mut a, _) = galvo_app();
     run(

@@ -388,7 +388,7 @@ pub fn vision_json(app: &DarkBurn, which: Option<&str>) -> Result<Value, Command
         None => Ok(all),
         Some("camera") => Ok(all["camera"].clone()),
         Some("rotary") => {
-            Ok(json!({"rotary": all["rotary"], "split": all["rotary_split"], "cylinder": all["cylinder"], "on": app.machine.rotary_on}))
+            Ok(json!({"rotary": all["rotary"], "split": all["rotary_split"], "cylinder": all["cylinder"], "on": app.vision.state.rotary.enabled}))
         }
         Some("print_and_cut" | "pnc") => Ok(all["pnc"].clone()),
         Some(other) => Err(CommandError::failed(format!("unknown vision path `{other}`: use camera, rotary or print_and_cut"))),

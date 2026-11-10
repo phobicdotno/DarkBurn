@@ -62,6 +62,9 @@ pub struct JobDevice {
     pub tab_pulse_width: f64,
     /// The controller has no dynamic power: every layer is written with M3 (GRBL-02).
     pub m3_only: bool,
+    /// The machine's job has no place for a pause on the spot (a Ruida job): start and end
+    /// pauses and cut-through are left out, and the job says so in a warning.
+    pub no_pauses: bool,
 }
 
 impl Default for JobDevice {
@@ -78,6 +81,7 @@ impl Default for JobDevice {
             tolerance: TOLERANCE,
             tab_pulse_width: 0.0,
             m3_only: false,
+            no_pauses: false,
         }
     }
 }
@@ -993,6 +997,9 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     let mut warnings = c.warnings;
     if c.dropped > 0 {
         warnings.push(format!("{} shape(s) outside the work area were left out.", c.dropped));
+    }
+    if input.device.no_pauses {
+        warnings.extend(crate::machine_job::rd_dropped_pauses(&toolpath));
     }
     let bounds_report = check_work_area(input, &toolpath);
     if !bounds_report.is_ok() {

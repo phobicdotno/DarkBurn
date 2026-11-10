@@ -214,7 +214,7 @@ impl GcodeMachine for GrblAdapter {
         if cmd.trim().is_empty() {
             return Err(MachineError::Unsupported("air assist"));
         }
-        Ok(self.machine.run_macro(cmd)?)
+        Ok(self.machine.run_accessory(cmd)?)
     }
     fn set_feed_override(&self, percent: u16) -> Result<(), MachineError> {
         Ok(self.machine.set_feed_override(percent)?)

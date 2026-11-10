@@ -194,6 +194,66 @@ fn a_job_on_a_machine_with_an_origin_set_runs_where_its_frame_runs() {
 }
 
 #[test]
+fn a_saved_absolute_job_is_not_run_shifted_on_a_machine_with_an_origin_set() {
+    use crate::machine_api::LaserState;
+    use serde_json::json;
+    let mut a = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+    let run = |a: &mut crate::shell::DarkBurn, id: &str, args: serde_json::Value| crate::api::execute_headless(a, id, &args);
+    let wait = |a: &mut crate::shell::DarkBurn, what: &str, f: &dyn Fn(&crate::shell::DarkBurn) -> bool| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            a.machine.tick();
+            if f(a) {
+                return;
+            }
+            assert!(std::time::Instant::now() < end, "timed out waiting for {what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let ready = |a: &crate::shell::DarkBurn| a.machine.handle.snapshot().state == LaserState::Ready;
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == crate::devices::DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": id })).unwrap();
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait(&mut a, "ready", &ready);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    let dir = std::env::temp_dir().join(format!("darkburn-run-gcode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (abs, rel, other) = (dir.join("abs.gc"), dir.join("rel.gc"), dir.join("other.gc"));
+    run(&mut a, "job.save_gcode", json!({ "path": abs.to_str().unwrap() })).unwrap();
+    run(&mut a, "job.set_origin", json!({ "start_from": "current_position" })).unwrap();
+    run(&mut a, "job.save_gcode", json!({ "path": rel.to_str().unwrap() })).unwrap();
+    std::fs::write(&other, "G21\nG90\nG0 X1 Y1\n").unwrap();
+    let text = |p: &std::path::Path| std::fs::read_to_string(p).unwrap();
+    assert!(crate::machine_job::gcode_in_machine_coordinates(&text(&abs)));
+    assert!(!crate::machine_job::gcode_in_machine_coordinates(&text(&rel)), "a job from the current position moves in steps");
+    assert!(!crate::machine_job::gcode_in_machine_coordinates(&text(&other)), "a file from elsewhere is in work coordinates");
+    // Put the head at 50, 60 and set the origin there (GRBL keeps it as a work offset).
+    run(&mut a, "machine.move_to", json!({ "x": 50, "y": 60 })).unwrap();
+    wait(&mut a, "the move", &|a| ready(a) && (a.machine.handle.snapshot().machine_pos[0] - 50.0).abs() < 1e-6);
+    run(&mut a, "machine.set_origin", json!({})).unwrap();
+    wait(&mut a, "the work offset", &|a| {
+        let s = a.machine.handle.snapshot();
+        ready(a) && s.work_pos[0].abs() < 1e-6 && (s.machine_pos[0] - 50.0).abs() < 1e-6
+    });
+    // The file's X10 would be read as 10 mm from the origin: bed X60, not bed X10.
+    let err = run(&mut a, "job.run_gcode", json!({ "path": abs.to_str().unwrap() })).unwrap_err();
+    assert!(err.contains("origin"), "{err}");
+    a.machine.tick();
+    assert!(ready(&a), "nothing was started");
+    // A file from elsewhere is run as it is.
+    run(&mut a, "job.run_gcode", json!({ "path": other.to_str().unwrap() })).unwrap();
+    wait(&mut a, "the other file's move", &|a| ready(a) && (a.machine.handle.snapshot().work_pos[0] - 1.0).abs() < 1e-6);
+    // With the origin cleared the saved job runs where it was drawn.
+    run(&mut a, "machine.clear_origin", json!({})).unwrap();
+    wait(&mut a, "no work offset", &|a| {
+        let s = a.machine.handle.snapshot();
+        ready(a) && (s.machine_pos[0] - s.work_pos[0]).abs() < 1e-6 && (s.machine_pos[1] - s.work_pos[1]).abs() < 1e-6
+    });
+    run(&mut a, "job.run_gcode", json!({ "path": abs.to_str().unwrap() })).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn output_tolerance_changes_how_curves_are_flattened() {
     let mut d = Document::new();
     d.layer_mut(0).main_mut().max_power = 10.0;
@@ -218,6 +278,46 @@ fn return_to_finish_goes_back_to_the_start() {
     assert_eq!(b.toolpath.ops.last().unwrap().target(), Some(Point::new(50.0, 60.0)));
     let s = JobProjectSettings::default().with_device_finish(false);
     assert_eq!(s.finish, darkburn_job::FinishPosition::Stay);
+}
+
+#[test]
+fn pauses_a_ruida_job_cannot_carry_are_named_in_a_warning() {
+    let mut d = line_doc(20.0);
+    {
+        let s = d.layer_mut(0).main_mut();
+        s.start_pause_ms = 200.0;
+        s.cut_through_start = true;
+        s.cut_through_power = 80.0;
+        s.end_pause_ms = 50.0;
+    }
+    // A G-code machine gets the pauses: no warning.
+    let gcode = build_job_simple(&input(d.clone())).unwrap();
+    assert!(gcode.toolpath.ops.iter().any(|o| matches!(o, Op::Dwell { .. })));
+    assert!(!gcode.warnings.iter().any(|w| w.contains("pause")), "{:?}", gcode.warnings);
+    // A Ruida job has no place for them, and says so.
+    let ruida_dev = crate::devices::Device::new(crate::devices::DeviceType::SimulatorRuida);
+    assert!(ruida_dev.job_device().no_pauses);
+    assert!(!crate::devices::Device::default().job_device().no_pauses);
+    let mut i = input(d.clone());
+    i.device.no_pauses = true;
+    let b = build_job_simple(&i).unwrap();
+    let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("pause")).collect();
+    assert_eq!(said.len(), 1, "one warning for the layer: {:?}", b.warnings);
+    assert!(said[0].contains(&layer::layer_label(0)), "{said:?}");
+    // Without pauses there is nothing to warn about, and dot mode is sent (no warning either).
+    {
+        let s = d.layer_mut(0).main_mut();
+        s.start_pause_ms = 0.0;
+        s.cut_through_start = false;
+        s.end_pause_ms = 0.0;
+        s.dot_mode = true;
+        s.dot_time_ms = 3.0;
+        s.dot_spacing = 2.0;
+    }
+    let mut i = input(d);
+    i.device.no_pauses = true;
+    let b = build_job_simple(&i).unwrap();
+    assert!(!b.warnings.iter().any(|w| w.contains("pause")), "{:?}", b.warnings);
 }
 
 #[test]

@@ -560,6 +560,31 @@ fn grbl_adapter_looks_like_any_other_machine() {
     m.disconnect();
 }
 
+#[test]
+fn grbl_air_assist_leaves_the_fire_button_on() {
+    let emu = EmulatorHandle::new(GrblEmulator::new(EmulatorConfig::atomstack()));
+    let p = DeviceProfile::for_kind(DeviceKind::Grbl);
+    let m = p.connect(Box::new(emu.transport())).unwrap();
+    let mut log = Log::new();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Connected(_))));
+    m.fire(1.0, Duration::from_secs(8)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.fire_on && emu.with(|e| e.laser_on())));
+    m.set_air(true).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l == "M8"))), "the air command arrives");
+    worker_passes(m.as_ref(), 3);
+    assert!(m.snapshot().fire_on, "the fire button is still on");
+    emu.with(|e| {
+        assert!(e.laser_on(), "the laser is still on");
+        assert!(!e.stats().lines.iter().any(|l| l.starts_with("M5")), "no laser-off line was sent: {:?}", e.stats().lines);
+    });
+    m.set_air(false).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l == "M9"))));
+    assert!(m.snapshot().fire_on);
+    m.fire_off().unwrap();
+    assert!(m.as_ref().wait_until(T, |s| !s.fire_on && !emu.with(|e| e.laser_on())));
+    m.disconnect();
+}
+
 /// One routine that works on any machine: connect state, a jog, a short job, stop.
 fn exercise(m: &dyn GcodeMachine, mut log: Log, make_job: impl Fn() -> Job) {
     assert!(m.snapshot().is_connected());

@@ -626,6 +626,10 @@ impl<T: Transport> RuidaMachine<T> {
     }
 
     fn check_bounds(&self, p: Point) -> Result<()> {
+        // `NaN < 0.0` and `NaN > bed` are both false, and NaN turns into 0 µm when it is encoded.
+        if !p.x.is_finite() || !p.y.is_finite() {
+            return Err(RuidaError::Encode("the position is not a number".into()));
+        }
         if let Some((bx, by)) = self.bed_size_mm()
             && (p.x < 0.0 || p.y < 0.0 || p.x > bx || p.y > by)
         {

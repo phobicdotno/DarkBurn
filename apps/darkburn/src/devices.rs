@@ -410,6 +410,8 @@ pub struct DeviceState {
     pub libraries: Vec<String>,
     pub backups: Vec<BackupEntry>,
     pub macros: [String; 6],
+    /// The saved positions of the Move panel (MOVE-10).
+    pub saved_positions: Vec<crate::machine_ui::SavedPos>,
 }
 
 impl Default for DeviceState {
@@ -427,6 +429,7 @@ impl Default for DeviceState {
             libraries: Vec::new(),
             backups: Vec::new(),
             macros: Default::default(),
+            saved_positions: Vec::new(),
         }
     }
 }
@@ -522,6 +525,7 @@ impl Device {
             pointer_offset: [self.settings.red_dot_x, self.settings.red_dot_y],
             tab_pulse_width: self.settings.tab_pulse_width,
             m3_only: self.m3_only(),
+            no_pauses: self.family() == Family::Ruida,
             ..JobDevice::default()
         }
     }

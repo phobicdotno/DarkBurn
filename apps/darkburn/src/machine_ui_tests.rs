@@ -343,6 +343,17 @@ fn jog_arrows_follow_the_origin_corner() {
     assert_eq!(machine_ui::arrow_to_axes(1, 1, BottomRight, false), (-1, 1));
     assert_eq!(machine_ui::arrow_to_axes(-1, 1, TopRight, false), (1, -1));
     assert_eq!(machine_ui::arrow_to_axes(0, 1, BottomLeft, true), (0, -1), "inverted keypad flips the vertical arrows");
+    // The device form agrees with it for every corner, and follows negative coordinates too.
+    for corner in [BottomLeft, TopLeft, BottomRight, TopRight] {
+        let mut d = Device::new(DeviceType::Grbl);
+        d.origin = corner;
+        for (dx, dy, inv) in [(1, 1, false), (-1, 1, false), (0, 1, true), (1, 0, true)] {
+            assert_eq!(machine_ui::arrow_to_machine(dx, dy, &d, inv), machine_ui::arrow_to_axes(dx, dy, corner, inv), "{corner:?}");
+        }
+        d.settings.negative_coords = true;
+        let (x, y) = machine_ui::arrow_to_axes(1, 1, corner, false);
+        assert_eq!(machine_ui::arrow_to_machine(1, 1, &d, false), (-x, -y), "{corner:?} with negative coordinates");
+    }
     assert_eq!(machine_ui::jog_multiplier(false, false), 1.0);
     assert_eq!(machine_ui::jog_multiplier(true, false), 10.0);
     assert_eq!(machine_ui::jog_multiplier(false, true), 0.1);
@@ -616,5 +627,153 @@ fn the_default_layout_shows_the_machine_panels() {
     }
     for want in ["Laser", "Cuts / Layers", "SIMULATOR: no hardware attached", "Connect", "Devices", "Start", "Stop"] {
         assert!(found.iter().any(|t| t == want), "{want} is on screen: {found:?}");
+    }
+}
+
+// ----- second bug hunt: what the Laser and Move panels send -----
+
+#[test]
+fn air_assist_on_the_grbl_simulator_leaves_the_fire_button_on() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    run(&mut a, "machine.fire", json!({ "percent": 1.0, "secs": 8.0 })).unwrap();
+    wait(&mut a, "fire on", |a| a.machine.handle.snapshot().fire_on);
+    run(&mut a, "machine.air", json!({ "on": true })).unwrap();
+    let end = Instant::now() + Duration::from_millis(600);
+    while Instant::now() < end {
+        a.machine.tick();
+        assert!(a.machine.handle.snapshot().fire_on, "switching the air switched the fire button off");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    run(&mut a, "machine.fire_off", json!({})).unwrap();
+    wait(&mut a, "fire off", |a| !a.machine.handle.snapshot().fire_on);
+}
+
+#[test]
+fn the_finish_position_of_the_move_panel_is_where_the_job_ends() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    draw_square(&mut a);
+    let at = |a: &DarkBurn, x: f64, y: f64| {
+        let s = a.machine.handle.snapshot();
+        state(a) == LaserState::Ready && (s.machine_pos[0] - x).abs() < 1e-3 && (s.machine_pos[1] - y).abs() < 1e-3
+    };
+    // An origin is set, so bed and work coordinates differ: the finish position is a place on the bed.
+    run(&mut a, "machine.move_to", json!({ "x": 50, "y": 60 })).unwrap();
+    wait(&mut a, "the move", |a| at(a, 50.0, 60.0));
+    run(&mut a, "machine.set_origin", json!({})).unwrap();
+    wait(&mut a, "the origin", |a| state(a) == LaserState::Ready && a.machine.handle.snapshot().work_pos[0].abs() < 1e-6);
+    run(&mut a, "machine.move_to", json!({ "x": 20, "y": 20 })).unwrap();
+    wait(&mut a, "the move to the finish position", |a| at(a, 70.0, 80.0));
+    crate::laser_panel::set_finish_here(&mut a);
+    assert_eq!(a.machine.jog.finish, Some((70.0, 80.0)), "kept as a bed position");
+    run(&mut a, "machine.move_to", json!({ "x": 0, "y": 0 })).unwrap();
+    wait(&mut a, "the move away", |a| at(a, 50.0, 60.0));
+    run(&mut a, "job.start", json!({})).unwrap();
+    wait(&mut a, "the job to start", |a| a.machine.handle.job_running());
+    wait(&mut a, "the job to end", |a| !a.machine.handle.job_running() && state(a) == LaserState::Ready);
+    wait(&mut a, "the head at the finish position", |a| at(a, 70.0, 80.0));
+    // A Ruida job ends there too.
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorRuida);
+    draw_square(&mut a);
+    a.machine.jog.finish = Some((70.0, 80.0));
+    let job = crate::job_cmds::build_now(&a).unwrap();
+    let crate::machine_api::JobData::Rd(rd) = crate::machine_job::request_for(&a, &job, None, false).unwrap().data else { panic!("an RD job") };
+    assert_eq!(rd.layers.last().unwrap().ops.last(), Some(&darkburn_ruida::RdOp::Move(darkburn_core::kurbo::Point::new(70.0, 80.0))));
+    a.machine.jog.finish = None;
+    let crate::machine_api::JobData::Rd(rd) = crate::machine_job::request_for(&a, &job, None, false).unwrap().data else { panic!("an RD job") };
+    assert!(matches!(rd.layers.last().unwrap().ops.last(), Some(darkburn_ruida::RdOp::Cut { .. })), "no move is added without one");
+}
+
+#[test]
+fn saved_positions_are_kept_with_their_device() {
+    let mut a = app();
+    machine_ui::adopt_device_state(&mut a);
+    let first = a.machine.devices.active.unwrap();
+    a.machine.jog.saved.push(machine_ui::SavedPos { name: "Corner jig".into(), x: 12.5, y: 30.0, z: 4.0, use_z: true });
+    machine_ui::capture_device_state(&mut a, first);
+    // Another device has its own list.
+    let other = a.machine.devices.devices.iter().find(|d| d.id != first).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": other })).unwrap();
+    machine_ui::adopt_device_state(&mut a);
+    assert!(a.machine.jog.saved.is_empty(), "{:?}", a.machine.jog.saved);
+    run(&mut a, "device.select", json!({ "id": first })).unwrap();
+    machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.machine.jog.saved.len(), 1);
+    // And the list survives a restart: it is in the device list that is written to disk.
+    let stored = a.machine.devices.to_json();
+    let mut b = app();
+    b.machine.devices = crate::devices::DeviceStore::from_json(&stored);
+    machine_ui::adopt_device_state(&mut b);
+    assert_eq!(b.machine.jog.saved, vec![machine_ui::SavedPos { name: "Corner jig".into(), x: 12.5, y: 30.0, z: 4.0, use_z: true }]);
+}
+
+#[test]
+fn the_rotary_and_cylinder_boxes_of_the_laser_panel_switch_the_projects_setup() {
+    use crate::ui_harness::Gui;
+    use crate::vision_state::VisionState;
+    let mut g = Gui::new(1600.0, 1400.0, 1.0);
+    let area = g.app().prefs.panel("laser").area;
+    if g.rect_of("panel:tab:laser").is_some() {
+        g.click_id("panel:tab:laser");
+    } else {
+        g.click_id(&format!("panel:overflow:{area:?}"));
+        g.click_label("Laser");
+    }
+    g.frames(2);
+    for (label, on) in [("Rotary", true), ("Cylinder correction", true), ("Rotary", false)] {
+        let mut clicked = false;
+        for _ in 0..25 {
+            let boxes = g.find_a11y(Some("CheckBox"), label);
+            let at = boxes.last().unwrap_or_else(|| panic!("no {label} check box in the Laser panel: {:?}", g.visible_texts())).rect;
+            if at.bottom() < g.screen().bottom() - 40.0 && at.top() > 40.0 {
+                g.click_pos(at.left_center() + egui::vec2(8.0, 0.0));
+                clicked = true;
+                break;
+            }
+            let over = g.rect_of("dialog:button::Connect").map_or(at.center(), |r| r.center());
+            g.scroll(over, egui::vec2(0.0, -120.0));
+        }
+        assert!(clicked, "the {label} check box never came into view");
+        g.frames(2);
+        let s = VisionState::from_doc(&g.app().editor.doc);
+        match label {
+            "Rotary" => assert_eq!(s.rotary.enabled, on, "the project's rotary setup follows the box"),
+            _ => assert_eq!(s.cylinder.enabled, on, "the project's cylinder correction follows the box"),
+        }
+    }
+    // What the job builder reads is the project's setup.
+    assert!(crate::vision_state::JobMap::from_doc(&g.app().editor.doc).is_some(), "cylinder correction is on for the job");
+}
+
+#[test]
+fn jog_arrows_and_position_laser_use_the_axes_the_job_uses() {
+    use darkburn_core::kurbo::Point;
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    let at = |a: &DarkBurn, x: f64, y: f64| {
+        let s = a.machine.handle.snapshot();
+        state(a) == LaserState::Ready && (s.machine_pos[0] - x).abs() < 1e-3 && (s.machine_pos[1] - y).abs() < 1e-3
+    };
+    run(&mut a, "machine.move_to", json!({ "x": 50, "y": 50 })).unwrap();
+    wait(&mut a, "the move", |a| at(a, 50.0, 50.0));
+    // Swapped axes (Device Settings): what is right on the screen is the machine's Y.
+    a.machine.devices.active_mut().unwrap().settings.gcode.swap_xy = true;
+    let job_axes = a.machine.active().job_device().geometry().affine();
+    assert_eq!(job_axes * Point::new(10.0, 0.0), Point::new(0.0, 10.0), "the job sends a move to the right as Y");
+    a.machine.jog.distance = 10.0;
+    assert!(crate::key_cmds::run(&mut a, &egui::Context::default(), "laser.jog_right"));
+    wait(&mut a, "the jog along the machine's Y", |a| at(a, 50.0, 60.0));
+    // Position Laser and the arrange-to-laser commands send a design point where the job cuts it.
+    for (negative, swap) in [(false, true), (true, false), (true, true), (false, false)] {
+        let d = a.machine.devices.active_mut().unwrap();
+        d.settings.negative_coords = negative;
+        d.settings.gcode.swap_xy = swap;
+        let job_axes = a.machine.active().job_device().geometry().affine();
+        let p = Point::new(12.0, 34.0);
+        let m = crate::laser_position::to_machine(&a, p);
+        assert!(m.distance(job_axes * p) < 1e-9, "negative {negative}, swapped {swap}: {m:?} against the job's {:?}", job_axes * p);
+        assert!(crate::laser_position::from_machine(&a, m).distance(p) < 1e-9, "and back");
     }
 }

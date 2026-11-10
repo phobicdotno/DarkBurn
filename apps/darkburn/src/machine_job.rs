@@ -54,9 +54,19 @@ pub fn update_head(app: &mut DarkBurn) {
 
 /// Offset that turns machine coordinates into the controller's work coordinates (GRBL: the work
 /// offset; Ruida has none).
-fn work_offset(app: &DarkBurn) -> Vec2 {
+pub fn work_offset(app: &DarkBurn) -> Vec2 {
     let s = app.machine.handle.snapshot();
     if s.family == Family::Grbl { Vec2::new(s.machine_pos[0] - s.work_pos[0], s.machine_pos[1] - s.work_pos[1]) } else { Vec2::ZERO }
+}
+
+/// True for a G-code file DarkBurn saved with absolute coordinates: its moves are bed (machine)
+/// positions. Files from other programs, and jobs saved to start from the current position
+/// (`G91`), are not.
+pub fn gcode_in_machine_coordinates(text: &str) -> bool {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let ours = lines.next().is_some_and(|l| l.starts_with("; DarkBurn job") || l.starts_with("(DarkBurn job"));
+    // The header ends with the distance mode, before the first move.
+    ours && lines.take(200).find(|l| *l == "G90" || *l == "G91") == Some("G90")
 }
 
 /// The points a toolpath visits, as work coordinates for the connected controller.
@@ -261,6 +271,33 @@ pub fn toolpath_to_rd_with(tp: &Toolpath, shift: Vec2, options: RdOptions) -> Re
     Ok(job)
 }
 
+/// What [`toolpath_to_rd_with`] leaves out of `tp`, one line per layer: a Ruida job has no
+/// command for standing still with the laser on or off, so start and end pauses and cut-through
+/// are not sent (the dots of dot mode are: the controller times those itself).
+pub fn rd_dropped_pauses(tp: &Toolpath) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur: Option<&darkburn_job::IrLayer> = None;
+    let mut said: Vec<(usize, usize)> = Vec::new();
+    for op in &tp.ops {
+        match op {
+            Op::LayerStart { layer } => cur = tp.layers.get(*layer),
+            Op::Dwell { ms, power } if *ms > 0.0 => {
+                let Some(l) = cur else { continue };
+                if (l.dot.is_some() && *power > 0.0) || said.contains(&(l.layer_index, l.sublayer)) {
+                    continue;
+                }
+                said.push((l.layer_index, l.sublayer));
+                out.push(format!(
+                    "Layer {}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
+                    l.name
+                ));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Why `dev` has no machine file DarkBurn can write, if so (FILE-09).
 pub fn machine_file_unsupported(dev: &crate::devices::Device) -> Option<String> {
     use crate::devices::DeviceType as T;
@@ -342,7 +379,12 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             } else {
                 Vec2::ZERO
             };
-            let rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
+            let mut rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
+            // The finish position of the Move panel: one last move with the laser off (the
+            // job's coordinates are bed positions here).
+            if let (Some((x, y)), Some(last)) = (app.machine.jog.finish, rd.layers.last_mut()) {
+                last.ops.push(ruida::RdOp::Move(Point::new(x, y)));
+            }
             if send_only {
                 let data = rd.to_rd_file(ruida::Magic::DEFAULT).map_err(|e| e.to_string())?;
                 JobRequest::new(JobData::RdFile { name: name.clone(), data })
@@ -363,6 +405,10 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             crate::galvo_job::request(&crate::galvo_job::job_document(app)?, app.machine.active(), false, false)?.0
         }
     };
+    // The finish position of the Move panel, for the machines that take it with the job.
+    if let (Family::Grbl, Some((x, y))) = (family, app.machine.jog.finish) {
+        req.finish = crate::machine_api::Finish::Machine(Point::new(x, y));
+    }
     req.name = name;
     req.estimated = estimated;
     req.start_immediately = !send_only;

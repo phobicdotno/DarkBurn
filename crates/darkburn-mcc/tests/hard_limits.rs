@@ -262,8 +262,8 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
     for port in 1..=10 {
         all.push(command::do_off(port).unwrap());
     }
-    all.extend(command::stop_sequence(&p, false, 0, 0, &[5, 6, 9]).unwrap());
-    all.extend(command::stop_sequence(&p, true, 0, 0b100, &[5, 6, 9]).unwrap());
+    all.extend(command::stop_sequence(&p, false, 0, 0, &[5, 6, 9]));
+    all.extend(command::stop_sequence(&p, true, 0, 0b100, &[5, 6, 9]));
     for w in all {
         assert_ne!(w.policy(), Policy::Laser, "{}", w.name());
         assert!(matches!(w.register(), 0x65..=0x67), "{}", w.name());

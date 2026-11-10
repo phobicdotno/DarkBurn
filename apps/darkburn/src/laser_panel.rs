@@ -172,12 +172,22 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Mode status [LASER-22]
     ui.add_space(t.space_6);
-    let mut rot = app.machine.rotary_on;
-    let mut cyl = app.machine.cylinder_on;
-    ui_kit::checkbox(ui, "Rotary", &mut rot);
-    ui_kit::checkbox(ui, "Cylinder correction", &mut cyl);
-    app.machine.rotary_on = rot;
-    app.machine.cylinder_on = cyl;
+    // The boxes are the project's rotary and cylinder setup itself (what the job is built
+    // with), not a note beside it.
+    let setup = crate::vision_state::VisionState::from_doc(&app.editor.doc);
+    let (mut rot, mut cyl) = (setup.rotary.enabled, setup.cylinder.enabled);
+    if ui_kit::checkbox(ui, "Rotary", &mut rot).changed()
+        && let Err(e) = crate::vision_cmds::rotary_set(app, &json!({ "enabled": rot }))
+    {
+        app.machine.fail(e);
+    }
+    if ui_kit::checkbox(ui, "Cylinder correction", &mut cyl).changed()
+        && let Err(e) = crate::vision_cmds::cylinder_set(app, &json!({ "enabled": cyl }))
+    {
+        app.machine.fail(e);
+    }
+    let setup = crate::vision_state::VisionState::from_doc(&app.editor.doc);
+    let (rot, cyl) = (setup.rotary.enabled, setup.cylinder.enabled);
     ui.label(RichText::new(mode_status(rot, cyl, dev.settings.dsp.u_axis || family == Family::Grbl)).size(t.font_small).color(t.text_dim));
 
     ui.add_space(t.space_6);
@@ -480,7 +490,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             go(app, "machine.clear_origin", json!({}));
         }
         if btn(ui, "Set finish position", "Return here when a job ends", snap.has_position) {
-            app.machine.jog.finish = Some((snap.work_pos[0], snap.work_pos[1]));
+            set_finish_here(app);
         }
         if app.machine.jog.finish.is_some() && btn(ui, "Clear finish", "Leave the head where the job ends", true) {
             app.machine.jog.finish = None;
@@ -490,7 +500,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui.label(RichText::new("A DSP controller keeps its origin on its own panel.").size(t.font_small).color(t.text_dim));
     }
     if let Some((x, y)) = app.machine.jog.finish {
-        ui.label(RichText::new(format!("Finish position: X {x:.2}, Y {y:.2}")).size(t.font_small).color(t.text_dim));
+        ui.label(RichText::new(format!("Finish position: X {x:.2}, Y {y:.2} from machine zero")).size(t.font_small).color(t.text_dim));
     }
 
     // Fire [MOVE-15]
@@ -545,10 +555,18 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
 }
 
+/// "Set finish position": jobs end where the head is now. Kept as a place on the bed (machine
+/// coordinates), so setting or clearing the origin later does not move it.
+pub fn set_finish_here(app: &mut DarkBurn) {
+    let snap = app.machine.handle.snapshot();
+    if snap.has_position {
+        app.machine.jog.finish = Some((snap.machine_pos[0], snap.machine_pos[1]));
+    }
+}
+
 /// Click on an arrow: a step, or the start of a continuous jog.
 fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
-    let origin = app.machine.active().origin;
-    let (ax, ay) = machine_ui::arrow_to_axes(dx, dy, origin, app.machine.jog.invert_keypad);
+    let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let feed = app.machine.jog.speed * 60.0;
     if app.machine.jog.continuous {
         go(app, "machine.jog_start", json!({ "x": ax, "y": ay, "feed": feed }));

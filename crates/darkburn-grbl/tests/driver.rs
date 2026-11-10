@@ -780,3 +780,117 @@ fn not_a_number_is_refused() {
     std::thread::sleep(Duration::from_millis(200));
     emu.with(|e| assert!(!e.stats().lines.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().lines));
 }
+
+// ----- a link that can lose things -----
+
+/// What a [`Lossy`] link does to the traffic of the emulator behind it.
+#[derive(Default)]
+struct LinkFaults {
+    /// Start-up messages (`Grbl ...`) from the controller are lost.
+    swallow_banner: std::sync::atomic::AtomicBool,
+    /// Nothing gets through in either direction; the link itself stays open.
+    silent: std::sync::atomic::AtomicBool,
+}
+
+struct Lossy<T: Transport> {
+    inner: T,
+    faults: std::sync::Arc<LinkFaults>,
+    line: Vec<u8>,
+    ready: std::collections::VecDeque<u8>,
+}
+
+impl<T: Transport> Lossy<T> {
+    fn new(inner: T) -> (Self, std::sync::Arc<LinkFaults>) {
+        let faults = std::sync::Arc::new(LinkFaults::default());
+        (Self { inner, faults: faults.clone(), line: Vec::new(), ready: Default::default() }, faults)
+    }
+}
+
+impl<T: Transport> Transport for Lossy<T> {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        if self.faults.silent.load(std::sync::atomic::Ordering::SeqCst) { Ok(()) } else { self.inner.write_all(data) }
+    }
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.faults.silent.load(SeqCst) {
+            std::thread::sleep(timeout);
+            return Ok(0);
+        }
+        if self.ready.is_empty() {
+            let mut raw = [0u8; 512];
+            let n = self.inner.read(&mut raw, timeout)?;
+            for &b in &raw[..n] {
+                self.line.push(b);
+                if b == b'\n' {
+                    let banner = self.line.starts_with(b"Grbl") || self.line.starts_with(b"\r\nGrbl");
+                    if !(banner && self.faults.swallow_banner.load(SeqCst)) {
+                        self.ready.extend(self.line.iter().copied());
+                    }
+                    self.line.clear();
+                }
+            }
+        }
+        let n = buf.len().min(self.ready.len());
+        for slot in &mut buf[..n] {
+            *slot = self.ready.pop_front().unwrap_or(b'\n');
+        }
+        Ok(n)
+    }
+    fn set_dtr(&mut self, level: bool) -> std::io::Result<()> {
+        self.inner.set_dtr(level)
+    }
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+}
+
+fn connect_lossy(emu: &EmulatorHandle, opts: ConnectOptions) -> (GrblMachine, std::sync::Arc<LinkFaults>) {
+    let (link, faults) = Lossy::new(emu.transport());
+    let m = GrblMachine::connect(Box::new(link), opts);
+    wait_event(&m, |e| matches!(e, Event::Connected(_)));
+    (m, faults)
+}
+
+/// Many short, slow moves: more than the planner holds, so lines stay in flight.
+fn slow_job(lines: usize) -> Job {
+    let mut text = String::from("G21 G90\nM4 S100\n");
+    for i in 1..=lines {
+        text.push_str(&format!("G1 X{}.{} Y{} F300\n", i / 10, i % 10, i % 3));
+    }
+    Job::from_text(&text)
+}
+
+#[test]
+fn a_stop_whose_reset_is_not_answered_still_frees_the_send_buffer() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    assert!(m.wait_until(T, |s| s.rx_in_flight > 60), "lines wait in the controller's buffer");
+    // The controller resets, but its start-up message never arrives.
+    faults.swallow_banner.store(true, std::sync::atomic::Ordering::SeqCst);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(events.iter().any(|e| matches!(e, Event::JobAborted { .. })));
+    emu.with(|e| assert_eq!(e.stats().soft_resets, 1, "the controller did reset"));
+    // The controller answered a status request after the reset, so its buffer is empty: the
+    // laser-off line goes out and commands are sent again.
+    wait_emu(&emu, "M5 after the stop", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    assert!(m.wait_until(T, |s| s.rx_in_flight == 0), "nothing counted as in flight: {}", m.snapshot().rx_in_flight);
+    wait_snap(&m, "idle after the stop", |s| s.activity == Activity::Idle);
+    m.send_console("G4 P0").unwrap();
+    wait_emu(&emu, "the next command arrives", |e| e.stats().lines.last().is_some_and(|l| l == "G4 P0"));
+}
+
+#[test]
+fn disconnecting_from_a_silent_controller_does_not_hang_the_caller() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    faults.silent.store(true, std::sync::atomic::Ordering::SeqCst);
+    let t = Instant::now();
+    m.disconnect();
+    let took = t.elapsed();
+    assert!(took < Duration::from_secs(2), "disconnect took {took:?}");
+}

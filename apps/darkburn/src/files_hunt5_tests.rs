@@ -129,3 +129,21 @@ fn styled_text_opened_from_a_lightburn_file_keeps_its_letters() {
     let built = crate::text_render::prepare_for_output(&b.editor.doc).bbox().unwrap();
     assert!(near(built, before, 0.05), "as burned: {built:?} vs {before:?}");
 }
+
+/// A cut library file is read like a project: numbers no editor field could hold (power above
+/// 100 %, no speed at all, more sub-layers than a layer has) never reach a layer.
+#[test]
+fn a_cut_library_file_cannot_put_impossible_settings_on_a_layer() {
+    use crate::library::{Entry, Library, assign};
+    use darkburn_core::{CutSetting, MAX_SUB_LAYERS};
+    let wild = CutSetting { max_power: 500.0, min_power: -20.0, speed: 0.0, passes: 0, interval: 0.0, ..Default::default() };
+    let lib = Library { entries: vec![Entry { material: "Birch".into(), settings: vec![wild; 40], ..Default::default() }], ..Default::default() };
+    let back = Library::from_json(&lib.to_json()).unwrap();
+    let mut a = app();
+    assign(&mut a.editor.doc, 1, &back.entries[0]).unwrap();
+    let l = a.editor.doc.layer(1);
+    assert!(l.settings.len() <= MAX_SUB_LAYERS, "{} settings on one layer", l.settings.len());
+    let m = l.main();
+    assert_eq!((m.max_power, m.min_power, m.passes), (100.0, 0.0, 1));
+    assert!(m.speed > 0.0 && m.interval > 0.0, "speed {} interval {}", m.speed, m.interval);
+}

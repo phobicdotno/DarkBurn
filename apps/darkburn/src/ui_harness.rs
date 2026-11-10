@@ -766,14 +766,38 @@ impl Gui {
         !self.dialog_windows().is_empty() || !self.window_titles().is_empty()
     }
 
+    fn job_build_pending(&self) -> bool {
+        self.app().job.pending.is_some()
+    }
+
+    /// Draws frames until the job being prepared on its worker thread has ended (finished or
+    /// cancelled) and the app has taken the result. Returns at once when there is none.
+    #[track_caller]
+    pub fn wait_for_job_build(&mut self) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while self.job_build_pending() {
+            assert!(std::time::Instant::now() < end, "the job build never ended after `{}`", self.last);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.frames(1);
+        }
+    }
+
     /// Close every open dialog window: Escape first, then its close button or a closing action.
-    /// Returns how many rounds it took.
+    /// A job still being prepared in the background is waited for, so no window of its own can
+    /// come up after this returns. Returns how many rounds it took.
     #[track_caller]
     pub fn close_dialogs(&mut self) -> usize {
         let mut rounds = 0;
         for _ in 0..6 {
             if !self.dialog_open() {
-                break;
+                if !self.job_build_pending() {
+                    break;
+                }
+                // A job is being prepared in the background. Its progress window, or the
+                // window its result opens, would come up later, at a moment that depends on
+                // how fast the computer is. Let it end, then look again.
+                self.wait_for_job_build();
+                continue;
             }
             rounds += 1;
             self.escape();
@@ -804,6 +828,8 @@ impl Gui {
                     }
                 }
             }
+            // Cancel only asks the worker to stop; the progress window stays until it has.
+            self.wait_for_job_build();
         }
         assert!(
             !self.dialog_open(),

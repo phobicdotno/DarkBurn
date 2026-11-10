@@ -618,3 +618,31 @@ menu_tests! {
     menu_language => "Language",
     menu_help => "Help",
 }
+
+#[test]
+fn closing_dialogs_waits_for_a_job_build_that_is_slow_to_stop() {
+    use std::time::{Duration, Instant};
+    let mut g = Gui::standard();
+    {
+        // A job that has been in preparation for a while, on a worker that takes its time to
+        // notice Cancel (as on a busy computer).
+        let mut a = g.app();
+        let task = crate::job_build::BuildTask::slow_to_cancel(Duration::from_millis(1500));
+        a.job.pending = Some((task, crate::job_cmds::After::Preview));
+        a.job.pending_started = Instant::now().checked_sub(Duration::from_secs(2));
+    }
+    g.frames(2);
+    assert!(g.window_titles().iter().any(|t| t == "Preparing the job"), "{:?}", g.window_titles());
+    g.close_dialogs();
+    assert!(g.app().job.pending.is_none(), "the build has ended");
+    assert!(!g.dialog_open());
+}
+
+#[test]
+fn a_language_switch_in_one_test_does_not_reach_another() {
+    crate::i18n::set_language("nb");
+    assert_eq!(crate::i18n::language(), "nb");
+    // Another test is another thread with its own app.
+    let other = std::thread::spawn(crate::i18n::language).join().unwrap();
+    assert_eq!(other, "en");
+}

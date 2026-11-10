@@ -86,6 +86,11 @@ pub struct GcodeSettings {
     pub z_relative_only: bool,
     /// Write every Z move even when Z is already there (Optimize Z moves off).
     pub z_always: bool,
+    /// GRBL: write `S0` with every travel move. A controller without laser mode (GRBL 0.9, or
+    /// `$32=0`) keeps the laser at the last `S` during `G0`, so a constant power (`M3`) job
+    /// would burn its travel moves.
+    #[serde(default)]
+    pub travel_s0: bool,
 }
 
 impl GcodeSettings {
@@ -113,6 +118,7 @@ impl GcodeSettings {
             comments: true,
             z_relative_only: false,
             z_always: false,
+            travel_s0: false,
         }
     }
 
@@ -415,6 +421,10 @@ impl<'a> Emitter<'a> {
         // Laser off before travel where G0 does not switch it off by itself.
         let mut tail = String::new();
         match self.s.flavor {
+            f if f.is_grbl() && self.s.travel_s0 && self.spindle != Spindle::Off && self.power != Some(0.0) => {
+                tail = " S0".into();
+                self.power = Some(0.0);
+            }
             Flavor::Marlin => match self.s.marlin_power {
                 MarlinPower::Inline if self.power != Some(0.0) => {
                     tail = " S0".into();
@@ -432,8 +442,11 @@ impl<'a> Emitter<'a> {
             }
             _ => {}
         }
-        if let Some(w) = self.xy(to) {
-            out.push(format!("G0 {w}{tail}"));
+        match self.xy(to) {
+            Some(w) => out.push(format!("G0 {w}{tail}")),
+            // Nothing moves, but the laser must still go off where the travel would have been.
+            None if self.s.flavor.is_grbl() && !tail.is_empty() => out.push("S0".into()),
+            None => {}
         }
     }
 
@@ -659,6 +672,20 @@ mod tests {
                 from = x;
             }
         }
+    }
+
+    /// Without laser mode a GRBL controller keeps the laser on at the last S during G0.
+    #[test]
+    fn travel_moves_switch_the_laser_off_for_a_controller_without_laser_mode() {
+        let mut ops = sq();
+        ops.push(Op::Rapid { to: Point::new(30.0, 30.0) });
+        ops.push(Op::Cut { to: Point::new(40.0, 30.0), speed: 10.0, power: 50.0 });
+        let s = GcodeSettings { comments: false, travel_s0: true, ..GcodeSettings::grbl() };
+        let g = emit(&tp(ops.clone(), true), &s);
+        assert_eq!(g, "G21\nG90\nM3 S0\nG0 X1 Y1\nG1 X11 F600 S500\nG1 Y11\nG0 X30 Y30 S0\nG1 X40 S500\nM5\nM2\n");
+        // Off by default: with laser mode G0 switches the laser off by itself.
+        let g = emit(&tp(ops, true), &GcodeSettings { comments: false, ..GcodeSettings::grbl() });
+        assert!(g.contains("G0 X30 Y30\nG1 X40\n"), "{g}");
     }
 
     #[test]

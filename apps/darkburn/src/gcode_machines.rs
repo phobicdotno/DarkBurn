@@ -356,7 +356,7 @@ pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
 /// The lines to stream to `dev` for `tp`.
 pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec<String> {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_lines(tp, base);
+        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only());
     }
     let neutral = crate::job_build::gcode_lines(tp, &neutral_gcode(base));
     translate_for(dev, &neutral)
@@ -365,7 +365,7 @@ pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec
 /// The text of a G-code file for `dev` (Save G-code). Snapmaker files get their header.
 pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &DeviceGcodeSettings) -> String {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_text(job, from_op, base);
+        return crate::job_build::gcode_text_for(job, from_op, base, dev.m3_only());
     }
     let neutral = crate::job_build::gcode_text(job, from_op, &neutral_gcode(base));
     let lines: Vec<String> = neutral.lines().map(str::to_owned).collect();

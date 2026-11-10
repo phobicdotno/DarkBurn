@@ -1110,7 +1110,14 @@ fn for_device(tp: Toolpath, dev: &DeviceGcodeSettings) -> Toolpath {
 
 /// G-code for the job, or for the job from operation `from_op` on.
 pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings) -> String {
-    let settings = dev.to_gcode();
+    gcode_text_for(job, from_op, dev, false)
+}
+
+/// [`gcode_text`] for a controller that may have no laser mode (`m3_only`, GRBL 1.1e and
+/// older): its travel moves switch the laser off themselves.
+pub fn gcode_text_for(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings, m3_only: bool) -> String {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
     match from_op {
         Some(op) => job::gcode::emit(&for_device(job.toolpath_from(op), dev), &settings),
         None => job::gcode::emit(&for_device(job.toolpath.clone(), dev), &settings),
@@ -1119,7 +1126,14 @@ pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSetti
 
 /// G-code lines to stream to a controller.
 pub fn gcode_lines(tp: &Toolpath, dev: &DeviceGcodeSettings) -> Vec<String> {
-    job::gcode::lines(&for_device(tp.clone(), dev), &dev.to_gcode()).collect()
+    gcode_lines_for(tp, dev, false)
+}
+
+/// [`gcode_lines`] for a controller that may have no laser mode (see [`gcode_text_for`]).
+pub fn gcode_lines_for(tp: &Toolpath, dev: &DeviceGcodeSettings, m3_only: bool) -> Vec<String> {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
+    job::gcode::lines(&for_device(tp.clone(), dev), &settings).collect()
 }
 
 /// File extensions the G-code save offers (EXP-06).

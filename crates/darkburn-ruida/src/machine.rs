@@ -664,7 +664,11 @@ impl<T: Transport> RuidaMachine<T> {
             Axis::Z => s.z,
             Axis::U => s.u,
         };
-        let target = cur + mm_to_um(distance_mm);
+        if !distance_mm.is_finite() {
+            return Err(RuidaError::Encode("the jog distance is not a number".into()));
+        }
+        let target =
+            cur.checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
         if matches!(axis, Axis::X | Axis::Y) {
             let p = if axis == Axis::X { Point::new(um_to_mm(target), um_to_mm(s.y)) } else { Point::new(um_to_mm(s.x), um_to_mm(target)) };
             self.check_bounds(p)?;
@@ -806,8 +810,9 @@ impl<T: Transport> RuidaMachine<T> {
     /// UNCERTAIN: the result address (0x390 + index) and its unit (taken as ms) come from
     /// MeerK40t's emulator and need checking.
     pub fn calc_time(&mut self, index: u16) -> Result<Duration> {
+        let result = addr::FILE_TIME_BASE.checked_add(index).ok_or_else(|| RuidaError::NoSuchFile(format!("there is no file number {index}")))?;
         self.send_commands(&[Command::CalcFileTime(index)])?;
-        let ms = self.read_setting(addr::FILE_TIME_BASE + index)?;
+        let ms = self.read_setting(result)?;
         Ok(Duration::from_millis(ms as u64))
     }
 }

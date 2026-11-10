@@ -8,6 +8,7 @@
 //! * The UI path ([`Source::Ui`]) can reach a real machine only through the Connect confirmation
 //!   dialog, which shows the "REAL MACHINE" banner afterwards. Nothing connects at start-up.
 //! * The agent path ([`Source::Api`]) works on the simulators only. A real machine is refused.
+//!   The one exception is stopping: stop, pause and emergency stop always go through.
 
 #![allow(dead_code, reason = "some helpers are used only by the dialogs and tests")]
 
@@ -621,8 +622,18 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     // Keep the state fresh before acting on it.
     app.machine.tick();
     crate::machine_job::update_head(app);
-    if src == Source::Api && is_hardware(id) && app.machine.handle.is_real_machine() {
-        return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+    if src == Source::Api && app.machine.handle.is_real_machine() {
+        if AGENT_STOPS.contains(&id) {
+            return Some(agent_stop(app, id));
+        }
+        if is_hardware(id) {
+            return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+        }
+        if drops_the_link(app, id, a) {
+            return Some(Err(format!(
+                "{id} was refused: a real machine is connected, and this would end its connection. Use the window; agents only drive the simulators."
+            )));
+        }
     }
     if let Some(r) = crate::connections::run(app, id, a, src) {
         return Some(r);
@@ -631,6 +642,33 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
         return Some(r);
     }
     Some(run_command(app, id, a, src))
+}
+
+/// What an agent may do on a real machine too: stop it. Nothing here ever starts, moves or
+/// resumes anything.
+const AGENT_STOPS: &[&str] = &["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop"];
+
+/// One of [`AGENT_STOPS`] on a real machine. Pause only ever pauses: a job that is already paused
+/// is left alone, since on some controllers a second pause sets it going again.
+fn agent_stop(app: &mut DarkBurn, id: &str) -> Result<Value, String> {
+    let h = &mut app.machine.handle;
+    match id {
+        "machine.pause" | "job.pause" if h.snapshot().state == LaserState::Paused => Ok(json!({ "ok": true, "paused": true })),
+        "machine.pause" | "job.pause" => mach(h.pause()),
+        "machine.emergency_stop" => mach(h.command(MachineCommand::EmergencyStop)),
+        _ => mach(h.stop()),
+    }
+}
+
+/// Whether a device-list command would end the open connection: picking a device always does,
+/// removing the active one does, and the bridge setup makes its new device the active one.
+/// `machine.disconnect` is refused to an agent on a real machine, so these are as well.
+fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
+    match id {
+        "device.select" | "device.bridge_setup" => true,
+        "device.remove" => a.get("id").and_then(Value::as_u64).is_some_and(|d| app.machine.devices.active == Some(d)),
+        _ => false,
+    }
 }
 
 fn num(a: &Value, k: &str) -> Option<f64> {

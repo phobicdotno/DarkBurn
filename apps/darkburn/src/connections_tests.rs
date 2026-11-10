@@ -1044,3 +1044,110 @@ fn devices_dialog_wizard_and_laser_panel_show_the_new_pieces() {
     assert!(shows(&t, "Detected laser: Ortur Laser Master 2 Pro S1 (OLF 172)") && shows(&t, "Use it"), "{t:?}");
     assert!(!shows(&t, "Rescan bridge"), "only for a bridge device");
 }
+
+// ----- An agent and a real machine ------------------------------------------------------------------
+//
+// A TCP link is a real link (`is_real_machine`), and a test build opens one only to this computer:
+// here it leads to a GRBL emulator behind a loopback listener.
+
+fn app_on_a_real_link() -> DarkBurn {
+    let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(grbl::EmulatorConfig::atomstack().with_time_scale(1.0)));
+    let port = grbl_behind_tcp(emu);
+    let mut a = app();
+    a.machine.handle = loopback(Link::Tcp { host: "127.0.0.1".into(), port });
+    wait(&mut a, "ready on the real link", |a| state(a) == LaserState::Ready);
+    assert!(a.machine.handle.is_real_machine() && !a.machine.handle.is_simulator());
+    a
+}
+
+/// A job from the window (the user's own Start) that runs for minutes unless it is stopped.
+fn start_slow_job(a: &mut DarkBurn) {
+    if state(a) == LaserState::Alarm {
+        a.machine.handle.command(MachineCommand::Unlock).unwrap();
+    }
+    wait(a, "ready", |a| state(a) == LaserState::Ready);
+    a.machine.begin_start(zigzag(200, 30.0, 300)).unwrap();
+    wait(a, "busy", |a| state(a) == LaserState::Busy);
+}
+
+#[test]
+fn an_agent_can_stop_and_pause_a_real_machine_and_nothing_else() {
+    let mut a = app_on_a_real_link();
+    const STOPS: [&str; 5] = ["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop"];
+    // Every other hardware command stays refused.
+    let mut refused = 0;
+    for c in crate::commands::registry() {
+        if !machine_ui::handles(c.id) || !machine_ui::is_hardware(c.id) || STOPS.contains(&c.id) {
+            continue;
+        }
+        let e = run(&mut a, c.id, json!({})).expect_err(c.id);
+        assert!(e.contains("a real machine is connected"), "{}: {e}", c.id);
+        refused += 1;
+    }
+    assert!(refused > 40, "only {refused} commands were tried");
+    for id in ["machine.resume", "machine.jog", "machine.fire", "job.start", "machine.disconnect", "machine.unlock", "machine.console"] {
+        let e = run(&mut a, id, json!({ "dx": 1.0, "line": "G0 X5" })).expect_err(id);
+        assert!(e.contains("a real machine is connected"), "{id}: {e}");
+    }
+    assert_eq!(state(&a), LaserState::Ready, "nothing moved");
+
+    // Pause pauses, and a second pause never sets the job going again.
+    start_slow_job(&mut a);
+    run(&mut a, "job.pause", json!({})).expect("an agent may pause a real machine");
+    wait(&mut a, "paused", |a| state(a) == LaserState::Paused);
+    for id in ["machine.pause", "job.pause", "machine.pause"] {
+        run(&mut a, id, json!({})).expect(id);
+        for _ in 0..30 {
+            a.machine.tick();
+            assert_eq!(state(&a), LaserState::Paused, "{id} set the paused job going again");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    assert!(run(&mut a, "machine.resume", json!({})).is_err(), "going on is the user's");
+    assert_eq!(state(&a), LaserState::Paused);
+    run(&mut a, "machine.stop", json!({})).expect("an agent may stop a real machine");
+    wait(&mut a, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+
+    // Each stop command ends a running job.
+    for id in ["job.stop", "machine.emergency_stop", "machine.stop"] {
+        start_slow_job(&mut a);
+        run(&mut a, id, json!({})).unwrap_or_else(|e| panic!("{id} was refused on a real machine: {e}"));
+        wait(&mut a, id, |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+        assert!(!a.machine.handle.snapshot().fire_on, "{id}");
+    }
+    // Pause from running, with the other id.
+    start_slow_job(&mut a);
+    run(&mut a, "machine.pause", json!({})).expect("machine.pause");
+    wait(&mut a, "paused", |a| state(a) == LaserState::Paused);
+    run(&mut a, "job.stop", json!({})).unwrap();
+    wait(&mut a, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+    assert!(a.machine.handle.is_connected() && a.machine.handle.is_real_machine(), "the link is still the user's");
+}
+
+#[test]
+fn an_agent_cannot_drop_the_connection_of_a_real_machine_through_the_device_list() {
+    let mut a = app_on_a_real_link();
+    let active = a.machine.devices.active.unwrap();
+    let other = run(&mut a, "device.duplicate", json!({ "id": active })).unwrap()["id"].as_u64().unwrap();
+    let linked = |a: &DarkBurn| a.machine.handle.is_connected() && a.machine.handle.is_real_machine();
+    for (id, args) in [
+        ("machine.disconnect", json!({})),
+        ("device.select", json!({ "id": other })),
+        ("device.select", json!({ "id": active })),
+        ("device.remove", json!({ "id": active })),
+        ("device.bridge_setup", json!({ "host": "127.0.0.1", "port": 5005, "name": "Bridge" })),
+    ] {
+        let e = run(&mut a, id, args).expect_err(id);
+        assert!(e.contains("a real machine is connected"), "{id}: {e}");
+        a.machine.tick();
+        assert!(linked(&a), "{id} dropped the connection");
+        assert_eq!(a.machine.devices.active, Some(active), "{id} changed the device");
+    }
+    // What leaves the connection alone still works: another device may go.
+    run(&mut a, "device.remove", json!({ "id": other })).unwrap();
+    assert!(linked(&a));
+    // The window may still switch, and that ends the connection as before.
+    let other = run(&mut a, "device.duplicate", json!({ "id": active })).unwrap()["id"].as_u64().unwrap();
+    machine_ui::dispatch(&mut a, "device.select", &json!({ "id": other }), Source::Ui).unwrap().unwrap();
+    assert!(!a.machine.handle.is_connected() && !a.machine.handle.is_real_machine());
+}

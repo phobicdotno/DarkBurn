@@ -214,3 +214,32 @@ fn a_saved_position_does_not_push_the_move_panel_out_of_its_dock() {
     g.click_label("Delete");
     assert!(g.app().machine.jog.saved.is_empty(), "Delete in the row could not be clicked");
 }
+
+/// Looking at the Camera panel changes nothing: an overlay width that does not survive the trip
+/// to percent and back to the last digit (0.9 mm of a 400 mm bed) used to be rewritten, and the
+/// project then counted as changed.
+#[test]
+fn the_camera_panel_leaves_the_overlay_size_alone_until_it_is_edited() {
+    let mut g = Gui::standard();
+    {
+        let mut app = g.app();
+        app.vision.state.camera.overlay.width_mm = Some(0.9);
+        app.vision.state.camera.overlay.height_mm = Some(0.9);
+        crate::vision_cmds::commit(&mut app, "Camera settings", false);
+        app.editor.mark_saved();
+    }
+    show_panel(&mut g, "camera");
+    g.frames(3);
+    assert!(g.has_text("Overlay") || g.has_text("OVERLAY"), "the Camera panel is shown");
+    let o = g.app().vision.state.camera.overlay.clone();
+    assert_eq!((o.width_mm, o.height_mm), (Some(0.9), Some(0.9)), "the panel rewrote the overlay size");
+    assert!(!g.app().editor.is_modified(), "showing the Camera panel changed the project");
+    // A value typed into the field is still taken.
+    g.click_a11y(Some("SpinButton"), "Width");
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("50");
+    g.enter();
+    assert_eq!(g.app().vision.state.camera.overlay.width_mm, Some(200.0));
+    assert_eq!(g.app().vision.state.camera.overlay.height_mm, Some(0.9));
+    assert!(g.app().editor.is_modified());
+}

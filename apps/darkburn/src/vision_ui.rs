@@ -1349,12 +1349,19 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     });
     let mut wp = c.overlay.width_mm.map_or(100.0, |w| w / covers.width * 100.0);
     let mut hp = c.overlay.height_mm.map_or(100.0, |h| h / covers.height * 100.0);
+    let (wp0, hp0) = (wp, hp);
     field(ui, "Width", &mut wp, " %");
     field(ui, "Height", &mut hp, " %");
     field(ui, "X shift", &mut c.overlay.x_shift_mm, " mm");
     field(ui, "Y shift", &mut c.overlay.y_shift_mm, " mm");
-    c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
-    c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    // Only a value that was changed here is written back: millimetres to percent and back does
+    // not always give the same number, and that alone must not count as a change to the project.
+    if wp != wp0 {
+        c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
+    }
+    if hp != hp0 {
+        c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    }
     // Camera controls
     let mut ex = c.exposure.unwrap_or(0.0);
     let mut br = c.brightness.unwrap_or(0.0);

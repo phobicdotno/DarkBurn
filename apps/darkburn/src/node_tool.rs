@@ -671,7 +671,9 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, xf: &Xf, m: Mo
     st.canvas = Some(response.rect);
     st.hover = raw;
     st.snapped = None;
-    let free = ctx.memory(|mem| mem.focused().is_none()) && !egui::Popup::is_any_open(&ctx);
+    // The keys are the tool's only while nothing else has them: no field is being typed in and no
+    // dialog, window or menu is open over the canvas.
+    let free = ctx.memory(|mem| mem.focused().is_none()) && !egui::Popup::is_any_open(&ctx) && !crate::escape::window_open(&ctx);
     match app.tool {
         Tool::Nodes => nodes_tool(ui, &ctx, app, &mut st, response, xf, m, raw, free),
         Tool::Tabs => tabs_tool(&ctx, app, &mut st, response, xf, raw),

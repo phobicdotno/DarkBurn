@@ -569,6 +569,11 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, xf: &Xf, raw: 
             None => place_text(app, p),
         }
     }
+    // A dialog, window or menu over the canvas has the keyboard: what is typed there is not for
+    // the text behind it. Typing goes on when it has closed.
+    if crate::escape::window_open(&ctx) {
+        return;
+    }
     if let Some(ty) = &mut app.text.typing {
         ty.frames += 1;
         let id = typing_id();

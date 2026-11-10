@@ -15,3 +15,4 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] The node tool and the text tool read keys themselves (`node_tool::interact`, `text_ui`); whether they also act while a dialog is open over the canvas was not checked (the select tool's keys and the plain command shortcuts no longer do)
 - [ ] The Move, Size and Rotate locks of the status bar stop mouse drags and arrow nudges, but not the X, Y, W, H and Rotate fields of the ribbon or the rotate and flip commands; unclear which is meant
 - [ ] `cargo fmt --all` also walks into the SolidCraft path dependencies (`..\solidcraft\crates\...`): one run failed there with out of memory. `cargo fmt -p <crate>` stays inside DarkBurn
+- [ ] `darkburn-grbl` `tests/driver.rs` `frame_rectangle_with_and_without_laser` failed once in a full workspace run under load (`e.stats().laser_switch_ons >= 1`, driver.rs:514) and passed three times in a row when run alone: it depends on timing

@@ -77,6 +77,7 @@ mod mcp_inspect;
 #[cfg(test)]
 mod mcp_tests;
 mod mcp_ui;
+mod misc_cmds;
 mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;
@@ -86,6 +87,8 @@ mod numeric_edits;
 mod options;
 mod palette;
 mod panels;
+#[cfg(test)]
+mod polish_tests;
 mod prefs;
 mod prefs_files;
 mod preview;

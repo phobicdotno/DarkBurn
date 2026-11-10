@@ -49,6 +49,19 @@ pub struct Motion {
     pub mark_speed: u16,
 }
 
+/// One shot fired in place (`LaserOnPoint`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointShot {
+    /// Where the mirrors were.
+    pub at: (u16, u16),
+    /// How long, in 10 microsecond units.
+    pub dwell: u16,
+    /// The laser could really emit: board enabled and MO open.
+    pub emitting: bool,
+    pub current: u16,
+    pub q_period: u16,
+}
+
 /// What the emulator saw.
 #[derive(Clone, Debug, Default)]
 pub struct EmulatorLog {
@@ -62,6 +75,8 @@ pub struct EmulatorLog {
     pub light_on_writes: usize,
     /// `LaserOnPoint` count.
     pub points: usize,
+    /// Every shot fired in place (drill mode, single dots), in order.
+    pub shots: Vec<PointShot>,
     /// Accumulated simulated mark time in microseconds.
     pub time_us: f64,
 }
@@ -418,11 +433,15 @@ impl GalvoEmulator {
                 self.ended = false;
                 self.motion(x, y, true);
             }
-            ListCmd::LaserOnPoint { .. } => {
+            ListCmd::LaserOnPoint { dwell } => {
                 self.ended = false;
-                if self.can_emit() {
+                let emitting = self.can_emit();
+                if emitting {
                     self.log.points += 1;
                 }
+                // The dwell is in 10 microsecond units.
+                self.log.time_us += dwell as f64 * 10.0;
+                self.log.shots.push(PointShot { at: self.pos, dwell, emitting, current: self.current, q_period: self.q_period });
             }
             ListCmd::DelayTime { units } => self.log.time_us += units as f64 * 10.0,
             ListCmd::JumpSpeed(v) => self.jump_speed = v.max(1),

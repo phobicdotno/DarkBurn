@@ -510,7 +510,7 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::checkbox(ui, "Inches", &mut d.state.inches);
     ui_kit::checkbox(ui, "Show the grid", &mut d.state.show_grid);
     ui_kit::row(ui, "Grid spacing", |ui| {
-        ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.1..=1000.0, 0.5, " mm");
+        ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.0..=1000.0, 0.5, " mm");
     });
     ui.horizontal(|ui| {
         if small(ui, "Use current layers as defaults", "", true) {

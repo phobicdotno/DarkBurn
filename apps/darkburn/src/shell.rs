@@ -83,6 +83,8 @@ pub struct DarkBurn {
     pub text: crate::text_ui::TextUi,
     /// Camera, rotary, cylinder, print and cut and the test tools (vision_cmds.rs).
     pub vision: crate::vision_cmds::Vision,
+    /// The job under way, for the job log (settings_wiring.rs).
+    pub job_run: crate::settings_wiring::JobRun,
 }
 
 impl DarkBurn {
@@ -121,6 +123,7 @@ impl DarkBurn {
             fio: Default::default(),
             text: Default::default(),
             vision: Default::default(),
+            job_run: Default::default(),
         }
     }
 
@@ -205,6 +208,7 @@ impl DarkBurn {
             || crate::laser_position::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
+            || crate::misc_cmds::run(self, ctx, id)
             || crate::layer_defaults::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
@@ -875,6 +879,7 @@ impl DarkBurn {
                 .show(ctx, true, |ui| {
                     crate::settings::page(ui, prefs);
                 });
+            crate::misc_cmds::run_requests(self);
             if closed || action != ui_kit::Action::None {
                 self.settings_open = false;
             }

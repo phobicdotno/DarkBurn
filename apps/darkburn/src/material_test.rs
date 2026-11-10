@@ -88,6 +88,13 @@ pub struct MaterialTestParams {
     pub label_power: f64,
     /// The first layer used for cells; cells take the next free colour layers.
     pub first_layer: usize,
+    /// The galvo variant [LT-19]: every cell also gets the base frequency and Q-pulse below
+    /// (the axes still override them), so the whole sheet is set for a fiber, MOPA or UV source.
+    pub galvo: bool,
+    /// Pulse frequency for the cells in kHz when the grid does not vary it.
+    pub base_frequency: f64,
+    /// Q-pulse width for the cells in ns when the grid does not vary it (MOPA sources).
+    pub base_q_pulse: f64,
 }
 
 impl Default for MaterialTestParams {
@@ -117,8 +124,79 @@ impl Default for MaterialTestParams {
             label_speed: 150.0,
             label_power: 10.0,
             first_layer: 0,
+            galvo: false,
+            base_frequency: 30.0,
+            base_q_pulse: 200.0,
         }
     }
+}
+
+impl MaterialTestParams {
+    /// The galvo variant's starting values: small filled cells with a fine interval, speed along
+    /// the columns and pulse frequency down the rows, placed to fit a `field` mm lens field.
+    pub fn galvo_defaults(field: (f64, f64)) -> MaterialTestParams {
+        let mut p = MaterialTestParams {
+            x_axis: Axis::Speed,
+            x_min: 500.0,
+            x_max: 2500.0,
+            columns: 5,
+            y_axis: Axis::Frequency,
+            y_min: 20.0,
+            y_max: 60.0,
+            rows: 5,
+            cell_w: 5.0,
+            cell_h: 5.0,
+            gap: 1.0,
+            fill: true,
+            base_speed: 1000.0,
+            base_power: 50.0,
+            base_interval: 0.03,
+            label_height: 2.0,
+            label_speed: 1000.0,
+            label_power: 40.0,
+            galvo: true,
+            ..Default::default()
+        };
+        // Centre the sheet in the field (the labels take about 12 mm on the left and 3 mm on top).
+        let w = p.columns as f64 * (p.cell_w + p.gap) + 12.0;
+        let h = p.rows as f64 * (p.cell_h + p.gap) + 3.0;
+        p.x = ((field.0 - w) / 2.0).max(0.0);
+        p.y = ((field.1 - h) / 2.0).max(0.0);
+        p
+    }
+
+    fn varies(&self, axis: Axis) -> bool {
+        (self.x_axis == axis && self.columns > 1) || (self.y_axis == axis && self.rows > 1)
+    }
+}
+
+/// What the test would do wrong on the device it is made for [LT-19]. `Err` stops it; the
+/// warnings are shown and it is made anyway.
+pub fn check_for_device(p: &MaterialTestParams, dev: &crate::devices::Device, bounds: Option<Rect>) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
+    let galvo_device = dev.family() == crate::machine_api::Family::Galvo;
+    if galvo_device {
+        let source = dev.settings.galvo.source;
+        if p.varies(Axis::QPulse) && !source.has_q_pulse() {
+            return Err(
+                "This laser source has no Q-pulse setting (only MOPA sources do). Vary something else, or pick a MOPA source in the device settings."
+                    .into(),
+            );
+        }
+        let (w, h) = dev.bed();
+        if let Some(b) = bounds
+            && (b.x0 < 0.0 || b.y0 < 0.0 || b.x1 > w || b.y1 > h)
+        {
+            warnings.push(format!(
+                "The test is {:.0} x {:.0} mm and does not fit the {w:.0} x {h:.0} mm field where it is placed.",
+                b.width(),
+                b.height()
+            ));
+        }
+    } else if p.varies(Axis::Frequency) || p.varies(Axis::QPulse) {
+        warnings.push("Frequency and Q-pulse only do something on a galvo laser; on this device the cells will all burn the same.".into());
+    }
+    Ok(warnings)
 }
 
 /// What a run created.
@@ -218,6 +296,10 @@ pub fn generate(doc: &mut Document, p: &MaterialTestParams) -> Result<MaterialTe
                 s.speed = p.base_speed;
                 s.max_power = p.base_power;
                 s.interval = p.base_interval;
+                if p.galvo {
+                    s.galvo.frequency_khz = p.base_frequency.max(0.0);
+                    s.galvo.q_pulse_ns = p.base_q_pulse.max(0.0);
+                }
                 set_axis(s, p.x_axis, *xv);
                 set_axis(s, p.y_axis, *yv);
                 s.sanitise();

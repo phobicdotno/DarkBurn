@@ -27,7 +27,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
 - [x] SHELL-11 Theme picker (SolidCraft's bundled themes)
 - [x] SHELL-12 Windows installer (MSI) and app icon
-- [~] SHELL-13 Update check
+- [~] SHELL-13 Update check *(the check, the start-up check and the dialog work against a test server; the real HTTPS request to the release feed is not verified, and the feed has to be public)*
 
 ---
 
@@ -178,7 +178,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-16 Get controller info
 - [x] LT-17 Repeat marking (galvo)
 - [x] LT-18 Lens correction test (galvo)
-- [ ] LT-19 Material test, galvo variant
+- [x] LT-19 Material test, galvo variant
 
 ### Window
 - [x] WIN-01 Reset to default layout
@@ -199,8 +199,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] HELP-02 Quick help and context help on F1
 - [x] HELP-03 Online documentation link
 - [x] HELP-04 Generate support data
-- [~] HELP-05 Camera selection help
-- [~] HELP-06 Check for updates
+- [x] HELP-05 Camera selection help
+- [~] HELP-06 Check for updates *(see SHELL-13)*
 - [x] HELP-07 Enable debug log
 
 ---
@@ -284,8 +284,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LASER-22 Rotary and cylinder correction toggles, mode status text
 - [x] LASER-23 Option to disable Start on machines that take uploads
 - [x] LASER-24 Pre-job checklist before start
-- [ ] LASER-25 Sounds on job finished and on error
-- [ ] LASER-26 Job log saved as CSV
+- [x] LASER-25 Sounds on job finished and on error
+- [x] LASER-26 Job log saved as CSV
 - [x] LASER-27 Out-of-bounds warning and option to drop out-of-bounds shapes
 - [x] LASER-28 Warning when closing during a running job
 
@@ -293,7 +293,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LIB-01 Named library files: new, load, save, save as, auto-save, backup on save
 - [x] LIB-02 Entries grouped by material, then thickness, then description
 - [x] LIB-03 Thickness in fractions when using inches; entries with no thickness
-- [~] LIB-04 Type icon for line, fill and image entries
+- [x] LIB-04 Type icon for line, fill and image entries
 - [x] LIB-05 Assign entry to layer
 - [x] LIB-06 Link layer to entry; unlink when entry deleted
 - [x] LIB-07 Create entry from layer
@@ -636,7 +636,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
 - [x] PREV-07 Zoom, pan, maximise
 - [x] PREV-08 Save preview image, optionally transparent
-- [~] PREV-09 Start here: run, send or save from any point in the job
+- [~] PREV-09 Start here: run, send or save from any point in the job *(run from here on G-code and DSP machines, send on DSP, save as G-code; a galvo job cannot start part way and says so; saving an RD file from a point waits on EXP-07)*
 - [x] PREV-10 Layer and pass readout
 - [x] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 
@@ -681,7 +681,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DEV-04 Edit, duplicate, remove device
 - [x] DEV-05 Import and export device profiles
 - [~] DEV-06 Network bridge setup wizard *(the wizard adds the device and tests the address; the relay itself is unconfirmed, see CONN-03)*
-- [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups
+- [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups *(units, grid and its spacing, origin corner, panel layout, default layers, port and backups follow the device; the library follows the device by its name, and the job origin and start-from stay with the project)*
 - [x] DEV-08 Design-only device with no laser
 
 ### Connections
@@ -753,7 +753,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [~] GALVO-16 3D sliced image
 - [x] GALVO-17 Lens correction test and scale calibration
 - [x] GALVO-18 Import EZCad config
-- [ ] GALVO-19 Drill mode
+- [x] GALVO-19 Drill mode *(on the emulator; the point command's time unit needs checking on a real board)*
 
 ### User's machines (acceptance targets)
 - [ ] TARGET-01 Atomstack 400×400 mm, GRBL over USB serial at 115200 baud, end to end
@@ -769,7 +769,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PROJ-02 Open LightBurn `.lbrn2` projects
 - [x] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
 - [x] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
-- [~] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
+- [x] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts *(in DarkBurn projects; variable text state and virtual arrays from LightBurn files are not carried over)*
 - [x] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import
@@ -876,7 +876,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-02 Curve quality, antialiasing, filled rendering, reduce motion
 - [x] SET-03 Font size and toolbar icon size
 - [x] SET-04 Cursor and node size
-- [~] SET-05 Dark background, grid contrast, grid spacing
+- [x] SET-05 Dark background, grid contrast, grid spacing
 - [x] SET-06 Grid snap distance, object snap distance, snapping on or off
 - [x] SET-07 Click tolerance
 - [x] SET-08 Full-screen cursor, centre cross, palette labels
@@ -892,10 +892,10 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-16 Save job origin and cut selected in the project
 - [x] SET-17 Remember move, size, rotate and shear lock states
 - [x] SET-18 Ignore out-of-bounds shapes
-- [~] SET-19 Ignore Start when the monitor is off
+- [~] SET-19 Ignore Start when the monitor is off *(the setting is stored; telling that the monitor is off needs a Windows power notification, which cannot be had without `unsafe` code)*
 - [x] SET-20 Load default layers on new project
-- [~] SET-21 Built-in or system file dialogs
-- [~] SET-22 Sounds on error and on job finished
+- [~] SET-21 Built-in or system file dialogs *(system dialogs only: the Built-in choice is stored but there is no built-in file browser yet)*
+- [x] SET-22 Sounds on error and on job finished
 - [x] SET-23 Save job log
 - [x] SET-24 Use system clipboard
 - [x] SET-25 Nudge distances for normal, Ctrl and Shift
@@ -941,9 +941,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 24. Keyboard
 
-- [~] KEY-01 Every default shortcut from the menus above
+- [~] KEY-01 Every default shortcut from the menus above *(missing: F2 as a second Start key, Z and diagonal jog keys, Y and N in message boxes)*
 - [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [~] KEY-03 Numpad jogging
+- [~] KEY-03 Numpad jogging *(Ctrl+Alt+arrows jog instead: egui does not tell numpad keys from the others)*
 - [x] KEY-04 Node edit single-key commands
 - [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel
@@ -961,13 +961,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ## 26. Platform
 
 - [x] PLAT-01 Windows file association and single running copy
-- [ ] PLAT-02 Explorer thumbnails for project files
-- [ ] PLAT-03 Recent files in the Windows jump list
+- [ ] PLAT-02 Explorer thumbnails for project files *(needs a COM shell extension, which cannot be written without `unsafe` code; the project file does hold a thumbnail)*
+- [ ] PLAT-03 Recent files in the Windows jump list *(the jump list is set through COM calls, which need `unsafe` code)*
 - [x] PLAT-04 Debug log
 - [x] PLAT-05 Support data bundle
-- [~] PLAT-06 Crash restore file
+- [x] PLAT-06 Crash restore file
 - [x] PLAT-07 Automatic preference backups
-- [~] PLAT-08 Print support
+- [~] PLAT-08 Print support *(prints through a PDF handed to the system: no printer choice or page setup, and 1:1 scale depends on the PDF viewer)*
 - [ ] PLAT-09 macOS build
 - [ ] PLAT-10 Linux build
 - [ ] PLAT-11 REST API *(later)*

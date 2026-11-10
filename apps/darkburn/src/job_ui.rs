@@ -126,6 +126,17 @@ fn run_command(ctx: &egui::Context, app: &mut DarkBurn, id: &str, args: &serde_j
     }
 }
 
+/// What the Preview's "from here" buttons can do on a machine family [PREV-09]: (run, send).
+/// A G-code machine runs a job as it streams it, a DSP controller can also store it, and a
+/// galvo job is made whole from the shapes. Save from here always works.
+pub fn from_here_actions(family: crate::machine_api::Family) -> (bool, bool) {
+    use crate::machine_api::Family;
+    match family {
+        Family::Grbl => (true, false),
+        Family::Ruida => (true, true),
+        Family::Galvo | Family::DesignOnly | Family::FileOnly => (false, false),
+    }
+}
 fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) {
     let t = Tokens::get();
     let pending = app.job.pending.as_ref().map(|(task, _)| task.progress());
@@ -214,10 +225,12 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Run from here", have) {
+        let family = app.machine.active().kind.family();
+        let (can_run, can_send) = from_here_actions(family);
+        if b(ui, "Run from here", have && can_run) {
             *command = Some(("job.preview_run_from_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Send from here", have) {
+        if b(ui, "Send from here", have && can_send) {
             *command = Some(("job.preview_send_from_here", serde_json::json!({ "op_index": op })));
         }
         if b(ui, "Save from here", have)
@@ -564,7 +577,9 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         return;
     }
     let mut p = app.job.material.clone();
-    let problem = crate::material_test::validate(&p).err();
+    let problem = crate::material_test::validate(&p).err().or_else(|| crate::material_test::check_for_device(&p, app.machine.active(), None).err());
+    let device_notes = crate::material_test::check_for_device(&p, app.machine.active(), None).unwrap_or_default();
+    let field = app.machine.active().bed();
     let mut preset_action: Option<&'static str> = None;
     let mut preset_pick: Option<usize> = None;
     let names: Vec<String> = app.job.presets.iter().map(|q| q.name.clone()).collect();
@@ -624,6 +639,22 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
             ui_kit::row(ui, "Base interval", |ui| {
                 ui_kit::number_field(ui, &mut p.base_interval, 0.001..=10.0, 0.005, " mm");
             });
+            let mut galvo = p.galvo;
+            if ui_kit::checkbox(ui, "Galvo test (frequency and Q-pulse)", &mut galvo).changed() {
+                // Switching variant starts from that variant's own values.
+                p = if galvo { crate::material_test::MaterialTestParams::galvo_defaults(field) } else { Default::default() };
+            }
+            if p.galvo {
+                ui_kit::row(ui, "Base frequency", |ui| {
+                    ui_kit::number_field(ui, &mut p.base_frequency, 0.0..=10_000.0, 1.0, " kHz");
+                });
+                ui_kit::row(ui, "Base Q-pulse", |ui| {
+                    ui_kit::number_field(ui, &mut p.base_q_pulse, 0.0..=100_000.0, 1.0, " ns");
+                });
+            }
+            for note in &device_notes {
+                ui_kit::status_line(ui, note, ui_kit::StatusTone::Warning);
+            }
             ui.separator();
             ui_kit::checkbox(ui, "Label the rows and columns", &mut p.labels);
             if p.labels {

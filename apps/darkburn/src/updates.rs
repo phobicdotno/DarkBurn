@@ -445,4 +445,137 @@ mod tests {
     fn the_setting_is_off_by_default() {
         assert!(!crate::prefs::Prefs::default().opts.check_updates);
     }
+
+    /// Run frames until the check that `frame` started has answered.
+    fn frames_until_answer(app: &mut DarkBurn) {
+        let ctx = Context::default();
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        frame(&ctx, app);
+        while app.extras.updates.running() {
+            assert!(std::time::Instant::now() < end, "no answer");
+            std::thread::sleep(Duration::from_millis(20));
+            frame(&ctx, app);
+        }
+    }
+
+    #[test]
+    fn with_the_setting_on_a_start_checks_once_and_only_a_newer_version_opens_the_dialog() {
+        // A newer release: the dialog opens by itself.
+        let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0","html_url":"https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0"}"#, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::Available { .. })));
+        assert!(app.extras.updates.open, "a newer version is shown");
+        assert!(app.note.is_none(), "no status note for a check nobody asked for");
+        // Later frames do not check again.
+        frames_until_answer(&mut app);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        // The same version: the answer is kept, nothing pops up.
+        let body: &'static str = Box::leak(format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION")).into_boxed_str());
+        let (url, seen) = serve("200 OK", body, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::UpToDate { .. })));
+        assert!(!app.extras.updates.open, "up to date: no dialog at start");
+
+        // A server that cannot be reached, or a private repository: silence at start.
+        let (url, _) = serve("404 Not Found", r#"{"message":"Not Found"}"#, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::NotVisible { status: 404 })));
+        assert!(!app.extras.updates.open);
+    }
+
+    #[test]
+    fn no_check_at_start_with_the_setting_off_or_in_safe_mode() {
+        for (setting, safe) in [(false, false), (true, true)] {
+            let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0"}"#, 1);
+            let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+            app.prefs.opts.check_updates = setting;
+            app.safe_mode = safe;
+            app.prefs.opts.update_url = url;
+            let ctx = Context::default();
+            for _ in 0..5 {
+                frame(&ctx, &mut app);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!app.extras.updates.running() && app.extras.updates.result.is_none());
+            assert!(!app.extras.updates.open);
+            assert!(seen.lock().unwrap().is_empty(), "nothing was asked of the server");
+        }
+    }
+
+    #[test]
+    fn the_dialog_shows_the_new_version_and_opens_only_a_safe_download_page() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::Available {
+                current: "0.0.24".into(),
+                latest: "99.0.0".into(),
+                url: "https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0".into(),
+                notes: "Faster previews.".into(),
+            });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        assert!(g.window_titles().contains(&"Check for Updates".to_string()), "{:?}", g.window_titles());
+        let texts = g.visible_texts().join(" | ");
+        assert!(texts.contains("99.0.0") && texts.contains("Faster previews."), "{texts}");
+        assert!(texts.contains("Nothing is downloaded"), "{texts}");
+        g.screenshot("update-available");
+        crate::help::take_opened();
+        g.click_label("Open the download page");
+        assert_eq!(crate::help::take_opened(), ["https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0"]);
+        assert!(!g.app().extras.updates.open, "the dialog closed");
+
+        // A link that is not a plain web address is never handed to the system.
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::Available {
+                current: "0.0.24".into(),
+                latest: "99.0.0".into(),
+                url: "file:///C:/Windows/System32/calc.exe".into(),
+                notes: String::new(),
+            });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        g.click_label("Open the download page");
+        assert_eq!(crate::help::take_opened(), [RELEASES_PAGE]);
+
+        // Up to date: no download button, Close closes.
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::UpToDate { current: "0.0.24".into() });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        assert!(!g.has_text("Open the download page"));
+        assert!(g.visible_texts().join(" ").contains("up to date"));
+        g.close_dialogs();
+        assert!(!g.app().extras.updates.open);
+    }
+
+    #[test]
+    fn help_menu_check_for_updates_opens_the_dialog() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        g.open_menu("Help", "Check for Updates");
+        g.frames(2);
+        assert!(g.app().extras.updates.open);
+        assert!(g.window_titles().contains(&"Check for Updates".to_string()));
+        // Under test the network is never touched: the dialog says the check failed.
+        assert!(matches!(g.app().extras.updates.result, Some(Outcome::Failed(_))));
+        g.close_dialogs();
+    }
 }

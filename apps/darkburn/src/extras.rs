@@ -140,7 +140,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
             }
         }
         "help.camera" => {
-            app.extras.help_topic = "camera".into();
+            app.extras.help_topic = "camera_selection".into();
             app.extras.help_open = true;
         }
         "help.updates" | "help.check_updates" => crate::updates::run_command(app),

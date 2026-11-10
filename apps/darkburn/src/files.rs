@@ -371,6 +371,7 @@ fn discard_autosave(app: &mut DarkBurn) {
     wait_for_autosave(app);
     if let Some(dir) = &app.settings_dir
         && !app.safe_mode
+        && !app.fio.secondary
     {
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_FILE));
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_PATH_FILE));
@@ -1187,5 +1188,25 @@ mod tests {
         assert_eq!(a.editor.doc.len(), 1, "the project is still open");
         assert!(a.editor.is_modified(), "and it still has unsaved changes, so closing asks again");
         assert_eq!(title(&a), "Untitled* - DarkBurn");
+    }
+
+    /// An extra window keeps no auto-save of its own, so nothing it does may remove the first
+    /// window's copy.
+    #[test]
+    fn an_extra_window_leaves_the_first_windows_autosave_alone() {
+        let dir = TempDir::new("secondary");
+        let settings = dir.0.join("settings");
+        let mut doc = darkburn_core::Document::new();
+        doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
+        write_autosave(&settings, &doc, Some(&dir.0.join("mine.dbrn"))).unwrap();
+        let mut second = app(&dir);
+        second.fio.secondary = true;
+        add_rect(&mut second);
+        new_project(&mut second);
+        add_rect(&mut second);
+        save_to(&mut second, &dir.0.join("other.dbrn")).unwrap();
+        open_path(&mut second, &dir.0.join("other.dbrn")).unwrap();
+        assert!(settings.join(AUTOSAVE_FILE).is_file(), "the first window's auto-save is still there");
+        assert!(settings.join(AUTOSAVE_PATH_FILE).is_file());
     }
 }

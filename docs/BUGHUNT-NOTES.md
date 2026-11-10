@@ -8,3 +8,9 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] `darkburn-gcodebots` device profile calls the tab pulse width `tab_pulse_width_ms`, but the value is a length in millimetres (the app and the job engine treat it as mm); rename the field and its file key with a fallback for old profiles
 - [ ] A shape inside a group cannot get tabs or a start point without ungrouping first (`tabs.add` and `shape.set_start_point` take top-level shapes only); tabs and start points set before grouping do work in the job
 - [ ] Library: entries made by a command before the Library panel was first shown are dropped when the panel first draws (`library::show` loads the device library on its first frame and replaces what is there)
+- [ ] Offset with the sharp join: a corner past the miter limit is clipped at the limit, not bevelled as `offset.rs` says, and a corner sharper than about 5 degrees stops well short of a true miter (the overlay engine's own limit); the result is a valid outline, only the corner differs
+- [ ] Kerf offset: a hole smaller than the kerf vanishes from the job without a warning (`kerf_offset` returns nothing for it)
+- [ ] A manual tab longer than the whole outline of a small shape leaves nothing of that shape to cut (`tabs::place_tabs_at`); automatic tabs reduce their count instead
+- [ ] `edit.convert_path` on a text with no visible characters leaves an empty path shape in the document
+- [ ] Booleans and offsets read a text's stored outline; a text that was never rendered would give its placeholder rectangle (not seen in a test: the text commands render after every change)
+- [ ] Adjust Image is slow at the limits: forty mode and DPI changes on a 2 x 1 mm image at 25400 DPI with 1000 halftone cells took over a minute in a test (results were right)

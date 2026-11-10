@@ -123,6 +123,8 @@ mod ui_harness;
 #[cfg(test)]
 mod ui_hunt2_tests;
 #[cfg(test)]
+mod ui_hunt3_tests;
+#[cfg(test)]
 mod ui_hunt_tests;
 #[cfg(test)]
 mod ui_smoke_tests;

@@ -394,7 +394,8 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             add_sel = true;
         }
     });
-    ui_kit::hint_field(ui, &mut art.search, &tr("art.search", "Search art"));
+    let search = tr("art.search", "Search art");
+    ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut art.search, &search));
     ui.add_space(t.space_6);
 
     if art.libs.is_empty() {
@@ -465,6 +466,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                                 if renaming {
                                     if let Some((_, _, _, text)) = &mut art.renaming {
                                         let e = ui.add(egui::TextEdit::singleline(text).desired_width(CELL));
+                                        crate::a11y::text(ui, &e, "Name");
                                         if !e.has_focus() && !e.lost_focus() {
                                             e.request_focus();
                                         }

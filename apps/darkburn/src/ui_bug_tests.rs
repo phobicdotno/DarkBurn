@@ -143,3 +143,168 @@ fn escape_closes_every_state_driven_window() {
     }
     assert!(stuck.is_empty(), "Escape did not close: {stuck:?}");
 }
+
+// ----- accessible names -----
+
+/// Every control in every panel, ribbon tab and window has an accessible name.
+#[test]
+fn every_control_in_every_window_has_an_accessible_name() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    let mut bad = std::collections::BTreeSet::new();
+    let roles = ["SpinButton", "Button", "CheckBox", "TextInput", "MultilineTextInput", "ComboBox", "Slider", "Link", "RadioButton", "Switch"];
+    let mut look = |g: &Gui, what: &str| {
+        for n in g.a11y() {
+            if roles.contains(&n.role.as_str()) && n.label.as_deref().is_none_or(|l| l.trim().is_empty()) {
+                bad.insert(format!("{what}: {} value {:?} at {:?}", n.role, n.value, n.rect));
+            }
+        }
+    };
+    for p in crate::panels::PANELS {
+        if !g.app().prefs.panel(p.id).visible {
+            g.run_command(&format!("panel.{}", p.id));
+        }
+    }
+    for p in crate::panels::PANELS {
+        let area = g.app().prefs.panel(p.id).area;
+        g.app().prefs.active_tab.insert(area, p.id.to_string());
+        g.frames(3);
+        look(&g, &format!("panel {}", p.id));
+    }
+    g.run_command("window.reset_layout");
+    for tab in ["home", "arrange", "modify", "text", "modes"] {
+        g.click_id(&format!("ribbon:tab:{tab}"));
+        look(&g, &format!("ribbon {tab}"));
+    }
+    let ids: Vec<&str> = commands::COMMANDS.iter().chain(crate::machine_ui::COMMANDS).map(|c| c.id).collect();
+    for id in ids {
+        g.close_dialogs();
+        crate::files::new_project(&mut g.app());
+        g.sample_design();
+        g.run_command(id);
+        if g.dialog_open() {
+            look(&g, &format!("cmd {id} {:?}", g.window_titles()));
+        }
+    }
+    for (what, open) in crate::ui_smoke_tests::state_dialog_cases() {
+        g.close_dialogs();
+        open(&mut g.app());
+        g.frames(3);
+        look(&g, &format!("state {what}"));
+    }
+    assert!(bad.is_empty(), "{} controls have no accessible name:\n{}", bad.len(), bad.into_iter().collect::<Vec<_>>().join("\n"));
+}
+
+/// A number field is named after its label, not after its unit, and a search box after its hint.
+#[test]
+fn fields_are_named_after_their_visible_labels() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    for p in ["art_library", "camera", "variable_text"] {
+        if !g.app().prefs.panel(p).visible {
+            g.run_command(&format!("panel.{p}"));
+        }
+    }
+    let named = |g: &Gui, role: &str, label: &str| !g.find_a11y(Some(role), label).is_empty();
+    for label in ["Speed", "Max power", "Min power", "Interval", "Passes"] {
+        assert!(named(&g, "SpinButton", label), "Cuts / Layers has a number field named {label}");
+    }
+    assert!(g.find_a11y(Some("SpinButton"), "mm/s").is_empty(), "no field is named after its unit");
+    assert!(named(&g, "TextInput", "Search art"));
+    for (panel, role, label) in [
+        ("console", "TextInput", "Console command"),
+        ("camera", "Slider", "Fade"),
+        ("camera", "SpinButton", "Exposure"),
+        ("variable_text", "SpinButton", "Start"),
+        ("shape_properties", "TextInput", "Name"),
+        ("library", "TextInput", "Search the library"),
+        ("library", "TextInput", "Library name"),
+    ] {
+        let area = g.app().prefs.panel(panel).area;
+        g.app().prefs.active_tab.insert(area, panel.to_string());
+        g.frames(3);
+        let have: Vec<_> = g.a11y().into_iter().filter(|n| n.role == role).map(|n| n.label.unwrap_or_default()).collect();
+        assert!(named(&g, role, label), "{panel} has a {role} named {label}; it has {have:?}");
+    }
+    g.run_command("window.preview");
+    assert!(named(&g, "Slider", "Time in the job"));
+    g.close_dialogs();
+    g.run_command("laser.print_and_cut");
+    assert!(named(&g, "SpinButton", "First target laser X") && named(&g, "SpinButton", "Second target design Y"));
+}
+
+// ----- widget IDs -----
+
+/// Everything a layout shows that could reuse a widget id: the frame itself, each dock's tabs
+/// with their right-click menus and overflow lists, and every ribbon tab.
+fn clashes_in_layout(g: &mut Gui, what: &str, out: &mut Vec<String>) {
+    let mut note = |g: &Gui, step: &str| {
+        for c in g.id_clashes_now() {
+            out.push(format!("{what}, {step}: {c}"));
+        }
+    };
+    g.frames(3);
+    note(g, "as shown");
+    let tabs: Vec<(String, egui::Rect)> = g.rects("panel:tab:");
+    for (name, r) in tabs {
+        g.click_pos(r.center());
+        note(g, &format!("{name} in front"));
+        g.right_click_pos(r.center());
+        note(g, &format!("menu of {name}"));
+        g.escape();
+    }
+    for (name, r) in g.rects("panel:overflow:") {
+        g.click_pos(r.center());
+        note(g, &format!("list of {name}"));
+        g.escape();
+    }
+    for (name, r) in g.rects("ribbon:tab:") {
+        g.click_pos(r.center());
+        note(g, &name);
+    }
+    for (name, r) in g.rects("") {
+        g.hover_pos(r.center());
+        note(g, &format!("pointer on {name}"));
+    }
+}
+
+/// egui paints a warning when two widgets in one frame share an id (a click or a drag can then go
+/// to the wrong one). None may show in the default layout, with every panel shown, with the
+/// panels moved to each dock, or at the smallest window.
+#[test]
+fn no_widget_id_is_used_twice_in_any_panel_arrangement() {
+    use crate::panels::{Area, PANELS};
+    let mut found = Vec::new();
+    for (w, h) in [(1600.0, 1000.0), (960.0, 600.0)] {
+        let mut g = Gui::new(w, h, 1.0);
+        g.allow_id_clashes();
+        g.sample_design();
+        clashes_in_layout(&mut g, &format!("default layout {w}x{h}"), &mut found);
+        for p in PANELS {
+            if !g.app().prefs.panel(p.id).visible {
+                g.run_command(&format!("panel.{}", p.id));
+            }
+        }
+        clashes_in_layout(&mut g, &format!("every panel shown {w}x{h}"), &mut found);
+        // Every panel in one dock, for each dock: the most tabs a dock can hold.
+        for area in Area::ALL {
+            for p in PANELS {
+                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true });
+            }
+            clashes_in_layout(&mut g, &format!("all panels in {area:?} {w}x{h}"), &mut found);
+        }
+        // The panels dealt round the docks, shifted one dock each time.
+        for shift in 0..Area::ALL.len() {
+            for (i, p) in PANELS.iter().enumerate() {
+                let area = Area::ALL[(i + shift) % Area::ALL.len()];
+                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true });
+            }
+            clashes_in_layout(&mut g, &format!("panels dealt round the docks ({shift}) {w}x{h}"), &mut found);
+        }
+        g.run_command("window.reset_layout");
+        clashes_in_layout(&mut g, &format!("after a layout reset {w}x{h}"), &mut found);
+    }
+    found.sort();
+    found.dedup();
+    assert!(found.is_empty(), "{} widget id clashes:\n{}", found.len(), found.join("\n"));
+}

@@ -152,7 +152,9 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             }
             ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(80.0);
             let mut tt = p.t;
-            if ui.add(egui::Slider::new(&mut tt, 0.0..=total.max(0.001)).show_value(false)).changed() {
+            let slider = ui.add(egui::Slider::new(&mut tt, 0.0..=total.max(0.001)).show_value(false));
+            crate::a11y::slider(ui, &slider, "Time in the job");
+            if slider.changed() {
                 p.t = tt;
                 p.playing = false;
             }

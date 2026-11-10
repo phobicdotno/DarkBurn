@@ -370,7 +370,8 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
 fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     ui.set_min_width(560.0);
-    ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &tr("hotkeys.search", "Search commands"));
+    let search = tr("hotkeys.search", "Search commands");
+    ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &search));
     ui.add_space(t.space_6);
     let clashes = keymap::conflicts(&app.prefs.hotkeys);
     for (key, ids) in &clashes {

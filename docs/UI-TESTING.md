@@ -13,7 +13,6 @@ Both are `#[cfg(test)]` modules of the `darkburn` binary, so there is nothing ex
 ```
 cargo test -p darkburn ui_smoke_tests::            # the whole UI suite, about 20 seconds
 cargo test -p darkburn ui_smoke_tests::user_story  # one test
-cargo test -p darkburn every_interactive_control -- --ignored   # known gaps (see BUGHUNT-NOTES)
 DARKBURN_BLESS=1 cargo test -p darkburn the_default_layout      # rewrite the golden picture
 ```
 
@@ -128,6 +127,8 @@ fn offset_shapes_dialog_opens_and_closes() {
 | `nothing_clips_at_*` | At 1280x720, 1920x1080, 2560x1440 and 3840x2160 pixels, at scale 1 and 2 (the window is never smaller than 960 x 600 points): no control outside the window, no text cut off or broken mid-word, no overlapping ribbon buttons, on every ribbon tab, with the default panels and with all of them |
 | `user_story_draw_set_up_preview_save_undo_and_reopen` | New project, draw a rectangle by dragging, set layer mode and speed, Preview, save G-code, undo and redo, save the project, reopen it |
 | `escape_*` (`ui_bug_tests.rs`) | One Escape closes every window a command or state opens, whatever tool is picked; menus and lists close before the window; windows close one at a time |
+| `every_interactive_control_has_an_accessible_name`, `every_control_in_every_window_has_an_accessible_name`, `fields_are_named_after_their_visible_labels` | Every field, slider, check box and button in every panel, ribbon tab and window has a name for screen readers, taken from its visible label. A bare `egui::TextEdit`, `DragValue` or `Slider` needs `a11y::text/number/slider` (or `ui_kit::named_control` round a kit field outside a row) |
+| `no_widget_id_is_used_twice_in_any_panel_arrangement` | No egui duplicate-ID warning in the default layout, with every panel shown, with all panels in each dock and dealt round the docks, with each tab's right-click menu and overflow list open, at 1600 x 1000 and 960 x 600 |
 | `the_harness_*`, `the_widget_registry_*`, `no_file_dialog_*`, `the_default_layout_matches_its_golden_picture` | The harness itself |
 
 Every test fails on a duplicate widget ID.
@@ -143,8 +144,8 @@ keep them few and the tolerance loose.
 
 ## Known limits
 
-- Accessibility names: about 19 text inputs and one slider have no accessible name
-  (`every_interactive_control_has_an_accessible_name`, ignored until fixed).
+- Accessibility names are checked for the standard egui widgets only. The hand-painted chrome
+  (ribbon buttons, tool column, panel tabs, status bar) is not in the accessibility tree at all.
 - The harness does not test native window behaviour: the title bar buttons, the resize border,
   drag and drop from the OS, and the file dialogs themselves.
 - Pointer position is exact; there is no hover delay or touch input.

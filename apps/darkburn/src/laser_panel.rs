@@ -619,6 +619,7 @@ fn console(ui: &mut Ui, app: &mut DarkBurn) {
                 .hint_text(if can_send { "Type a command" } else { "Console is for G-code machines" })
                 .desired_width(ui.available_width() - 60.0),
         );
+        crate::a11y::text(ui, &r, "Console command");
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             send = true;
             r.request_focus();

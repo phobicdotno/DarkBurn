@@ -317,6 +317,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             Some((rl, text)) if *rl == l => {
                 let mut buf = text.clone();
                 let edit = ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(Id::unique(("cuts_rename_edit", l))).font(font.clone()));
+                crate::a11y::text(ui, &edit, "Layer name");
                 if !edit.has_focus() && !edit.lost_focus() {
                     edit.request_focus();
                 }

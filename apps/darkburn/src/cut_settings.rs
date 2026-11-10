@@ -487,9 +487,15 @@ fn scan_angle_rows(ui: &mut Ui, c: &mut CutSetting) {
 fn common(ui: &mut Ui, c: &mut CutSetting, modes: &[Mode], layer: &Layer, output: &mut bool, air: &mut bool, name: &mut String, sub: usize) {
     let t = Tokens::get();
     ui_kit::section_heading(ui, "Layer");
-    ui_kit::row(ui, "Layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name)));
+    ui_kit::row(ui, "Layer name", |ui| {
+        let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name));
+        crate::a11y::text(ui, &r, "Layer name");
+    });
     if sub > 0 || layer.is_multi() {
-        ui_kit::row(ui, "Sub-layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name)));
+        ui_kit::row(ui, "Sub-layer name", |ui| {
+            let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name));
+            crate::a11y::text(ui, &r, "Sub-layer name");
+        });
         ui_kit::checkbox(ui, "Sub-layer on", &mut c.enabled);
     }
     let mode_opts: Vec<(Mode, &str)> = modes.iter().map(|m| (*m, m.label())).collect();

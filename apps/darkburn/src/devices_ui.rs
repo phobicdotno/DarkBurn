@@ -1019,7 +1019,7 @@ fn backups_body(ui: &mut Ui, app: &mut DarkBurn, family: Family) {
     ui.horizontal_wrapped(|ui| {
         ui.scope(|ui| {
             ui.set_max_width(ui.available_width().min(220.0));
-            ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name");
+            ui_kit::named_control(ui, "Backup name", |ui| ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name"));
         });
         if small(ui, "Back up now", "Keep the settings read from the laser with this device", have)
             && let Some(b) = app.machine.handle.backup_settings()

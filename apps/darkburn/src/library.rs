@@ -443,7 +443,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     ui.horizontal(|ui| {
         let mut name = st.lib.name.clone();
         ui.label(RichText::new(tr("library.name", "Library")).size(t.font_small).color(t.text_dim));
-        if ui_kit::field(ui, &mut name) {
+        if ui_kit::named_control(ui, "Library name", |ui| ui_kit::field(ui, &mut name)) {
             st.lib.name = name;
             st.touch();
         }
@@ -497,7 +497,8 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
         }
     });
     ui.add_space(t.space_6);
-    ui_kit::hint_field(ui, &mut st.filter, &tr("library.search", "Search the library"));
+    let search = tr("library.search", "Search the library");
+    ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut st.filter, &search));
     ui.add_space(t.space_6);
 
     // The grouped list.

@@ -38,6 +38,9 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             let inv = select::inverted(&e.doc, &e.selection);
             e.selection.set(inv);
         }
+        // With nothing selected there is nothing to copy: what was copied before stays, here and
+        // on the system clipboard.
+        "edit.copy" | "edit.cut" if ids.is_empty() => {}
         "edit.copy" => {
             e.clipboard.copy(&e.doc, &ids);
             app.clipboard_out = true;

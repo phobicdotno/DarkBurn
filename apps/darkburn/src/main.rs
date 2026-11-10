@@ -87,6 +87,8 @@ mod rd_import;
 mod render;
 mod ribbon;
 mod rotary_read;
+#[cfg(test)]
+mod ruida_tests;
 mod scan_offsets;
 mod settings;
 mod settings_wiring;

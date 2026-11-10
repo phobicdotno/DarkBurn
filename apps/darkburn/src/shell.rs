@@ -457,7 +457,11 @@ impl DarkBurn {
                     let Some(c) = commands::find(id) else {
                         continue;
                     };
-                    let label = crate::i18n::cmd_label(c);
+                    let mut label = crate::i18n::cmd_label(c);
+                    // Save machine file is named after the file the device takes [FILE-09].
+                    if id == "file.save_gcode" && crate::machine_job::machine_file_kind(self.machine.active()).rd {
+                        label = crate::machine_job::machine_file_kind(self.machine.active()).label.to_owned();
+                    }
                     let key = crate::keymap::key_for(c);
                     let mut item = MenuItem::new(c.id, &label, c.icon);
                     item.shortcut = &key;

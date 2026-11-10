@@ -165,10 +165,10 @@ impl DeviceType {
                 "Needs hardware capture. The Cubiio only takes G-code files over Wi-Fi through an undocumented web interface. Export G-code and load it with Cubiio's own app."
             }
             Self::Trocen => {
-                "Needs hardware capture. There is no public description of the Trocen / AWC USB or Ethernet protocol or of the .ud5 file. A capture from a real controller is needed first."
+                "Not supported yet. Needs hardware capture. There is no public description of the Trocen / AWC USB or Ethernet protocol or of the .ud5 file. A capture from a real controller is needed first."
             }
             Self::TopWisdom => {
-                "Needs hardware capture. There is no public description of the TopWisdom protocol or of the .out file. A capture from a real controller is needed first."
+                "Not supported yet. Needs hardware capture. There is no public description of the TopWisdom protocol or of the .out file. A capture from a real controller is needed first."
             }
             _ => return None,
         })
@@ -272,6 +272,8 @@ pub struct DspSettings {
     pub disable_start: bool,
     pub check_bounds_when_framing: bool,
     pub network_timeout_ms: u32,
+    /// The controller adds overscan to scan lines itself (RUIDA-12).
+    pub hardware_overscan: bool,
 }
 
 impl Default for DspSettings {
@@ -283,6 +285,7 @@ impl Default for DspSettings {
             disable_start: false,
             check_bounds_when_framing: true,
             network_timeout_ms: 3000,
+            hardware_overscan: false,
         }
     }
 }
@@ -568,7 +571,15 @@ impl Device {
             }
             (_, ConnectionKind::Tcp) => Ok(Link::Tcp { host: self.host.trim().to_owned(), port: self.tcp_port }),
             (_, ConnectionKind::Udp) => Ok(Link::Udp { ip: self.host.trim().to_owned() }),
-            (_, ConnectionKind::Usb) => Ok(Link::Usb { serial: (!self.usb_serial.is_empty()).then(|| self.usb_serial.clone()) }),
+            (_, ConnectionKind::Usb) => {
+                // The controller's FTDI chip shows up as a serial port: that port is the link.
+                let wanted = self.usb_serial.trim();
+                let port = pick_ftdi_port(ports, wanted, &self.state.excluded_ports);
+                if port.is_none() && !cfg!(feature = "usb") {
+                    return Err(crate::machine_api::NO_RUIDA_USB_PORT.to_owned());
+                }
+                Ok(Link::Usb { serial: (!wanted.is_empty()).then(|| wanted.to_owned()), port })
+            }
             (_, ConnectionKind::BoardUsb) => Ok(Link::GalvoUsb),
             (_, ConnectionKind::None) => Err("Choose how this device connects.".into()),
         }
@@ -605,6 +616,23 @@ pub fn pick_port(ports: &[PortInfo], remembered: &str, excluded: &[String]) -> O
         return Some(p.name.clone());
     }
     allowed.iter().find(|p| p.vid.is_some()).or_else(|| allowed.first()).map(|p| p.name.clone())
+}
+
+/// The serial port of a Ruida controller's USB chip (FTDI, 0403:6001) [RUIDA-02]. `wanted` is
+/// what the user typed in Device Settings: a port name (COM5) or the adapter's serial number;
+/// empty picks the first FTDI port that is not excluded. A typed port name is used even when the
+/// port list does not show it as FTDI (USB hubs and drivers do not always report the IDs).
+pub fn pick_ftdi_port(ports: &[PortInfo], wanted: &str, excluded: &[String]) -> Option<String> {
+    let allowed = |p: &&PortInfo| !excluded.iter().any(|e| e.eq_ignore_ascii_case(&p.name));
+    let is_ftdi = |p: &&PortInfo| p.vid == Some(darkburn_ruida::transport::FTDI_VID) && p.pid == Some(darkburn_ruida::transport::FTDI_PID);
+    if wanted.is_empty() {
+        return ports.iter().filter(allowed).find(is_ftdi).map(|p| p.name.clone());
+    }
+    ports
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(wanted))
+        .or_else(|| ports.iter().filter(is_ftdi).find(|p| p.serial_number.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(wanted))))
+        .map(|p| p.name.clone())
 }
 
 /// A laser Find My Laser thinks it can see. It is only a guess from the port list: nothing is
@@ -657,6 +685,15 @@ pub fn find_my_laser(ports: &[PortInfo]) -> Vec<Candidate> {
             }
         })
         .collect()
+}
+
+/// The Ruida boards DarkBurn lists, for the DSP page of Device Settings [RUIDA-14].
+pub fn known_boards_note() -> String {
+    let names: Vec<&str> = darkburn_ruida::settings::KNOWN_BOARDS.iter().map(|b| b.model).collect();
+    format!(
+        "Known boards: {}. Only some of them can be told apart by their card ID; any other Ruida board is used as a generic Ruida controller and Controller info shows its card ID.",
+        names.join(", ")
+    )
 }
 
 /// A Ruida controller on the network cannot be found without sending packets, so DarkBurn asks

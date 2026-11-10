@@ -303,10 +303,13 @@ fn connection_fields(ui: &mut Ui, d: &mut Device) {
             note(ui, RUIDA_DISCOVERY_NOTE);
         }
         ConnectionKind::Usb => {
-            ui_kit::row(ui, "Adapter serial", |ui| {
+            ui_kit::row(ui, "Port or adapter serial", |ui| {
                 ui_kit::hint_field(ui, &mut d.usb_serial, "first one found");
             });
-            note(ui, "Raw USB needs a build with USB support.");
+            note(
+                ui,
+                "The controller's USB chip (FTDI) shows up as a serial port, like COM5. Leave the field empty to use the first one found. The Fire button and continuous panel keys need the Ethernet connection.",
+            );
         }
         ConnectionKind::BoardUsb => {
             note(
@@ -651,11 +654,22 @@ fn dsp_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::checkbox(ui, "Add a number to the file name on every send", &mut s.filename_increment);
     ui_kit::checkbox(ui, "Hide Start (run from the controller)", &mut s.disable_start);
     ui_kit::checkbox(ui, "Check the bounds when framing", &mut s.check_bounds_when_framing);
+    ui_kit::checkbox(ui, "Hardware overscan (the controller adds it)", &mut s.hardware_overscan);
+    if s.hardware_overscan {
+        note(
+            ui,
+            "Fill and image layers that scan along X or Y are sent without overscan moves; the controller runs past the line ends by the distance set in its own settings. Scans at other angles keep DarkBurn's overscan.",
+        );
+    }
     ui_kit::row(ui, "Network timeout", |ui| {
         ui_kit::number_field(ui, &mut s.network_timeout_ms, 100..=60_000, 100.0, " ms");
     });
     connection_fields(ui, d);
-    note(ui, "Job start and end delays are set on the controller (Machine Settings).");
+    note(
+        ui,
+        "Job start and end delays are set on the controller's own panel. No public source says where the controller keeps them, so DarkBurn cannot read or change them yet.",
+    );
+    note(ui, &crate::devices::known_boards_note());
 }
 
 fn additional_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
@@ -1118,7 +1132,7 @@ fn controller_info_dialog(ctx: &Context, app: &mut DarkBurn) {
             row(ui, "Port", snap.port.clone());
             row(ui, "Firmware", if snap.firmware.is_empty() { "unknown".into() } else { snap.firmware.clone() });
             if let Some(i) = &snap.ruida.info {
-                row(ui, "Board", i.board.clone().unwrap_or_else(|| format!("unknown (card id 0x{:08X})", i.card_id)));
+                row(ui, "Board", darkburn_ruida::settings::board_label(i.card_id));
                 row(ui, "Total on time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_on_time_s))));
                 row(ui, "Total job time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_job_time_s))));
                 row(ui, "Laser on time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_laser_on_time_s))));

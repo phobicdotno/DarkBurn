@@ -5,17 +5,19 @@
 //! the controller's own frame (the caller does any origin or mirroring transform).
 //!
 //! Layout written here (following the public descriptions of RDWorks/MeerK40t output):
-//! header (`D8 12`, `E6 01`, `F0`, `F1 02`, `D8 00`, bounds, repeat), a per-layer table
+//! header (`D8 10` for machine coordinates, or `D8 11` / `D8 12` for a job measured from the
+//! user origin or from where the head is; then `E6 01`, `F0`, `F1 02`, `D8 00`, bounds, repeat), a per-layer table
 //! (`C9 04`, `C6 60`, `C6 31/32/41/42`, `CA 06`, `CA 41`, `E7 52/53/61/62`), `CA 22`, offsets,
-//! `EA 00`, then for each layer a settings block (`CA 02`, `CA 01 10`, `CA 01 12/13`, `C9 02`,
-//! `C6 01/02/21/22`, dot settings, `CA 03`) followed by motion, and `E7 00 CA 01 00 CA 01 30`.
+//! `EA 00`, then for each layer a settings block (`CA 02`, `CA 01 10`, `CA 01 12/13`, the
+//! hardware overscan mode `CA 01 01..05` if any, `C9 02`, `C6 01/02/21/22`, dot settings,
+//! `CA 03`) followed by motion, and `E7 00 CA 01 00 CA 01 30`.
 //! The trailer is `EB E7 00 E5 05 <sum> D7`.
 
 use std::collections::BTreeMap;
 
 use kurbo::Point;
 
-use crate::command::{Axis, Command, DelayKind, Laser, LayerFlag, RapidOption, parse_commands};
+use crate::command::{Axis, Command, DelayKind, Laser, LayerFlag, OverscanMode, RapidOption, parse_commands};
 use crate::encoding::{Power, REL_MAX, REL_MIN, bgr_to_rgb, mm_s_to_um_s, mm_to_um, ms_to_us, rgb_to_bgr, um_s_to_mm_s, um_to_mm, us_to_ms};
 use crate::error::{Result, RuidaError};
 use crate::swizzle::{Magic, Swizzler, detect_magic_histogram};
@@ -44,6 +46,8 @@ pub struct LayerSettings {
     pub frequency_hz: Option<u32>,
     pub air_assist: bool,
     pub dot_mode: Option<DotMode>,
+    /// Hardware overscan for a scanning layer (the job then holds no overscan moves).
+    pub overscan: OverscanMode,
 }
 
 impl Default for LayerSettings {
@@ -57,6 +61,7 @@ impl Default for LayerSettings {
             frequency_hz: None,
             air_assist: true,
             dot_mode: None,
+            overscan: OverscanMode::Off,
         }
     }
 }
@@ -81,10 +86,46 @@ pub struct RdLayer {
     pub ops: Vec<RdOp>,
 }
 
+/// What a job's coordinates are measured from: `D8 10`, `D8 11` or `D8 12` at the start of the
+/// file. MeerK40t and ruida-pa (both MIT) agree on the three bytes; ruida-pa marks them as seen
+/// on an RDC6442S.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum RefPoint {
+    /// `D8 10`: machine zero, so the coordinates are absolute bed positions.
+    #[default]
+    MachineZero,
+    /// `D8 11`: the origin set with the panel's Origin key.
+    UserOrigin,
+    /// `D8 12`: where the head is when the job starts.
+    CurrentPosition,
+}
+
+impl RefPoint {
+    /// The byte after `D8`.
+    pub fn byte(self) -> u8 {
+        match self {
+            RefPoint::MachineZero => 0x10,
+            RefPoint::UserOrigin => 0x11,
+            RefPoint::CurrentPosition => 0x12,
+        }
+    }
+
+    pub fn from_byte(b: u8) -> Option<RefPoint> {
+        match b {
+            0x10 => Some(RefPoint::MachineZero),
+            0x11 => Some(RefPoint::UserOrigin),
+            0x12 => Some(RefPoint::CurrentPosition),
+            _ => None,
+        }
+    }
+}
+
 /// A whole job.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct RdJob {
     pub layers: Vec<RdLayer>,
+    /// What the coordinates are measured from.
+    pub reference: RefPoint,
 }
 
 fn q_mm(v: f64) -> f64 {
@@ -104,6 +145,7 @@ impl RdJob {
     /// The job as it reads back after a write: every value rounded to wire precision.
     pub fn quantized(&self) -> RdJob {
         RdJob {
+            reference: self.reference,
             layers: self
                 .layers
                 .iter()
@@ -119,6 +161,7 @@ impl RdJob {
                             frequency_hz: s.frequency_hz,
                             air_assist: s.air_assist,
                             dot_mode: s.dot_mode.map(|d| DotMode { dot_time_ms: q_mm(d.dot_time_ms), spacing_mm: q_mm(d.spacing_mm) }),
+                            overscan: s.overscan,
                         },
                         ops: l
                             .ops
@@ -170,7 +213,7 @@ impl RdJob {
         let mut c = Vec::new();
         let (min_x, min_y, max_x, max_y) = Self::bounds_um(self.layers.iter().flat_map(|l| l.ops.iter().copied()));
         c.extend([
-            RefPointMode(0x12),
+            RefPointMode(self.reference.byte()),
             SetAbsolute,
             RefPointSet,
             EnableBlockCutting(0),
@@ -220,6 +263,9 @@ impl RdJob {
             c.push(LayerNumber(s.index));
             c.push(Flag(LayerFlag::LaserDevice(0)));
             c.push(Flag(LayerFlag::AirAssist(s.air_assist)));
+            if s.overscan != OverscanMode::Off {
+                c.push(Flag(LayerFlag::overscan(s.overscan)));
+            }
             c.push(Speed(mm_s_to_um_s(s.speed_mm_s)));
             for (i, laser) in [Laser::L1, Laser::L2].into_iter().enumerate() {
                 c.push(MinPower { laser, power: Power::from_percent(s.min_power[i]) });
@@ -350,6 +396,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
     let mut dot_time: Option<u32> = None;
     let mut dot_spacing: Option<u32> = None;
     let mut saw_eof = false;
+    let mut reference = None;
 
     fn entry(t: &mut BTreeMap<u8, LayerSettings>, part: u8) -> &mut LayerSettings {
         t.entry(part).or_insert_with(|| LayerSettings { index: part, ..Default::default() })
@@ -357,6 +404,8 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
 
     for cmd in cmds {
         match cmd {
+            // The first reference point command is the file's; later ones are not expected.
+            RefPointMode(m) if reference.is_none() && layers.is_empty() && current.is_none() => reference = RefPoint::from_byte(*m),
             SpeedPart { part, speed } => entry(&mut table, *part).speed_mm_s = um_s_to_mm_s(*speed),
             FrequencyPart { part, hz, .. } => entry(&mut table, *part).frequency_hz = Some(*hz),
             MinPowerPart { laser, part, power } if matches!(laser, Laser::L1 | Laser::L2) => {
@@ -386,6 +435,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
                     MinPower { laser: laser @ (Laser::L1 | Laser::L2), power } => s.min_power[laser.number() as usize - 1] = power.percent(),
                     MaxPower { laser: laser @ (Laser::L1 | Laser::L2), power } => s.max_power[laser.number() as usize - 1] = power.percent(),
                     Flag(LayerFlag::AirAssist(on)) => s.air_assist = *on,
+                    Flag(f @ LayerFlag::WorkMode(_)) => s.overscan = f.overscan_mode().unwrap_or_default(),
                     Delay { kind: DelayKind::AddDelay, us } => dot_time = Some(*us),
                     Delay { kind: DelayKind::LaserInterval, us } => dot_spacing = Some(*us),
                     LaserTubeStart(_) => {
@@ -424,7 +474,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
     if !saw_eof && layers.is_empty() {
         return std::result::Result::Err(RuidaError::Decode("no layers and no end-of-file marker".into()));
     }
-    Ok(RdJob { layers })
+    Ok(RdJob { layers, reference: reference.unwrap_or_default() })
 }
 
 fn body_motion(c: &Command, l: &mut RdLayer, pos: &mut (i32, i32), speed: &mut Option<f64>, power: &mut Option<f64>) {
@@ -464,6 +514,7 @@ mod tests {
 
     pub(crate) fn sample_job() -> RdJob {
         RdJob {
+            reference: RefPoint::MachineZero,
             layers: vec![
                 RdLayer {
                     settings: LayerSettings {
@@ -475,6 +526,7 @@ mod tests {
                         frequency_hz: Some(20_000),
                         air_assist: true,
                         dot_mode: None,
+                        overscan: OverscanMode::HorizontalBidirectional,
                     },
                     ops: vec![
                         RdOp::Move(Point::new(10.0, 10.0)),
@@ -495,6 +547,7 @@ mod tests {
                         frequency_hz: None,
                         air_assist: false,
                         dot_mode: Some(DotMode { dot_time_ms: 0.5, spacing_mm: 0.2 }),
+                        overscan: OverscanMode::Off,
                     },
                     ops: vec![
                         RdOp::Z(-2.5),
@@ -539,6 +592,33 @@ mod tests {
         let bytes = crate::command::encode_commands(&cmds[..n - 2]).unwrap();
         let s: u32 = bytes.iter().map(|&b| b as u32).sum();
         assert_eq!(sum, s + 0xD7);
+    }
+
+    #[test]
+    fn reference_point_is_the_first_command_and_reads_back() {
+        for (reference, byte) in [(RefPoint::MachineZero, 0x10), (RefPoint::UserOrigin, 0x11), (RefPoint::CurrentPosition, 0x12)] {
+            let job = RdJob { reference, ..sample_job() };
+            let bytes = job.to_logical().unwrap();
+            assert_eq!(&bytes[..2], &[0xD8, byte]);
+            assert_eq!(RdJob::from_logical(&bytes).unwrap().reference, reference);
+        }
+        assert_eq!(RdJob::default().reference, RefPoint::MachineZero, "absolute bed coordinates unless asked otherwise");
+    }
+
+    #[test]
+    fn hardware_overscan_is_one_flag_in_the_layer_block() {
+        let cmds = sample_job().to_commands().unwrap();
+        let modes: Vec<&Command> = cmds.iter().filter(|c| matches!(c, Command::Flag(LayerFlag::WorkMode(_)))).collect();
+        assert_eq!(modes, [&Command::Flag(LayerFlag::WorkMode(1))], "only the first layer asks for it");
+        let at = cmds.iter().position(|c| matches!(c, Command::Flag(LayerFlag::WorkMode(_)))).unwrap();
+        let first_move = cmds.iter().position(Command::is_motion).unwrap();
+        assert!(at < first_move, "the mode is set before the layer moves");
+        for mode in OverscanMode::ALL {
+            let mut job = sample_job();
+            job.layers[1].settings.overscan = mode;
+            let back = RdJob::from_logical(&job.to_logical().unwrap()).unwrap();
+            assert_eq!(back.layers[1].settings.overscan, mode);
+        }
     }
 
     #[test]

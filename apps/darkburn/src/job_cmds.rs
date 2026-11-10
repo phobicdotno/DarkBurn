@@ -159,7 +159,7 @@ pub fn works(id: &str) -> bool {
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "window.preview" => &["WIN-02", "PREV-01", "PREV-02", "PREV-03", "PREV-04", "PREV-05", "PREV-06", "PREV-07", "PREV-10"],
-        "file.save_gcode" | "job.save_gcode" => &["FILE-09", "EXP-06", "LASER-06"],
+        "file.save_gcode" | "job.save_gcode" => &["FILE-09", "EXP-06", "EXP-07", "LASER-06", "RUIDA-13"],
         "job.optimization_settings" | "job.set_optimization" | "job.optimization_defaults" => &["LASER-16", "PLAN-01"],
         "job.set_origin" => &["LASER-11", "LASER-12", "LASER-13", "LASER-14", "LASER-15", "ORIG-01", "ORIG-02", "ORIG-04", "ORIG-05"],
         "job.set_user_origin" | "job.clear_user_origin" => &["ORIG-03"],
@@ -423,6 +423,37 @@ pub fn write_gcode(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op
     Ok(text.lines().count())
 }
 
+/// What Save machine file wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedFile {
+    /// "G-code" or "RD file".
+    pub what: &'static str,
+    /// Lines of G-code; 0 for a binary file.
+    pub lines: usize,
+    pub bytes: usize,
+}
+
+/// Save the machine file the active device takes (FILE-09, LASER-06): G-code for G-code
+/// machines, an `.rd` job for Ruida controllers. Trocen and TopWisdom files are refused with
+/// the reason.
+pub fn write_machine_file(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) -> Result<SavedFile, String> {
+    if let Some(why) = crate::machine_job::machine_file_unsupported(app.machine.active()) {
+        return Err(why);
+    }
+    if !crate::machine_job::machine_file_kind(app.machine.active()).rd {
+        let lines = write_gcode(app, job, path, from_op)?;
+        let bytes = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        return Ok(SavedFile { what: "G-code", lines, bytes });
+    }
+    let data = crate::machine_job::rd_file_bytes(app, job, from_op)?;
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, &data).map_err(|e| format!("{}: {e}", path.display()))?;
+    record_last_job(app, job);
+    Ok(SavedFile { what: "RD file", lines: 0, bytes: data.len() })
+}
+
 /// Handle a finished build in the window flow.
 pub fn finish(app: &mut DarkBurn, job: Arc<BuiltJob>, then: After) {
     app.job.last_job = Some(job.clone());
@@ -459,15 +490,19 @@ fn run_on_machine(app: &mut DarkBurn, job: Arc<BuiltJob>, action: crate::machine
 }
 
 fn save_and_report(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) {
-    match write_gcode(app, job, path, from_op) {
-        Ok(lines) => {
-            let mut text = format!("Wrote {lines} lines to {}.", path.display());
+    match write_machine_file(app, job, path, from_op) {
+        Ok(saved) => {
+            let mut text = if saved.lines > 0 {
+                format!("Wrote {} lines to {}.", saved.lines, path.display())
+            } else {
+                format!("Wrote {} bytes to {}.", saved.bytes, path.display())
+            };
             for w in &job.warnings {
                 text.push_str(&format!("\n{w}"));
             }
-            app.job.message = Some(Message { title: "G-code saved".into(), text });
+            app.job.message = Some(Message { title: format!("{} saved", saved.what), text });
         }
-        Err(e) => app.job.message = Some(Message { title: "Could not save G-code".into(), text: e }),
+        Err(e) => app.job.message = Some(Message { title: "Could not save the machine file".into(), text: e }),
     }
 }
 
@@ -491,13 +526,20 @@ pub fn run(app: &mut DarkBurn, _ctx: &egui::Context, id: &str) -> bool {
     match id {
         "window.preview" => open_preview(app),
         "file.save_gcode" => {
+            // The file follows the device: G-code, or an .rd job for a Ruida controller.
+            if let Some(why) = crate::machine_job::machine_file_unsupported(app.machine.active()) {
+                app.job.message = Some(Message { title: "Could not save the machine file".into(), text: why });
+                return true;
+            }
+            let kind = crate::machine_job::machine_file_kind(app.machine.active());
+            let ext = kind.extensions.first().copied().unwrap_or("gc");
             let name = app
                 .project_path
                 .as_deref()
                 .and_then(Path::file_stem)
-                .map(|n| format!("{}.gc", n.to_string_lossy()))
-                .unwrap_or_else(|| "job.gc".into());
-            let Some(path) = rfd::FileDialog::new().add_filter("G-code", job_build::GCODE_EXTENSIONS).set_file_name(name).save_file() else {
+                .map(|n| format!("{}.{ext}", n.to_string_lossy()))
+                .unwrap_or_else(|| format!("job.{ext}"));
+            let Some(path) = rfd::FileDialog::new().add_filter(kind.filter, kind.extensions).set_file_name(name).save_file() else {
                 return true;
             };
             let from_op = app.job.start_op;
@@ -756,8 +798,15 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
             {
                 return Err(format!("op_index {op} is past the end of the job ({} operations)", job.toolpath.ops.len()));
             }
-            let lines = write_gcode(app, &job, &path, from_op)?;
-            Ok(json!({ "path": path.display().to_string(), "lines": lines, "from_op": from_op, "warnings": job.warnings }))
+            let saved = write_machine_file(app, &job, &path, from_op)?;
+            Ok(json!({
+                "path": path.display().to_string(),
+                "format": if saved.lines > 0 { "gcode" } else { "rd" },
+                "lines": saved.lines,
+                "bytes": saved.bytes,
+                "from_op": from_op,
+                "warnings": job.warnings,
+            }))
         })(),
         "job.optimization_settings" | "job.gcode_settings" => {
             app.job.optimization_open |= id == "job.optimization_settings";

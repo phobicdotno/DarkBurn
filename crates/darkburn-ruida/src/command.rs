@@ -206,12 +206,64 @@ impl DelayKind {
     }
 }
 
+/// Hardware overscan of a scanning layer, `CA 01 00..05`: the controller runs past both ends
+/// of every scan line by itself. Names follow ruida-pa (MIT), which marks 00 to 04 as seen on an
+/// RDC6442S; MeerK40t (MIT) calls the same bytes work modes 1 to 6 and uses 03 for a raster with
+/// an X step and 01 for one with a Y step, so which axis each mode means is UNCERTAIN until a
+/// controller is checked. The overscan distance is not in the job; the controller has it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum OverscanMode {
+    /// `CA 01 00`: no hardware overscan (also written at the end of every layer).
+    #[default]
+    Off,
+    /// `CA 01 01`: lines along X, both directions.
+    HorizontalBidirectional,
+    /// `CA 01 02`: lines along X, one direction.
+    HorizontalUnidirectional,
+    /// `CA 01 03`: lines along Y, both directions.
+    VerticalBidirectional,
+    /// `CA 01 04`: lines along Y, one direction.
+    VerticalUnidirectional,
+    /// `CA 01 05`: diagonal. Named by ruida-pa, not seen on a controller.
+    Diagonal,
+}
+
+impl OverscanMode {
+    pub const ALL: [OverscanMode; 6] = [
+        OverscanMode::Off,
+        OverscanMode::HorizontalBidirectional,
+        OverscanMode::HorizontalUnidirectional,
+        OverscanMode::VerticalBidirectional,
+        OverscanMode::VerticalUnidirectional,
+        OverscanMode::Diagonal,
+    ];
+
+    /// The byte after `CA 01`.
+    pub fn byte(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_byte(b: u8) -> Option<OverscanMode> {
+        Self::ALL.get(b as usize).copied()
+    }
+
+    /// The mode for scan lines along X (`horizontal`) or Y, in both directions or one.
+    pub fn for_scan(horizontal: bool, bidirectional: bool) -> OverscanMode {
+        match (horizontal, bidirectional) {
+            (true, true) => OverscanMode::HorizontalBidirectional,
+            (true, false) => OverscanMode::HorizontalUnidirectional,
+            (false, true) => OverscanMode::VerticalBidirectional,
+            (false, false) => OverscanMode::VerticalUnidirectional,
+        }
+    }
+}
+
 /// `CA 01 xx` layer flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LayerFlag {
-    /// `CA 01 00`.
+    /// `CA 01 00`: end of a layer, which is also "hardware overscan off".
     LayerEnd,
-    /// `CA 01 01..05` and `CA 01 55`.
+    /// `CA 01 01..05` (hardware overscan modes, see [`OverscanMode`]) and `CA 01 55`.
     WorkMode(u8),
     /// `CA 01 10` / `11`: laser device 0 or 1.
     LaserDevice(u8),
@@ -225,6 +277,23 @@ pub enum LayerFlag {
 }
 
 impl LayerFlag {
+    /// The flag that turns hardware overscan on in `mode` (`Off` is the layer-end flag).
+    pub fn overscan(mode: OverscanMode) -> LayerFlag {
+        match mode {
+            OverscanMode::Off => LayerFlag::LayerEnd,
+            m => LayerFlag::WorkMode(m.byte()),
+        }
+    }
+
+    /// The hardware overscan mode this flag sets, if it is one.
+    pub fn overscan_mode(self) -> Option<OverscanMode> {
+        match self {
+            LayerFlag::LayerEnd => Some(OverscanMode::Off),
+            LayerFlag::WorkMode(b) => OverscanMode::from_byte(b),
+            _ => None,
+        }
+    }
+
     fn byte(self) -> u8 {
         match self {
             LayerFlag::LayerEnd => 0x00,
@@ -1434,6 +1503,19 @@ mod tests {
         assert_eq!(Command::GetSetting { addr: 0x2FE }.encode().unwrap(), [0xDA, 0x00, 0x05, 0x7E]);
         assert_eq!(Command::GetSetting { addr: 0x26 }.encode().unwrap(), [0xDA, 0x00, 0x00, 0x26]);
         assert_eq!(Command::Flag(LayerFlag::AirAssist(true)).encode().unwrap(), [0xCA, 0x01, 0x13]);
+        // Hardware overscan modes are CA 01 00..05.
+        for (i, m) in OverscanMode::ALL.into_iter().enumerate() {
+            let flag = LayerFlag::overscan(m);
+            assert_eq!(Command::Flag(flag).encode().unwrap(), [0xCA, 0x01, i as u8]);
+            assert_eq!(Command::decode(&[0xCA, 0x01, i as u8]), Command::Flag(flag));
+            assert_eq!(flag.overscan_mode(), Some(m));
+        }
+        assert_eq!(LayerFlag::WorkMode(0x55).overscan_mode(), None);
+        assert_eq!(LayerFlag::AirAssist(true).overscan_mode(), None);
+        assert_eq!(OverscanMode::for_scan(true, true).byte(), 1);
+        assert_eq!(OverscanMode::for_scan(true, false).byte(), 2);
+        assert_eq!(OverscanMode::for_scan(false, true).byte(), 3);
+        assert_eq!(OverscanMode::for_scan(false, false).byte(), 4);
         assert_eq!(Command::MinPower { laser: Laser::L2, power: Power::FULL }.encode().unwrap(), [0xC6, 0x21, 0x7F, 0x7F]);
         assert_eq!(Command::KeyDown(JogKey::XRight).encode().unwrap(), [0xD8, 0x21]);
         assert_eq!(Command::KeyUp(JogKey::UBackward).encode().unwrap(), [0xD8, 0x37]);

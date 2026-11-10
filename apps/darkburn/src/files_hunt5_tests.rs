@@ -66,3 +66,18 @@ fn text_opened_from_a_lightburn_file_stays_in_place_when_the_job_is_built() {
     let built = crate::text_render::prepare_for_output(&b.editor.doc).bbox().unwrap();
     assert!(near(built, before, 0.05), "as burned: {built:?} vs {before:?}");
 }
+
+/// A Fill+Line layer comes back as Fill+Line from a LightBurn file the app wrote itself.
+#[test]
+fn a_lightburn_file_keeps_a_fill_and_line_layer() {
+    use darkburn_core::layer::Mode;
+    let dir = TempDir::new("lbrnmode");
+    let mut a = app();
+    run(&mut a, "shape.add_rect", json!({ "x": 20, "y": 30, "width": 40, "height": 20, "layer": 1 })).unwrap();
+    a.editor.doc.layer_mut(1).main_mut().mode = Mode::FillLine;
+    let file = dir.file("layer.lbrn2");
+    run(&mut a, "project.export", json!({ "path": file })).unwrap();
+    let mut b = app();
+    run(&mut b, "project.open", json!({ "path": file })).unwrap();
+    assert_eq!(b.editor.doc.layer(1).main().mode, Mode::FillLine, "Fill+Line stays Fill+Line");
+}

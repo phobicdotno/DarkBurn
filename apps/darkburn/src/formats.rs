@@ -892,7 +892,8 @@ pub fn doc_items(doc: &Document, ids: Option<&[ShapeId]>, text_as_paths: bool) -
 fn mode_name(m: Mode) -> &'static str {
     match m {
         Mode::Line => "Cut",
-        Mode::Fill | Mode::FillLine => "Scan",
+        Mode::Fill => "Scan",
+        Mode::FillLine => "Scan+Cut",
         Mode::Image => "Image",
         Mode::OffsetFill => "Offset",
     }

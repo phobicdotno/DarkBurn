@@ -78,9 +78,12 @@ enum UnitKind {
         scales: Vec<f64>,
         reversible: bool,
     },
+    /// `levels`: the rings of the fill, level by level ([`fill::offset_levels`]). They are
+    /// worked out once here: planning and every pass burn the same rings.
     Offset {
         polys: Vec<Vec<Point>>,
         scales: Vec<f64>,
+        levels: Vec<Vec<Vec<Point>>>,
     },
     Image {
         image: usize,
@@ -446,7 +449,9 @@ fn fill_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], sta
         let group = layer.shapes[shape_of[c[0]]].group;
         let priority = c.iter().map(|&i| layer.shapes[shape_of[i]].priority).min().unwrap_or(0);
         let kind = if b.mode == CutMode::OffsetFill {
-            UnitKind::Offset { polys: cpolys, scales }
+            let refs: Vec<&[Point]> = cpolys.iter().map(|p| p.as_slice()).collect();
+            let levels = fill::offset_levels(&refs, b.settings.fill.interval.max(1e-3));
+            UnitKind::Offset { polys: cpolys, scales, levels }
         } else {
             UnitKind::Fill { polys: cpolys, scales, reversible: b.settings.fill.bidirectional }
         };
@@ -539,13 +544,12 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                 fill::emit_rows(&ordered, &e, out);
             }
         }
-        UnitKind::Offset { polys, scales } => {
-            let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
+        UnitKind::Offset { polys, scales, levels } => {
             let interval = f.interval.max(1e-3);
             // Every ring with its level and bounds; `None` once it is burned.
             let mut rings: Vec<Option<(usize, Vec<Point>, Rect)>> = Vec::new();
             let mut by_level: Vec<Vec<usize>> = Vec::new();
-            for (level, level_rings) in fill::offset_levels(&refs, interval).into_iter().enumerate() {
+            for (level, level_rings) in levels.iter().cloned().enumerate() {
                 by_level.push((rings.len()..rings.len() + level_rings.len()).collect());
                 rings.extend(level_rings.into_iter().map(|r| {
                     let bb = geom::bbox(&r);

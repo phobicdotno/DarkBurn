@@ -9,3 +9,4 @@ Fix: dot mode with overcut no longer fires the first dots twice
 Fix: the frame and the job origin no longer count shapes that are not burned
 Fix: fine pictures (300 DPI and up) keep the exact size of their dots in G-code
 Fix: a hole on its own layer is treated as a hole for kerf offset, lead-in side and tabs
+Fix: offset fill of round shapes is worked out several times faster

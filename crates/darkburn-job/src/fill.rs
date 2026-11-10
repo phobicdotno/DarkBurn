@@ -328,10 +328,9 @@ pub fn offset_levels(polys: &[&[Point]], interval: f64) -> Vec<Vec<Vec<Point>>> 
         path.close_path();
     }
     let tol = (interval / 10.0).clamp(0.002, 0.02);
-    let mut levels = Vec::new();
-    let mut count = 0usize;
-    let mut d = interval / 2.0;
-    while count < 100_000 {
+    // The rings `d` inside the edge. Every level is offset from the drawn outline, so one level
+    // does not depend on another.
+    let level = |d: f64| -> Vec<Vec<Point>> {
         let opts = OffsetOptions {
             distance: d,
             side: OffsetSide::Inward,
@@ -340,21 +339,62 @@ pub fn offset_levels(polys: &[&[Point]], interval: f64) -> Vec<Vec<Vec<Point>>> 
             tol,
             ..Default::default()
         };
-        let rings: Vec<Vec<Point>> = offset(std::slice::from_ref(&path), &opts)
+        offset(std::slice::from_ref(&path), &opts)
             .inward
             .iter()
             .flat_map(|p| geom::flatten(p, tol))
             .filter(|p| p.closed && p.pts.len() >= 3 && geom::signed_area(&p.pts).abs() > 1e-9)
             .map(|p| p.pts)
-            .collect();
-        if rings.is_empty() {
-            break;
+            .collect()
+    };
+    let mut levels: Vec<Vec<Vec<Point>>> = Vec::new();
+    let mut count = 0usize;
+    // Takes the next level; false when the fill is complete.
+    let mut take = |rings: Vec<Vec<Point>>, levels: &mut Vec<Vec<Vec<Point>>>| {
+        if count >= 100_000 || rings.is_empty() {
+            return false;
         }
         count += rings.len();
         levels.push(rings);
-        d += interval;
+        true
+    };
+    // A level of a shape with many corners (a circle, lettering) takes milliseconds, and a fine
+    // fill has hundreds of them: those are worked out side by side, a batch at a time, and
+    // taken in order, which gives the same rings as one after the other. Quick levels (a
+    // rectangle) are not worth a thread.
+    let mut d = interval / 2.0;
+    let started = std::time::Instant::now();
+    if !take(level(d), &mut levels) {
+        return levels;
     }
-    levels
+    let threads = if started.elapsed() > std::time::Duration::from_micros(300) {
+        std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+    } else {
+        1
+    };
+    loop {
+        // The depths of the next levels, each one interval further in than the one before.
+        let depths: Vec<f64> = (0..if threads > 1 { threads * 4 } else { 1 })
+            .map(|_| {
+                d += interval;
+                d
+            })
+            .collect();
+        let batch: Vec<Vec<Vec<Point>>> = if threads > 1 {
+            std::thread::scope(|scope| {
+                let level = &level;
+                let handles: Vec<_> = depths.chunks(4).map(|c| scope.spawn(move || c.iter().map(|d| level(*d)).collect::<Vec<_>>())).collect();
+                handles.into_iter().flat_map(|h| h.join().expect("an offset level panicked")).collect()
+            })
+        } else {
+            vec![level(depths[0])]
+        };
+        for rings in batch {
+            if !take(rings, &mut levels) {
+                return levels;
+            }
+        }
+    }
 }
 
 /// The rings of one shape for offset fill, outermost first (see [`offset_levels`]).
@@ -368,6 +408,55 @@ mod tests {
 
     fn square(x: f64, y: f64, s: f64) -> Vec<Point> {
         vec![Point::new(x, y), Point::new(x + s, y), Point::new(x + s, y + s), Point::new(x, y + s)]
+    }
+
+    /// Levels worked out side by side are the levels worked out one after the other.
+    #[test]
+    fn offset_levels_in_batches_are_the_levels_one_by_one() {
+        use darkburn_geom::offset::{Join, OffsetOptions, OffsetSide, offset};
+        let one_by_one = |polys: &[&[Point]], interval: f64| -> Vec<Vec<Vec<Point>>> {
+            let mut path = kurbo::BezPath::new();
+            for poly in polys {
+                path.move_to(poly[0]);
+                poly[1..].iter().for_each(|p| path.line_to(*p));
+                path.close_path();
+            }
+            let tol = (interval / 10.0).clamp(0.002, 0.02);
+            let mut levels = Vec::new();
+            let mut d = interval / 2.0;
+            loop {
+                let opts = OffsetOptions {
+                    distance: d,
+                    side: OffsetSide::Inward,
+                    join: Join::Round,
+                    fill_rule: darkburn_geom::FillRule::EvenOdd,
+                    tol,
+                    ..Default::default()
+                };
+                let rings: Vec<Vec<Point>> = offset(std::slice::from_ref(&path), &opts)
+                    .inward
+                    .iter()
+                    .flat_map(|p| geom::flatten(p, tol))
+                    .filter(|p| p.closed && p.pts.len() >= 3 && geom::signed_area(&p.pts).abs() > 1e-9)
+                    .map(|p| p.pts)
+                    .collect();
+                if rings.is_empty() {
+                    return levels;
+                }
+                levels.push(rings);
+                d += interval;
+            }
+        };
+        // A round shape (slow levels: the batches) with a hole, and a square (quick levels).
+        let circle = |r: f64| -> Vec<Point> {
+            (0..120).map(|i| (i as f64 * std::f64::consts::TAU / 120.0).sin_cos()).map(|(s, c)| Point::new(50.0 + r * c, 50.0 + r * s)).collect()
+        };
+        let (outer, hole, sq) = (circle(40.0), circle(11.3), square(0.0, 0.0, 20.0));
+        for (polys, interval) in [(vec![outer.as_slice(), hole.as_slice()], 0.6), (vec![outer.as_slice()], 0.9), (vec![sq.as_slice()], 0.3)] {
+            let got = offset_levels(&polys, interval);
+            assert!(got.len() > 20, "{}", got.len());
+            assert_eq!(got, one_by_one(&polys, interval), "{} shapes at {interval}", polys.len());
+        }
     }
 
     #[test]

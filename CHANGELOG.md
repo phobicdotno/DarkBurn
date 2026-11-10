@@ -1,5 +1,231 @@
 # Changelog
 
+## v0.0.248 (build 6)
+- The ribbon now shrinks to icons and a » menu on narrow windows
+- Panel tabs that do not fit move behind a » menu
+- Cuts / Layers columns are readable at the default panel width
+- Settings has pages for general, display, editing, work area, files, text, devices and shared defaults
+- Lengths in inches or millimetres and speeds in mm/s or mm/min apply everywhere
+- Snapping, click tolerance, nudge distances, curve quality, antialiasing, interface size and icon size are settings
+- Edit Hotkeys: change any shortcut, see clashes, import and export hotkey files
+- F1 explains the panel or dialog you are on
+- Material library: save, load, assign, link and create entries from a layer
+- Art Library: several libraries, folders, thumbnails with hover preview, search and drag-in
+- Norwegian language, switching right away from the Language menu
+- Help menu: documentation link, support data bundle and debug log
+- Export, import and restore preferences, and a shared defaults file for workshops
+- Laser keys work from the keyboard: Alt+S start, Alt+R frame, Alt+Shift+R outline frame, Alt+Shift+S send, Pause and Ctrl+Pause
+- Ctrl+Alt+arrow keys jog the laser head
+- Shortcuts no longer fire when an extra Alt is held (Alt+L used to align left)
+- Default layers can be made the default for this laser or all lasers, loaded and reset from the layer list menu
+- New projects start with the laser's default layers
+- Material test grids now show the units next to the numbers, and Frame frames the test itself
+- Rotary setup can read pulses per rotation and diameter from a Ruida controller
+- Print and Cut targets can take the laser head position
+- Escape closes the Preview, the notes and the camera and rotary windows
+- Escape closes an open window first, even with the node or measure tool picked
+- Screen readers now say what each field, slider and search box is for
+- Side and bottom panels keep the size you drag them to
+- Panels no longer shrink by themselves or get squeezed away in a small window
+- Machine Settings no longer grows wider than the window when a laser is connected
+- Macro buttons in the Console move to the next row instead of breaking their names
+- Tabs you place by hand now leave gaps in the cut
+- Choose where a shape starts cutting and which way it goes; the choice is saved with the project
+- Delete, Backspace and Ctrl+D work while editing nodes
+- Remove rounded corners also works on drawn shapes with curved corners
+- Docking follows the real outline of shapes, not just their boxes
+- Counting text now counts up in real arrays too
+- Comma and period turn the selection 1 degree, with Ctrl 5 degrees and with Alt 10 degrees
+- Open Ruida .rd files and get the cut paths on their own layers
+- SVG clip paths now also cut lines and curves
+- Position Laser tool: click the canvas to move the laser head there
+- Move the selection to the laser, or the laser to one of nine points of the selection
+- Move Selection pop-up on the Arrange tab
+- Toolbars can be shown, hidden and put in a different order in Settings
+- Offset shapes inward, outward or both, with round, bevel or sharp corners and a live preview
+- Weld, union, difference and intersection of shapes
+- Boolean assistant with a preview and a reset button
+- Cut shapes into pieces where they overlap
+- Resize slots in a selection, with the slots highlighted in colours
+- Select all shapes smaller than the selected one
+- Warp the selection with 4 points or deform it with 16
+- Round Corners tool with a radius field, negative for inward notches
+- Start Points tool to choose where each cut begins and which way it runs
+- Convert rectangles, ellipses, polygons and text to paths
+- Close paths, also with a tolerance
+- Auto-join open lines, with a progress bar you can cancel
+- Optimize shapes to fewer nodes, and see the before and after count
+- Delete duplicate shapes and overlapping lines
+- Break apart compound shapes
+- Auto-group shapes that sit inside each other
+- Mirror shapes across a line
+- Two-point rotate and scale
+- Nest the selected shapes inside the work area
+- Dock shapes against their neighbours, with padding
+- Rubber-band outline around the selection
+- Grid array, circular array and copy along a path
+- Virtual arrays that stay editable until you flatten them
+- Alignment helper that explains aligning step by step
+- Edit Nodes tool: move nodes and handles, insert, delete, break, trim, extend and align
+- Add Tabs tool, with the layer's automatic tabs shown too
+- Measure tool for distances, angles, arcs and areas
+- Rectangle corner radius, including inward corners, and Remove Rounded Corners
+- New lines join up with the end of an open line on the same layer
+- Text tool: click, type right on the canvas, double-click text to edit it
+- Edit Text Shapes window with a zoomable preview
+- Font picker with favourites, recent fonts and a live preview
+- Bold, italic, upper case, spacing, alignment and welded text from the Text toolbar
+- Text on a path, and Apply Path to Text
+- Single-line SHX fonts
+- Text now cuts and engraves, and opens on machines without the font
+- QR codes for text, links, Wi-Fi and contacts, still editable afterwards
+- Barcodes: Code 128, Code 39, EAN-13, UPC-A, ITF and Data Matrix
+- Variable Text panel: serial numbers, CSV merge, date and time, auto-advance after a job
+- Pictures show on the canvas as they will burn, with the layer's dither mode
+- Adjust Image: brightness, contrast, gamma, sharpening, denoise, a side-by-side preview and saved presets
+- Trace Image turns a picture into cut lines, with threshold, smoothness and a preview
+- Image layers: threshold, ordered, Atkinson, Floyd-Steinberg, Jarvis, Stucki, newsprint, halftone, sketch, grayscale and pass-through
+- Convert shapes to a bitmap, save the processed bitmap, replace or refresh an image
+- Crop an image with a shape, flatten or remove the crop
+- Scanning offset table for lines that come out shifted, with import and export
+- Open and import DXF, PDF, Illustrator and PLT files
+- Open LightBurn project files, with their layer settings and notes
+- Pick a page when importing a PDF with several pages
+- Import options for DXF units, joining open paths, hidden Illustrator layers and colours to layers
+- See a list of warnings after an import
+- Big files are read in the background, with a Cancel button
+- Drag and drop any of these files onto the window
+- Export to SVG, Illustrator, DXF and pictures, for everything or just the selection
+- Save a copy in the LightBurn .lbrn2 format
+- Export a DXF with one layer per material, and a .nc file, for the Gweike software
+- Print, in black only or in colour, or save the page as a PDF
+- Export and import your preferences, and go back to an earlier backup
+- Preferences are backed up automatically
+- New Window, and an option to keep just one DarkBurn running
+- Tabs you place by hand are now left uncut in the job
+- Shapes can have their own start point and cut direction, and the job keeps them
+- Tool layers marked "frame" are framed with the job
+- The red-dot offset moves the frame so the dot lands where the laser will
+- Reverse Z, relative Z moves and the Z optimise option now change what is sent
+- Fast scan over white space and the scanning offset table are applied to the job
+- The curve tolerance setting changes how finely curves are cut
+- "Return to start when done" is a checkbox in the Laser panel, and the device setting works too
+- Framing checks the work area on controllers that ask for it, and the network timeout is used
+- PWM frequency, U offset, laser 2 power and dot mode go into the files sent to Ruida controllers
+- Speeds and acceleration can be read from the controller to make the time estimate match the machine
+- Fix: Tabs you place by hand now land exactly where you put them, on open lines too
+- Fix: A tab on a shape with a hole only cuts a gap where you placed it
+- Fix: A tab right at the start of a cut is no longer cut short
+- Fix: Tabs placed by hand stay when Skip inner shapes is on
+- Fix: Automatic tabs are cut where the Add Tabs tool shows them
+- Fix: Tabs stay on the outline when you edit nodes
+- New: Each part of a compound shape keeps its own start point
+- New: Partly cut tabs are pulsed using the Tab pulse width from the device settings
+- New: Preview window (Alt+P) with play, speed, power shading, travel moves, invert, time estimate, zoom and pan
+- New: Start here, save from here and save preview image from the preview
+- New: Save G-code with your own start and end scripts and G-code flavor
+- New: Optimization settings saved in the project, with set as default and reset
+- New: Start from, job origin picker, cut selected graphics, use selection origin and show last position
+- New: Warning when the job leaves the work area, with an option to drop those shapes
+- New: Material test generator with presets you can import and export
+- New: Acceleration and speed settings so the time estimate matches your machine
+- Devices dialog with a list you can reorder, sort, duplicate, remove, import and export
+- New Device wizard for GRBL, Ruida and design-only machines
+- Find My Laser lists the serial ports that look like a laser
+- Each device remembers its own units, grid, origin, panels, port and settings backups
+- Device Settings with Basic, GCode, DSP and Additional pages
+- A built-in simulator laser so you can try everything with no hardware
+- Laser panel shows the laser's state, job progress and time left
+- Start, pause, stop, frame, home and go to origin work on the simulators
+- Port picker with an automatic choice and a list of ports to ignore
+- A red REAL MACHINE banner and a confirmation before connecting to a real laser
+- A checklist before each job, if you want one
+- A warning before closing DarkBurn while a job is running
+- Move panel with jog arrows, continuous jog, move to, saved positions and a Fire button
+- Speed and power sliders while a GRBL job runs
+- Console panel with a command line and six macro buttons you edit with a right-click
+- Machine Settings dialog with labels, backups and settings files
+- File List panel for Ruida controllers with upload, run, delete and job time
+- Controller info, dual tube and rotary settings for Ruida controllers
+- GRBL-M3 and GRBL-LPC lasers in the New Device wizard
+- Older GRBL boards get jobs written the way they understand
+- The simulator can act like older GRBL, GRBL-LPC, grblHAL or FluidNC
+- Bluetooth, HTTP and raw USB connections for G-code lasers
+- Network bridge setup for Ruida lasers, with a Rescan button in the Laser panel
+- Automation socket so another program can start a job and ask how it is going
+- DarkBurn tells you when it recognises an Ortur, xTool, Atomstack or Sculpfun laser and can take over its size
+- Find My Laser lists USB devices too
+- A switch to keep DTR on or off while connected
+- Smoothieware, Marlin, Snapmaker, Emblaser and custom G-code lasers in the New Device wizard, each with a simulator
+- G-code is written for the laser you picked, with its start and end scripts, air assist and power style
+- LinuxCNC jobs save as a ready-to-run program
+- DarkBurn tells you if the laser that answers is not the type you chose
+- Galvo lasers: Device Settings for the lens field, calibration, lens file, timing, ports, wobble and axes
+- Galvo lasers: red-light framing with nudge and scale, and an Arm button before anything can fire
+- Galvo lasers: repeat marking, rotary runner, lens test pattern, scale calibration and EZCad import
+- Galvo cut settings in the Advanced tab: frequency, Q-pulse, wobble and timing per layer
+- Gweike craft files (.chf) with a material and craft setting for every layer
+- Gweike card simulator that plans a job and shows the time estimate without moving anything
+- Trocen, TopWisdom, Cubiio and network Emblaser and Snapmaker are listed as waiting for a hardware capture
+- Save RD files for Ruida lasers, from the File menu or the Laser window
+- RD files open with their layers, speeds and powers
+- Ruida over USB uses the laser's own USB port, picked for you
+- Hardware overscan for Ruida fills and images
+- Ruida jobs in bed coordinates now land where they are drawn
+- Ruida power values are sent in finer steps
+- Ruida board names in Controller info, and a list of known boards in Device Settings
+- Trocen and TopWisdom lasers say clearly that they are not supported yet
+- Camera panel: pick a camera or a picture file, see it live, lay it over the bed
+- Camera overlay can be faded, hidden, shifted, resized and shown in black and white
+- Trace a camera picture straight from the panel
+- Camera settings can be saved, exported and imported, and the last camera is remembered
+- Calibrate the camera lens with a dot grid or chessboard, standard or fisheye
+- Line up the camera with the bed using targets drawn by DarkBurn
+- Head-mounted cameras can be lined up and their pictures stitched together
+- Rotary setup with chuck or roller, axis, steps, sizes, mirror and a test turn plan
+- Rotary, cylinder and print and cut switches in the status bar
+- Cylinder correction for outside and inside curves
+- Print and cut: set two targets, align with or without scaling, reset, or use the wizard
+- Focus test and interval test drawn into the design
+- Centre finder for round stock
+- Feeder setup with window plan and step correction
+- Cut selected and Use selection origin now start in the state you picked in Settings
+- Ignore shapes outside the work area now works from Settings
+- New projects can load the device's default layers
+- Job log: every finished or stopped job is added to a CSV file
+- Sounds for finished jobs and errors
+- Excluded serial ports no longer show up in the port list
+- Default text font, height and auto-weld are used for new text
+- The status bar shows the layer and pass while a job runs
+- Try buttons for the error and finished sounds in Settings
+- Stopping a job yourself no longer plays the error sound
+- The job log now has each job's start time, how long it ran and the file, and you can pick its folder
+- Show the job log from Settings
+- Grid spacing can be set in Settings, and each device remembers its own
+- Library entries show an icon for line, fill or image
+- Help > Camera Selection Help explains how to pick a camera and what to check when it is missing
+- Preview: Run from here and Send from here are only offered on machines that can do it
+- A galvo no longer marks the whole job when asked to start part way
+- Material Test (galvo): small filled cells, speed against frequency, sized for the lens field
+- The material test warns when the device cannot do what the grid varies
+- Galvo drill mode: a line layer can fire at points along the outline, with a drill time and point spacing
+- AI agents can now use DarkBurn: draw, edit, change cut settings, preview jobs and take screenshots (off until you turn it on in Settings)
+- New "AI agents (MCP)" settings page with the switches, the connection details and a log of what agents did
+- A small "MCP" tag in the status bar shows when agents are connected
+- Agents can't touch the machine unless you allow it, and starting a job always asks you first
+- DarkBurn can run without a window for scripts and testing
+- Windows installer: installs for you without admin rights, or for everyone on the computer
+- DarkBurn project, device, cut library, art library and hotkey files open with a double-click
+- Start menu and desktop shortcuts
+- Updating the installed version keeps your settings, and so does uninstalling
+- Portable zip that keeps its settings next to the program
+- Check for updates from the Help menu, and an option to check when DarkBurn starts (off by default)
+- Escape closes a dialog instead of clearing your selection behind it
+- The right-hand panels no longer share a button id, which could confuse clicks on their close buttons
+- Art Library buttons wrap to the next row instead of squeezing their words apart
+- Machine Settings fits a narrow window
+- Fixed a slow memory growth while the window stays open
+
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent
 

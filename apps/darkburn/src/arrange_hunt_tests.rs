@@ -92,3 +92,24 @@ fn shapes_of_a_deleted_layer_do_not_come_back_when_a_virtual_array_is_edited() {
     assert_eq!(a.editor.doc.used_layers(), vec![5]);
     assert_eq!(a.editor.doc.get(ShapeId(id)).unwrap().leaves().len(), 3, "three copies of the one square left");
 }
+
+/// Hiding a layer drops its shapes from the selection: they used to stay selected, unseen, and
+/// the next Delete removed them. A group with a child on a shown layer stays.
+#[test]
+fn hiding_a_layer_deselects_its_shapes() {
+    let ctx = egui::Context::default();
+    let mut a = app();
+    let hidden = add_rect(&mut a, 0.0, 0.0, 10.0, 10.0, 2);
+    let shown = add_rect(&mut a, 20.0, 0.0, 10.0, 10.0, 3);
+    select(&mut a, &[hidden, shown]);
+    run(&mut a, "layer.set_param", json!({ "layer": 2, "field": "show", "value": false })).unwrap();
+    assert_eq!(a.editor.selected(), vec![shown]);
+    a.run(&ctx, "edit.delete");
+    assert!(a.editor.doc.get(hidden).is_some(), "the hidden shape is not deleted");
+    assert!(a.editor.doc.get(shown).is_none());
+    // Undo of the hiding gives the selection back with the layer.
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    assert!(a.editor.doc.layer(2).show);
+    assert_eq!(a.editor.selected(), vec![hidden, shown]);
+}

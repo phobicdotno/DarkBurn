@@ -430,7 +430,11 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                     Switch::Show => "Show layer",
                     Switch::Air => "Air assist",
                 };
-                e.edit(label, |d, _| toggle(d, l, which));
+                e.edit(label, |d, sel| {
+                    let changed = toggle(d, l, which);
+                    sel.retain_selectable(d);
+                    changed
+                });
             }
             Act::Reorder(l, to) => {
                 e.edit("Layer order", |d, _| reorder(d, l, to));
@@ -461,7 +465,11 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             }
             Act::Header(cmd) => {
-                e.edit("Layers", |d, _| header_command(d, cmd));
+                e.edit("Layers", |d, sel| {
+                    let changed = header_command(d, cmd);
+                    sel.retain_selectable(d);
+                    changed
+                });
             }
             Act::Run(id) => run_later.push(id),
         }

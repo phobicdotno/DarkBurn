@@ -335,7 +335,7 @@ fn set_param(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if matches!(v, V::Output(true)) && darkburn_core::layer::is_tool_layer(layer) {
         return Err("tool layers never output".into());
     }
-    let done = app.editor.edit("Layer setting", |d, _| {
+    let done = app.editor.edit("Layer setting", |d, sel| {
         let before = d.layer(layer).clone();
         let l = d.layer_mut(layer);
         match v {
@@ -350,7 +350,12 @@ fn set_param(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
             V::Air(x) => l.air = x,
         }
         l.main_mut().sanitise();
-        *d.layer(layer) != before
+        let changed = *d.layer(layer) != before;
+        // Shapes of a layer that was just hidden are no longer selected.
+        if changed {
+            sel.retain_selectable(d);
+        }
+        changed
     });
     changed(done)
 }

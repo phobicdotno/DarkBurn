@@ -71,6 +71,13 @@ impl Selection {
         self.ids.last().copied()
     }
 
+    /// Drop shapes that can no longer be clicked: locked, or with every layer hidden. Without
+    /// this a shape on a layer that was just hidden stays selected, unseen, and the next Delete
+    /// or arrow key acts on it.
+    pub fn retain_selectable(&mut self, doc: &Document) {
+        self.ids.retain(|id| doc.get(*id).is_some_and(|s| doc.is_selectable(s)));
+    }
+
     /// Drop ids that are no longer in `doc`.
     pub fn retain_existing(&mut self, doc: &Document) {
         self.ids.retain(|id| doc.get(*id).is_some());

@@ -473,17 +473,16 @@ fn order_bucket(
         seq.push(pick);
     }
     if s.reduce_travel && s.direction_order.is_none() && seq.len() > 2 {
-        // 2-opt inside each contiguous cluster run.
+        // 2-opt inside each run of one group, and inside each run of shapes that are in no
+        // group (those may change places among themselves).
+        let run_key = |p: &Planned| if grouped { items[p.item].group } else { None };
         let mut ranges = Vec::new();
         let mut a = 0;
         for i in 1..=seq.len() {
-            if i == seq.len() || (grouped && cluster(local(seq[i].item)) != cluster(local(seq[a].item))) {
+            if i == seq.len() || run_key(&seq[i]) != run_key(&seq[a]) {
                 ranges.push((a, i));
                 a = i;
             }
-        }
-        if !grouped {
-            ranges = vec![(0, seq.len())];
         }
         for (a, b) in ranges {
             two_opt(items, &mut seq, a, b, start, s, &pairs, deadline, progress)?;
@@ -682,6 +681,29 @@ mod tests {
         let opt = plan(&items, &PlannerSettings::default(), Point::ZERO, &mut Progress::none()).unwrap();
         assert!(travel(&opt) <= travel(&greedy) + 1e-9);
         assert_eq!(opt.len(), items.len());
+    }
+
+    /// "Reduce travel moves" also works with the default "order by group" on shapes that are
+    /// in no group: they are free to change places among themselves.
+    #[test]
+    fn reduce_travel_improves_the_order_of_ungrouped_shapes_with_group_ordering_on() {
+        let pts = [(0.0, 1.0), (5.0, 0.0), (5.0, 9.0), (0.0, 10.0), (10.0, 10.0), (10.0, 1.0), (3.0, 3.0), (8.0, 4.0)];
+        let items: Vec<PlanItem> = pts.iter().map(|&(x, y)| PlanItem::new(ItemGeom::Open(vec![Point::new(x, y), Point::new(x + 0.1, y)]))).collect();
+        let travel = |s: &PlannerSettings| {
+            let p = plan(&items, s, Point::ZERO, &mut Progress::none()).unwrap();
+            let mut pos = Point::ZERO;
+            let mut t = 0.0;
+            for q in &p {
+                t += pos.distance(q.entry(&items));
+                pos = q.exit(&items);
+            }
+            t
+        };
+        let by_layer = vec![OrderKey::Layer];
+        let greedy = travel(&PlannerSettings { reduce_travel: false, order_by: by_layer.clone(), ..Default::default() });
+        let improved = travel(&PlannerSettings { order_by: by_layer, ..Default::default() });
+        assert!(improved < greedy - 1.0, "the example has travel to save: {improved} against {greedy}");
+        assert_eq!(travel(&PlannerSettings::default()), improved, "the same with order by layer and group");
     }
 
     #[test]

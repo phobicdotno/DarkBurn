@@ -7,3 +7,5 @@ Fix: a cropped image now burns only inside its crop
 Fix: an image set far too fine to scan is left out with a warning instead of running out of memory
 Fix: Cut selected graphics now also holds on a galvo laser
 Fix: the material test no longer changes the settings of layers your design already uses
+Fix: with an origin set on a G-code machine, the job now runs where its frame runs
+Fix: the material test refuses an absurd number of rows or columns instead of crashing

@@ -325,6 +325,12 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             if send_only {
                 return Err("A G-code machine runs a job as it streams it. Use Start (or Save G-code).".into());
             }
+            // An absolute job is in machine coordinates, but the controller reads its moves in
+            // work coordinates: they differ by the work offset once an origin is set. The frame
+            // is sent the same way (`work_points`).
+            let offset = work_offset(app);
+            let tp =
+                if tp.space == CoordSpace::MachineAbsolute && offset != Vec2::ZERO { darkburn_job::origin::pointer_offset(&tp, -offset) } else { tp };
             JobRequest::gcode(crate::gcode_machines::job_lines(app.machine.active(), &tp, &app.job.gcode))
         }
         Family::Ruida => {

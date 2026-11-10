@@ -77,4 +77,3 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] Galvo: `SingleCmd::MoveAxisTo` carries no axis number, so a move of axis 1 is sent like a move of axis 0 (`machine.rs`, `axis_words`); how the board tells them apart is not known from the sources
 - [ ] Galvo: after a pause and resume while the job waits for the foot switch, the activity shows a running job, not waiting for the foot switch; and a door that opens outside the sending phases makes the job wait without saying why
 - [ ] Galvo MOPA: a layer without a pulse width after one with a pulse width keeps the earlier width, as no command sets it back (`job.rs`, `q_pulse_ns`)
-- [ ] Preview image export with shade by power draws the burnt lines grouped by colour, lightest last, so where a weak and a strong burn cross the weak one lies on top (`preview.rs`, `render_png`); the window draws them in job order

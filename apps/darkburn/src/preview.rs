@@ -165,27 +165,39 @@ pub fn render_png(data: &PreviewData, bed: Rect, width: u32, view: &ViewOptions,
     let to_px = |p: Point| ((p.x - bed.x0) * scale, (bed.y1 - p.y) * scale);
     let n = upto.map_or(data.segs.len(), |t| data.started(t));
     let stroke = tiny_skia::Stroke { width: (0.15 * scale).clamp(1.0, 4.0) as f32, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
-    // One path per colour keeps this fast.
-    let mut groups: std::collections::BTreeMap<[u8; 3], tiny_skia::PathBuilder> = Default::default();
-    for s in &data.segs[..n] {
-        let Some(c) = view.colour_of(s) else { continue };
-        let pb = groups.entry(c).or_default();
-        let (ax, ay) = to_px(s.a);
-        let (bx, by) = to_px(s.b);
-        pb.move_to(ax as f32, ay as f32);
-        pb.line_to(bx as f32, by as f32);
-    }
-    // Travel first so burns end up on top.
-    let travel = view.travel_colour();
-    let mut keys: Vec<[u8; 3]> = groups.keys().copied().collect();
-    keys.sort_by_key(|k| *k != travel);
-    for k in keys {
-        let Some(pb) = groups.remove(&k) else { continue };
-        let Some(path) = pb.finish() else { continue };
+    let mut draw = |pb: tiny_skia::PathBuilder, k: [u8; 3]| {
+        let Some(path) = pb.finish() else { return };
         let mut paint = tiny_skia::Paint::default();
         paint.set_color_rgba8(k[0], k[1], k[2], 255);
         paint.anti_alias = true;
         pm.stroke_path(&path, &paint, &stroke, tiny_skia::Transform::identity(), None);
+    };
+    let add = |pb: &mut tiny_skia::PathBuilder, s: &DrawSeg| {
+        let (ax, ay) = to_px(s.a);
+        let (bx, by) = to_px(s.b);
+        pb.move_to(ax as f32, ay as f32);
+        pb.line_to(bx as f32, by as f32);
+    };
+    // Travel first so burns end up on top.
+    if view.show_travel {
+        let mut pb = tiny_skia::PathBuilder::new();
+        data.segs[..n].iter().filter(|s| s.power <= 0.0).for_each(|s| add(&mut pb, s));
+        draw(pb, view.travel_colour());
+    }
+    // The burns in the order of the job, as the window draws them: where two cross, the later one
+    // lies on top. One path per run of one colour keeps this fast.
+    let mut run: Option<([u8; 3], tiny_skia::PathBuilder)> = None;
+    for s in data.segs[..n].iter().filter(|s| s.power > 0.0) {
+        let c = view.burn_colour(s.power);
+        if run.as_ref().is_some_and(|(k, _)| *k != c)
+            && let Some((k, pb)) = run.take()
+        {
+            draw(pb, k);
+        }
+        add(&mut run.get_or_insert_with(|| (c, tiny_skia::PathBuilder::new())).1, s);
+    }
+    if let Some((k, pb)) = run {
+        draw(pb, k);
     }
     let mut img = image::RgbaImage::new(width, height);
     for (px, p) in img.pixels_mut().zip(pm.pixels()) {
@@ -284,5 +296,51 @@ mod tests {
         let none = render_png(&p, bed, 200, &ViewOptions::default(), false, Some(-1.0)).unwrap();
         let nimg = image::load_from_memory(&none).unwrap().to_rgba8();
         assert!(nimg.pixels().all(|px| px.0 == [250, 250, 250, 255]));
+    }
+
+    /// Two crossing outlines on two layers of different power, `first` percent for the one the
+    /// job runs first.
+    fn crossing(first: f64, second: f64) -> PreviewData {
+        let mut d = Document::new();
+        for (li, power) in [(0, first), (1, second)] {
+            let s = d.layer_mut(li).main_mut();
+            s.speed = 20.0;
+            s.max_power = power;
+            s.min_power = power;
+        }
+        d.add(Shape::rect(Rect::new(10.0, 40.0, 90.0, 60.0), 0.0, 0));
+        d.add(Shape::rect(Rect::new(40.0, 10.0, 60.0, 90.0), 0.0, 1));
+        let input = BuildInput {
+            doc: d,
+            selection: vec![],
+            settings: Default::default(),
+            device: JobDevice::new(100.0, 100.0),
+            user_origin: None,
+            head: None,
+            motion: Default::default(),
+            tuning: None,
+        };
+        PreviewData::new(Arc::new(build_job_simple(&input).unwrap()), &AdditionalSettings::default(), 0)
+    }
+
+    #[test]
+    fn the_image_shows_crossing_burns_in_job_order_like_the_window() {
+        let view = ViewOptions::default();
+        let bed = Rect::new(0.0, 0.0, 100.0, 100.0);
+        // The outlines cross at (40, 40) mm; at 20 px/mm the 3 px lines fully cover pixel (800, 1200).
+        let cross = Point::new(40.0, 40.0);
+        for (first, second) in [(100.0, 15.0), (15.0, 100.0)] {
+            let p = crossing(first, second);
+            let on_top = p
+                .segs
+                .iter()
+                .rfind(|s| s.power > 0.0 && (s.a.distance(cross) + s.b.distance(cross) - s.a.distance(s.b)).abs() < 1e-6)
+                .expect("a burn through the crossing");
+            let want = view.burn_colour(on_top.power);
+            let png = render_png(&p, bed, 2000, &view, false, None).unwrap();
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            let got = img.get_pixel(800, 1200).0;
+            assert_eq!([got[0], got[1], got[2]], want, "{first} % then {second} %: the later burn ({} %) lies on top", on_top.power);
+        }
     }
 }

@@ -494,7 +494,9 @@ fn fire_button_turns_itself_off() {
 
 #[test]
 fn frame_rectangle_with_and_without_laser() {
-    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(50.0));
+    // Slow enough that the framing state lasts well over half a second of real time: at 50x
+    // the whole frame took 120 ms and a loaded machine could miss it.
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(10.0));
     let m = connect(&emu, ConnectOptions::default());
     m.frame_rect(Rect::new(10.0, 20.0, 110.0, 70.0), FrameOptions::default()).unwrap();
     wait_snap(&m, "framing", |s| s.activity == Activity::Framing);

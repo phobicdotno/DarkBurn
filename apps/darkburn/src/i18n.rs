@@ -4,14 +4,50 @@
 //! the program. `en.json` is generated from the code by a test and kept in step by it.
 
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::OnceLock;
+#[cfg(not(test))]
+use std::sync::RwLock;
 
 use crate::commands::Cmd;
 
 /// The languages that have a translation file, by code.
 const FILES: &[(&str, &str)] = &[("en", include_str!("../../../assets/locales/en.json")), ("nb", include_str!("../../../assets/locales/nb.json"))];
 
+/// The active language code (empty: English). The program has one interface, so one value.
+#[cfg(not(test))]
 static ACTIVE: RwLock<String> = RwLock::new(String::new());
+
+// Tests run many apps side by side in one process, each on its own thread. With one shared
+// value, a test that switches the language would change the text under every other test, so
+// in test builds each thread has its own language.
+#[cfg(test)]
+thread_local! {
+    static ACTIVE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+#[cfg(not(test))]
+fn active() -> String {
+    ACTIVE.read().map(|a| a.clone()).unwrap_or_default()
+}
+
+#[cfg(not(test))]
+fn set_active(code: &str) {
+    if let Ok(mut a) = ACTIVE.write()
+        && *a != code
+    {
+        *a = code.to_string();
+    }
+}
+
+#[cfg(test)]
+fn active() -> String {
+    ACTIVE.with(|a| a.borrow().clone())
+}
+
+#[cfg(test)]
+fn set_active(code: &str) {
+    ACTIVE.with(|a| *a.borrow_mut() = code.to_string());
+}
 
 fn tables() -> &'static HashMap<&'static str, HashMap<String, String>> {
     static TABLES: OnceLock<HashMap<&'static str, HashMap<String, String>>> = OnceLock::new();
@@ -37,19 +73,13 @@ pub fn available(code: &str) -> bool {
 /// Switch the interface language. An unknown code leaves English.
 pub fn set_language(code: &str) {
     let code = if available(code) { code } else { "en" };
-    if let Ok(mut a) = ACTIVE.write()
-        && *a != code
-    {
-        *a = code.to_string();
-    }
+    set_active(code);
 }
 
 /// The language in use.
 pub fn language() -> String {
-    match ACTIVE.read() {
-        Ok(a) if !a.is_empty() => a.clone(),
-        _ => "en".into(),
-    }
+    let code = active();
+    if code.is_empty() { "en".into() } else { code }
 }
 
 /// The text for `key` in the active language; `english` when there is none.

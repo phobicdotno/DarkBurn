@@ -1063,6 +1063,25 @@ impl BuildTask {
     }
 }
 
+#[cfg(test)]
+impl BuildTask {
+    /// A build for tests that runs until it is cancelled and then takes `lag` longer to stop,
+    /// like a worker on a busy computer that notices Cancel late.
+    pub fn slow_to_cancel(lag: std::time::Duration) -> BuildTask {
+        let (tx, rx) = channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            while !c2.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            std::thread::sleep(lag);
+            let _ = tx.send(Err(BuildError::Cancelled));
+        });
+        BuildTask { rx, cancel, progress: Arc::new(AtomicU32::new(0)), done: None }
+    }
+}
+
 // ----- G-code ---------------------------------------------------------------------------------
 
 /// The device's own changes to a toolpath before it is written as G-code.

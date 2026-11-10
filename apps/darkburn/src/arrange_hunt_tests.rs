@@ -59,3 +59,19 @@ fn copy_along_path_follows_the_last_selected_shape_not_the_topmost() {
     assert_eq!(centres, vec![(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]);
     assert!(a.editor.doc.get(ShapeId(line)).is_some(), "the line stays");
 }
+
+/// A virtual grid array of a 4 mm square at x 300..304, moved 50 mm right and then changed to a
+/// circular array of two: the page is 400 mm wide, so about its centre (200) the square at
+/// 350..354 gets its second copy at 46..50. The centre used to be taken 50 mm off.
+#[test]
+fn a_moved_array_changed_to_circular_turns_about_the_page_centre() {
+    let mut a = app();
+    let r = add_rect(&mut a, 300.0, 198.0, 4.0, 4.0, 2);
+    select(&mut a, &[r]);
+    let v = run(&mut a, "arrange.grid_array", json!({ "rows": 1, "cols": 2, "virtual": true })).unwrap();
+    let id = v["ids"][0].as_u64().unwrap();
+    run(&mut a, "shape.translate", json!({ "dx": 50.0, "dy": 0.0 })).unwrap();
+    run(&mut a, "arrange.array_edit", json!({ "id": id, "kind": "circular", "count": 2 })).unwrap();
+    let b = a.editor.doc.get(ShapeId(id)).unwrap().bbox();
+    assert!((b.x0 - 46.0).abs() < 1e-6 && (b.x1 - 354.0).abs() < 1e-6 && (b.y0 - 198.0).abs() < 1e-6, "{b:?}");
+}

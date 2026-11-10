@@ -281,7 +281,12 @@ fn array_edit(e: &mut Editor, a: &Value, env: &Env) -> R {
         ("grid", ArrayKind::Grid(_)) | ("", ArrayKind::Grid(_)) => ArrayKind::Grid(grid_from(a, &grid_of(&def.kind))),
         ("grid", _) => ArrayKind::Grid(grid_from(a, &GridDef::default())),
         ("circular", ArrayKind::Circular(_)) | ("", ArrayKind::Circular(_)) => ArrayKind::Circular(circ_from(a, &circ_of(&def.kind))),
-        ("circular", _) => ArrayKind::Circular(circ_from(a, &CircularDef { cx: env.page.center().x, cy: env.page.center().y, ..Default::default() })),
+        ("circular", _) => {
+            // The page centre in the array's own coordinates: the array may have been moved or turned.
+            let to_own = e.doc.get(id).map(|s| s.transform.inverse()).unwrap_or_default();
+            let c = to_own * env.page.center();
+            ArrayKind::Circular(circ_from(a, &CircularDef { cx: c.x, cy: c.y, ..Default::default() }))
+        }
         ("along_path", ArrayKind::AlongPath(p)) | ("", ArrayKind::AlongPath(p)) => ArrayKind::AlongPath(along_from(a, p)),
         (other, _) => return Err(format!("cannot change the array to kind {other:?}")),
     };

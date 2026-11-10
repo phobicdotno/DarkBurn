@@ -350,8 +350,12 @@ fn tokenize_verts(s: &str) -> Vec<Tok<'_>> {
         } else if c == b'S' {
             out.push(Tok::S);
             i += 1;
-        } else if c == b'c' && i + 3 <= b.len() && matches!(&s[i..i + 3], "c0x" | "c0y" | "c1x" | "c1y") {
-            out.push(Tok::Ctl(&s[i..i + 3]));
+        } else if c == b'c'
+            && let Some(name) = s.get(i..i + 3)
+            && matches!(name, "c0x" | "c0y" | "c1x" | "c1y")
+        {
+            // `get`, not an index: after a `c` the next bytes can be part of a longer character.
+            out.push(Tok::Ctl(name));
             i += 3;
         } else if c == b'-' || c == b'+' || c == b'.' || c.is_ascii_digit() {
             let start = i;
@@ -859,6 +863,16 @@ mod tests {
         assert_eq!(v[1].c0, Some(Point::new(12.0, 3.0)));
         assert_eq!(v[1].c1, Some(Point::new(8.0, -2.0)));
         assert_eq!(v[2].p, Point::new(10.0, 5.0));
+    }
+
+    #[test]
+    fn vert_list_with_letters_outside_ascii_is_read_not_a_crash() {
+        // "ca\u{e9}": three bytes after the `c` end in the middle of the two-byte letter.
+        let v = parse_vert_list("V1 2ca\u{e9}V3 4c\u{e9}\u{20ac}c0x5c0y6c");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].p, Point::new(1.0, 2.0));
+        assert_eq!(v[1].p, Point::new(3.0, 4.0));
+        assert_eq!(v[1].c0, Some(Point::new(5.0, 6.0)));
     }
 
     #[test]

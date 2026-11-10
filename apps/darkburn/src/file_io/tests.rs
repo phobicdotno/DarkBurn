@@ -674,7 +674,11 @@ fn damaged_files_of_every_kind_never_crash_the_reader() {
             }
             let mut o = opts.clone();
             o.pdf_page = Some(if round % 2 == 0 { PageChoice::Page(1) } else { PageChoice::All });
-            let _ = formats::read_bytes(&path, &b, &o);
+            // `read_bytes` turns a panic inside a reader into this error, so "it returned" alone
+            // proves nothing: a reader that panics on a damaged file is a bug too.
+            if let Err(e) = formats::read_bytes(&path, &b, &o) {
+                assert!(!e.contains("internal error"), "{path:?} round {round}: a reader panicked (its message is above)");
+            }
             cases += 1;
         }
     }

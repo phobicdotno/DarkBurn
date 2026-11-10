@@ -21,6 +21,70 @@ pub const FILE_EXTENSION: &str = "dbclb";
 /// A library with changes is saved to its file (or the auto-save file) this long after the change.
 pub const AUTOSAVE_AFTER: Duration = Duration::from_secs(20);
 
+/// What an entry is for, shown as a small icon before it in the list [LIB-04].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Line,
+    Fill,
+    Image,
+}
+
+/// The side of the type icon in points.
+const KIND_ICON: f32 = 14.0;
+
+impl EntryKind {
+    /// Line, image, or one of the fills (fill, fill and line, offset fill).
+    pub fn of(mode: Mode) -> EntryKind {
+        match mode {
+            Mode::Line => EntryKind::Line,
+            Mode::Image => EntryKind::Image,
+            Mode::Fill | Mode::FillLine | Mode::OffsetFill => EntryKind::Fill,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            EntryKind::Line => "line",
+            EntryKind::Fill => "fill",
+            EntryKind::Image => "image",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            EntryKind::Line => tr("library.kind_line", "Line"),
+            EntryKind::Fill => tr("library.kind_fill", "Fill"),
+            EntryKind::Image => tr("library.kind_image", "Image"),
+        }
+    }
+}
+
+/// The type icon: an outline for a line entry, a solid block for a fill, a framed picture
+/// (sun and hill) for an image.
+fn paint_kind_icon(p: &egui::Painter, r: egui::Rect, kind: EntryKind, ink: egui::Color32) {
+    use egui::{Stroke, StrokeKind, pos2};
+    let b = r.shrink(2.0);
+    let stroke = Stroke::new(1.5, ink);
+    match kind {
+        EntryKind::Line => {
+            p.rect_stroke(b, 1.0, stroke, StrokeKind::Inside);
+        }
+        EntryKind::Fill => {
+            p.rect_filled(b, 1.0, ink);
+        }
+        EntryKind::Image => {
+            p.rect_stroke(b, 1.0, Stroke::new(1.0, ink), StrokeKind::Inside);
+            p.circle_filled(pos2(b.left() + b.width() * 0.3, b.top() + b.height() * 0.32), 1.4, ink);
+            let hill = vec![
+                pos2(b.left() + 1.0, b.bottom() - 1.0),
+                pos2(b.left() + b.width() * 0.62, b.top() + b.height() * 0.42),
+                pos2(b.right() - 1.0, b.bottom() - 1.0),
+            ];
+            p.add(egui::Shape::convex_polygon(hill, ink, Stroke::NONE));
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entry {
@@ -522,20 +586,22 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             ui.label(RichText::new(format!("  {heading}")).size(t.font_small).color(t.text_dim));
             for &i in entries {
                 let e = &st.lib.entries[i];
-                let kind = match e.mode() {
-                    Mode::Image => "IMG",
-                    Mode::Line => "LINE",
-                    _ => "FILL",
-                };
-                let mut text = format!(
-                    "    [{kind}] {}",
-                    if e.description.is_empty() { tr("library.no_description", "(no description)") } else { e.description.clone() }
-                );
+                let kind = EntryKind::of(e.mode());
+                let mut text = if e.description.is_empty() { tr("library.no_description", "(no description)") } else { e.description.clone() };
                 if linked.contains(&e.link_name()) {
                     text += &format!("  - {}", tr("library.linked", "linked"));
                 }
                 let selected = st.selected == Some(i);
-                if ui.selectable_label(selected, text).on_hover_text(e.link_name()).clicked() {
+                let mut clicked = false;
+                ui.horizontal(|ui| {
+                    ui.add_space(t.space_12);
+                    let (icon, r) = ui.allocate_exact_size(egui::vec2(KIND_ICON, KIND_ICON), egui::Sense::click());
+                    paint_kind_icon(ui.painter(), icon, kind, if selected { t.text } else { t.text_dim });
+                    solidcraft_ui_registry::publish_target(&format!("library:kind:{}:{i}", kind.id()), icon);
+                    clicked |= r.on_hover_text(kind.label()).clicked();
+                    clicked |= ui.selectable_label(selected, text).on_hover_text(format!("{} ({})", e.link_name(), kind.label())).clicked();
+                });
+                if clicked {
                     st.selected = Some(i);
                 }
             }

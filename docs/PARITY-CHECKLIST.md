@@ -293,7 +293,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LIB-01 Named library files: new, load, save, save as, auto-save, backup on save
 - [x] LIB-02 Entries grouped by material, then thickness, then description
 - [x] LIB-03 Thickness in fractions when using inches; entries with no thickness
-- [~] LIB-04 Type icon for line, fill and image entries
+- [x] LIB-04 Type icon for line, fill and image entries
 - [x] LIB-05 Assign entry to layer
 - [x] LIB-06 Link layer to entry; unlink when entry deleted
 - [x] LIB-07 Create entry from layer

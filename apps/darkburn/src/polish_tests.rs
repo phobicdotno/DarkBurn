@@ -290,3 +290,74 @@ fn each_device_remembers_its_grid_spacing() {
     assert_eq!(a.prefs.grid_spacing, 25.0);
     assert_eq!(a.machine.devices.get(id).unwrap().state.grid_spacing, 0.1, "no float noise in the device file");
 }
+
+// ----- LIB-04: type icon for line, fill and image entries --------------------------------------
+
+#[test]
+fn library_entries_are_sorted_into_line_fill_and_image_kinds() {
+    use crate::library::EntryKind;
+    use darkburn_core::Mode;
+    assert_eq!(EntryKind::of(Mode::Line), EntryKind::Line);
+    assert_eq!(EntryKind::of(Mode::Image), EntryKind::Image);
+    for m in [Mode::Fill, Mode::FillLine, Mode::OffsetFill] {
+        assert_eq!(EntryKind::of(m), EntryKind::Fill);
+    }
+    let ids: Vec<&str> = Mode::ALL.iter().map(|m| EntryKind::of(*m).id()).collect();
+    assert_eq!(ids, ["line", "fill", "fill", "fill", "image"]);
+}
+
+#[test]
+fn library_panel_draws_a_different_icon_for_line_fill_and_image_entries() {
+    let mut g = Gui::standard();
+    // Show the panel first: its first drawing loads the device's own library.
+    g.frames(2);
+    g.click_id("panel:tab:library");
+    g.frames(2);
+    for (layer, mode, name) in [(0, "line", "Cut through"), (1, "fill", "Engrave dark"), (2, "line", "Photo")] {
+        g.exec("layer.set_mode", json!({ "layer": layer, "mode": mode }));
+        let made = g.exec("library.create_from_layer", json!({ "layer": layer, "material": "Birch", "thickness": 3.0, "description": name }));
+        if name == "Photo" {
+            // An image entry (a layer only takes the image mode once it holds a picture).
+            let i = made["entry"].as_u64().unwrap() as usize;
+            g.app().extras.library.lib.entries[i].settings[0].mode = darkburn_core::Mode::Image;
+        }
+    }
+    g.frames(2);
+    for name in ["Cut through", "Engrave dark", "Photo"] {
+        assert!(g.has_text(name), "{name} is listed; texts: {:?}", g.visible_texts());
+    }
+    assert!(!g.visible_texts().iter().any(|t| t.contains("[LINE]") || t.contains("[FILL]") || t.contains("[IMG]")), "no text tags any more");
+    let icons = g.rects("library:kind:");
+    let kinds: Vec<&str> = icons.iter().map(|(n, _)| n.split(':').nth(2).unwrap()).collect();
+    assert_eq!(icons.len(), 3, "{icons:?}");
+    for k in ["line", "fill", "image"] {
+        assert!(kinds.contains(&k), "{kinds:?}");
+    }
+    g.screenshot("library-kind-icons");
+    // The three icons are three different pictures: count the inked pixels of each.
+    let scale = g.scale();
+    let img = g.render_image();
+    let inked = |r: egui::Rect| -> usize {
+        let bg = img.get_pixel((r.left() * scale) as u32, (r.top() * scale) as u32).0;
+        let mut n = 0;
+        for y in (r.top() * scale) as u32..(r.bottom() * scale) as u32 {
+            for x in (r.left() * scale) as u32..(r.right() * scale) as u32 {
+                let p = img.get_pixel(x, y).0;
+                if (0..3).map(|i| (i32::from(p[i]) - i32::from(bg[i])).abs()).sum::<i32>() > 60 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let count = |kind: &str| inked(icons.iter().find(|(n, _)| n.split(':').nth(2) == Some(kind)).unwrap().1);
+    let (line, fill, image) = (count("line"), count("fill"), count("image"));
+    assert!(line >= 20, "the line icon is an outline: {line}");
+    assert!(fill >= line + 20, "the fill icon is solid: {fill} against {line}");
+    assert!(image != line && image != fill, "the image icon is a third picture: line {line}, fill {fill}, image {image}");
+    // Clicking an icon picks its entry.
+    let photo = icons.iter().find(|(n, _)| n.starts_with("library:kind:image")).unwrap().1;
+    g.click_pos(photo.center());
+    let picked = g.app().extras.library.selected;
+    assert_eq!(picked.map(|i| g.app().extras.library.lib.entries[i].description.clone()).as_deref(), Some("Photo"));
+}

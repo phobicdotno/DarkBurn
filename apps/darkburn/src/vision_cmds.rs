@@ -907,6 +907,20 @@ fn corner(r: Rect, index: usize) -> Point {
     }
 }
 
+/// Design to machine coordinates for the selected device (origin corner, negative axes, swapped axes).
+fn machine_affine(app: &DarkBurn) -> darkburn_core::kurbo::Affine {
+    let mut device = app.machine.active().job_device();
+    device.swap_xy |= app.job.gcode.swap_xy;
+    device.geometry().affine()
+}
+
+/// The design position under the laser when the controller reports `laser`. Laser positions are
+/// machine coordinates; the registration is fitted and applied in design coordinates, before the
+/// job is turned to the machine's origin corner.
+pub fn laser_to_design(app: &DarkBurn, laser: Point) -> Point {
+    machine_affine(app).inverse() * laser
+}
+
 /// Set target `index` (0 first, 1 second): `laser` is where the laser stands on it [LT-01, LT-02].
 /// The design position defaults to a corner of the selection.
 pub fn pnc_set_target(app: &mut DarkBurn, index: usize, laser: Point, design: Option<Point>) -> Result<Value, String> {
@@ -933,6 +947,7 @@ pub fn pnc_align(app: &mut DarkBurn, mode: PnCMode) -> Result<Value, String> {
     if d.len() < 2 {
         return Err("set the first and second target first".into());
     }
+    let m: Vec<Point> = m.iter().map(|p| laser_to_design(app, *p)).collect();
     let fit = darkburn_vision::printcut::fit_registration(&d, &m, mode).map_err(|e| e.to_string())?;
     let report = json!({
         "mode": mode, "scale": fit.scale, "rotation_deg": fit.rotation_deg, "translation": fit.translation,
@@ -955,7 +970,8 @@ fn wizard_summary(app: &DarkBurn) -> Value {
     match &app.vision.state.pnc.wizard {
         None => json!({ "wizard": null }),
         Some(w) => json!({
-            "step": w.step, "mode": w.mode, "measured": w.measured, "current_target": w.current_target(),
+            // the wizard keeps design positions; shown as the laser positions that were entered
+            "step": w.step, "mode": w.mode, "measured": w.measured.iter().map(|p| machine_affine(app) * *p).collect::<Vec<_>>(), "current_target": w.current_target(),
             "targets": w.design_targets, "active": w.active_fit().is_some(),
         }),
     }
@@ -965,12 +981,17 @@ fn wizard_summary(app: &DarkBurn) -> Value {
 pub fn pnc_wizard_event(app: &mut DarkBurn, event: PnCEvent) -> Result<Value, String> {
     sync(app);
     let mut w = app.vision.state.pnc.wizard.clone().ok_or("start the wizard first")?;
+    let event = match event {
+        PnCEvent::Measured(laser) => PnCEvent::Measured(laser_to_design(app, laser)),
+        other => other,
+    };
     w.handle(event).map_err(|e| e.to_string())?;
     if let Some(f) = w.active_fit() {
         app.vision.state.pnc.fit = Some(f.clone());
         app.vision.state.pnc.mode = w.mode;
         app.vision.state.pnc.design = w.design_targets.iter().map(|p| Some(*p)).collect();
-        app.vision.state.pnc.measured = w.measured.iter().map(|p| Some(*p)).collect();
+        let to_machine = machine_affine(app);
+        app.vision.state.pnc.measured = w.measured.iter().map(|p| Some(to_machine * *p)).collect();
     }
     if matches!(event, PnCEvent::Reset) {
         app.vision.state.pnc.fit = None;
@@ -1601,6 +1622,43 @@ mod tests {
         run(&mut app, "laser.pnc_reset", json!({})).unwrap();
         assert!(mode_status(&app.vision.state).is_empty());
         assert!(app.vision.state.pnc.fit.is_none());
+    }
+
+    /// The laser positions are what the controller reports: machine coordinates. On a machine
+    /// whose origin is at the back (Ruida) Y runs the other way from the design.
+    #[test]
+    fn print_and_cut_on_a_machine_with_its_origin_at_the_back() {
+        use darkburn_job::origin::Corner;
+        for (corner, wizard) in [(Corner::TopLeft, false), (Corner::TopRight, false), (Corner::BottomLeft, false), (Corner::TopLeft, true)] {
+            let mut app = app();
+            app.machine.devices.active_mut().unwrap().origin = corner;
+            let to_machine = app.machine.active().job_device().geometry().affine();
+            run(&mut app, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 100, "height": 50 })).unwrap();
+            // the print sits 5 mm right and 3 mm up of the design: where the laser stands on the two marks
+            let m1 = to_machine * Point::new(15.0, 13.0);
+            let m2 = to_machine * Point::new(115.0, 13.0);
+            let fit = if wizard {
+                run(&mut app, "pnc.wizard", json!({ "start": true, "targets": [{"x":10,"y":10},{"x":110,"y":10}] })).unwrap();
+                run(&mut app, "pnc.wizard", json!({ "event": "select_mode", "mode": "unscaled" })).unwrap();
+                run(&mut app, "pnc.wizard", json!({ "event": "measured", "x": m1.x, "y": m1.y })).unwrap();
+                run(&mut app, "pnc.wizard", json!({ "event": "measured", "x": m2.x, "y": m2.y })).unwrap();
+                run(&mut app, "pnc.wizard", json!({ "event": "confirm" })).unwrap();
+                app.vision.state.pnc.fit.clone().unwrap()
+            } else {
+                run(&mut app, "laser.pnc_first", json!({ "x": m1.x, "y": m1.y })).unwrap();
+                run(&mut app, "laser.pnc_second", json!({ "x": m2.x, "y": m2.y })).unwrap();
+                run(&mut app, "laser.pnc_align_noscale", json!({})).unwrap();
+                // the position reads back as it was entered
+                assert_eq!(app.vision.state.pnc.measured[0], Some(m1), "{corner:?}");
+                app.vision.state.pnc.fit.clone().unwrap()
+            };
+            assert!(fit.rotation_deg.abs() < 1e-6, "{corner:?} wizard {wizard}: turned by {}", fit.rotation_deg);
+            assert!((fit.translation.0 - 5.0).abs() < 1e-6 && (fit.translation.1 - 3.0).abs() < 1e-6, "{corner:?}: {:?}", fit.translation);
+            // the job cuts where the print is
+            let job = crate::job_build::build_job_simple(&crate::job_cmds::build_input(&app)).unwrap();
+            let b = job.bounds;
+            assert!((b.x0 - 15.0).abs() < 0.01 && (b.y0 - 13.0).abs() < 0.01 && (b.x1 - 115.0).abs() < 0.01, "{corner:?}: {b:?}");
+        }
     }
 
     #[test]

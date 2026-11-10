@@ -520,6 +520,37 @@ fn preferences_export_import_and_backups_work_through_commands() {
     assert_eq!(b.prefs.theme, "nord", "a bad file changes nothing");
 }
 
+/// A preferences file carries the work area of the machine it was made on. The job is built for
+/// the active device, so the canvas must go on showing that device's bed after an import.
+#[test]
+fn imported_preferences_do_not_change_the_work_area_of_the_active_device() {
+    use crate::devices::{Device, DeviceType};
+    let dir = TempDir::new("prefsarea");
+    let file = dir.file("other.dbprefs");
+    let mut other = app();
+    other.prefs.page_width = 900.0;
+    other.prefs.page_height = 600.0;
+    other.prefs.origin = crate::view::Origin::FrontLeft;
+    other.prefs.theme = "nord".into();
+    run(&mut other, "project.prefs_export", json!({ "path": path_arg(&file) })).unwrap();
+
+    let mut a = app();
+    let mut d = Device::new(DeviceType::Grbl);
+    d.width_mm = 300.0;
+    d.height_mm = 200.0;
+    d.origin = darkburn_job::Corner::TopRight;
+    let id = a.machine.devices.add(d);
+    a.machine.select_device(id);
+    crate::machine_ui::adopt_device_state(&mut a);
+    assert_eq!((a.prefs.page_width, a.prefs.page_height), (300.0, 200.0));
+    run(&mut a, "project.prefs_import", json!({ "path": path_arg(&file) })).unwrap();
+    assert_eq!(a.prefs.theme, "nord", "the preferences came in");
+    assert_eq!((a.prefs.page_width, a.prefs.page_height), (300.0, 200.0), "the canvas still shows the device's bed");
+    assert_eq!(a.prefs.origin, crate::view::Origin::RearRight);
+    let dev = a.machine.devices.get(id).unwrap();
+    assert_eq!((dev.width_mm, dev.height_mm), (300.0, 200.0), "and the device is untouched");
+}
+
 // ----- The worker thread -----
 
 fn wait_for_job(a: &mut DarkBurn) {

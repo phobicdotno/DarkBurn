@@ -641,7 +641,11 @@ fn report_warnings(app: &mut DarkBurn, name: &str, warnings: Vec<String>) {
 /// Imports preferences from a file (the old ones are backed up first).
 pub fn import_prefs(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let dir = app.settings_dir.clone().filter(|_| !app.safe_mode);
-    prefs_files::import(&mut app.prefs, path, dir.as_deref())
+    prefs_files::import(&mut app.prefs, path, dir.as_deref())?;
+    // The file's work area is another machine's: the job is built for the active device, so
+    // the canvas has to show that device's bed.
+    crate::machine_ui::work_area_from_device(app);
+    Ok(())
 }
 
 /// Starts the OS print of a PDF.

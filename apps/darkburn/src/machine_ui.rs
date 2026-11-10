@@ -1020,6 +1020,16 @@ pub fn view_origin(c: Corner) -> crate::view::Origin {
     }
 }
 
+/// The preferences were replaced as a whole (imported from a file or a backup): the work area
+/// and origin corner they brought belong to whatever machine they came from. The active device
+/// keeps its own, and the canvas shows those again, as it would after the next start.
+pub fn work_area_from_device(app: &mut DarkBurn) {
+    let Some(dev) = app.machine.devices.active.and_then(|id| app.machine.devices.get(id)) else { return };
+    app.prefs.page_width = dev.width_mm as f32;
+    app.prefs.page_height = dev.height_mm as f32;
+    app.prefs.origin = view_origin(dev.origin);
+}
+
 /// The work area was changed in Settings (or by `setting.set`): it is the active device's from
 /// now on, so a job is built for the bed and the origin corner the canvas shows. A galvo's
 /// field comes from its lens; the canvas goes back to it.

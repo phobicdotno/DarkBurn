@@ -494,10 +494,13 @@ pub fn convert_to_bitmap(e: &mut Editor, ids: &[ShapeId], args: &ConvertArgs) ->
     let mut closed = true;
     let mut layer = None;
     let mut used = Vec::new();
+    // Images inside the groups: they are not drawn into the bitmap, so they stay.
+    let mut images_kept = Vec::new();
     for id in ids {
         let Some(top) = e.doc.get(*id) else { continue };
         for leaf in top.leaves() {
             if leaf.is_image() {
+                images_kept.push(leaf);
                 continue;
             }
             closed &= leaf.is_closed();
@@ -526,6 +529,9 @@ pub fn convert_to_bitmap(e: &mut Editor, ids: &[ShapeId], args: &ConvertArgs) ->
             Shape::new(ShapeKind::Image(ImageShape { image: key, width: wmm, height: hmm, ..Default::default() }), Affine::translate(centre), layer);
         if !args.keep_original {
             d.remove(&used);
+            for image in images_kept {
+                d.add(image);
+            }
         }
         let new = d.add(shape);
         d.prune_images();
@@ -947,6 +953,24 @@ mod tests {
         assert_eq!(rgba.get_pixel(rgba.width() - 3, 1)[3], 0);
         e.undo();
         assert_eq!(e.doc.len(), 2);
+    }
+
+    /// A group with a picture in it: the vector shapes become the bitmap, the picture is not
+    /// drawn into it and must not vanish with the group.
+    #[test]
+    fn convert_to_bitmap_keeps_the_images_of_a_group() {
+        let (mut e, image) = editor_with_image();
+        let was = e.doc.get(image).unwrap().bbox();
+        let r = e.doc.add(Shape::rect(Rect::new(100.0, 100.0, 120.0, 110.0), 0.0, 4));
+        let group = darkburn_core::arrange::group(&mut e.doc, &[image, r]).unwrap();
+        let new = convert_to_bitmap(&mut e, &[group], &ConvertArgs { dpi: 100.0, ..Default::default() }).unwrap();
+        let images: Vec<Rect> = e.doc.iter().filter(|s| s.is_image() && s.id != new).map(Shape::bbox).collect();
+        assert_eq!(images.len(), 1, "the picture in the group was deleted with it");
+        assert!((images[0].x0 - was.x0).abs() < 1e-9 && (images[0].y1 - was.y1).abs() < 1e-9, "{:?} moved from {was:?}", images[0]);
+        assert_eq!(e.doc.len(), 2, "the group's rectangle became the bitmap");
+        assert!((e.doc.get(new).unwrap().bbox().width() - 20.0).abs() < 0.5, "the bitmap is of the rectangle alone");
+        e.undo();
+        assert_eq!(e.doc.len(), 1, "one undo step gives the group back");
     }
 
     #[test]

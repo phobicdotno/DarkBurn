@@ -742,7 +742,12 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             if !l.outputs() {
                 // Tool layers never burn, but may be framed with the job (LAYER-02).
                 if l.is_tool() && l.frame && !leaf.is_image() {
-                    tool_frame.push(leaf.outline());
+                    // Mapped like the shapes that burn, so the frame stays with the job.
+                    let outline = leaf.outline();
+                    tool_frame.push(match &vision_map {
+                        Some(m) => m.apply(outline),
+                        None => outline,
+                    });
                 }
                 continue;
             }

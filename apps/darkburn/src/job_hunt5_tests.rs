@@ -454,3 +454,29 @@ fn rubber_band_frame_leaves_out_a_picture_that_is_not_burned() {
     assert!(close(bbox_of(&rect), job.bounds, 1e-6), "rectangle frame {:?}", bbox_of(&rect));
     assert!(close(bbox_of(&band), job.bounds, 0.05), "rubber band frame {:?} against the job {:?}", bbox_of(&band), job.bounds);
 }
+
+#[test]
+fn tool_layer_frame_follows_the_print_and_cut_alignment() {
+    use darkburn_core::layer::T1;
+    // The job is moved 20 mm to the right by a print-and-cut alignment. A tool layer shape that
+    // is framed with the job moves with it.
+    let mut doc = crate::job_field_tests::line_doc(20.0);
+    doc.layer_mut(T1).frame = true;
+    doc.add(Shape::rect(Rect::new(50.0, 50.0, 60.0, 60.0), 0.0, T1));
+    let plain = input(doc.clone());
+    let frame = build_frame(&plain, FrameKind::Rectangle, 50.0, None).unwrap();
+    assert!(close(bbox_of(&frame), Rect::new(10.0, 10.0, 60.0, 60.0), 1e-6), "{:?}", bbox_of(&frame));
+
+    let d = [Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(0.0, 100.0)];
+    let m: Vec<Point> = d.iter().map(|p| *p + darkburn_core::kurbo::Vec2::new(20.0, 0.0)).collect();
+    let mut vs = crate::vision_state::VisionState::default();
+    vs.pnc.fit = Some(darkburn_vision::printcut::fit_registration(&d, &m, darkburn_vision::printcut::PnCMode::Scaled).unwrap());
+    doc.vision_settings = Some(vs.to_value());
+    let moved = input(doc);
+    let job = build_job_simple(&moved).unwrap();
+    assert!(close(job.bounds, Rect::new(30.0, 10.0, 50.0, 30.0), 1e-6), "{:?}", job.bounds);
+    for kind in [FrameKind::Rectangle, FrameKind::RubberBand] {
+        let frame = build_frame(&moved, kind, 50.0, None).unwrap();
+        assert!(close(bbox_of(&frame), Rect::new(30.0, 10.0, 80.0, 60.0), 0.05), "{kind:?}: {:?}", bbox_of(&frame));
+    }
+}

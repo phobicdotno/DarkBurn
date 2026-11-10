@@ -180,6 +180,19 @@ pub fn point_at(pts: &[Point], s: f64) -> (Point, Vec2) {
     (pts[n - 1], dir)
 }
 
+/// Where segment `a`-`b` crosses segment `c`-`d`, as the fraction of the way from `a` to `b`
+/// (strictly between the ends of `a`-`b`). Parallel segments do not cross.
+pub fn segment_hit(a: Point, b: Point, c: Point, d: Point) -> Option<f64> {
+    let (r, s) = (b - a, d - c);
+    let den = r.cross(s);
+    if den.abs() < 1e-12 {
+        return None;
+    }
+    let t = (c - a).cross(s) / den;
+    let u = (c - a).cross(r) / den;
+    (t > 0.0 && t < 1.0 && (0.0..=1.0).contains(&u)).then_some(t)
+}
+
 /// Unit vector (or zero).
 pub fn unit(v: Vec2) -> Vec2 {
     let l = v.hypot();

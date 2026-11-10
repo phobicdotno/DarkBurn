@@ -505,14 +505,53 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
         }
         UnitKind::Offset { polys, scales } => {
             let parents = fill::parents(polys);
+            let boxes: Vec<Rect> = polys.iter().map(|p| geom::bbox(p)).collect();
             let mut pos = from;
             for (pi, poly) in polys.iter().enumerate() {
-                // Rings of outer shapes only (holes are not avoided).
+                // Rings of outer shapes only.
                 let depth = std::iter::successors(parents[pi], |&q| parents[q]).count();
                 if depth % 2 == 1 {
                     continue;
                 }
+                // The shapes inside this one: its holes and whatever lies in them. The rings burn
+                // only outside of those (an island in a hole has rings of its own).
+                let inner: Vec<usize> = (0..polys.len()).filter(|&q| std::iter::successors(parents[q], |&a| parents[a]).any(|a| a == pi)).collect();
                 let power = s.max_power * scales[pi];
+                // A move of a ring, cut where it crosses a hole.
+                let cut = |a: Point, b: Point, out: &mut Vec<Op>| {
+                    if inner.is_empty() {
+                        out.push(Op::Cut { to: b, speed: s.speed, power });
+                        return;
+                    }
+                    let seg = Rect::from_points(a, b);
+                    let mut ts: Vec<f64> = vec![0.0, 1.0];
+                    for &q in &inner {
+                        if seg.x1 < boxes[q].x0 || seg.x0 > boxes[q].x1 || seg.y1 < boxes[q].y0 || seg.y0 > boxes[q].y1 {
+                            continue;
+                        }
+                        let n = polys[q].len();
+                        ts.extend((0..n).filter_map(|i| geom::segment_hit(a, b, polys[q][i], polys[q][(i + 1) % n])));
+                    }
+                    ts.sort_by(f64::total_cmp);
+                    for w in ts.windows(2) {
+                        let (p0, p1) = (a.lerp(b, w[0]), a.lerp(b, w[1]));
+                        if p0.distance(p1) < EPS {
+                            continue;
+                        }
+                        let mid = p0.midpoint(p1);
+                        if !inner.iter().any(|&q| geom::point_in_polygon(mid, &polys[q])) {
+                            out.push(Op::Cut { to: p1, speed: s.speed, power });
+                        } else if p0.distance(p1) > f.rapid_gap {
+                            out.push(Op::Rapid { to: p1 });
+                        } else {
+                            out.push(Op::Cut { to: p1, speed: s.speed, power: 0.0 });
+                        }
+                    }
+                    // Rounding may leave the last piece a hair short of the corner.
+                    if out.last().and_then(Op::target).is_none_or(|t| t.distance(b) > EPS) {
+                        out.push(Op::Cut { to: b, speed: s.speed, power: 0.0 });
+                    }
+                };
                 let rings = fill::offset_rings(poly, f.interval);
                 for (k, ring) in rings.iter().enumerate() {
                     let st = planner::choose_start(ring, pos, false);
@@ -522,10 +561,10 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                         out.push(Op::Rapid { to: first });
                     } else {
                         // Step inwards with the laser on: an inward spiral.
-                        out.push(Op::Cut { to: first, speed: s.speed, power });
+                        cut(pos, first, out);
                     }
                     for m in 1..=n {
-                        out.push(Op::Cut { to: ring[(st + m) % n], speed: s.speed, power });
+                        cut(ring[(st + m - 1) % n], ring[(st + m) % n], out);
                     }
                     pos = first;
                 }
@@ -658,6 +697,53 @@ mod tests {
         assert_eq!(rapids, 1);
         let cuts = tp.ops.iter().filter(|o| matches!(o, Op::Cut { .. })).count();
         assert_eq!(cuts, 5 * 4 + 4);
+    }
+
+    /// The burning moves as (from, to).
+    fn burning(tp: &Toolpath) -> Vec<(Point, Point)> {
+        let mut pos = Point::ZERO;
+        let mut out = Vec::new();
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                out.push((pos, *to));
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn offset_fill_leaves_holes_and_does_not_burn_islands_twice() {
+        // A 20 mm plate with a 10 mm hole, and a 4 mm island in the hole.
+        let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+        s.mode = CutMode::OffsetFill;
+        let l = LayerInput::new(0, "A", s)
+            .with_shape(ShapeInput::new(rect_path(0.0, 0.0, 20.0, 20.0)))
+            .with_shape(ShapeInput::new(rect_path(5.0, 5.0, 10.0, 10.0)))
+            .with_shape(ShapeInput::new(rect_path(8.0, 8.0, 4.0, 4.0)));
+        let burns = burning(&run(l, &JobOptions::default()));
+        let in_rect = |p: Point, a: f64, b: f64| p.x > a + 1e-6 && p.x < b - 1e-6 && p.y > a + 1e-6 && p.y < b - 1e-6;
+        let (mut in_hole, mut in_island, mut in_plate) = (0.0, 0.0, 0.0);
+        for (a, b) in &burns {
+            let m = a.midpoint(*b);
+            let len = a.distance(*b);
+            if in_rect(m, 8.0, 12.0) {
+                in_island += len;
+            } else if in_rect(m, 5.0, 15.0) {
+                in_hole += len;
+            } else {
+                in_plate += len;
+            }
+        }
+        assert!(in_hole < 1e-6, "nothing burns in the hole: {in_hole} mm");
+        // The island: rings at 0.5 and 1.5 mm from its edge, 12 + 4 mm, and the step between them.
+        assert!((in_island - 16.0).abs() < 2.0, "the island is filled once: {in_island} mm");
+        // The plate: 300 mm2 at 1 mm a line.
+        assert!((in_plate - 300.0).abs() < 30.0, "the plate around the hole is filled: {in_plate} mm");
     }
 
     /// The powers the laser fires at left and right of x = 50.

@@ -23,8 +23,9 @@ neg_cmp_op_on_partial_ord = "allow"
 # Real USB serial ports for GRBL machines: listing ports, and opening one only when the user clicks Connect.
 default = ["live-camera", "serial"]
 live-camera = ["darkburn-vision/capture"]
-serial = ["darkburn-grbl/serial"]
-# Ruida over raw FTDI USB.
+# The same feature opens a Ruida controller's USB port (its FTDI chip shows up as a serial port).
+serial = ["darkburn-grbl/serial", "darkburn-ruida/serial"]
+# Ruida over raw FTDI USB, for systems where the FTDI chip has no serial driver. Not built by default.
 usb = ["darkburn-ruida/usb"]
 
 [dependencies]

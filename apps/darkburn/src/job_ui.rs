@@ -202,6 +202,7 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
     ui.horizontal_wrapped(|ui| {
         let have = app.job.preview.data.is_some();
         let op = app.job.preview.data.as_ref().and_then(|d| d.sim.state_at(app.job.preview.t)).map_or(0, |s| s.op_index);
+        let file_kind = crate::machine_job::machine_file_kind(app.machine.active());
         let b = |ui: &mut Ui, label: &str, on: bool| ui.add_enabled_ui(on, |ui| ui_kit::button(ui, label, ui_kit::Button::Small)).inner.clicked();
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
@@ -213,7 +214,10 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             *command = Some(("job.preview_send_from_here", serde_json::json!({ "op_index": op })));
         }
         if b(ui, "Save from here", have)
-            && let Some(path) = rfd::FileDialog::new().add_filter("G-code", crate::job_build::GCODE_EXTENSIONS).set_file_name("job.gc").save_file()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter(file_kind.filter, file_kind.extensions)
+                .set_file_name(format!("job.{}", file_kind.extensions.first().copied().unwrap_or("gc")))
+                .save_file()
         {
             *command = Some(("job.preview_save_from_here", serde_json::json!({ "path": path.to_string_lossy(), "op_index": op })));
         }
@@ -797,9 +801,11 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
         &[("Frame", "job.frame"), ("Frame outline", "job.frame_rubber"), ("Home", "job.home"), ("Go to origin", "job.go_origin")],
         &mut clicked,
     );
+    // The save button is named after the file the device takes: G-code or an RD file.
+    let save_label = crate::machine_job::machine_file_kind(app.machine.active()).label;
     buttons(
         ui,
-        &[("Save G-code", "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send"), ("Preview", "window.preview")],
+        &[(save_label, "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send"), ("Preview", "window.preview")],
         &mut clicked,
     );
     if let Some(op) = app.job.start_op {

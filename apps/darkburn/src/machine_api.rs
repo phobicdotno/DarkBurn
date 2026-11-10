@@ -75,8 +75,13 @@ pub enum Link {
     Tcp { host: String, port: u16 },
     /// Ruida Ethernet.
     Udp { ip: String },
-    /// Ruida FTDI USB (needs the `usb` feature).
-    Usb { serial: Option<String> },
+    /// Ruida over USB: the serial port of the controller's FTDI chip (`port`), or the FTDI chip
+    /// itself by adapter serial number in builds with the `usb` feature.
+    Usb {
+        serial: Option<String>,
+        #[serde(default)]
+        port: Option<String>,
+    },
     /// An in-memory Smoothieware, Marlin, Snapmaker, custom or library-GRBL machine. Safe.
     SimulatorGcode(crate::gcode_machines::SimGcode),
     /// The in-memory galvo board. Safe.
@@ -106,7 +111,7 @@ impl Link {
             Link::Serial { port, baud } => format!("{port} @ {baud}"),
             Link::Tcp { host, port } => format!("tcp://{host}:{port}"),
             Link::Udp { ip } => format!("udp://{ip}"),
-            Link::Usb { serial } => format!("USB {}", serial.as_deref().unwrap_or("(first FTDI)")),
+            Link::Usb { serial, port } => format!("USB {}", port.as_deref().or(serial.as_deref()).unwrap_or("(first FTDI)")),
         }
     }
 }
@@ -919,7 +924,7 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
                     ruida::RdOp::Cut { to: Point::new(10.0, 10.0), power: None, speed: None },
                 ],
             };
-            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer] });
+            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer], ..Default::default() });
             j.bounds = Some(Rect::new(10.0, 10.0, 10.0 + s, 10.0 + s));
             j
         }
@@ -1011,13 +1016,7 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
             let t = ruida::UdpTransport::connect(ip)?;
             Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
         }
-        #[cfg(feature = "usb")]
-        Link::Usb { serial } => {
-            let t = ruida::transport::UsbTransport::open(serial.as_deref())?;
-            Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
-        }
-        #[cfg(not(feature = "usb"))]
-        Link::Usb { .. } => Err(MachineError::Unsupported("this build has no raw USB support".into())),
+        Link::Usb { serial, port } => open_ruida_usb(serial.as_deref(), port.as_deref(), config),
         Link::GalvoUsb => Err(MachineError::Unsupported(
             "the galvo USB link is not built into this version. Use the galvo simulator until the hardware checks in docs/hardware-checks-galvo.md are done."
                 .into(),
@@ -1027,6 +1026,31 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         }
     }
 }
+
+/// Ruida over USB. The controller's FTDI chip normally shows up as a serial port (a COM port on
+/// Windows), which is what gets opened; builds with the `usb` feature can also claim the chip
+/// directly. Reached only through [`open_real`].
+fn open_ruida_usb(serial: Option<&str>, port: Option<&str>, config: &ConnectConfig) -> Result<Box<dyn DriverAdapter>, MachineError> {
+    #[cfg(feature = "serial")]
+    if let Some(p) = port {
+        let t = ruida::transport::SerialTransport::open(p)?;
+        return Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)));
+    }
+    #[cfg(feature = "usb")]
+    {
+        let _ = port;
+        let t = ruida::transport::UsbTransport::open(serial)?;
+        Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
+    }
+    #[cfg(not(feature = "usb"))]
+    {
+        let _ = (serial, port, config);
+        Err(MachineError::Unsupported(NO_RUIDA_USB_PORT.into()))
+    }
+}
+
+/// Shown when no serial port of a Ruida controller's USB chip is found.
+pub const NO_RUIDA_USB_PORT: &str = "No USB serial port of a Ruida controller was found. Plug the controller in, install the FTDI driver if Windows does not show a COM port for it, then press Rescan. You can also type the port (like COM5) in Device Settings.";
 
 // ============================================================================================
 // GRBL
@@ -1321,6 +1345,9 @@ enum Op {
 pub struct RuidaAdapter {
     h: ruida::RuidaHandle,
     simulator: bool,
+    /// The link has the jog port (Ethernet only): the Fire button and the controller's own
+    /// Frame need it.
+    jog_port: bool,
     sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     snap: Snapshot,
     pending: HashMap<u64, Op>,
@@ -1345,6 +1372,9 @@ impl RuidaAdapter {
         simulator: bool,
         sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     ) -> Self {
+        use ruida::Transport as _;
+        let jog_port = transport.framing() == ruida::Framing::Udp;
+        let described = transport.describe();
         let machine = ruida::RuidaMachine::new(
             transport,
             ruida::MachineConfig {
@@ -1364,13 +1394,14 @@ impl RuidaAdapter {
             simulator,
             link: LinkState::Connecting,
             state: LaserState::Connecting,
-            port: if simulator { "Simulator (Ruida)".into() } else { String::new() },
+            port: if simulator { "Simulator (Ruida)".into() } else { described },
             bed: cfg.bed,
             ..Default::default()
         };
         Self {
             h,
             simulator,
+            jog_port,
             sim,
             snap,
             pending,
@@ -1694,6 +1725,10 @@ impl DriverAdapter for RuidaAdapter {
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }
+            C::FrameOnController if !self.jog_port => Err(MachineError::Unsupported(
+                "the controller's own Frame needs the Ethernet connection. Over USB, use Frame in DarkBurn or the Frame key on the controller."
+                    .into(),
+            )),
             C::FrameOnController => self.req(R::FrameOnController, Op::Other("frame")),
             C::JogStep(j) => {
                 busy(working)?;
@@ -1748,6 +1783,9 @@ impl DriverAdapter for RuidaAdapter {
                 Err(MachineError::Unsupported("set the origin on the controller panel; this is not confirmed on real controllers yet".into()))
             }
             C::GetPosition => self.req(R::Status, Op::Other("status")),
+            C::Fire { .. } if !self.jog_port => {
+                Err(MachineError::Unsupported("the Fire button needs the Ethernet connection. Over USB, use the Pulse key on the controller.".into()))
+            }
             C::Fire { percent, secs } => {
                 let _ = percent;
                 busy(working)?;
@@ -1759,6 +1797,7 @@ impl DriverAdapter for RuidaAdapter {
                 self.snap.fire_on = true;
                 Ok(())
             }
+            C::FireOff if !self.jog_port => Ok(()),
             C::FireOff => {
                 self.fire = None;
                 self.snap.fire_on = false;

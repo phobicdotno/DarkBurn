@@ -68,11 +68,40 @@ pub struct Painted {
     pub broken_word: bool,
 }
 
-/// The GPU device is made and destroyed under one lock: tests run in parallel threads, and a
-/// device torn down while another is being created crashed the process (access violation).
+/// One lock for everything that makes the software rasteriser work: making a GPU device,
+/// destroying one, and drawing a picture.
+///
+/// Tests run in parallel threads, each with its own device, and all of them end up on the one
+/// software adapter the harness prefers (WARP on Windows). The process crashed now and then
+/// with an access violation inside `d3d10warp.dll`, on one of its own worker threads. The
+/// crash dumps showed some tests drawing a screenshot while others made or destroyed their
+/// device; serialising only creation and teardown did not stop it. So drawing takes the lock
+/// too. Ordinary frames do not: they draw nothing, they only make textures and queue the
+/// uploads, which run with the next picture.
+///
+/// Everything that owns a piece of the device lives inside the harness (the renderer and the
+/// copies of its render state that eframe keeps), and the harness only ever exists inside a
+/// [`Guarded`]: [`Guarded::build`] makes it under the lock and `Drop` destroys it under the
+/// lock, also when a test panics or the app fails to start. The app itself holds nothing of
+/// the GPU, so it may outlive the harness.
 static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Guarded(Option<Harness<'static, crate::App>>);
+
+impl Guarded {
+    /// Runs `make` (which creates the device) under the GPU lock. If `make` panics, what it
+    /// had built so far is dropped while the lock is still held.
+    fn build(make: impl FnOnce() -> Harness<'static, crate::App>) -> Guarded {
+        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        Guarded(Some(make()))
+    }
+
+    /// Draws the last frame offscreen, under the GPU lock.
+    fn render(&mut self) -> Result<image::RgbaImage, String> {
+        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        self.0.as_mut().expect("the harness is alive").render()
+    }
+}
 
 impl std::ops::Deref for Guarded {
     type Target = Harness<'static, crate::App>;
@@ -118,32 +147,31 @@ impl Gui {
         darkburn_dialogs_script();
         let cell: Rc<RefCell<Option<Rc<RefCell<DarkBurn>>>>> = Rc::new(RefCell::new(None));
         let (cell2, dir2) = (cell.clone(), dir.clone());
-        let gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
-        let h = Harness::builder()
-            .with_size(vec2(width, height))
-            .with_pixels_per_point(scale)
-            .with_max_steps(60)
-            .allow_missing_glyphs()
-            .with_accessibility_check(false)
-            .with_context_setup(|ctx| {
-                darkburn_ui::fonts::setup_bundled_fonts(ctx);
-                ctx.options_mut(|o| o.warn_on_id_clash = true);
-            })
-            .wgpu()
-            .build_eframe(move |cc| {
-                let mut app = DarkBurn::new(Prefs::default());
-                app.settings_dir = Some(dir2.clone());
-                app.safe_mode = true;
-                app.custom_titlebar = true;
-                crate::image_ui::load_tuning(&app);
-                app.apply_theme(&cc.egui_ctx);
-                let app = Rc::new(RefCell::new(app));
-                *cell2.borrow_mut() = Some(app.clone());
-                let mcp = crate::mcp_ui::Host::new(app.clone());
-                crate::App { app, writer: crate::PrefsWriter::default(), frames: 2, mcp }
-            });
-        drop(gpu);
-        let h = Guarded(Some(h));
+        let h = Guarded::build(|| {
+            Harness::builder()
+                .with_size(vec2(width, height))
+                .with_pixels_per_point(scale)
+                .with_max_steps(60)
+                .allow_missing_glyphs()
+                .with_accessibility_check(false)
+                .with_context_setup(|ctx| {
+                    darkburn_ui::fonts::setup_bundled_fonts(ctx);
+                    ctx.options_mut(|o| o.warn_on_id_clash = true);
+                })
+                .wgpu()
+                .build_eframe(move |cc| {
+                    let mut app = DarkBurn::new(Prefs::default());
+                    app.settings_dir = Some(dir2.clone());
+                    app.safe_mode = true;
+                    app.custom_titlebar = true;
+                    crate::image_ui::load_tuning(&app);
+                    app.apply_theme(&cc.egui_ctx);
+                    let app = Rc::new(RefCell::new(app));
+                    *cell2.borrow_mut() = Some(app.clone());
+                    let mcp = crate::mcp_ui::Host::new(app.clone());
+                    crate::App { app, writer: crate::PrefsWriter::default(), frames: 2, mcp }
+                })
+        });
         let app = cell.borrow_mut().take().expect("the app was built");
         let mut g = Gui { h, app, dir, scale, last: "start".into(), strict_ids: true, clashes: Vec::new(), shots: Vec::new() };
         g.frames(3);

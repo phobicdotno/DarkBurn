@@ -254,6 +254,8 @@ struct PathBuilder {
     path: BezPath,
     current: Option<Point>,
     start: Option<Point>,
+    /// The last part was closed: the next segment starts a new part at the current point.
+    reopen: bool,
 }
 
 impl<'a> Interp<'a> {
@@ -308,7 +310,7 @@ impl<'a> Interp<'a> {
         let doc = self.doc;
         let mut gs = gs0;
         let mut stack: Vec<GState> = Vec::new();
-        let mut pb = PathBuilder { path: BezPath::new(), current: None, start: None };
+        let mut pb = PathBuilder { path: BezPath::new(), current: None, start: None, reopen: false };
         let mut clip_pending = false;
         // Marked-content stack: Some((layer name, hidden)) for optional content.
         let mut mc: Vec<Option<(String, bool)>> = mc0;
@@ -341,6 +343,7 @@ impl<'a> Interp<'a> {
                     pb.path.move_to(p);
                     pb.current = Some(p);
                     pb.start = Some(p);
+                    pb.reopen = false;
                 }
                 "l" if n.len() >= 2 => {
                     let p = t(&gs, n[0], n[1]);
@@ -371,6 +374,7 @@ impl<'a> Interp<'a> {
                     if pb.current.is_some() {
                         pb.path.close_path();
                         pb.current = pb.start;
+                        pb.reopen = true;
                     }
                 }
                 "re" if n.len() >= 4 => {
@@ -382,6 +386,7 @@ impl<'a> Interp<'a> {
                     pb.path.close_path();
                     pb.current = Some(t(&gs, x, y));
                     pb.start = pb.current;
+                    pb.reopen = true;
                 }
                 "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n" => {
                     let o = op.operator.as_str();
@@ -397,6 +402,7 @@ impl<'a> Interp<'a> {
                     let path = std::mem::take(&mut pb.path);
                     pb.current = None;
                     pb.start = None;
+                    pb.reopen = false;
                     if (stroke || fill) && path.elements().len() > 1 && path.is_finite() {
                         let mut item = Item::path(path, stroke.then_some(gs.stroke), fill.then_some(gs.fill));
                         if let ItemKind::Path(p) = &mut item.kind {
@@ -570,12 +576,22 @@ impl<'a> Interp<'a> {
     }
 }
 
+/// Makes sure a segment has a part to go into: a new one at the origin when nothing was drawn
+/// yet, a new one at the current point when the last part was closed (`h` or `re`).
 fn ensure_start(pb: &mut PathBuilder) {
-    if pb.current.is_none() {
-        pb.path.move_to(Point::ZERO);
-        pb.current = Some(Point::ZERO);
-        pb.start = pb.current;
+    match pb.current {
+        None => {
+            pb.path.move_to(Point::ZERO);
+            pb.current = Some(Point::ZERO);
+            pb.start = pb.current;
+        }
+        Some(p) if pb.reopen => {
+            pb.path.move_to(p);
+            pb.start = Some(p);
+        }
+        Some(_) => {}
     }
+    pb.reopen = false;
 }
 
 fn inherited<'a>(doc: &'a Document, page: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {

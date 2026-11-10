@@ -33,6 +33,8 @@ mod escape;
 mod extras;
 mod file_io;
 mod files;
+#[cfg(test)]
+mod files_hunt5_tests;
 mod formats;
 mod galvo_job;
 mod galvo_machine;

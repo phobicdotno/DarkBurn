@@ -415,8 +415,17 @@ impl Converter<'_> {
                     },
                     ..Default::default()
                 };
-                let transform = if outline.is_some() {
-                    // The outline is already in drawing coordinates.
+                // The outline is in drawing coordinates; a text keeps its letters in its own, so
+                // that it stays where it is when it is rendered again.
+                let local = outline.as_ref().and_then(|o| {
+                    let mut l = o.clone();
+                    l.apply_affine(t.transform.inverse());
+                    (t.transform.determinant().abs() > 1e-12 && l.is_finite()).then_some(l)
+                });
+                let transform = if let Some(l) = local {
+                    text.backup = Some(l);
+                    t.transform
+                } else if outline.is_some() {
                     text.backup = outline;
                     Affine::IDENTITY
                 } else {

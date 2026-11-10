@@ -777,3 +777,26 @@ fn jog_arrows_and_position_laser_use_the_axes_the_job_uses() {
         assert!(crate::laser_position::from_machine(&a, m).distance(p) < 1e-9, "and back");
     }
 }
+
+/// The finish position is a place on one machine's bed: another device does not get it, and it
+/// is still set after a restart.
+#[test]
+fn the_finish_position_is_kept_with_its_device() {
+    let mut a = app();
+    machine_ui::adopt_device_state(&mut a);
+    let first = a.machine.devices.active.unwrap();
+    a.machine.jog.finish = Some((120.0, 45.5));
+    machine_ui::capture_device_state(&mut a, first);
+    let other = a.machine.devices.devices.iter().find(|d| d.id != first).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": other })).unwrap();
+    machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.machine.jog.finish, None, "the other machine ends its jobs at the first one's finish position");
+    run(&mut a, "device.select", json!({ "id": first })).unwrap();
+    machine_ui::adopt_device_state(&mut a);
+    assert_eq!(a.machine.jog.finish, Some((120.0, 45.5)));
+    let stored = a.machine.devices.to_json();
+    let mut b = app();
+    b.machine.devices = crate::devices::DeviceStore::from_json(&stored);
+    machine_ui::adopt_device_state(&mut b);
+    assert_eq!(b.machine.jog.finish, Some((120.0, 45.5)), "the finish position was forgotten at exit");
+}

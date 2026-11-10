@@ -1108,6 +1108,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     app.extras.library.switch_device(&dev.name, &app.prefs);
     // Its own saved positions (before the capture below, which would hand it the last device's).
     app.machine.jog.saved = dev.state.saved_positions;
+    app.machine.jog.finish = dev.state.finish_position;
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
@@ -1118,9 +1119,10 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
-    let saved = app.machine.jog.saved.clone();
+    let (saved, finish) = (app.machine.jog.saved.clone(), app.machine.jog.finish);
     if let Some(d) = app.machine.devices.get_mut(id) {
         d.state.saved_positions = saved;
+        d.state.finish_position = finish;
         d.state.inches = inches;
         d.state.show_grid = grid;
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.

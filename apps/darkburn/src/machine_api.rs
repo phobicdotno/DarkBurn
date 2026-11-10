@@ -1330,7 +1330,8 @@ impl DriverAdapter for GrblAdapter {
             C::ReadLaser2 | C::WriteLaser2(_) => unsupported("Laser 2 settings"),
             C::ReadUAxis | C::WriteUAxis(_) => unsupported("U axis settings"),
             C::EmergencyStop => Ok(m.stop()?),
-            C::Air(on) => Ok(m.run_macro(if on { "M8" } else { "M9" })?),
+            // Not a macro: a macro switches the fire button off before it runs.
+            C::Air(on) => Ok(m.run_accessory(if on { "M8" } else { "M9" })?),
             C::PersistSettings | C::WriteGcodeSetting { .. } => Err(MachineError::Unsupported("GRBL settings are written with $N=value".into())),
             C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {
                 Err(MachineError::Unsupported("that is a galvo command; this is a GRBL machine".into()))

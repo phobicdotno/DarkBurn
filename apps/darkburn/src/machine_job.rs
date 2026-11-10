@@ -379,7 +379,12 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             } else {
                 Vec2::ZERO
             };
-            let rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
+            let mut rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
+            // The finish position of the Move panel: one last move with the laser off (the
+            // job's coordinates are bed positions here).
+            if let (Some((x, y)), Some(last)) = (app.machine.jog.finish, rd.layers.last_mut()) {
+                last.ops.push(ruida::RdOp::Move(Point::new(x, y)));
+            }
             if send_only {
                 let data = rd.to_rd_file(ruida::Magic::DEFAULT).map_err(|e| e.to_string())?;
                 JobRequest::new(JobData::RdFile { name: name.clone(), data })
@@ -400,6 +405,10 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             crate::galvo_job::request(&crate::galvo_job::job_document(app)?, app.machine.active(), false, false)?.0
         }
     };
+    // The finish position of the Move panel, for the machines that take it with the job.
+    if let (Family::Grbl, Some((x, y))) = (family, app.machine.jog.finish) {
+        req.finish = crate::machine_api::Finish::Machine(Point::new(x, y));
+    }
     req.name = name;
     req.estimated = estimated;
     req.start_immediately = !send_only;

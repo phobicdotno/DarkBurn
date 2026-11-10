@@ -299,8 +299,6 @@ pub struct MachineUi {
     pub upload_name: String,
     /// Closing is allowed although a job runs (the user said so).
     pub close_ok: bool,
-    pub rotary_on: bool,
-    pub cylinder_on: bool,
     /// Dialogs and fields of the G-code, galvo and Gweike pieces (`machine_ext.rs`).
     pub ext: crate::machine_ext::ExtUi,
     /// The automation socket, the bridge wizard and the detected laser (`connections.rs`).
@@ -340,8 +338,6 @@ impl MachineUi {
             file_sel: BTreeSet::new(),
             upload_name: "DARKBURN".into(),
             close_ok: false,
-            rotary_on: false,
-            cylinder_on: false,
             ext: Default::default(),
             conn: Default::default(),
             last_events: Vec::new(),
@@ -1093,19 +1089,21 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     p.sanitise();
     // Each device keeps its own material and cut library [LIB-09, LAYER-10].
     app.extras.library.switch_device(&dev.name, &app.prefs);
+    // Its own saved positions (before the capture below, which would hand it the last device's).
+    app.machine.jog.saved = dev.state.saved_positions;
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
     }
-    app.machine.rotary_on = false;
-    app.machine.cylinder_on = false;
 }
 
 /// Copy what the app holds for the current device into the device record.
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
+    let saved = app.machine.jog.saved.clone();
     if let Some(d) = app.machine.devices.get_mut(id) {
+        d.state.saved_positions = saved;
         d.state.inches = inches;
         d.state.show_grid = grid;
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.

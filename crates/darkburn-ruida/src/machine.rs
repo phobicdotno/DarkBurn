@@ -294,9 +294,22 @@ impl<T: Transport> RuidaMachine<T> {
         let n = slices.len();
         for (i, s) in slices.into_iter().enumerate() {
             let c = Command::decode(s);
-            let complete = match &c {
-                Command::Raw(_) => false,
-                Command::FileName { .. } | Command::SettingReplyRaw { .. } => s.last() == Some(&0),
+            // A USB serial port hands a reply over in pieces. The last slice may be a reply
+            // that is still arriving, and some partial replies decode as something shorter.
+            let complete = match (s, &c) {
+                // A setting reply is DA 01 and two address bytes, then five value bytes, or for
+                // the firmware version a NUL-terminated string of any length (so its first 9 or
+                // 14 bytes must not be taken for a number or a settings write).
+                ([0xDA, 0x01, hi, lo, rest @ ..], _) => {
+                    let a = (u16::from(*hi & 0x7F) << 7) | u16::from(*lo & 0x7F);
+                    if a == addr::FIRMWARE { rest.last() == Some(&0) } else { rest.len() >= 5 }
+                }
+                ([0xDA, 0x01, ..], _) => false,
+                (_, Command::Raw(_)) => false,
+                // E8 01, two index bytes, the name, NUL. The first four bytes alone read as the
+                // request for a name, which a controller never sends.
+                (_, Command::GetFileName(_)) => false,
+                (_, Command::FileName { .. }) => s.len() >= 5 && s.last() == Some(&0),
                 _ => true,
             };
             if i + 1 == n && !complete {

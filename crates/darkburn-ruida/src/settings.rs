@@ -24,7 +24,8 @@ pub enum Unit {
     Second,
     /// Frequency in Hz.
     Hertz,
-    /// Power or ratio in 0.1 % steps.
+    /// Power or ratio in 0.1 % steps. UNCERTAIN for the laser power registers: job power is
+    /// 14-bit (raw / 163.84 = percent), and no source gives the unit of the registers.
     Permille,
     /// Percent.
     Percent,
@@ -233,14 +234,55 @@ pub fn writable(group: Option<Group>) -> impl Iterator<Item = &'static Register>
     REGISTERS.iter().filter(move |r| r.writable && group.is_none_or(|g| r.group == g))
 }
 
-/// Known board names by card ID (RUIDA-14). 0x65106510 (RDC6442S) and 0x90109010 (RDC8445S) are
-/// named by public sources (MeerK40t, ruida-pa); the others are placeholders that need checking.
+/// A controller board DarkBurn knows by name (RUIDA-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Board {
+    /// Model or model series as printed on the board.
+    pub model: &'static str,
+    /// The card ID it answers at address 0x2FE, where a public source gives one.
+    pub card_id: Option<u32>,
+    /// Where the card ID comes from, or what is known instead.
+    pub note: &'static str,
+}
+
+const fn b(model: &'static str, card_id: Option<u32>, note: &'static str) -> Board {
+    Board { model, card_id, note }
+}
+
+/// The Ruida boards DarkBurn lists. All of them speak the same protocol family; only two card
+/// IDs are public (MeerK40t and ruida-pa, both MIT), so every other board is accepted as a
+/// generic Ruida controller and shown by its card ID. Needs checking on each board.
+pub const KNOWN_BOARDS: &[Board] = &[
+    b("RDC6442S", Some(0x6510_6510), "card ID from MeerK40t and ruida-pa (seen on a controller by ruida-pa's author)"),
+    b("RDC6442G", Some(0x6500_6500), "card ID is the one MeerK40t's emulator answers with; not a reading from a board"),
+    b("RDC8445S", Some(0x9010_9010), "card ID from ruida-pa"),
+    b("RDC644x (6445G, 6445S)", None, "card ID not public"),
+    b("RDC654x", None, "card ID not public"),
+    b("RDC658x", None, "card ID not public"),
+    b("RDLC-5121", None, "card ID not public"),
+    b("RDLC320-A", None, "card ID not public"),
+    b("RDC420B", None, "card ID not public"),
+    b("RDC6332G", None, "card ID not public"),
+    b("KT332N", None, "card ID not public"),
+];
+
+/// The board that answers with `card_id`, if a public source names it.
+pub fn board(card_id: u32) -> Option<&'static Board> {
+    KNOWN_BOARDS.iter().find(|b| b.card_id == Some(card_id))
+}
+
+/// Known board names by card ID. 0x65106510 (RDC6442S) and 0x90109010 (RDC8445S) are named by
+/// public sources (MeerK40t, ruida-pa); 0x65006500 is only MeerK40t's emulator value.
 pub fn board_name(card_id: u32) -> Option<&'static str> {
-    match card_id {
-        0x6510_6510 => Some("RDC6442S"),
-        0x9010_9010 => Some("RDC8445S"),
-        0x6500_6500 => Some("RDC6442G"),
-        _ => None,
+    board(card_id).map(|b| b.model)
+}
+
+/// What to call a controller: the board model when the card ID is known, otherwise a generic
+/// name with the ID so the user can report it.
+pub fn board_label(card_id: u32) -> String {
+    match board_name(card_id) {
+        Some(n) => n.to_owned(),
+        None => format!("Ruida controller (card ID 0x{card_id:08X}, not in the board list)"),
     }
 }
 
@@ -490,5 +532,16 @@ mod tests {
         assert_eq!(board_name(0x65106510), Some("RDC6442S"));
         assert_eq!(board_name(0x90109010), Some("RDC8445S"));
         assert_eq!(board_name(0x12345678), None);
+        assert_eq!(board_name(0x65006500), Some("RDC6442G"));
+        assert_eq!(board_label(0x90109010), "RDC8445S");
+        assert_eq!(board_label(0x12345678), "Ruida controller (card ID 0x12345678, not in the board list)");
+        // Every board of the checklist is listed; card IDs are unique.
+        for part in ["644", "654", "658", "5121", "320", "420B", "6332G", "KT332N"] {
+            assert!(KNOWN_BOARDS.iter().any(|b| b.model.contains(part)), "{part}");
+        }
+        let mut ids: Vec<u32> = KNOWN_BOARDS.iter().filter_map(|b| b.card_id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 3);
     }
 }

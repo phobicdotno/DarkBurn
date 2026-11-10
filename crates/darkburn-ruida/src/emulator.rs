@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::command::{Axis, Command, JogKey, Laser, PanelCommand, PanelKey, split_commands};
+use crate::command::{Axis, Command, JogKey, Laser, LayerFlag, OverscanMode, PanelCommand, PanelKey, split_commands};
 use crate::encoding::{Power, encode_cstring};
 use crate::packet::{frame, unframe};
 use crate::settings::{StatusWord, addr};
@@ -133,6 +133,16 @@ pub struct RuidaEmulator {
     pub file_sum_mismatches: usize,
     /// Settings writes, in order.
     pub writes: Vec<(u16, u32)>,
+    /// Hardware overscan in effect (`CA 01 00..05`); off again at the end of each layer.
+    overscan: OverscanMode,
+    /// Every hardware overscan mode a running job turned on, with its layer number.
+    pub overscan_modes: Vec<(u8, OverscanMode)>,
+    layer: u8,
+    /// The user origin (panel Origin key), `[x, y]` in µm.
+    origin: [i32; 2],
+    /// Added to the absolute coordinates of the running job: zero for `D8 10`, the user origin
+    /// for `D8 11`, the head position at the start for `D8 12`.
+    job_offset: [i32; 2],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -199,6 +209,11 @@ impl RuidaEmulator {
             checksum_failures: 0,
             file_sum_mismatches: 0,
             writes: Vec::new(),
+            overscan: OverscanMode::Off,
+            overscan_modes: Vec::new(),
+            layer: 0,
+            origin: [0; 2],
+            job_offset: [0; 2],
         }
     }
 
@@ -220,6 +235,14 @@ impl RuidaEmulator {
     }
     pub fn state(&self) -> RunState {
         self.state
+    }
+    /// Set the user origin a `D8 11` job is measured from (test setup; µm).
+    pub fn set_origin(&mut self, x: i32, y: i32) {
+        self.origin = [x, y];
+    }
+    /// Hardware overscan mode in effect right now.
+    pub fn overscan(&self) -> OverscanMode {
+        self.overscan
     }
     pub fn memory(&self, a: u16) -> Option<u32> {
         self.mem.get(&a).copied()
@@ -499,6 +522,11 @@ impl RuidaEmulator {
     }
 
     fn start_job(&mut self, cmds: Vec<Command>) {
+        self.job_offset = match cmds.iter().find_map(|c| if let Command::RefPointMode(m) = c { Some(*m) } else { None }) {
+            Some(0x11) => self.origin,
+            Some(0x12) => [self.pos[0], self.pos[1]],
+            _ => [0; 2],
+        };
         self.last_job = Some(cmds.clone());
         self.job = Some(Job { cmds, pc: 0, cut_us: 0, total_us: 0 });
         self.state = RunState::Running;
@@ -534,9 +562,11 @@ impl RuidaEmulator {
             self.account(&j);
         }
         self.state = RunState::Idle;
+        self.overscan = OverscanMode::Off;
     }
 
     fn account(&mut self, j: &Job) {
+        self.job_offset = [0; 2];
         let ms = (j.total_us / 1000) as u32;
         self.mem.insert(addr::PREVIOUS_WORK_TIME, ms);
         *self.mem.entry(addr::TOTAL_WORK_TIME).or_insert(0) += (j.total_us / 1_000_000) as u32;
@@ -559,6 +589,15 @@ impl RuidaEmulator {
         match cmd {
             Command::Speed(s) => self.speed = s,
             Command::MaxPower { laser: Laser::L1, power } => self.power = power,
+            Command::LayerNumber(n) => self.layer = n,
+            Command::Flag(f @ (LayerFlag::LayerEnd | LayerFlag::WorkMode(_))) => {
+                if let Some(mode) = f.overscan_mode() {
+                    self.overscan = mode;
+                    if mode != OverscanMode::Off {
+                        self.overscan_modes.push((self.layer, mode));
+                    }
+                }
+            }
             Command::EndOfFile => {
                 let j = self.job.take().expect("job");
                 self.account(&j);
@@ -585,12 +624,13 @@ impl RuidaEmulator {
     fn exec_motion(&mut self, c: &Command) -> (f64, bool) {
         use Command::*;
         let p = self.pos;
+        let [ox, oy] = self.job_offset;
         let (to, kind) = match *c {
-            MoveAbs { x, y } => ([x, y, p[2], p[3]], MotionKind::Travel),
+            MoveAbs { x, y } => ([x + ox, y + oy, p[2], p[3]], MotionKind::Travel),
             MoveRel { dx, dy } => ([p[0] + dx, p[1] + dy, p[2], p[3]], MotionKind::Travel),
             MoveRelX(d) => ([p[0] + d, p[1], p[2], p[3]], MotionKind::Travel),
             MoveRelY(d) => ([p[0], p[1] + d, p[2], p[3]], MotionKind::Travel),
-            CutAbs { x, y } => ([x, y, p[2], p[3]], MotionKind::Cut),
+            CutAbs { x, y } => ([x + ox, y + oy, p[2], p[3]], MotionKind::Cut),
             CutRel { dx, dy } => ([p[0] + dx, p[1] + dy, p[2], p[3]], MotionKind::Cut),
             CutRelX(d) => ([p[0] + d, p[1], p[2], p[3]], MotionKind::Cut),
             CutRelY(d) => ([p[0], p[1] + d, p[2], p[3]], MotionKind::Cut),
@@ -677,6 +717,8 @@ fn is_complete(s: &[u8]) -> bool {
         Command::Raw(_) => false,
         // Host-to-controller DA 01 is always a 14-byte write.
         Command::SettingReply { .. } | Command::SettingReplyRaw { .. } => s.len() >= 14,
+        // A file name runs up to its NUL; the datagram or USB write may end before it.
+        Command::SetFilename(_) => s.last() == Some(&0),
         _ => true,
     }
 }

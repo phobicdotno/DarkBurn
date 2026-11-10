@@ -42,6 +42,7 @@ pub fn never(_: &str) -> OverwriteChoice {
 pub fn square_job(origin: (f64, f64), size: f64, speed: f64) -> RdJob {
     let (x, y) = origin;
     RdJob {
+        reference: RefPoint::MachineZero,
         layers: vec![RdLayer {
             settings: LayerSettings { index: 0, speed_mm_s: speed, color: 0xFF0000, ..Default::default() },
             ops: vec![
@@ -58,6 +59,7 @@ pub fn square_job(origin: (f64, f64), size: f64, speed: f64) -> RdJob {
 /// A two-layer job using every op kind.
 pub fn mixed_job() -> RdJob {
     RdJob {
+        reference: RefPoint::MachineZero,
         layers: vec![
             RdLayer {
                 settings: LayerSettings {
@@ -69,6 +71,7 @@ pub fn mixed_job() -> RdJob {
                     frequency_hz: Some(5_000),
                     air_assist: true,
                     dot_mode: None,
+                    overscan: OverscanMode::VerticalBidirectional,
                 },
                 ops: vec![
                     RdOp::Move(Point::new(20.0, 20.0)),
@@ -88,6 +91,7 @@ pub fn mixed_job() -> RdJob {
                     frequency_hz: None,
                     air_assist: false,
                     dot_mode: Some(DotMode { dot_time_ms: 1.25, spacing_mm: 0.5 }),
+                    overscan: OverscanMode::Off,
                 },
                 ops: vec![
                     RdOp::Z(3.0),

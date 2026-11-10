@@ -449,6 +449,8 @@ fn autosave_tick(app: &mut DarkBurn, now: Instant) -> Option<Duration> {
                 app.files.autosave.failed = r.is_err();
                 if let Err(e) = r {
                     log::warn!("auto-save failed: {e}");
+                    // Nothing was kept: this state is still to be saved, at the next interval.
+                    app.files.autosave.revision = None;
                 }
                 app.files.autosave.at = Some(now);
                 app.files.autosave.writing = None;
@@ -1348,5 +1350,41 @@ mod tests {
         save_to(&mut a, &mine).unwrap();
         assert!(!settings.join(AUTOSAVE_FILE).exists());
         end_session(&settings);
+    }
+
+    /// Bug hunt 5: an auto-save that could not be written is tried again at the next interval,
+    /// without waiting for another edit.
+    #[test]
+    fn a_failed_autosave_is_tried_again() {
+        let dir = TempDir::new("autosave-retry");
+        let settings = dir.0.join("settings");
+        let mut a = app(&dir);
+        a.prefs.autosave_minutes = 1.0;
+        add_rect(&mut a);
+        // Something sits where the auto-save goes: the write fails.
+        let blocker = settings.join(AUTOSAVE_FILE);
+        std::fs::create_dir_all(&blocker).unwrap();
+        std::fs::write(blocker.join("in the way"), b"x").unwrap();
+        let t0 = Instant::now();
+        let settle = |a: &mut DarkBurn, at: Instant| {
+            for _ in 0..500 {
+                autosave_tick(a, at);
+                if a.files.autosave.writing.is_none() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        autosave_tick(&mut a, t0);
+        settle(&mut a, t0 + Duration::from_secs(61));
+        assert!(a.files.autosave.failed, "the write failed");
+        assert_eq!(autosave_status(&a, t0 + Duration::from_secs(62)), "Auto-save failed");
+        // The way is clear again: the next rounds write the same, still unsaved, project.
+        std::fs::remove_dir_all(&blocker).unwrap();
+        for round in 2..5 {
+            settle(&mut a, t0 + Duration::from_secs(61 * round));
+        }
+        assert!(blocker.is_file(), "the auto-save was written once it could be");
+        assert!(!a.files.autosave.failed);
     }
 }

@@ -5,3 +5,4 @@ Fix: Fill+Line layers came back as Fill from a LightBurn file
 Fix: Kerf, Z offset and air assist were missing from exported LightBurn files
 Fix: Bold, spaced or bent text from a LightBurn file lost its look when the job was made
 Fix: A damaged cut library file could put impossible power or speed on a layer
+Fix: A failed auto-save was not tried again until the next change

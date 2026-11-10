@@ -407,7 +407,8 @@ impl Ctx<'_> {
                 let mut p = BezPath::new();
                 p.move_to(pt(&l.p1));
                 p.line_to(pt(&l.p2));
-                self.push_path(e, inh, p, ocs(l.extrusion_direction.z));
+                // A line's points are world coordinates; its extrusion only steers a thickness.
+                self.push_path(e, inh, p, Affine::IDENTITY);
             }
             EntityType::Circle(c) => {
                 self.push_path(e, inh, circle_path(pt(&c.center), c.radius), ocs(c.normal.z));

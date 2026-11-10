@@ -78,6 +78,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     }
     let dir = app.settings_dir.clone();
     app.extras.library.autosave(dir.as_deref(), std::time::Instant::now());
+    art_library::frame(app);
     app.extras.last_hover = app.extras.hover_topic.take();
     crate::updates::frame(ctx, app);
     if app.extras.library.is_dirty() || !app.extras.art.libs.is_empty() {

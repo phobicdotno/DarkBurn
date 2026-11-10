@@ -647,6 +647,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
             app.files.ask_save = Some(Then::Exit);
         } else {
             wait_for_autosave(app);
+            crate::art_library::closing(app);
             if let Some(dir) = &app.settings_dir
                 && !app.safe_mode
                 && !app.fio.secondary

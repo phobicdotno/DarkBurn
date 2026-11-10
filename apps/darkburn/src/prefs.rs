@@ -93,6 +93,8 @@ pub struct Prefs {
     pub hotkeys: crate::keymap::Overrides,
     /// The cut library file each device last used (empty key: no device).
     pub library_paths: BTreeMap<String, String>,
+    /// The art libraries that were open, to open again at the next start (art_library.rs).
+    pub art_libraries: Vec<String>,
     /// Import, export and file preferences (formats.rs).
     pub files: crate::formats::FilePrefs,
     /// AI agents (MCP): off until the user turns it on (mcp_ui.rs).
@@ -143,6 +145,7 @@ impl Default for Prefs {
             opts: crate::options::Options::default(),
             hotkeys: Default::default(),
             library_paths: BTreeMap::new(),
+            art_libraries: Vec::new(),
             files: Default::default(),
             mcp: Default::default(),
             fonts: Default::default(),

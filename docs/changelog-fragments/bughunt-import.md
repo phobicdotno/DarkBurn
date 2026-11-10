@@ -10,3 +10,4 @@ Fix: deleting a layer with its shapes keeps the other shapes of a group
 Fix: a shape with a broken coordinate can no longer make a saved project impossible to open
 Fix: changes made while a file is still being opened are asked about instead of thrown away
 Fix: importing preferences no longer shows another machine's work area on the canvas
+Fix: art libraries are saved when DarkBurn closes and are open again at the next start

@@ -267,6 +267,8 @@ pub struct ArtState {
     /// The panel's screen rectangle from the last frame, so dropped files can be told apart.
     pub panel_rect: Option<Rect>,
     pub last_check: Option<std::time::Instant>,
+    /// The libraries of the last run were opened again (once, on the first frame).
+    restored: bool,
 }
 
 fn hash(s: &str) -> u64 {
@@ -288,6 +290,44 @@ impl ArtState {
     pub fn new_library(&mut self) -> usize {
         self.libs.push(Open { lib: ArtLibrary::default(), path: None, dirty: false, mtime: None });
         self.libs.len() - 1
+    }
+
+    /// The files of the open libraries, for the next start.
+    pub fn paths(&self) -> Vec<String> {
+        self.libs.iter().filter_map(|l| l.path.as_ref()).map(|p| p.to_string_lossy().into_owned()).collect()
+    }
+
+    /// Open the libraries `paths` names; one whose file is gone or unreadable is left out.
+    pub fn restore(&mut self, paths: &[String]) {
+        for p in paths {
+            let _ = self.open(Path::new(p));
+        }
+    }
+
+    /// Save every library with unsaved changes: to its own file, or, when it never had one, to a
+    /// new file in the settings folder (so it is there again at the next start). Returns how
+    /// many could not be saved.
+    pub fn save_changes(&mut self, settings_dir: Option<&Path>) -> usize {
+        let mut failed = 0;
+        for i in 0..self.libs.len() {
+            if !self.libs[i].dirty {
+                continue;
+            }
+            let result = match (self.libs[i].path.clone(), settings_dir) {
+                (Some(p), _) => self.libs[i].save_as(&p),
+                (None, Some(dir)) => {
+                    let _ = std::fs::create_dir_all(dir);
+                    let path = free_file(dir, &self.libs[i].lib.name);
+                    self.libs[i].save_as(&path)
+                }
+                (None, None) => Err(tr("art.no_file", "The library has no file yet: use Save as")),
+            };
+            if let Err(e) = result {
+                self.status = e;
+                failed += 1;
+            }
+        }
+        failed
     }
 
     /// Reload libraries another running copy changed (those with no unsaved changes here).
@@ -345,6 +385,48 @@ impl ArtState {
 }
 
 /// Dropped files that belong to the Art Library panel (the pointer is over it). True when taken.
+/// A file name in `dir` for a library called `name` that no file has yet.
+fn free_file(dir: &Path, name: &str) -> PathBuf {
+    let slug: String = name.trim().chars().map(|c| if c.is_alphanumeric() || c == '-' || c == ' ' { c } else { '_' }).collect();
+    let slug = if slug.trim().is_empty() { "art-library".to_string() } else { slug };
+    let mut n = 1;
+    loop {
+        let file = if n == 1 { format!("{slug}.{FILE_EXTENSION}") } else { format!("{slug} {n}.{FILE_EXTENSION}") };
+        let path = dir.join(file);
+        if !path.exists() {
+            return path;
+        }
+        n += 1;
+    }
+}
+
+/// Once a frame: open the libraries of the last run on the first frame, and keep the list of
+/// open libraries in the preferences from then on.
+pub fn frame(app: &mut DarkBurn) {
+    if !app.extras.art.restored {
+        app.extras.art.restored = true;
+        if !app.safe_mode {
+            let paths = app.prefs.art_libraries.clone();
+            app.extras.art.restore(&paths);
+        }
+        return;
+    }
+    let open = app.extras.art.paths();
+    if open != app.prefs.art_libraries {
+        app.prefs.art_libraries = open;
+    }
+}
+
+/// DarkBurn is closing: unsaved library changes are saved, and the list of open libraries is
+/// brought up to date (a library that got its file just now is on it).
+pub fn closing(app: &mut DarkBurn) {
+    let dir = app.settings_dir.clone();
+    app.extras.art.save_changes(dir.as_deref());
+    if app.extras.art.restored {
+        app.prefs.art_libraries = app.extras.art.paths();
+    }
+}
+
 pub fn handle_drop(app: &mut DarkBurn, ctx: &egui::Context, paths: &[PathBuf]) -> bool {
     let Some(rect) = app.extras.art.panel_rect else { return false };
     if !ctx.pointer_latest_pos().is_some_and(|p| rect.contains(p)) {
@@ -649,6 +731,45 @@ mod tests {
         assert_eq!(app.editor.doc.len(), before + 1);
         let t = thumb_of(&app.extras.art.libs[0].lib.folders[0].items[0].payload);
         assert!(!t.lines.is_empty() && (t.aspect - 2.0).abs() < 1e-3, "{t:?}");
+    }
+
+    #[test]
+    fn unsaved_library_changes_are_saved_when_darkburn_closes_and_the_libraries_open_again() {
+        let dir = std::env::temp_dir().join(format!("darkburn-art-exit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = app_with_rect();
+        app.settings_dir = Some(dir.join("settings"));
+        frame(&mut app);
+        // One library with a file, one that never had one; both get changes after their last save.
+        let filed = dir.join("mine.dbart");
+        let a = app.extras.art.new_library();
+        app.extras.art.libs[a].save_as(&filed).unwrap();
+        add_selection(&mut app, a, 0, "Box", OnDuplicate::KeepBoth).unwrap();
+        let b = app.extras.art.new_library();
+        add_selection(&mut app, b, 0, "Loose", OnDuplicate::KeepBoth).unwrap();
+        assert!(app.extras.art.libs[a].dirty && app.extras.art.libs[b].dirty);
+        frame(&mut app);
+        assert_eq!(app.prefs.art_libraries, vec![filed.to_string_lossy().into_owned()]);
+
+        closing(&mut app);
+        assert!(app.extras.art.libs.iter().all(|l| !l.dirty), "{}", app.extras.art.status);
+        assert_eq!(Open::load(&filed).unwrap().lib.folders[0].items[0].name, "Box");
+        assert_eq!(app.prefs.art_libraries.len(), 2, "the library without a file got one in the settings folder");
+
+        // The next start: both are open again, with what was added.
+        let mut next = DarkBurn::new(app.prefs.clone());
+        frame(&mut next);
+        let names: Vec<&str> = next.extras.art.libs.iter().map(|l| l.lib.folders[0].items[0].name.as_str()).collect();
+        assert_eq!(names, ["Box", "Loose"]);
+        // A library whose file is gone is dropped from the list instead of failing every start.
+        std::fs::remove_file(&filed).unwrap();
+        let mut later = DarkBurn::new(app.prefs.clone());
+        frame(&mut later);
+        frame(&mut later);
+        assert_eq!(later.extras.art.libs.len(), 1);
+        assert_eq!(later.prefs.art_libraries.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

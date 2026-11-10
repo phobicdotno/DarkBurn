@@ -384,12 +384,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Position [MOVE-08]
     ui_kit::section_heading(ui, "Position");
-    let p = snap.work_pos;
-    let pos = if snap.has_position {
-        format!("X {:.3}   Y {:.3}   Z {:.3}   U {:.3}", p[0], p[1], p[2], p[3])
-    } else {
-        "X ?   Y ?   Z ?   U ?".to_string()
-    };
+    let pos = position_text(snap.has_position.then_some(snap.work_pos), inches);
     ui.label(RichText::new(pos).monospace().size(t.font_small));
     if btn(ui, "Get position", "Ask the laser where it is", snap.connected()) {
         go(app, "machine.get_position", json!({}));
@@ -397,6 +392,9 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Move to [MOVE-09, MOVE-11, MOVE-12]
     ui_kit::section_heading(ui, "Move to");
+    if inches {
+        ui.add(egui::Label::new(RichText::new("In inches; a unit can be typed (25 mm).").size(t.font_small).color(t.text_dim)).wrap());
+    }
     ui_kit::row(ui, "X", |ui| {
         ui_kit::field(ui, &mut app.machine.jog.goto_x);
     });
@@ -412,14 +410,14 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             let j = &app.machine.jog;
             let mut a = json!({ "machine_coords": j.from_machine_zero, "feed": j.speed * 60.0 });
             for (k, v) in [("x", &j.goto_x), ("y", &j.goto_y), ("z", &j.goto_z)] {
-                if let Some(n) = ui_kit::parse_number(v) {
+                if let Some(n) = typed_mm(v, inches) {
                     a[k] = json!(n);
                 }
             }
             go(app, "machine.move_to", a);
         }
-        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && ui_kit::parse_number(&app.machine.jog.goto_z).is_some()) {
-            let z = ui_kit::parse_number(&app.machine.jog.goto_z).unwrap_or(0.0);
+        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && typed_mm(&app.machine.jog.goto_z, inches).is_some()) {
+            let z = typed_mm(&app.machine.jog.goto_z, inches).unwrap_or(0.0);
             go(
                 app,
                 "machine.move_to",
@@ -432,15 +430,17 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Saved positions");
     if btn(ui, "Save position", "Remember the position above", true) {
         let j = &app.machine.jog;
-        let (x, y) = (ui_kit::parse_number(&j.goto_x).unwrap_or(0.0), ui_kit::parse_number(&j.goto_y).unwrap_or(0.0));
-        let z = ui_kit::parse_number(&j.goto_z);
+        let (x, y) = (typed_mm(&j.goto_x, inches).unwrap_or(0.0), typed_mm(&j.goto_y, inches).unwrap_or(0.0));
+        let z = typed_mm(&j.goto_z, inches);
         let n = j.saved.len() + 1;
         app.machine.jog.saved.push(machine_ui::SavedPos { name: format!("Position {n}"), x, y, z: z.unwrap_or(0.0), use_z: z.is_some() });
     }
     let mut action: Option<(usize, &str)> = None;
     for (i, sp) in app.machine.jog.saved.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            ui_kit::field(ui, &mut sp.name);
+        // The name takes the panel's width, so the buttons go on a line of their own (in one
+        // row with it they pushed the panel wider than its dock).
+        ui.push_id(("saved_position", i), |ui| ui_kit::field(ui, &mut sp.name));
+        ui.horizontal_wrapped(|ui| {
             ui_kit::checkbox(ui, "Z", &mut sp.use_z);
             if btn(ui, "Go", "Move there", free) {
                 action = Some((i, "go"));
@@ -500,7 +500,9 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui.label(RichText::new("A DSP controller keeps its origin on its own panel.").size(t.font_small).color(t.text_dim));
     }
     if let Some((x, y)) = app.machine.jog.finish {
-        ui.label(RichText::new(format!("Finish position: X {x:.2}, Y {y:.2} from machine zero")).size(t.font_small).color(t.text_dim));
+        let (unit, k) = if inches { ("in", 1.0 / 25.4) } else { ("mm", 1.0) };
+        let text = format!("Finish position: X {:.2}, Y {:.2} {unit} from machine zero", x * k, y * k);
+        ui.label(RichText::new(text).size(t.font_small).color(t.text_dim));
     }
 
     // Fire [MOVE-15]
@@ -552,6 +554,25 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     // Laser 2 [MOVE-18, CUTS-09]
     if family == Family::Ruida && dev.settings.dsp.dual_tube {
         laser2_controls(ui, app);
+    }
+}
+
+/// A position typed into the Move to fields, in millimetres. A bare number is in the unit the
+/// panel shows (inches with the inch setting on); a typed unit or a sum is worked out
+/// (`10in/4`, `25 mm`). None for an empty field or text that is not a length.
+pub fn typed_mm(text: &str, inches: bool) -> Option<f64> {
+    let unit_mm = if inches { 25.4 } else { 1.0 };
+    let text = text.replace('\u{2212}', "-");
+    let v = darkburn_core::expr::eval_in(&text, unit_mm).or_else(|| ui_kit::parse_number(&text))?;
+    v.is_finite().then_some(v * unit_mm)
+}
+
+/// The Position line: the laser's place in the unit the panel works in, with the unit named.
+pub fn position_text(pos: Option<[f64; 4]>, inches: bool) -> String {
+    let (unit, scale) = if inches { ("in", 1.0 / 25.4) } else { ("mm", 1.0) };
+    match pos {
+        Some(p) => format!("X {:.3}   Y {:.3}   Z {:.3} {unit}   U {:.3}", p[0] * scale, p[1] * scale, p[2] * scale, p[3]),
+        None => format!("X ?   Y ?   Z ? {unit}   U ?"),
     }
 }
 

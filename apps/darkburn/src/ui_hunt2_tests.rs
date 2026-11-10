@@ -130,3 +130,87 @@ fn closing_an_art_library_drops_the_question_about_its_item() {
     assert!(!g.has_text("Replace it"), "the question outlived its library");
     assert!(g.app().extras.art.pending.is_none());
 }
+
+/// The Move panel works in one unit: with the inch setting on, a number typed into Move to is
+/// in inches like the Distance next to it, the Position line names its unit, and a typed unit
+/// or sum is worked out instead of being dropped.
+#[test]
+fn the_move_panel_positions_follow_the_inch_setting() {
+    use crate::laser_panel::{position_text, typed_mm};
+    let mut g = Gui::standard();
+    show_panel(&mut g, "move");
+    assert!(g.has_text("X ?   Y ?   Z ? mm   U ?"), "{:?}", g.visible_texts());
+    // The panel is taller than its dock: bring the rest into view.
+    let at = g.find_text("Get position").unwrap().center();
+    let reveal = |g: &mut Gui| {
+        g.scroll(at, egui::vec2(0.0, 4000.0));
+        for _ in 0..60 {
+            if g.find_text("Save position").is_some_and(|r| r.bottom() < g.screen().bottom() - 80.0) {
+                return;
+            }
+            g.scroll(at, egui::vec2(0.0, -40.0));
+        }
+        panic!("Save position did not scroll into view");
+    };
+    reveal(&mut g);
+    // Millimetres: a bare number, and a length with its unit.
+    g.app().machine.jog.goto_x = "12.5".into();
+    g.app().machine.jog.goto_y = "10in/4".into();
+    g.click_label("Save position");
+    let saved = g.app().machine.jog.saved.clone();
+    assert_eq!((saved[0].x, saved[0].y, saved[0].use_z), (12.5, 63.5, false), "a typed sum with a unit was saved as 0");
+    // The saved position's row fits the panel: the dock keeps its place and its width.
+    g.frames(2);
+    assert_eq!(g.layout_problems(), Vec::<String>::new(), "a saved position pushed the Move panel out of its dock");
+    assert!(g.find_text("MOVE TO").is_some_and(|r| r.left() > 1221.0), "the Move panel slid under the canvas: {:?}", g.find_text("MOVE TO"));
+    // Inches: the same fields now count in inches.
+    g.app().prefs.numeric_inches = true;
+    g.app().machine.jog.goto_x = "2".into();
+    g.app().machine.jog.goto_y = "25.4 mm".into();
+    g.app().machine.jog.goto_z = "0.5".into();
+    g.frames(2);
+    reveal(&mut g);
+    g.click_label("Save position");
+    let saved = g.app().machine.jog.saved.clone();
+    assert!((saved[1].x - 50.8).abs() < 1e-9 && (saved[1].y - 25.4).abs() < 1e-9, "2 in was saved as {} mm", saved[1].x);
+    assert!(saved[1].use_z && (saved[1].z - 12.7).abs() < 1e-9);
+
+    g.scroll(at, egui::vec2(0.0, 2000.0));
+    assert!(g.has_text("X ?   Y ?   Z ? in   U ?"), "{:?}", g.visible_texts());
+    assert_eq!(g.layout_problems(), Vec::<String>::new());
+
+    assert_eq!(typed_mm("", true), None);
+    assert_eq!(typed_mm("abc", false), None);
+    assert_eq!(typed_mm("-3,5", false), Some(-3.5));
+    assert_eq!(position_text(Some([25.4, 50.8, 2.54, 7.0]), true), "X 1.000   Y 2.000   Z 0.100 in   U 7.000");
+    assert_eq!(position_text(Some([25.4, 50.8, 2.54, 7.0]), false), "X 25.400   Y 50.800   Z 2.540 mm   U 7.000");
+}
+
+/// A saved position's row (name, Z, Go, up, down, Delete) fits the Move panel: it used to be one
+/// line wider than the dock, which slid the whole dock's contents under the canvas.
+#[test]
+fn a_saved_position_does_not_push_the_move_panel_out_of_its_dock() {
+    let mut g = Gui::standard();
+    show_panel(&mut g, "move");
+    let dock = g.rect_of("panel:area:RightBottom").unwrap();
+    let left = |g: &Gui, label: &str| g.find_text(label).unwrap_or_else(|| panic!("{label} is on screen")).left();
+    let before = left(&g, "POSITION");
+    assert!(before > dock.left());
+    g.app().machine.jog.saved.push(crate::machine_ui::SavedPos { name: "Corner jig".into(), x: 1.0, y: 2.0, z: 0.0, use_z: false });
+    let at = g.find_text("Get position").unwrap().center();
+    for _ in 0..60 {
+        if g.find_text("Delete").is_some_and(|r| r.top() > dock.top() + 40.0 && r.bottom() < dock.bottom() - 20.0) && g.has_text("SAVED POSITIONS") {
+            break;
+        }
+        g.scroll(at, egui::vec2(0.0, -30.0));
+    }
+    assert_eq!(g.rect_of("panel:area:RightBottom"), Some(dock));
+    assert_eq!(left(&g, "SAVED POSITIONS"), before, "the panel's contents slid sideways");
+    // Every control of the row is inside the dock and can be used.
+    for label in ["Go", "Delete", "Save position"] {
+        let r = g.find_text(label).unwrap_or_else(|| panic!("{label} is on screen"));
+        assert!(r.left() >= dock.left() && r.right() <= dock.right(), "{label} is outside the dock: {r:?}");
+    }
+    g.click_label("Delete");
+    assert!(g.app().machine.jog.saved.is_empty(), "Delete in the row could not be clicked");
+}

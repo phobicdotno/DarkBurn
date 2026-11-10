@@ -264,11 +264,12 @@ fn jobs_section(ui: &mut Ui, prefs: &mut Prefs) {
     });
     ui_kit::checkbox(ui, &tr("settings.job_log", "Save a log of each job"), &mut prefs.opts.job_log);
     ui_kit::row(ui, &tr("settings.job_log_dir", "Job log folder"), |ui| {
-        ui.add(
+        let r = ui.add(
             egui::TextEdit::singleline(&mut prefs.opts.job_log_dir)
                 .hint_text(tr("settings.job_log_dir_hint", "DarkBurn's settings folder"))
                 .desired_width(320.0),
         );
+        crate::a11y::name_from_row(ui, &r, egui::Role::TextInput);
     });
     ui.horizontal_wrapped(|ui| {
         if ui_kit::button(ui, tr("settings.job_log_choose", "Choose the log folder"), ui_kit::Button::Small).clicked()

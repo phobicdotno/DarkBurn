@@ -160,3 +160,12 @@ fn a_layer_membership_that_names_itself_is_not_followed_forever() {
     let doc = read(&pdf("/MediaBox [0 0 300 300] /Resources << /Properties << /P 5 0 R >> >>", "/OC /P BDC 0 0 10 10 re S EMC", &[ocmd]));
     assert_eq!(paths(&doc).len(), 1);
 }
+
+#[test]
+fn a_soft_mask_that_names_itself_is_not_followed_forever() {
+    let img =
+        stream("/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /SMask 5 0 R", &[0, 85, 170, 255]);
+    let doc = read(&pdf("/MediaBox [0 0 300 300] /Resources << /XObject << /I 5 0 R >> >>", "72 0 0 72 0 0 cm /I Do", &[img]));
+    let n = doc.items.iter().filter(|i| matches!(i.kind, ItemKind::Image(_))).count();
+    assert_eq!(n, 1, "{:?}", doc.warnings);
+}

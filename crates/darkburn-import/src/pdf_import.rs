@@ -463,7 +463,7 @@ impl<'a> Interp<'a> {
                 "BI" => {
                     if let Some(Object::Stream(s)) = a.first() {
                         if self.opts.include_images {
-                            let img = decode_image(doc, &s.dict, &s.content, gs.fill, &res, true);
+                            let img = decode_image(doc, &s.dict, &s.content, gs.fill, &res, true, false);
                             self.place_image(img, &gs, &mc);
                         }
                     } else {
@@ -564,7 +564,7 @@ impl<'a> Interp<'a> {
                 if !self.opts.include_images {
                     return;
                 }
-                let img = decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false);
+                let img = decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false, true);
                 self.place_image(img, gs, mc);
             }
             _ => {}
@@ -702,8 +702,18 @@ fn expand_filter(n: &[u8]) -> &[u8] {
     }
 }
 
-/// Decodes an image XObject or inline image into an RGB(A) or gray image.
-fn decode_image(doc: &Document, dict: &Dictionary, raw: &[u8], fill: Rgb, res: &Res<'_>, inline: bool) -> Result<DynamicImage, String> {
+/// Decodes an image XObject or inline image into an RGB(A) or gray image. `soft_mask` says
+/// whether the image's own soft mask is read too; a soft mask has none of its own, and one that
+/// names itself or its image in a damaged file must not be followed.
+fn decode_image(
+    doc: &Document,
+    dict: &Dictionary,
+    raw: &[u8],
+    fill: Rgb,
+    res: &Res<'_>,
+    inline: bool,
+    soft_mask: bool,
+) -> Result<DynamicImage, String> {
     let width = get_abbr(doc, dict, b"W", b"Width").and_then(num).unwrap_or(0.0);
     let height = get_abbr(doc, dict, b"H", b"Height").and_then(num).unwrap_or(0.0);
     if !(width >= 1.0 && height >= 1.0) || width * height > MAX_PIXELS as f64 {
@@ -766,9 +776,9 @@ fn decode_image(doc: &Document, dict: &Dictionary, raw: &[u8], fill: Rgb, res: &
         }
     };
     // Soft mask -> alpha.
-    if !inline
+    if soft_mask
         && let Some(sm) = dict_get(doc, dict, b"SMask").and_then(|o| o.as_stream().ok())
-        && let Ok(mask) = decode_image(doc, &sm.dict, &sm.content, Rgb::BLACK, res, false)
+        && let Ok(mask) = decode_image(doc, &sm.dict, &sm.content, Rgb::BLACK, res, false, false)
     {
         let mask = mask.to_luma8();
         let mut rgba = img.to_rgba8();

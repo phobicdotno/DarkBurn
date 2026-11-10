@@ -27,7 +27,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SHELL-10 IBM Plex fonts and SolidCraft icon style for all DarkBurn icons
 - [x] SHELL-11 Theme picker (SolidCraft's bundled themes)
 - [x] SHELL-12 Windows installer (MSI) and app icon
-- [~] SHELL-13 Update check
+- [~] SHELL-13 Update check *(the check, the start-up check and the dialog work against a test server; the real HTTPS request to the release feed is not verified, and the feed has to be public)*
 
 ---
 
@@ -200,7 +200,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] HELP-03 Online documentation link
 - [x] HELP-04 Generate support data
 - [x] HELP-05 Camera selection help
-- [~] HELP-06 Check for updates
+- [~] HELP-06 Check for updates *(see SHELL-13)*
 - [x] HELP-07 Enable debug log
 
 ---

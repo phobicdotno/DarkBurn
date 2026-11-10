@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.434 (build 6)
+## v0.0.438 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -18,6 +18,10 @@
 - Fix: "Home when a job starts" on the first page of Device Settings now does what it says
 - Fix: showing inches on the screen no longer changes the G-code sent to Marlin, Smoothieware, Snapmaker, LinuxCNC and custom machines
 - Fix: a device list that cannot be read is kept as a copy instead of being lost
+- Fix: Rubber band frame no longer goes round a picture that is left out of the job
+- Fix: Frame with a tool layer follows the job when print and cut or rotary moves it
+- Fix: Frame from the current position puts the head back where it started, so the job lands on what was framed
+- Fix: Pausing a Marlin or fan-controlled laser in the middle of a cut switches the laser off until you resume
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

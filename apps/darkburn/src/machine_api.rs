@@ -490,11 +490,14 @@ pub struct FrameSpec {
     pub feed: f64,
     /// Laser on at this power while tracing (GRBL) or red light (Ruida).
     pub laser_percent: Option<f64>,
+    /// Where the head goes when the frame is done, in the coordinates of the frame points. A job
+    /// that starts from the current position needs the head back where it was.
+    pub return_to: Option<Point>,
 }
 
 impl Default for FrameSpec {
     fn default() -> Self {
-        Self { feed: 3000.0, laser_percent: None }
+        Self { feed: 3000.0, laser_percent: None, return_to: None }
     }
 }
 
@@ -1269,8 +1272,10 @@ impl DriverAdapter for GrblAdapter {
             C::Pause => Ok(m.pause()?),
             C::Resume => Ok(m.resume()?),
             C::Stop => Ok(m.stop()?),
-            C::FrameRect(r, f) => Ok(m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent })?),
-            C::FrameOutline(p, f) => Ok(m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent })?),
+            C::FrameRect(r, f) => Ok(m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to })?),
+            C::FrameOutline(p, f) => {
+                Ok(m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to })?)
+            }
             C::FrameOnController => unsupported("Framing on the controller"),
             C::JogStep(j) => {
                 if j.du != 0.0 {
@@ -1747,8 +1752,10 @@ impl DriverAdapter for RuidaAdapter {
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }
-            C::FrameOutline(points, f) => {
+            C::FrameOutline(mut points, f) => {
                 busy(working)?;
+                // The frame is a run of rapid moves: one more takes the head back.
+                points.extend(f.return_to);
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
                 self.req(R::FrameOutline { points, light: f.laser_percent.is_some() }, Op::Other("frame"))?;
                 self.out.push(MachineEvent::FrameStarted);

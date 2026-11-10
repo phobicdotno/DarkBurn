@@ -316,7 +316,7 @@ fn smoothie_home_and_air_assist() {
 fn framing_draws_the_outline_with_the_laser_off_unless_asked() {
     let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Smoothie));
     let (m, mut log) = connect(&smoothie_profile(), &emu);
-    m.frame_rect(Rect::new(10.0, 10.0, 60.0, 40.0), FrameOptions { feed: 6000.0, laser_percent: None }).unwrap();
+    m.frame_rect(Rect::new(10.0, 10.0, 60.0, 40.0), FrameOptions { feed: 6000.0, laser_percent: None, return_to: None }).unwrap();
     assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
     emu.with(|e| {
         assert_eq!(e.stats().burned_mm, 0.0);
@@ -325,10 +325,10 @@ fn framing_draws_the_outline_with_the_laser_off_unless_asked() {
     });
     // With the laser on, power is capped.
     assert!(matches!(
-        m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 3000.0, laser_percent: Some(60.0) }),
+        m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 3000.0, laser_percent: Some(60.0), return_to: None }),
         Err(MachineError::InvalidArgument(_))
     ));
-    m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 6000.0, laser_percent: Some(2.0) }).unwrap();
+    m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 6000.0, laser_percent: Some(2.0), return_to: None }).unwrap();
     assert!(log.wait_n(m.as_ref(), T, 2, |e| matches!(e, MachineEvent::JobFinished(_))));
     emu.with(|e| {
         assert!(e.stats().burned_mm > 30.0);
@@ -415,6 +415,59 @@ fn marlin_pause_only_stops_sending_and_stop_uses_quick_stop() {
     });
     assert_eq!(m.snapshot().activity, Activity::Idle);
     m.disconnect();
+}
+
+/// Outside inline mode a Marlin keeps the laser at the last power until it is told otherwise,
+/// moving or not. A pause in the middle of a cut must not leave it burning one spot, and the
+/// rest of the cut must burn after the resume.
+#[test]
+fn marlin_pause_in_a_cut_switches_the_laser_off_and_resume_puts_it_back() {
+    for mode in [MarlinPowerMode::M3, MarlinPowerMode::Fan] {
+        let mut cfg = EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0);
+        if mode == MarlinPowerMode::Fan {
+            cfg = cfg.with_laser_fan(0);
+        }
+        let emu = LineEmuHandle::with_config(cfg);
+        let mut p = marlin_profile();
+        p.gcode.marlin_power = mode;
+        p.gcode.tool_index = 0;
+        p.gcode.air_assist.on.clear();
+        p.gcode.air_assist.off.clear();
+        let (m, mut log) = connect(&p, &emu);
+        // One cut of sixty pieces, 1 mm each.
+        let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M4 S0".to_owned(), "G0 X10 Y10".to_owned()];
+        for i in 1..=60 {
+            src.push(format!("G1 X{} Y10 S500 F3000", 10 + i));
+        }
+        src.push("M5".to_owned());
+        let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(&p));
+        let n = out.len();
+        m.start_job(Job::from_lines(out).with_total(n)).unwrap();
+        assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 12)), "{mode:?}");
+        m.pause().unwrap();
+        assert!(m.as_ref().wait_until(T, |s| s.paused));
+        // What the controller already has runs out, then the head stands still.
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.planner_len() == 0)), "{mode:?}: the planner never ran empty");
+        worker_passes(m.as_ref(), 25);
+        let burned = emu.with(|e| {
+            assert_eq!(e.planner_len(), 0, "{mode:?}");
+            assert!(
+                !e.laser_armed(),
+                "{mode:?}: paused in a cut with the laser left on: {:?}",
+                e.stats().lines.iter().rev().take(4).collect::<Vec<_>>()
+            );
+            e.stats().burned_mm
+        });
+        assert!(burned > 1.0 && burned < 59.0, "{mode:?}: paused inside the cut, {burned} mm burned");
+        m.resume().unwrap();
+        assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))), "{mode:?}");
+        emu.with(|e| {
+            assert!((e.stats().burned_mm - 60.0).abs() < 1e-6, "{mode:?}: the whole cut burns, {} mm", e.stats().burned_mm);
+            assert_eq!(e.stats().rapid_burn_mm, 0.0, "{mode:?}");
+            assert!(!e.laser_armed(), "{mode:?}");
+        });
+        m.disconnect();
+    }
 }
 
 #[test]
@@ -908,7 +961,7 @@ fn not_a_number_is_refused_by_every_machine() {
     assert!(m.jog(JogStep { dx: 1.0, dy: 0.0, dz: 0.0, feed: f64::NAN }).is_err());
     assert!(m.jog(JogStep { dx: f64::NAN, dy: 0.0, dz: 0.0, feed: 600.0 }).is_err());
     assert!(m.jog(JogStep { dx: 0.0, dy: 0.0, dz: f64::INFINITY, feed: 600.0 }).is_err());
-    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None }).is_err());
+    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None, return_to: None }).is_err());
     assert!(
         m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), coords: darkburn_grbl::Coords::Work, feed: 600.0 }).is_err()
     );

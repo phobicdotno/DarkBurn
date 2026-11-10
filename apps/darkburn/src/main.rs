@@ -56,6 +56,8 @@ mod job_device_tests;
 #[cfg(test)]
 mod job_field_tests;
 #[cfg(test)]
+mod job_hunt5_tests;
+#[cfg(test)]
 mod job_plan_tests;
 mod job_ui;
 mod key_cmds;

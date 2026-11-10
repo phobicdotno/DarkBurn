@@ -509,7 +509,7 @@ fn frame_rectangle_with_and_without_laser() {
         assert!(e.stats().lines.contains(&"G1 X110 Y20 F3000".to_owned()));
     });
 
-    let opts = FrameOptions { feed: 6000.0, laser_percent: Some(1.0) };
+    let opts = FrameOptions { feed: 6000.0, laser_percent: Some(1.0), return_to: None };
     m.frame_outline(&[Point::new(0.0, 0.0), Point::new(50.0, 0.0), Point::new(25.0, 40.0)], opts).unwrap();
     wait_event(&m, |e| matches!(e, Event::JobFinished(_)));
     emu.with(|e| {

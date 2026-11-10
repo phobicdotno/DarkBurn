@@ -45,7 +45,7 @@ use kurbo::Point;
 use crate::detect::{FirmwareGuess, identify_lines};
 use crate::machine::{Capabilities, GcodeMachine, MachineError, MachineEvent, MachineFamily, MachineSnapshot};
 use crate::template::{jog_vars, num, render, render_lines};
-use crate::translate::{TranslateOptions, parse_words, translate};
+use crate::translate::{PowerStyle, TranslateOptions, parse_words, translate};
 
 /// How the controller's position and state are polled.
 #[derive(Clone, Debug, PartialEq)]
@@ -431,10 +431,10 @@ impl GcodeMachine for LineMachine {
         if !positive(opts.feed) {
             return Err(MachineError::InvalidArgument("Framing speed must be above 0.".into()));
         }
-        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+        if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
             return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
-        for p in points {
+        for p in points.iter().chain(&opts.return_to) {
             if !self.in_travel(*p) {
                 return Err(MachineError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", p.x, p.y)));
             }
@@ -455,6 +455,10 @@ impl GcodeMachine for LineMachine {
             for p in points.iter().skip(1).chain(std::iter::once(&points[0])) {
                 src.push(format!("G1 X{} Y{} F{f}", num(p.x), num(p.y)));
             }
+        }
+        if let Some(p) = opts.return_to {
+            // Laser off (M5 above, or never on): back to where the head was.
+            src.push(format!("G0 X{} Y{}", num(p.x), num(p.y)));
         }
         let lines = translate(src.iter().map(String::as_str), &self.cfg.power);
         let n = lines.len();
@@ -736,6 +740,8 @@ struct ActiveJob {
     errors: usize,
     stop_on_error: bool,
     sync_acked: bool,
+    /// The power command the controller is holding (a job line set it, none switched it off).
+    power_on: Option<String>,
 }
 
 impl ActiveJob {
@@ -1069,6 +1075,7 @@ impl Worker {
             errors: 0,
             stop_on_error,
             sync_acked: false,
+            power_on: None,
         });
         self.snap.activity = if kind == JobKind::Frame { Activity::Framing } else { Activity::Job };
         self.snap.paused = false;
@@ -1084,6 +1091,11 @@ impl Worker {
         for l in render_lines(&self.cfg.commands.pause, &[]) {
             self.enqueue_front(l);
         }
+        // A controller that keeps the laser at the last power command (Marlin outside inline
+        // mode, a fan output) would burn one spot while the head stands still: off first.
+        if let (PowerStyle::Command { off, .. }, true) = (&self.cfg.power.style, self.job.as_ref().is_some_and(|j| j.power_on.is_some())) {
+            self.enqueue_front(off.clone());
+        }
     }
 
     fn resume(&mut self) {
@@ -1091,6 +1103,10 @@ impl Worker {
             return;
         }
         self.snap.paused = false;
+        // The power the pause switched off, back on before the job's next line.
+        if let Some(on) = self.job.as_ref().and_then(|j| j.power_on.clone()) {
+            self.enqueue_front(on);
+        }
         for l in render_lines(&self.cfg.commands.resume, &[]) {
             self.enqueue_front(l);
         }
@@ -1685,6 +1701,16 @@ impl Worker {
             let Some(o) = job.staged.take() else { return Ok(()) };
             if matches!(o.tag, Tag::Job(_)) {
                 job.lines_sent += 1;
+            }
+            if let PowerStyle::Command { set, off } = &self.cfg.power.style {
+                // The power is its own command here and stays until the next one: remember it
+                // for a pause.
+                let head = set.split("{value}").next().unwrap_or_default();
+                if o.text == *off {
+                    job.power_on = None;
+                } else if !head.is_empty() && o.text.starts_with(head) {
+                    job.power_on = Some(o.text.clone());
+                }
             }
             self.write_line(&o.text, o.tag)?;
         }

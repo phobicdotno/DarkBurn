@@ -1748,7 +1748,16 @@ impl DriverAdapter for RuidaAdapter {
             C::FrameRect(r, f) => {
                 busy(working)?;
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
-                self.req(R::FrameRect { rect: r, light: f.laser_percent.is_some() }, Op::Other("frame"))?;
+                let light = f.laser_percent.is_some();
+                let request = match f.return_to {
+                    // The same lap as the rectangle, then one more rapid move back.
+                    Some(back) => {
+                        let (a, b, c, d) = (Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1));
+                        R::FrameOutline { points: vec![a, b, c, d, a, back], light }
+                    }
+                    None => R::FrameRect { rect: r, light },
+                };
+                self.req(request, Op::Other("frame"))?;
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }

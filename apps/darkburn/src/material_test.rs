@@ -372,13 +372,19 @@ fn label(text: &str, height: f64, at: Point, layer: usize) -> Shape {
 /// The points that frame the test the dialog would add (just the test, not the rest of the
 /// project), as work coordinates for the connected controller.
 pub fn frame_points(app: &crate::shell::DarkBurn) -> Result<Vec<Point>, String> {
+    frame_points_and_return(app).map(|(p, _)| p)
+}
+
+/// The frame of the test, and where the head goes when it is done: back to where it is now when
+/// the job starts from the current position (the test is burned from there).
+fn frame_points_and_return(app: &crate::shell::DarkBurn) -> Result<(Vec<Point>, Option<Point>), String> {
     let mut input = crate::job_cmds::build_input(app);
     input.doc.shapes.clear();
     input.selection.clear();
     input.settings.cut_selected = false;
     generate(&mut input.doc, &app.job.material)?;
     let tp = crate::job_build::build_frame(&input, crate::job_build::FrameKind::Rectangle, 100.0, None).map_err(|e| e.to_string())?;
-    Ok(crate::machine_job::work_points(app, &tp))
+    Ok((crate::machine_job::work_points(app, &tp), crate::machine_job::frame_return(app, &tp)))
 }
 
 /// Move the laser head round the test (laser off).
@@ -386,10 +392,10 @@ pub fn frame_test(app: &mut crate::shell::DarkBurn) -> Result<(), String> {
     if !app.machine.handle.is_connected() {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
-    let points = frame_points(app)?;
+    let (points, return_to) = frame_points_and_return(app)?;
     app.machine
         .handle
-        .frame_outline(points, crate::machine_api::FrameSpec { feed: 3000.0, laser_percent: None, return_to: None })
+        .frame_outline(points, crate::machine_api::FrameSpec { feed: 3000.0, laser_percent: None, return_to })
         .map_err(|e| e.to_string())
 }
 

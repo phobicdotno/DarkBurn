@@ -744,4 +744,87 @@ mod on_machine {
             assert!((x - 100.0).abs() < 0.01 && (y - 100.0).abs() < 0.01, "{command}: the head rests at {x:.2}, {y:.2}, it started at 100, 100");
         }
     }
+
+    /// A connected simulator of `kind` with the job set to start from the current position and
+    /// the head at 100, 100.
+    fn at_100_from_the_current_position(kind: DeviceType) -> DarkBurn {
+        let mut a = DarkBurn::new(Prefs::default());
+        let id = run(&mut a, "device.add", json!({ "type": format!("{kind:?}") })).unwrap()["id"].as_u64().unwrap();
+        run(&mut a, "device.select", json!({ "id": id })).unwrap();
+        run(&mut a, "machine.connect", json!({})).unwrap();
+        wait(&mut a, "connected", ready);
+        run(&mut a, "job.set_origin", json!({ "start_from": "current_position", "anchor": "centre" })).unwrap();
+        run(&mut a, "machine.move_to", json!({ "x": 100, "y": 100, "machine_coords": kind != DeviceType::SimulatorMarlin })).unwrap();
+        wait(&mut a, "the move to the start", |a| ready(a) && (head(a).0 - 100.0).abs() < 1e-3 && (head(a).1 - 100.0).abs() < 1e-3);
+        a
+    }
+
+    /// Wait for a frame that was just sent to end, and say where the head rests.
+    fn rest_after_the_frame(a: &mut DarkBurn) -> (f64, f64) {
+        let going = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < going {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let end = Instant::now() + Duration::from_secs(20);
+        while !ready(a) {
+            a.machine.tick();
+            assert!(Instant::now() < end, "the frame did not end");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let end = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < end {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(ready(a));
+        head(a)
+    }
+
+    const FRAME_KINDS: [DeviceType; 3] = [DeviceType::SimulatorGrbl, DeviceType::SimulatorRuida, DeviceType::SimulatorMarlin];
+
+    /// The material test is burned from the current position like any job: its frame must leave
+    /// the head where it was.
+    #[test]
+    fn the_material_test_frame_from_the_current_position_brings_the_head_back() {
+        let mut wrong = Vec::new();
+        for kind in FRAME_KINDS {
+            let mut a = at_100_from_the_current_position(kind);
+            crate::material_test::frame_test(&mut a).unwrap();
+            let (x, y) = rest_after_the_frame(&mut a);
+            if (x - 100.0).abs() > 0.01 || (y - 100.0).abs() > 0.01 {
+                wrong.push(format!("{kind:?}: the head rests at {x:.2}, {y:.2}, it started at 100, 100"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// `machine.frame` goes round a rectangle given by numbers. With the job set to start from
+    /// the current position the head must rest where it was, or the job burns from a corner of
+    /// that rectangle.
+    #[test]
+    fn machine_frame_by_numbers_from_the_current_position_brings_the_head_back() {
+        let mut wrong = Vec::new();
+        for kind in FRAME_KINDS {
+            let mut a = at_100_from_the_current_position(kind);
+            run(&mut a, "machine.frame", json!({ "x": 20, "y": 30, "width": 40, "height": 25 })).unwrap();
+            let (x, y) = rest_after_the_frame(&mut a);
+            if (x - 100.0).abs() > 0.01 || (y - 100.0).abs() > 0.01 {
+                wrong.push(format!("{kind:?}: the head rests at {x:.2}, {y:.2}, it started at 100, 100"));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// With an absolute job the frame by numbers ends on its first corner, as before.
+    #[test]
+    fn machine_frame_by_numbers_with_an_absolute_job_stays_on_the_first_corner() {
+        for kind in FRAME_KINDS {
+            let mut a = at_100_from_the_current_position(kind);
+            run(&mut a, "job.set_origin", json!({ "start_from": "absolute" })).unwrap();
+            run(&mut a, "machine.frame", json!({ "x": 20, "y": 30, "width": 40, "height": 25 })).unwrap();
+            let (x, y) = rest_after_the_frame(&mut a);
+            assert!((x - 20.0).abs() < 0.01 && (y - 30.0).abs() < 0.01, "{kind:?}: the head rests at {x:.2}, {y:.2}");
+        }
+    }
 }

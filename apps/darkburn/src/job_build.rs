@@ -584,7 +584,8 @@ fn image_inputs(
         min_power: 0.4,
         max_power: 100.0,
     };
-    let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64)> = Vec::new();
+    // (dots, group, priority, power scale, corners of the picture)
+    let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64, Vec<Point>)> = Vec::new();
     for (shape, group) in leaves {
         let ShapeKind::Image(img) = &shape.kind else { continue };
         let label = layer::layer_label(shape.layer.min(layer::LAYER_COUNT - 1));
@@ -606,40 +607,44 @@ fn image_inputs(
         };
         let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
         let p = darkburn_raster::process_image(&gray, to_mm, &crate::images::adjustments(&img.adjust), &settings);
-        processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
+        let outline: Vec<Point> = job::geom::flatten(&shape.outline(), TOLERANCE).into_iter().flat_map(|poly| poly.pts).collect();
+        processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0), outline));
     }
     let mut out = Vec::new();
     // The device's scanning offset table moves forward and reverse lines apart (DS-08). The job
     // engine applies it, because only it knows which way each line ends up being scanned.
     let direction_offset = if s.bidirectional { tuning.offsets.offset_at(s.speed) } else { 0.0 };
-    let build = |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
-        for plan in plans {
-            let lines = plan
-                .lines
-                .iter()
-                .map(|l| {
-                    let mut runs: Vec<(f64, f64, f64)> =
-                        l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
-                    runs.sort_by(|a, b| a.0.total_cmp(&b.0));
-                    job::Scanline { y: l.y, runs }
-                })
-                .collect();
-            let mut input = job::ImageInput::new(lines);
-            input.transform = plan.scan_to_mm();
-            input.group = group;
-            input.priority = priority;
-            input.direction_offset = direction_offset;
-            out.push(input);
-        }
-    };
+    let build =
+        |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, outline: &[Point], out: &mut Vec<job::ImageInput>| {
+            for plan in plans {
+                let lines = plan
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        let mut runs: Vec<(f64, f64, f64)> =
+                            l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
+                        runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        job::Scanline { y: l.y, runs }
+                    })
+                    .collect();
+                let mut input = job::ImageInput::new(lines);
+                input.transform = plan.scan_to_mm();
+                input.group = group;
+                input.priority = priority;
+                input.direction_offset = direction_offset;
+                input.outline = outline.to_vec();
+                out.push(input);
+            }
+        };
     if s.merge_images && processed.iter().all(|p| (p.3 - processed[0].3).abs() < 1e-9) && !processed.is_empty() {
         let refs: Vec<&darkburn_raster::ProcessedImage> = processed.iter().map(|p| &p.0).collect();
         let group = processed[0].1;
         let prio = processed.iter().map(|p| p.2).min().unwrap_or(0);
-        build(darkburn_raster::scan_plans(&refs, &scan), group, prio, processed[0].3, &mut out);
+        let outline: Vec<Point> = processed.iter().flat_map(|p| p.4.iter().copied()).collect();
+        build(darkburn_raster::scan_plans(&refs, &scan), group, prio, processed[0].3, &outline, &mut out);
     } else {
         for p in &processed {
-            build(darkburn_raster::scan_plans(&[&p.0], &scan), p.1, p.2, p.3, &mut out);
+            build(darkburn_raster::scan_plans(&[&p.0], &scan), p.1, p.2, p.3, &p.4, &mut out);
         }
     }
     out

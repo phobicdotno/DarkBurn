@@ -143,11 +143,15 @@ pub struct ImageInput {
     /// are moved back by half of it and lines scanned in reverse forward by half, whichever
     /// way the planner ends up scanning each line. Not used for one-way scans.
     pub direction_offset: f64,
+    /// The outline of the picture in design coordinates (its corners). When given, the job
+    /// bounds take the picture from here, white parts included, so where the job lands does
+    /// not depend on where the first dot is. Empty: the scan lines bound it.
+    pub outline: Vec<Point>,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0 }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new() }
     }
 }
 

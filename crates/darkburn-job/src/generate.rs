@@ -272,6 +272,10 @@ pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
             }
         }
         for img in &layer.images {
+            if !img.outline.is_empty() {
+                img.outline.iter().for_each(|p| add(*p));
+                continue;
+            }
             for sl in &img.scanlines {
                 for &(x0, x1, _) in &sl.runs {
                     add(img.transform * Point::new(x0, sl.y));
@@ -813,6 +817,18 @@ mod tests {
         sh.line_paths.push((0, rect_path(11.0, 11.0, 8.0, 8.0)));
         let input = JobInput { layers: vec![LayerInput::new(0, "A", CutSettings::line(10.0, 80.0)).with_shape(sh)] };
         assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(11.0, 11.0, 19.0, 19.0)));
+    }
+
+    #[test]
+    fn an_image_with_an_outline_is_bounded_by_it() {
+        let lines = vec![crate::input::Scanline { y: 5.5, runs: vec![(4.0, 6.0, 1.0)] }];
+        let mut img = ImageInput::new(lines);
+        let mut l = LayerInput::new(0, "A", CutSettings::image(100.0, 50.0, 0.0));
+        l.images.push(img.clone());
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(4.0, 5.5, 6.0, 5.5)), "no outline: the scan lines");
+        img.outline = vec![Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 8.0), Point::new(0.0, 8.0)];
+        l.images[0] = img;
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(0.0, 0.0, 10.0, 8.0)));
     }
 
     #[test]

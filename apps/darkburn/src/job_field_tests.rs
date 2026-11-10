@@ -819,6 +819,32 @@ fn image_negative_inverts_the_burn() {
     assert!(b0 > 9.0 && b1 > 13.0, "negative burns the light right half: {b0} {b1}");
 }
 
+/// An image is placed and framed by its own rectangle, white parts included: where the job
+/// lands must not depend on where the first dot happens to be.
+#[test]
+fn an_image_with_white_margins_is_bounded_by_its_rectangle() {
+    // Left half white, right half black: only x = 10 to 15 burns.
+    let half: Vec<u8> = (0..16).map(|i| if i % 4 < 2 { 255 } else { 0 }).collect();
+    let mut i = input(image_doc(|s| s.image_mode = layer::ImageMode::Threshold, half));
+    let b = build_job_simple(&i).unwrap();
+    let burn_x0 = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((10.0..11.0).contains(&burn_x0), "the burn starts in the middle of the picture: {burn_x0}");
+    assert!((b.bounds.x0 - 5.0).abs() < 1e-6 && (b.bounds.x1 - 15.0).abs() < 1e-6, "the picture's rectangle: {:?}", b.bounds);
+    assert!((b.bounds.y0 - 5.0).abs() < 1e-6 && (b.bounds.y1 - 15.0).abs() < 1e-6, "{:?}", b.bounds);
+    // The rectangle frame goes round the picture, as the rubber band does.
+    let xs = |kind| {
+        let tp = build_frame(&i, kind, 100.0, None).unwrap();
+        let xs: Vec<f64> = tp.ops.iter().filter_map(Op::target).map(|p| p.x).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    assert_eq!(xs(FrameKind::Rectangle), xs(FrameKind::RubberBand));
+    // From the current position the picture's corner, not its first dot, is at the head.
+    i.settings.start_from = StartMode::CurrentPosition;
+    let b = build_job_simple(&i).unwrap();
+    let from_head = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((from_head - (burn_x0 - 5.0)).abs() < 1e-6, "the black half starts 5 mm and more right of the head: {from_head}");
+}
+
 #[test]
 fn image_grayscale_min_and_max_power() {
     let grad: Vec<u8> = (0..16).map(|i| (i % 4 * 80) as u8).collect();

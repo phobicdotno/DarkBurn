@@ -163,3 +163,22 @@ fn lbrn2_round_trip() {
     assert_eq!(info.notes.as_deref(), Some("Use 3 mm birch\nSecond line"));
     assert_eq!(info.variable_text.get("Current").map(String::as_str), Some("5"));
 }
+
+#[test]
+fn a_layer_with_the_last_possible_index_does_not_break_the_export() {
+    // One layer setting with index 4294967295 and one shape with no layer: the shape used to need
+    // "index + 1", which does not exist (a panic in a debug build).
+    let mut doc = Imported::default();
+    doc.layer_settings.push(LayerSettings { index: u32::MAX, name: "Last".into(), mode: "Cut".into(), values: Default::default() });
+    doc.layer_settings.push(LayerSettings { index: 0, name: "First".into(), mode: "Cut".into(), values: Default::default() });
+    let mut path = kurbo::BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.line_to((10.0, 5.0));
+    doc.items.push(Item::path(path, Some(Rgb::BLACK), None));
+    let text = lbrn::write_lbrn2(&doc, &LbrnWriteOptions::default());
+    let back = lbrn::import(text.as_bytes()).unwrap();
+    assert_eq!(back.items.len(), 1);
+    // The shape gets a layer of its own, not one of the two that exist.
+    assert_eq!(back.items[0].layer_index, Some(1));
+    assert_eq!(back.layer_settings.len(), 3);
+}

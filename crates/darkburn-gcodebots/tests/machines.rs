@@ -864,7 +864,17 @@ fn a_job_started_while_the_fire_button_is_on_keeps_its_laser() {
     let first = lines.iter().position(|l| l.starts_with("G1")).expect("the job cut something");
     let last = lines.iter().rposition(|l| l.starts_with("G1")).expect("the job cut something");
     assert!(last - first > 70, "{lines:?}");
-    assert!(!lines[first..last].iter().any(|l| l == "M5"), "the laser was switched off in the middle of the job: {lines:?}");
+    // The job switches the laser off itself for every travel move (`M5`, then `G0`) and on again
+    // before the next cut. An `M5` anywhere else is the fire button's timer cutting into the job.
+    let job: Vec<&String> = lines[first..last].iter().filter(|l| *l != "M114").collect();
+    for (i, l) in job.iter().enumerate() {
+        if *l == "M5" {
+            assert!(job.get(i + 1).is_some_and(|n| n.starts_with("G0")), "the laser was switched off in the middle of the job: {lines:?}");
+        }
+        if l.starts_with("G1") && i > 0 {
+            assert!(job[i - 1].starts_with("M3 S") || job[i - 1].starts_with("G1"), "a cut without its power before it: {lines:?}");
+        }
+    }
     assert!(lines[..first].iter().any(|l| l == "M5"), "the fire button is switched off before the job: {lines:?}");
     assert!(!m.snapshot().fire_on);
     m.disconnect();

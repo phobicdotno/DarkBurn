@@ -48,6 +48,10 @@ pub struct TranslateOptions {
     pub end_script: String,
     /// Written first when "auto-home on start" is set (DS-09).
     pub home_command: Option<String>,
+    /// Write `S0` with every travel move (`G0`) that follows a powered cut, and the power again
+    /// with the next cut. For controllers that are not known to switch the laser off for `G0`
+    /// by themselves (a custom G-code device).
+    pub travel_s0: bool,
 }
 
 impl Default for TranslateOptions {
@@ -67,6 +71,7 @@ impl Default for TranslateOptions {
             start_script: String::new(),
             end_script: String::new(),
             home_command: None,
+            travel_s0: false,
         }
     }
 }
@@ -77,7 +82,11 @@ impl TranslateOptions {
         let g = &p.gcode;
         let style = match p.kind {
             DeviceKind::Marlin | DeviceKind::Snapmaker => match g.marlin_power {
-                MarlinPowerMode::M3 | MarlinPowerMode::M4 => PowerStyle::Passthrough,
+                // Outside inline mode Marlin keeps the laser at the last power through travel
+                // moves, and reads no `S` from a `G1`: the power is its own command before a
+                // cut, and `M5` before the head travels.
+                MarlinPowerMode::M3 => PowerStyle::Command { set: "M3 S{value}".into(), off: "M5".into() },
+                MarlinPowerMode::M4 => PowerStyle::Command { set: "M4 S{value}".into(), off: "M5".into() },
                 MarlinPowerMode::Inline => PowerStyle::MarlinInline,
                 MarlinPowerMode::Fan => {
                     PowerStyle::Command { set: format!("M106 P{} S{{value}}", g.tool_index), off: format!("M107 P{}", g.tool_index) }
@@ -101,6 +110,7 @@ impl TranslateOptions {
             start_script: g.start_script.clone(),
             end_script: g.end_script.clone(),
             home_command: g.auto_home_on_start.then(|| home_command(p)),
+            travel_s0: p.kind == DeviceKind::Custom,
         }
     }
 }
@@ -171,6 +181,8 @@ struct State {
     feed_src: Option<f64>,
     feed_out: Option<f64>,
     air_is_on: bool,
+    /// A travel move was given `S0` (`travel_s0`): the next cut states its power again.
+    travel_zeroed: bool,
 }
 
 /// Translates a job. Comments are dropped; lines the translator does not understand pass
@@ -185,7 +197,8 @@ where
         out.push(h.clone());
     }
     out.extend(script_lines(&opts.start_script));
-    let mut st = State { motion: 0, s_in: 0.0, laser_on: false, cmd_state: None, feed_src: None, feed_out: None, air_is_on: false };
+    let mut st =
+        State { motion: 0, s_in: 0.0, laser_on: false, cmd_state: None, feed_src: None, feed_out: None, air_is_on: false, travel_zeroed: false };
     for raw in lines {
         let line = strip_comment(raw.as_ref());
         if line.is_empty() {
@@ -404,6 +417,13 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
                         w.1 = fmt_s(scale_s(w.1.parse().unwrap_or(0.0), opts), opts.out_s_max);
                     }
                 }
+                st.travel_zeroed = false;
+            } else if opts.travel_s0 && motion == 0 && is_motion_word && st.laser_on && st.s_in > 0.0 && !st.travel_zeroed {
+                words.push(('S', "0".into()));
+                st.travel_zeroed = true;
+            } else if opts.travel_s0 && st.travel_zeroed && is_cut_move {
+                words.push(('S', fmt_s(if st.laser_on { s_out } else { 0.0 }, opts.out_s_max)));
+                st.travel_zeroed = false;
             } else if (opts.s_with_every_g1 || opts.style == PowerStyle::MarlinInline) && motion == 1 && is_motion_word {
                 words.push(('S', fmt_s(if st.laser_on { s_out } else { 0.0 }, opts.out_s_max)));
             }
@@ -524,6 +544,44 @@ mod tests {
 
     fn run(lines: &[&str], o: &TranslateOptions) -> Vec<String> {
         translate(lines.iter().copied(), o)
+    }
+
+    /// A custom controller is not known to switch the laser off for `G0` by itself.
+    #[test]
+    fn a_custom_device_gets_the_laser_switched_off_for_travel() {
+        let mut p = DeviceProfile::for_kind(DeviceKind::Custom);
+        (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+        let src = ["M4 S0", "G0 X1 Y1", "G1 X5 S500 F600", "G1 Y5", "G0 X20 Y20", "G0 X21", "G1 X25", "G1 Y25 S250", "G0 X0 Y0", "M5"];
+        let out = translate(src, &TranslateOptions::for_profile(&p));
+        let s = |v: f64| fmt_s(v / 1000.0 * p.gcode.s_max, p.gcode.s_max);
+        let want = [
+            "M4 S0".to_owned(),
+            "G0 X1 Y1".to_owned(),
+            format!("G1 X5 S{} F600", s(500.0)),
+            "G1 Y5".to_owned(),
+            "G0 X20 Y20 S0".to_owned(),
+            "G0 X21".to_owned(),
+            format!("G1 X25 S{}", s(500.0)),
+            format!("G1 Y25 S{}", s(250.0)),
+            "G0 X0 Y0 S0".to_owned(),
+            "M5".to_owned(),
+        ];
+        assert_eq!(out, want);
+        // GRBL-style controllers switch off for G0 themselves: nothing is added.
+        let plain = translate(src, &TranslateOptions::default());
+        assert!(plain.contains(&"G0 X20 Y20".to_owned()), "{plain:?}");
+    }
+
+    /// Outside inline mode Marlin keeps the laser on through G0: power is its own command.
+    #[test]
+    fn marlin_m3_mode_switches_the_laser_off_for_travel() {
+        let mut p = DeviceProfile::for_kind(DeviceKind::Marlin);
+        p.gcode.marlin_power = MarlinPowerMode::M3;
+        (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+        let src = ["M4 S0", "G0 X1 Y1", "G1 X5 S500 F600", "G1 Y5", "G0 X20 Y20", "G1 X25", "M5"];
+        let out = translate(src, &TranslateOptions::for_profile(&p));
+        let on = format!("M3 S{}", fmt_s(0.5 * p.gcode.s_max, p.gcode.s_max));
+        assert_eq!(out, ["G0 X1 Y1", on.as_str(), "G1 X5 F600", "G1 Y5", "M5", "G0 X20 Y20", on.as_str(), "G1 X25", "M5"]);
     }
 
     #[test]

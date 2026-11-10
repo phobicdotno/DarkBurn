@@ -534,8 +534,7 @@ mod tests {
     fn shared_defaults_never_switch_ai_agent_access_on() {
         let dir = std::env::temp_dir().join(format!("darkburn-defaults-mcp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut p = Prefs::default();
-        p.page_width = 600.0;
+        let mut p = Prefs { page_width: 600.0, ..Default::default() };
         p.mcp.enabled = true;
         p.mcp.allow_hardware = true;
         p.mcp.allow_gweike = true;

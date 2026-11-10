@@ -72,6 +72,10 @@ pub struct ShapeInput {
     /// Manually placed tabs (line mode). Each point snaps to the nearest point on the nearest
     /// sub-path, open or closed. A shape with manual tabs gets no automatic ones.
     pub tabs: Vec<Point>,
+    /// Outlines that line cuts follow instead of `path`, as `(index into the layer's settings,
+    /// outline)`: the kerf offset of that sub-layer. Fills (and the fill of Fill + Line) always
+    /// use `path`. An empty outline means that sub-layer has nothing of this shape to cut.
+    pub line_paths: Vec<(usize, BezPath)>,
 }
 
 impl ShapeInput {
@@ -85,7 +89,34 @@ impl ShapeInput {
             extra_start_points: Vec::new(),
             direction: None,
             tabs: Vec::new(),
+            line_paths: Vec::new(),
         }
+    }
+
+    /// The outline line cuts follow under setting `setting` of the layer.
+    pub fn line_path(&self, setting: usize) -> &BezPath {
+        self.line_paths.iter().find(|(i, _)| *i == setting).map_or(&self.path, |(_, p)| p)
+    }
+
+    /// Every outline of this shape that the layer's `settings` use: what the job bounds and
+    /// the frame are made of.
+    pub fn outlines_used(&self, settings: &[CutSettings]) -> Vec<&BezPath> {
+        let mut base = false;
+        let mut out: Vec<&BezPath> = Vec::new();
+        for (i, s) in settings.iter().enumerate().filter(|(_, s)| s.enabled && s.passes > 0) {
+            let line = matches!(s.mode, CutMode::Line | CutMode::FillLine);
+            match self.line_paths.iter().find(|(k, _)| *k == i) {
+                Some((_, p)) if line => {
+                    out.push(p);
+                    base |= s.mode == CutMode::FillLine;
+                }
+                _ => base = true,
+            }
+        }
+        if base || out.is_empty() {
+            out.insert(0, &self.path);
+        }
+        out
     }
 }
 
@@ -112,11 +143,15 @@ pub struct ImageInput {
     /// are moved back by half of it and lines scanned in reverse forward by half, whichever
     /// way the planner ends up scanning each line. Not used for one-way scans.
     pub direction_offset: f64,
+    /// The outline of the picture in design coordinates (its corners). When given, the job
+    /// bounds take the picture from here, white parts included, so where the job lands does
+    /// not depend on where the first dot is. Empty: the scan lines bound it.
+    pub outline: Vec<Point>,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0 }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new() }
     }
 }
 
@@ -375,6 +410,10 @@ pub struct FillSettings {
     pub ramp_outer_edge: bool,
     /// Gaps longer than this inside a scan line are crossed with a rapid move, mm.
     pub rapid_gap: f64,
+    /// Scanning offset, mm: how far apart the machine burns the two directions of a
+    /// bidirectional scan at this speed (see [`ImageInput::direction_offset`]).
+    #[serde(default)]
+    pub direction_offset: f64,
 }
 
 impl Default for FillSettings {
@@ -392,6 +431,7 @@ impl Default for FillSettings {
             ramp_length: 0.0,
             ramp_outer_edge: true,
             rapid_gap: 10.0,
+            direction_offset: 0.0,
         }
     }
 }

@@ -60,6 +60,8 @@ struct Block {
     settings: CutSettings,
     mode: CutMode,
     layer: usize,
+    /// Index into the layer's settings.
+    setting: usize,
 }
 
 enum UnitKind {
@@ -99,7 +101,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
 
     // Flatten every shape once.
     let flat: Vec<Vec<Vec<Poly>>> = input.layers.iter().map(|l| l.shapes.iter().map(|s| geom::flatten(&s.path, tol)).collect()).collect();
-    let job_bounds = job_bounds(input, &flat).ok_or(JobError::Empty)?;
+    let job_bounds = job_bounds(input, tol).ok_or(JobError::Empty)?;
     let start = opts.origin.map_or(Point::ZERO, |o| o.design_start(job_bounds));
 
     let mut tp = Toolpath { space: CoordSpace::Design, layers: Vec::new(), ops: Vec::new(), start };
@@ -135,7 +137,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
                 CutMode::Image => &[CutMode::Image],
             };
             for &mode in modes {
-                blocks.push(Block { ir_layer, settings: s.clone(), mode, layer: li });
+                blocks.push(Block { ir_layer, settings: s.clone(), mode, layer: li, setting: si });
             }
         }
     }
@@ -147,7 +149,17 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         let layer = &input.layers[b.layer];
         let polys = &flat[b.layer];
         match b.mode {
-            CutMode::Line => line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items),
+            CutMode::Line => {
+                // A sub-layer with a kerf offset cuts its own outlines.
+                let own: Vec<Vec<Poly>>;
+                let polys = if layer.shapes.iter().any(|s| s.line_paths.iter().any(|(i, _)| *i == b.setting)) {
+                    own = layer.shapes.iter().map(|s| geom::flatten(s.line_path(b.setting), tol)).collect();
+                    &own
+                } else {
+                    polys
+                };
+                line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items)
+            }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
                 for (ii, img) in layer.images.iter().enumerate() {
@@ -242,19 +254,28 @@ fn fmt_num(v: f64) -> String {
     if s == "-0" { "0".into() } else { s.to_string() }
 }
 
-fn job_bounds(input: &JobInput, flat: &[Vec<Vec<Poly>>]) -> Option<Rect> {
+/// The bounds of a job in design coordinates: every outline its layers use (flattened with
+/// `tolerance`, mm) and every image scan line. This is the box the job origin is anchored on.
+pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
+    let tol = tolerance.max(1e-4);
     let mut r: Option<Rect> = None;
     let mut add = |p: Point| r = Some(r.map_or(Rect::from_points(p, p), |r| r.union_pt(p)));
-    for (li, layer) in input.layers.iter().enumerate() {
+    for layer in &input.layers {
         if !layer.output {
             continue;
         }
-        for shape in &flat[li] {
-            for poly in shape {
-                poly.pts.iter().for_each(|p| add(*p));
+        for shape in &layer.shapes {
+            for path in shape.outlines_used(&layer.settings) {
+                for poly in geom::flatten(path, tol) {
+                    poly.pts.iter().for_each(|p| add(*p));
+                }
             }
         }
         for img in &layer.images {
+            if !img.outline.is_empty() {
+                img.outline.iter().for_each(|p| add(*p));
+                continue;
+            }
             for sl in &img.scanlines {
                 for &(x0, x1, _) in &sl.runs {
                     add(img.transform * Point::new(x0, sl.y));
@@ -469,6 +490,9 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                         }
                     }
                 }
+                if f.bidirectional {
+                    shift_by_direction(&mut ordered, f.direction_offset);
+                }
                 let e = RowEmit {
                     frame: Affine::rotate(a),
                     speed: s.speed,
@@ -480,34 +504,114 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
             }
         }
         UnitKind::Offset { polys, scales } => {
-            let parents = fill::parents(polys);
+            let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
+            let interval = f.interval.max(1e-3);
+            // Every ring with its level and bounds; `None` once it is burned.
+            let mut rings: Vec<Option<(usize, Vec<Point>, Rect)>> = Vec::new();
+            let mut by_level: Vec<Vec<usize>> = Vec::new();
+            for (level, level_rings) in fill::offset_levels(&refs, interval).into_iter().enumerate() {
+                by_level.push((rings.len()..rings.len() + level_rings.len()).collect());
+                rings.extend(level_rings.into_iter().map(|r| {
+                    let bb = geom::bbox(&r);
+                    Some((level, r, bb))
+                }));
+            }
+            let areas: Vec<f64> = polys.iter().map(|p| geom::signed_area(p).abs()).collect();
+            // The shape a ring belongs to: the smallest one around it.
+            let owner = |p: Point| (0..polys.len()).filter(|&q| geom::point_in_polygon(p, &polys[q])).min_by(|a, b| areas[*a].total_cmp(&areas[*b]));
+            // How far `pos` is from ring `i`, and where on the ring (arc length) that is.
+            let reach = |rings: &[Option<(usize, Vec<Point>, Rect)>], i: usize, pos: Point, within: f64| -> Option<(f64, f64)> {
+                let (_, pts, bb) = rings[i].as_ref()?;
+                let dx = (bb.x0 - pos.x).max(pos.x - bb.x1).max(0.0);
+                let dy = (bb.y0 - pos.y).max(pos.y - bb.y1).max(0.0);
+                if dx.hypot(dy) > within {
+                    return None;
+                }
+                let mut closed = pts.clone();
+                closed.push(pts[0]);
+                let (at, dist) = geom::nearest_arclen(&closed, pos);
+                (dist <= within).then_some((dist, at))
+            };
             let mut pos = from;
-            for (pi, poly) in polys.iter().enumerate() {
-                // Rings of outer shapes only (holes are not avoided).
-                let depth = std::iter::successors(parents[pi], |&q| parents[q]).count();
-                if depth % 2 == 1 {
-                    continue;
-                }
-                let power = s.max_power * scales[pi];
-                let rings = fill::offset_rings(poly, f.interval);
-                for (k, ring) in rings.iter().enumerate() {
-                    let st = planner::choose_start(ring, pos, false);
-                    let n = ring.len();
-                    let first = ring[st];
-                    if k == 0 {
-                        out.push(Op::Rapid { to: first });
-                    } else {
-                        // Step inwards with the laser on: an inward spiral.
-                        out.push(Op::Cut { to: first, speed: s.speed, power });
+            let mut level: Option<usize> = None;
+            for _ in 0..rings.len() {
+                // The spiral goes on inwards while the next ring is a step away; the step from a
+                // ring `d` inside the edge to the next one stays inside the shape while it is no
+                // longer than the interval plus twice `d`.
+                let mut next: Option<(usize, f64, f64, bool)> = None;
+                if let Some(l) = level
+                    && let Some(inner) = by_level.get(l + 1)
+                {
+                    let mut within = interval * (2 * l + 2) as f64 + EPS;
+                    for &i in inner {
+                        if let Some((dist, at)) = reach(&rings, i, pos, within) {
+                            within = dist;
+                            next = Some((i, dist, at, true));
+                        }
                     }
-                    for m in 1..=n {
-                        out.push(Op::Cut { to: ring[(st + m) % n], speed: s.speed, power });
-                    }
-                    pos = first;
                 }
+                if next.is_none() {
+                    let mut within = f64::INFINITY;
+                    for i in 0..rings.len() {
+                        if let Some((dist, at)) = reach(&rings, i, pos, within)
+                            && next.is_none_or(|n| dist < n.1)
+                        {
+                            within = dist;
+                            next = Some((i, dist, at, false));
+                        }
+                    }
+                }
+                let Some((i, _, at, step)) = next else { break };
+                let Some((l, mut pts, _)) = rings[i].take() else { break };
+                let own = owner(pts[0]);
+                let power = s.max_power * own.map_or(1.0, |q| scales[q]);
+                // Rings run the way their shape was drawn.
+                let mut at = at;
+                if own.is_some_and(|q| (geom::signed_area(&polys[q]) > 0.0) != (geom::signed_area(&pts) > 0.0)) {
+                    let mut closed = pts.clone();
+                    closed.push(pts[0]);
+                    at = geom::polyline_length(&closed) - at;
+                    pts.reverse();
+                }
+                // Start at the point of the ring nearest to where the head is.
+                let mut closed = pts.clone();
+                closed.push(pts[0]);
+                let pieces = geom::split_at(&closed, &[at]);
+                let first = pieces[1][0];
+                if step {
+                    // Step inwards with the laser on: an inward spiral.
+                    out.push(Op::Cut { to: first, speed: s.speed, power });
+                } else {
+                    out.push(Op::Rapid { to: first });
+                }
+                let mut last = first;
+                for p in pieces[1].iter().skip(1).chain(pieces[0].iter().skip(1)) {
+                    if p.distance(last) > EPS {
+                        out.push(Op::Cut { to: *p, speed: s.speed, power });
+                        last = *p;
+                    }
+                }
+                pos = first;
+                level = Some(l);
             }
         }
         _ => {}
+    }
+}
+
+/// Scanning offset: rows scanned forward move back by half of `offset`, rows scanned in reverse
+/// forward by half.
+fn shift_by_direction(ordered: &mut [(ScanRow, bool)], offset: f64) {
+    let half = offset / 2.0;
+    if half == 0.0 {
+        return;
+    }
+    for (row, forward) in ordered.iter_mut() {
+        let d = if *forward { -half } else { half };
+        for r in row.runs.iter_mut() {
+            r.x0 += d;
+            r.x1 += d;
+        }
     }
 }
 
@@ -546,15 +650,8 @@ fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
             }
         }
     }
-    let half = img.direction_offset / 2.0;
-    if is.bidirectional && half != 0.0 {
-        for (row, forward) in ordered.iter_mut() {
-            let d = if *forward { -half } else { half };
-            for r in row.runs.iter_mut() {
-                r.x0 += d;
-                r.x1 += d;
-            }
-        }
+    if is.bidirectional {
+        shift_by_direction(&mut ordered, img.direction_offset);
     }
     let e = RowEmit {
         frame: img.transform,
@@ -625,6 +722,53 @@ mod tests {
         assert_eq!(rapids, 1);
         let cuts = tp.ops.iter().filter(|o| matches!(o, Op::Cut { .. })).count();
         assert_eq!(cuts, 5 * 4 + 4);
+    }
+
+    /// The burning moves as (from, to).
+    fn burning(tp: &Toolpath) -> Vec<(Point, Point)> {
+        let mut pos = Point::ZERO;
+        let mut out = Vec::new();
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                out.push((pos, *to));
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn offset_fill_leaves_holes_and_does_not_burn_islands_twice() {
+        // A 20 mm plate with a 10 mm hole, and a 4 mm island in the hole.
+        let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+        s.mode = CutMode::OffsetFill;
+        let l = LayerInput::new(0, "A", s)
+            .with_shape(ShapeInput::new(rect_path(0.0, 0.0, 20.0, 20.0)))
+            .with_shape(ShapeInput::new(rect_path(5.0, 5.0, 10.0, 10.0)))
+            .with_shape(ShapeInput::new(rect_path(8.0, 8.0, 4.0, 4.0)));
+        let burns = burning(&run(l, &JobOptions::default()));
+        let in_rect = |p: Point, a: f64, b: f64| p.x > a + 1e-6 && p.x < b - 1e-6 && p.y > a + 1e-6 && p.y < b - 1e-6;
+        let (mut in_hole, mut in_island, mut in_plate) = (0.0, 0.0, 0.0);
+        for (a, b) in &burns {
+            let m = a.midpoint(*b);
+            let len = a.distance(*b);
+            if in_rect(m, 8.0, 12.0) {
+                in_island += len;
+            } else if in_rect(m, 5.0, 15.0) {
+                in_hole += len;
+            } else {
+                in_plate += len;
+            }
+        }
+        assert!(in_hole < 1e-6, "nothing burns in the hole: {in_hole} mm");
+        // The island: rings at 0.5 and 1.5 mm from its edge, 12 + 4 mm, and the step between them.
+        assert!((in_island - 16.0).abs() < 2.0, "the island is filled once: {in_island} mm");
+        // The plate: 300 mm2 at 1 mm a line.
+        assert!((in_plate - 300.0).abs() < 30.0, "the plate around the hole is filled: {in_plate} mm");
     }
 
     /// The powers the laser fires at left and right of x = 50.
@@ -721,6 +865,81 @@ mod tests {
             }
             assert_eq!(burns(0.4, false, y0), burns(0.0, false, y0), "a one-way scan is not shifted");
         }
+    }
+
+    #[test]
+    fn a_fill_scan_offset_follows_the_direction_of_each_line() {
+        let burns = |offset: f64, bidirectional: bool| {
+            let mut s = CutSettings::fill(100.0, 50.0, 1.0);
+            s.fill.bidirectional = bidirectional;
+            s.fill.direction_offset = offset;
+            let tp = run(LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(5.0, 5.0, 10.0, 4.0))), &JobOptions::default());
+            let mut pos = Point::ZERO;
+            let mut out = Vec::new();
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    out.push((pos, *to));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            out
+        };
+        let plain = burns(0.0, true);
+        let shifted = burns(0.4, true);
+        assert_eq!(plain.len(), 4);
+        for (a, b) in plain.iter().zip(&shifted) {
+            let want = if a.1.x > a.0.x { -0.2 } else { 0.2 };
+            assert!((b.0.x - a.0.x - want).abs() < 1e-9 && (b.1.x - a.1.x - want).abs() < 1e-9, "{a:?} {b:?}");
+        }
+        assert_eq!(burns(0.4, false), burns(0.0, false), "a one-way scan is not shifted");
+    }
+
+    #[test]
+    fn a_line_sub_layer_cuts_its_own_outline_and_the_fill_keeps_the_drawn_one() {
+        // Fill, then a line with a 1 mm kerf offset (the grown outline is handed in).
+        let mut l = LayerInput::new(0, "A", CutSettings::fill(100.0, 20.0, 1.0));
+        l.settings.push(CutSettings::line(10.0, 80.0));
+        let mut sh = ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0));
+        sh.line_paths.push((1, rect_path(9.0, 9.0, 12.0, 12.0)));
+        let input = JobInput { layers: vec![l.with_shape(sh)] };
+        let tp = generate(&input, &JobOptions::default(), &mut Progress::none()).unwrap();
+        let mut pos = Point::ZERO;
+        let (mut fill, mut line) = (Rect::new(f64::MAX, f64::MAX, f64::MIN, f64::MIN), Rect::new(f64::MAX, f64::MAX, f64::MIN, f64::MIN));
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                let r = if *power == 20.0 { &mut fill } else { &mut line };
+                *r = r.union_pt(pos).union_pt(*to);
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        assert_eq!(fill, Rect::new(10.0, 10.5, 20.0, 19.5), "the fill stays inside the drawn square");
+        assert_eq!(line, Rect::new(9.0, 9.0, 21.0, 21.0), "the line follows the kerf outline");
+        assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(9.0, 9.0, 21.0, 21.0)), "the bounds hold both");
+        // A line-only layer is bounded by what it cuts, not by the drawn outline.
+        let mut sh = ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0));
+        sh.line_paths.push((0, rect_path(11.0, 11.0, 8.0, 8.0)));
+        let input = JobInput { layers: vec![LayerInput::new(0, "A", CutSettings::line(10.0, 80.0)).with_shape(sh)] };
+        assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(11.0, 11.0, 19.0, 19.0)));
+    }
+
+    #[test]
+    fn an_image_with_an_outline_is_bounded_by_it() {
+        let lines = vec![crate::input::Scanline { y: 5.5, runs: vec![(4.0, 6.0, 1.0)] }];
+        let mut img = ImageInput::new(lines);
+        let mut l = LayerInput::new(0, "A", CutSettings::image(100.0, 50.0, 0.0));
+        l.images.push(img.clone());
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(4.0, 5.5, 6.0, 5.5)), "no outline: the scan lines");
+        img.outline = vec![Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 8.0), Point::new(0.0, 8.0)];
+        l.images[0] = img;
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(0.0, 0.0, 10.0, 8.0)));
     }
 
     #[test]

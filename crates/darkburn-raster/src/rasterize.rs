@@ -136,7 +136,7 @@ pub fn rasterize_paths(
         }
     }
     let data = pixmap.pixels().iter().map(|p| f32::from(p.red()) / 255.0).collect();
-    Ok(RasterizedPaths { image: GrayF { width: w, height: h, data }, image_to_mm })
+    Ok(RasterizedPaths { image: GrayF { width: w, height: h, data, clear: Vec::new() }, image_to_mm })
 }
 
 #[cfg(test)]

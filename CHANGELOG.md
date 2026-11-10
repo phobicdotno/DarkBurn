@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.340 (build 6)
+## v0.0.352 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -317,6 +317,18 @@
 - Fix: Set finish position works: the job ends there
 - Fix: saved positions in the Move panel are remembered, one list per device
 - Fix: jog arrows, Position Laser and move-to-selection follow negative coordinates and swapped axes like the job does
+- Fix: Kerf offset on a cut sub-layer no longer grows the fill of the same layer
+- Fix: Each cut sub-layer now uses its own kerf offset
+- Fix: Scanning offsets now also apply to fills
+- Fix: The time estimate now counts the fast whitespace scan
+- Fix: Images burn the way Adjust Image shows them in Sketch mode and with noise reduction
+- Fix: Cropped-away and transparent parts of an image no longer burn when the image is negative or darkened, and crop edges stay sharp
+- Fix: Perforation mode now leaves a bridge on shapes shorter than the cut length too
+- Fix: Reduce travel moves now also shortens the path between shapes that are not grouped
+- Fix: The order of Layer, Group and Priority in Order by now counts: group first finishes each group before the next
+- Fix: A picture is now placed and framed by its own rectangle, white edges included, instead of by its first and last dot
+- Fix: Offset fill no longer burns across holes, and fills a shape inside a hole only once
+- Fix: Offset fill now fills letters and other shapes with arms or narrow necks completely, with rings around holes
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

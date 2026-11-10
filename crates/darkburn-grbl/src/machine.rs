@@ -767,8 +767,11 @@ impl GrblMachine {
         if points.is_empty() {
             return Err(GrblError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(GrblError::InvalidArgument("Framing speed must be above 0.".into()));
+        }
+        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(GrblError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         if let Some(pct) = opts.laser_percent
             && !(0.0..=self.opts.max_fire_percent).contains(&pct)
@@ -806,8 +809,11 @@ impl GrblMachine {
     /// Relative jog (`$J=G91`), works for X/Y diagonals and Z. Turns the fire button off first.
     pub fn jog(&self, step: JogStep) -> Result<(), GrblError> {
         let s = self.motion_ok(true)?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(GrblError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -842,7 +848,7 @@ impl GrblMachine {
         if !s.is_v11() {
             return Err(GrblError::Unsupported("continuous jog needs GRBL 1.1"));
         }
-        if feed <= 0.0 {
+        if !positive(feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
         }
         let t =
@@ -918,8 +924,11 @@ impl GrblMachine {
         if target.x.is_none() && target.y.is_none() && target.z.is_none() {
             return Ok(());
         }
-        if target.feed <= 0.0 {
+        if !positive(target.feed) {
             return Err(GrblError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [target.x, target.y, target.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(GrblError::InvalidArgument("The position is not a number.".into()));
         }
         if let Some(t) = s.travel(&self.opts) {
             let off = if target.coords == Coords::Machine { [0.0; 4] } else { s.status.wco };
@@ -1082,6 +1091,12 @@ impl Drop for GrblMachine {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 fn contains(r: Rect, p: Point) -> bool {

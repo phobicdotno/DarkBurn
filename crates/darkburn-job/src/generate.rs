@@ -266,7 +266,7 @@ pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
         }
         for shape in &layer.shapes {
             for path in shape.outlines_used(&layer.settings) {
-                for poly in geom::flatten(path, tol) {
+                for poly in geom::flatten(&path, tol) {
                     poly.pts.iter().for_each(|p| add(*p));
                 }
             }
@@ -928,6 +928,57 @@ mod tests {
         sh.line_paths.push((0, rect_path(11.0, 11.0, 8.0, 8.0)));
         let input = JobInput { layers: vec![LayerInput::new(0, "A", CutSettings::line(10.0, 80.0)).with_shape(sh)] };
         assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(11.0, 11.0, 19.0, 19.0)));
+    }
+
+    /// The job bounds (the frame, the box the job origin is anchored on) hold what burns.
+    #[test]
+    fn shapes_that_never_burn_are_not_in_the_job_bounds() {
+        let open = |x: f64| {
+            let mut p = BezPath::new();
+            p.move_to((x, 50.0));
+            p.line_to((x + 10.0, 60.0));
+            p
+        };
+        let burned = |input: &JobInput| {
+            let tp = generate(input, &JobOptions::default(), &mut Progress::none()).unwrap();
+            let mut pos = tp.start;
+            let mut r: Option<Rect> = None;
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    let seg = Rect::from_points(pos, *to);
+                    r = Some(r.map_or(seg, |r| r.union(seg)));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            r.unwrap()
+        };
+        // An open line on a Fill layer is not filled, so it is not part of the job.
+        for mode in [CutMode::Fill, CutMode::OffsetFill] {
+            let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+            s.mode = mode;
+            let l = LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0))).with_shape(ShapeInput::new(open(80.0)));
+            let input = JobInput { layers: vec![l] };
+            let b = job_bounds(&input, 0.01).unwrap();
+            assert_eq!(b, Rect::new(10.0, 10.0, 20.0, 20.0), "{mode:?}");
+            let cut = burned(&input);
+            assert!(cut.x1 <= 20.0 + 1e-9 && cut.y1 <= 20.0 + 1e-9, "{mode:?}: the open line is not burned: {cut:?}");
+        }
+        // On a Fill + Line layer it is cut as a line, so it counts.
+        let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+        s.mode = CutMode::FillLine;
+        let l = LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0))).with_shape(ShapeInput::new(open(80.0)));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(10.0, 10.0, 90.0, 60.0)));
+        // A vector shape on an Image layer is not burned: only the picture counts.
+        let mut l = LayerInput::new(0, "A", CutSettings::image(100.0, 50.0, 0.0)).with_shape(ShapeInput::new(rect_path(50.0, 50.0, 30.0, 30.0)));
+        l.images.push(ImageInput::new(vec![crate::input::Scanline { y: 5.5, runs: vec![(4.0, 6.0, 1.0)] }]));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(4.0, 5.5, 6.0, 5.5)));
+        // A shape with nothing left to burn alone is no job.
+        let l = LayerInput::new(0, "A", CutSettings::fill(100.0, 20.0, 1.0)).with_shape(ShapeInput::new(open(80.0)));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), None);
     }
 
     #[test]

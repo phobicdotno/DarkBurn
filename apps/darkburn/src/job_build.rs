@@ -829,7 +829,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     // Nothing of the shape is left to cut.
                     continue;
                 }
-                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()).cloned());
+                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()));
             }
             // Tabs and forced start points are stored in the shape's local coordinates; they
             // go through the same mapping as the outline (the kerf offset keeps them: each

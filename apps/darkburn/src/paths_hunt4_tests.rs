@@ -94,3 +94,126 @@ fn automatic_tab_marks_match_the_job_with_skip_inner_shapes_and_one_shape_inside
     let inner = add_rect(&mut a, 30.0, 30.0, 40.0, 40.0, 0);
     assert_marks_are_the_job_gaps(&a, &[outer, inner], "a square inside a square, two shapes");
 }
+
+// ---------------------------------------------------------------- cut settings: editor and agent
+
+/// Every number of a cut setting with the range the Cut Settings editor holds it to
+/// (`cut_settings.rs`): a JSON pointer into the stored setting, lowest, highest.
+const CUT_SETTING_RANGES: &[(&str, f64, f64)] = &[
+    ("/kerf", -10.0, 10.0),
+    ("/perf_cut", 0.01, 1000.0),
+    ("/perf_skip", 0.01, 1000.0),
+    ("/tabs/spacing", 0.1, 10_000.0),
+    ("/tabs/min_count", 0.0, 1000.0),
+    ("/tabs/max_count", 0.0, 1000.0),
+    ("/tabs/size", 0.0, 100.0),
+    ("/tabs/tab_power", 0.0, 100.0),
+    ("/start_pause_ms", 0.0, 60_000.0),
+    ("/end_pause_ms", 0.0, 60_000.0),
+    ("/overcut", 0.0, 100.0),
+    ("/pwm_khz", 0.1, 1000.0),
+    ("/ppi", 1.0, 10_000.0),
+    ("/lead_in/length", 0.0, 100.0),
+    ("/lead_in/angle", 0.0, 180.0),
+    ("/lead_out/length", 0.0, 100.0),
+    ("/lead_out/angle", 0.0, 180.0),
+    ("/dot_time_ms", 0.001, 10_000.0),
+    ("/dot_spacing", 0.001, 1000.0),
+    ("/u_offset", -1000.0, 1000.0),
+    ("/z_step", -100.0, 100.0),
+    ("/overscan", 0.0, 1000.0),
+    ("/angle_increment", -360.0, 360.0),
+    ("/ramp_length", 0.0, 100.0),
+    ("/dot_width_correction", 0.0, 10.0),
+    ("/halftone_cells", 1.0, 1000.0),
+    ("/halftone_angle", -360.0, 360.0),
+    ("/threshold_ramp", 0.0, 100.0),
+    ("/galvo/frequency_khz", 1.0, 4000.0),
+    ("/galvo/q_pulse_ns", 1.0, 10_000.0),
+    ("/galvo/pause_before_ms", 0.0, 60_000.0),
+    ("/galvo/pause_after_ms", 0.0, 60_000.0),
+    ("/galvo/global_passes", 1.0, 10_000.0),
+    ("/galvo/wobble_size", 0.0, 10.0),
+    ("/galvo/wobble_step", 0.0, 10.0),
+    ("/galvo/jump_speed", 1.0, 100_000.0),
+    ("/galvo/min_jump_delay_us", 0.0, 100_000.0),
+    ("/galvo/max_jump_delay_us", 0.0, 100_000.0),
+    ("/galvo/jump_distance_limit", 0.0, 1000.0),
+    ("/galvo/laser_on_tc_us", -10_000.0, 10_000.0),
+    ("/galvo/laser_off_tc_us", -10_000.0, 10_000.0),
+    ("/galvo/end_tc_us", 0.0, 100_000.0),
+    ("/galvo/polygon_tc_us", 0.0, 100_000.0),
+    ("/galvo/drill_dwell_ms", 0.01, 60_000.0),
+    ("/galvo/drill_spacing_mm", 0.0, 1000.0),
+];
+
+/// The settings object `layer.set_cut_settings` takes, with every number of
+/// [`CUT_SETTING_RANGES`] set to `value(lowest, highest, whole number)`.
+fn settings_with(current: &serde_json::Value, value: impl Fn(f64, f64, bool) -> serde_json::Value) -> serde_json::Value {
+    let mut all = current.clone();
+    let mut top = serde_json::Map::new();
+    for (pointer, lo, hi) in CUT_SETTING_RANGES {
+        let whole = all.pointer(pointer).unwrap_or_else(|| panic!("no cut setting {pointer}")).is_u64();
+        *all.pointer_mut(pointer).unwrap() = value(*lo, *hi, whole);
+        let key = pointer.trim_start_matches('/').split('/').next().unwrap();
+        top.insert(key.to_string(), all[key].clone());
+    }
+    serde_json::Value::Object(top)
+}
+
+#[test]
+fn an_agent_cannot_store_a_cut_setting_outside_the_range_the_editor_allows() {
+    use darkburn_mcp::Backend;
+    let shared = std::rc::Rc::new(std::cell::RefCell::new(DarkBurn::new(crate::prefs::Prefs::default())));
+    let mut b = crate::mcp_backend::McpBackend::new(shared.clone(), egui::Context::default(), true);
+    let stored = |app: &DarkBurn| serde_json::to_value(app.editor.doc.layer(0).main()).unwrap();
+    let start = stored(&shared.borrow());
+    let tries: [(&str, Box<dyn Fn(f64, f64, bool) -> serde_json::Value>); 2] = [
+        ("far above", Box::new(|_, _, whole| if whole { serde_json::json!(4_000_000_000u64) } else { serde_json::json!(1e12) })),
+        ("far below", Box::new(|_, _, whole| if whole { serde_json::json!(0) } else { serde_json::json!(-1e12) })),
+    ];
+    let mut wrong = Vec::new();
+    for (what, value) in &tries {
+        let settings = settings_with(&start, value);
+        b.execute("layer.set_cut_settings", serde_json::json!({ "layer": 0, "settings": settings }))
+            .unwrap_or_else(|e| panic!("{what}: {}", e.message));
+        let now = stored(&shared.borrow());
+        for (pointer, lo, hi) in CUT_SETTING_RANGES {
+            let v = now.pointer(pointer).and_then(serde_json::Value::as_f64).unwrap();
+            if !(*lo..=*hi).contains(&v) {
+                wrong.push(format!("{pointer} set {what} is stored as {v} (the editor allows {lo} to {hi})"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{} settings out of range:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn a_project_file_with_cut_settings_out_of_range_opens_with_them_in_range() {
+    let mut a = app();
+    let start = serde_json::to_value(a.editor.doc.layer(0).main()).unwrap();
+    let settings = settings_with(&start, |_, _, whole| if whole { serde_json::json!(4_000_000_000u64) } else { serde_json::json!(1e12) });
+    // Straight into the document, as a file written by something else would hold them.
+    let mut raw = start.clone();
+    for (k, v) in settings.as_object().unwrap() {
+        raw[k] = v.clone();
+    }
+    *a.editor.doc.layer_mut(0).main_mut() = serde_json::from_value(raw).unwrap();
+    add_rect(&mut a, 10.0, 10.0, 20.0, 20.0, 0);
+    let dir = std::env::temp_dir().join(format!("darkburn-hunt4-ranges-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("ranges.dbrn");
+    crate::files::save_to(&mut a, &file).unwrap();
+    let mut b = app();
+    crate::files::open_path(&mut b, &file).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let now = serde_json::to_value(b.editor.doc.layer(0).main()).unwrap();
+    let wrong: Vec<String> = CUT_SETTING_RANGES
+        .iter()
+        .filter_map(|(pointer, lo, hi)| {
+            let v = now.pointer(pointer).and_then(serde_json::Value::as_f64).unwrap();
+            (!(*lo..=*hi).contains(&v)).then(|| format!("{pointer} is {v} (the editor allows {lo} to {hi})"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{} settings out of range:\n{}", wrong.len(), wrong.join("\n"));
+}

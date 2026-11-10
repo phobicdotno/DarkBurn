@@ -159,7 +159,13 @@ pub fn show(ui: &mut Ui, at: Pos2, height: f32, app: &mut DarkBurn) -> f32 {
             let mut v = value;
             let ed = ui
                 .scope_builder(egui::UiBuilder::new().max_rect(fr).id_salt(("numeric_edit", label, k)), |ui| {
-                    ui.add_enabled_ui(enabled, |ui| numeric::field_sized(ui, &mut v, &num, Some(field_w))).inner
+                    ui.add_enabled_ui(enabled, |ui| {
+                        let ed = numeric::field_sized(ui, &mut v, &num, Some(field_w));
+                        // Named after the label painted beside it, not after its unit ("mm").
+                        crate::a11y::number(ui, &ed.response, label);
+                        ed
+                    })
+                    .inner
                 })
                 .inner;
             if ed.changed && enabled {

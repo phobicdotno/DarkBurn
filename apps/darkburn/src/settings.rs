@@ -309,8 +309,14 @@ fn display(ui: &mut Ui, prefs: &mut Prefs) {
     ui_kit::checkbox(ui, &tr("settings.palette_labels", "Numbers on the cut palette"), &mut prefs.palette_labels);
     ui_kit::checkbox(ui, &tr("settings.fullscreen_cursor", "Full-screen cursor lines"), &mut prefs.opts.fullscreen_cursor);
     ui_kit::checkbox(ui, &tr("settings.centre_cross", "Cross at the centre of the page"), &mut prefs.opts.centre_cross);
-    ui_kit::checkbox(ui, &tr("settings.rotary_toggles", "Show the rotary and cylinder toggles"), &mut prefs.opts.show_rotary_toggles);
-    prefs.toolbars.insert("modes".into(), prefs.opts.show_rotary_toggles);
+    // The toggles are the Modes toolbar: this tick, the toolbar's own tick below and the Window
+    // menu all show one state. (Writing the stored option to the toolbar every frame brought a
+    // toolbar hidden elsewhere back as soon as this page was looked at.)
+    let mut modes = prefs.toolbar("modes");
+    if ui_kit::checkbox(ui, &tr("settings.rotary_toggles", "Show the rotary and cylinder toggles"), &mut modes).changed() {
+        prefs.toolbars.insert("modes".into(), modes);
+    }
+    prefs.opts.show_rotary_toggles = modes;
     ui.add_space(t.space_12);
     toolbars_section(ui, prefs);
     ui.add_space(t.space_12);
@@ -452,8 +458,9 @@ fn defaults(ui: &mut Ui, prefs: &mut Prefs) {
             let _ = std::fs::write(path, prefs.to_json());
         }
         if ui_kit::button(ui, tr("settings.reset_all", "Reset all settings"), ui_kit::Button::Small).clicked() {
+            // The recent projects are this computer's, and the work area is the device's.
             let recent = prefs.recent.clone();
-            *prefs = Prefs { recent, ..Prefs::default() };
+            *prefs = Prefs { recent, page_width: prefs.page_width, page_height: prefs.page_height, origin: prefs.origin, ..Prefs::default() };
         }
     });
 }

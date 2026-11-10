@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.248 (build 6)
+## v0.0.292 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -225,6 +225,50 @@
 - Art Library buttons wrap to the next row instead of squeezing their words apart
 - Machine Settings fits a narrow window
 - Fixed a slow memory growth while the window stays open
+- Fix: a DXF whose blocks insert each other over and over no longer freezes the import
+- Fix: undo no longer wipes the project notes you typed after the step it undoes
+- Fix: choosing Don't save and then cancelling or failing to open a file no longer makes the project look saved
+- Fix: an extra window no longer removes the first window's auto-saved copy
+- Fix: a drag that is cancelled or ends where it began no longer marks a saved project as changed
+- Fix: a cut library that was never saved to a file of its own is there again the next time DarkBurn starts
+- Fix: library entries made before the Library panel was first opened no longer disappear
+- Fix: a damaged project file with impossible shape numbers or layers opens instead of crashing
+- Fix: starting DarkBurn by opening a file after a crash no longer throws away the copy it offers to restore
+- Fix: shapes with their own power scale keep it when filled together with other shapes
+- Fix: the scanning offset now moves image lines the right way when a job is scanned from the top, and leaves one-way scans alone
+- Fix: a layer without a Z offset no longer runs at the height the layer before it left the head at
+- Fix: Marlin and LinuxCNC jobs no longer switch the laser on for moves too short to write
+- Fix: kerf offset now shrinks a hole that is drawn as its own shape inside another shape
+- Fix: a cropped image now burns only inside its crop
+- Fix: an image set far too fine to scan is left out with a warning instead of running out of memory
+- Fix: Cut selected graphics now also holds on a galvo laser
+- Fix: the material test no longer changes the settings of layers your design already uses
+- Fix: with an origin set on a G-code machine, the job now runs where its frame runs
+- Fix: the material test refuses an absurd number of rows or columns instead of crashing
+- Fix: Start here is forgotten when the design changes, so a changed job no longer starts part way
+- Fix: Boolean, offset and kerf no longer crash on a shape with broken coordinates
+- Fix: Kerf offset no longer drops a figure-of-eight or a closed line from the job
+- Fix: Offset and kerf treat an outline that ends on its start point as a closed shape
+- Fix: Deleting every node of a line inside a bigger shape no longer eats a node of its neighbour
+- Fix: Breaking or deleting lines at several nodes of a closed shape now hits the nodes you picked
+- Fix: Convert to curve or line works with every node of an open line selected
+- Fix: Deleting the last nodes of a shape removes the shape instead of leaving an invisible one
+- Fix: A mistyped array count or spacing gives a message instead of freezing or closing the program
+- Fix: Union, Difference, Weld, Cut Shapes and Offset no longer delete a selected picture or line they did not use
+- Fix: Text no longer vanishes when it is put on a path with no length
+- Fix: Bent text on a path follows the curve on every edge of a letter
+- Fix: Bending very large text on a path no longer closes the program
+- Fix: Optimize Shapes no longer wipes out holes and shapes smaller than its tolerance
+- Fix: Nesting with a very small rotation step no longer closes the program
+- Fix: clicking into a number field and out again no longer rounds the value
+- Fix: layer names with spaces can be typed in the cut settings editor
+- Fix: a hidden Modes toolbar stays hidden when you open the display settings
+- Fix: keys pressed while a dialog is open no longer move or delete shapes behind it
+- Fix: Preview works from the right-click menu on the canvas
+- Fix: the status bar shows the selection in the same coordinates as the rulers when the origin is not front left
+- Fix: scrolling in a window or menu no longer zooms the drawing behind it
+- Fix: Tab steps through the shapes again and no longer switches the other keys off
+- Fix: the work area size and origin set in Settings are now the ones the job uses
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

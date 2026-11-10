@@ -265,7 +265,13 @@ impl DarkBurn {
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return None;
         }
+        let over_window = crate::escape::window_open(ctx);
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
+            // A plain key pressed over a dialog or a menu is the dialog's: Delete or a letter must
+            // not change the drawing behind it.
+            if over_window && plain_key(&shortcut) {
+                continue;
+            }
             // In the node tool the plain letter keys are node commands, not align commands.
             if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
@@ -300,7 +306,7 @@ impl DarkBurn {
         }
         let mut run = self.shortcut_command(ctx);
         let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
-        if run.is_none() {
+        if run.is_none() && !crate::escape::window_open(ctx) {
             if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) || pressed(Modifiers::NONE, Key::Equals) {
                 run = Some("view.zoom_in");
             } else if pressed(Modifiers::NONE, Key::Minus) {
@@ -319,6 +325,7 @@ impl DarkBurn {
         let mut clicked: Option<String> = None;
         // Forget last frame's published widget rectangles (else the registry grows every frame).
         solidcraft_ui_registry::clear_handles();
+        keep_tab_for_the_canvas(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
@@ -560,7 +567,20 @@ impl DarkBurn {
         let host = Container::new(ui.ctx(), Surface::ApplicationBar);
         let panel = host.edge("db_status", Edge::Bottom).exact_size(STATUS_BAR_HEIGHT).show_separator_line(false);
         let frame = host.edge_frame(t.app_bar);
-        let selection = self.editor.doc.bbox_of(&self.editor.selected()).map(|r| (r, self.editor.selection.len()));
+        // In machine coordinates, like the pointer position beside it, the rulers and the X and Y
+        // fields: with the origin at the rear or the right they differ from the document's.
+        let work_area = crate::numeric_edits::Frame {
+            origin: self.prefs.origin,
+            width: f64::from(self.prefs.page_width),
+            height: f64::from(self.prefs.page_height),
+        };
+        let selection = self.editor.doc.bbox_of(&self.editor.selected()).map(|r| {
+            let (a, b) = (
+                work_area.to_machine(darkburn_core::kurbo::Point::new(r.x0, r.y0)),
+                work_area.to_machine(darkburn_core::kurbo::Point::new(r.x1, r.y1)),
+            );
+            (darkburn_core::kurbo::Rect::from_points(a, b), self.editor.selection.len())
+        });
         host.show_edge(ui, panel, frame, |ui| {
             let r = ui.max_rect();
             let font = FontId::proportional(t.font_small);
@@ -872,6 +892,7 @@ impl DarkBurn {
         }
         if self.settings_open {
             let prefs = &mut self.prefs;
+            let work_area = (prefs.page_width, prefs.page_height, prefs.origin);
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("settings"), "settings", "Settings")
                 .cards(2.0)
                 .fields()
@@ -879,11 +900,34 @@ impl DarkBurn {
                 .show(ctx, true, |ui| {
                     crate::settings::page(ui, prefs);
                 });
+            if (self.prefs.page_width, self.prefs.page_height, self.prefs.origin) != work_area {
+                crate::machine_ui::work_area_changed(self);
+            }
             crate::misc_cmds::run_requests(self);
             if closed || action != ui_kit::Action::None {
                 self.settings_open = false;
             }
         }
+    }
+}
+
+/// A shortcut without Ctrl or Alt that is not a function key or Pause: a key a dialog may want
+/// for itself. The others (Ctrl+Z, F1, Pause to hold a job) work whatever is open.
+fn plain_key(shortcut: &egui::KeyboardShortcut) -> bool {
+    let name = shortcut.logical_key.name();
+    let function = name.len() > 1 && name.starts_with('F') && name[1..].chars().all(|c| c.is_ascii_digit());
+    !shortcut.modifiers.command && !shortcut.modifiers.alt && !function && name != "Pause"
+}
+
+/// Tab steps through the shapes on the canvas. With no field holding the keyboard and no window
+/// open, egui would also take the key to start its own walk through the controls: the focus
+/// lands on the first button of the application bar, the canvas never sees the key, and every
+/// shortcut is dead until the next click (shortcuts are off while a control has the keyboard).
+/// Called before anything is drawn, so no control takes the focus this frame.
+fn keep_tab_for_the_canvas(ctx: &egui::Context) {
+    let tab = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
+    if tab && ctx.memory(|m| m.focused().is_none()) && !crate::escape::window_open(ctx) {
+        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
     }
 }
 

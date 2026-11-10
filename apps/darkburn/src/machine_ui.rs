@@ -1020,6 +1020,26 @@ pub fn view_origin(c: Corner) -> crate::view::Origin {
     }
 }
 
+/// The work area was changed in Settings (or by `setting.set`): it is the active device's from
+/// now on, so a job is built for the bed and the origin corner the canvas shows. A galvo's
+/// field comes from its lens; the canvas goes back to it.
+pub fn work_area_changed(app: &mut DarkBurn) {
+    use crate::view::Origin;
+    let Some(dev) = app.machine.devices.active.and_then(|id| app.machine.devices.get_mut(id)) else { return };
+    if dev.family() != Family::Galvo {
+        dev.width_mm = f64::from(app.prefs.page_width);
+        dev.height_mm = f64::from(app.prefs.page_height);
+    }
+    dev.origin = match app.prefs.origin {
+        Origin::FrontLeft => Corner::BottomLeft,
+        Origin::FrontRight => Corner::BottomRight,
+        Origin::RearLeft => Corner::TopLeft,
+        Origin::RearRight => Corner::TopRight,
+    };
+    app.prefs.page_width = dev.width_mm as f32;
+    app.prefs.page_height = dev.height_mm as f32;
+}
+
 /// Put the active device's remembered state into the app when the device changed [DEV-07], and
 /// remember the old device's first.
 pub fn adopt_device_state(app: &mut DarkBurn) {

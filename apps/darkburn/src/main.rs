@@ -121,6 +121,8 @@ mod ui_bug_tests;
 #[cfg(test)]
 mod ui_harness;
 #[cfg(test)]
+mod ui_hunt_tests;
+#[cfg(test)]
 mod ui_smoke_tests;
 mod updates;
 mod view;

@@ -385,6 +385,9 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "svg_dpi" => p.svg_dpi = if number()? <= 72.0 { 72.0 } else { 96.0 },
         other => return crate::extras::set_option(app, other, value).map(|_| json!({ "ok": true })),
     }
+    if matches!(key, "page_width" | "page_height") {
+        crate::machine_ui::work_area_changed(app);
+    }
     Ok(json!({ "ok": true }))
 }
 

@@ -522,6 +522,11 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
         }
         return;
     }
+    // So are the other keys: an arrow, Tab or a letter pressed over a dialog must not move, pick
+    // or flip the shapes behind it.
+    if window_open {
+        return;
+    }
     if !st.pen.is_empty() && pressed(Modifiers::NONE, Key::Enter) {
         finish_pen(app, st, false);
         return;
@@ -610,7 +615,6 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
     let enabled: Vec<bool> = items
         .iter()
         .map(|(id, _, _)| match *id {
-            "window.preview" => false,
             "canvas.properties" => true,
             "edit.paste_at_cursor" => app.context_point.is_some(),
             id => app.can_run(id),
@@ -623,10 +627,12 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
             if matches!(i, 3 | 5 | 8) {
                 Menu::separator(ui);
             }
-            let icon = crate::commands::find(id).map(|c| c.icon).unwrap_or("");
-            let shortcut = crate::commands::find(id).map(|c| c.key).filter(|k| !k.is_empty()).unwrap_or(*key);
+            let cmd = crate::commands::find(id);
+            let icon = cmd.map(|c| c.icon).unwrap_or("");
+            // The key the command has now (the user may have changed or removed it).
+            let shortcut = cmd.map_or_else(|| key.to_string(), |c| crate::keymap::key_in(&app.prefs.hotkeys, c.id, crate::keymap::default_key(c)));
             let mut item = MenuItem::new(id, label, icon);
-            item.shortcut = shortcut;
+            item.shortcut = &shortcut;
             item.enabled = enabled[i];
             if item.show(ui).clicked() && item.enabled {
                 picked = Some(id);

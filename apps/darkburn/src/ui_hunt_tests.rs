@@ -260,3 +260,39 @@ fn tab_steps_through_the_shapes_and_leaves_the_keys_working() {
     g.key(Key::Tab, Modifiers::NONE);
     assert_eq!(selected(&g), before, "Tab over a window does not change the selection");
 }
+
+/// The work area set in Settings is the one the job is built for: the bed size and the origin
+/// corner go to the selected device, so the laser works where the canvas shows.
+#[test]
+fn the_work_area_set_in_settings_is_the_one_the_job_uses() {
+    use darkburn_job::Corner;
+    let job_device = |g: &Gui| crate::job_cmds::build_input(&g.app()).device;
+    let mut g = Gui::standard();
+    g.sample_design();
+    let d = job_device(&g);
+    assert_eq!((d.bed_w, d.bed_h, d.origin), (400.0, 400.0, Corner::BottomLeft));
+    g.run_command("edit.settings");
+    g.click_label("Work area");
+    g.click_label("Front left");
+    g.click_label("Rear right");
+    g.frames(2);
+    assert_eq!(g.app().prefs.origin, crate::view::Origin::RearRight);
+    assert_eq!(job_device(&g).origin, Corner::TopRight, "the job still starts from the old origin corner");
+    g.click_a11y(Some("SpinButton"), "Width");
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("250");
+    g.enter();
+    assert_eq!(g.app().prefs.page_width, 250.0);
+    assert_eq!(job_device(&g).bed_w, 250.0, "the job is still built for the old bed width");
+    g.exec("setting.set", serde_json::json!({ "key": "page_height", "value": 300 }));
+    assert_eq!(job_device(&g).bed_h, 300.0);
+    // Reset all settings leaves the device's work area alone.
+    g.click_label("Shared defaults");
+    g.click_label("Reset all settings");
+    g.frames(2);
+    assert_eq!(g.app().prefs.theme, crate::prefs::Prefs::default().theme);
+    let d = job_device(&g);
+    assert_eq!((d.bed_w, d.bed_h, d.origin), (250.0, 300.0, Corner::TopRight));
+    let p = g.app().prefs.clone();
+    assert_eq!((p.page_width, p.page_height, p.origin), (250.0, 300.0, crate::view::Origin::RearRight));
+}

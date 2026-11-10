@@ -458,8 +458,9 @@ fn defaults(ui: &mut Ui, prefs: &mut Prefs) {
             let _ = std::fs::write(path, prefs.to_json());
         }
         if ui_kit::button(ui, tr("settings.reset_all", "Reset all settings"), ui_kit::Button::Small).clicked() {
+            // The recent projects are this computer's, and the work area is the device's.
             let recent = prefs.recent.clone();
-            *prefs = Prefs { recent, ..Prefs::default() };
+            *prefs = Prefs { recent, page_width: prefs.page_width, page_height: prefs.page_height, origin: prefs.origin, ..Prefs::default() };
         }
     });
 }

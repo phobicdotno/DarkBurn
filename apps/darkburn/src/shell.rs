@@ -892,6 +892,7 @@ impl DarkBurn {
         }
         if self.settings_open {
             let prefs = &mut self.prefs;
+            let work_area = (prefs.page_width, prefs.page_height, prefs.origin);
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("settings"), "settings", "Settings")
                 .cards(2.0)
                 .fields()
@@ -899,6 +900,9 @@ impl DarkBurn {
                 .show(ctx, true, |ui| {
                     crate::settings::page(ui, prefs);
                 });
+            if (self.prefs.page_width, self.prefs.page_height, self.prefs.origin) != work_area {
+                crate::machine_ui::work_area_changed(self);
+            }
             crate::misc_cmds::run_requests(self);
             if closed || action != ui_kit::Action::None {
                 self.settings_open = false;

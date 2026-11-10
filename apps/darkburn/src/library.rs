@@ -208,14 +208,7 @@ impl Library {
             bak.push(".bak");
             let _ = std::fs::copy(path, PathBuf::from(bak));
         }
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        std::fs::write(&tmp, self.to_json()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+        crate::files::write_atomic(path, self.to_json().as_bytes()).map_err(|e| e.to_string())
     }
 
     pub fn load(path: &Path) -> Result<Library, String> {
@@ -412,7 +405,7 @@ impl LibraryState {
     }
 
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
-        let path = path.with_extension(FILE_EXTENSION);
+        let path = crate::files::with_ending(path, FILE_EXTENSION);
         self.lib.save(&path)?;
         self.path = Some(path);
         self.dirty_since = None;
@@ -507,6 +500,15 @@ pub fn duplicate_entry(app: &mut DarkBurn, index: usize) -> Result<usize, String
 /// Replace entry `index` by `entry`; layers linked to the old name follow the new one.
 pub fn replace_entry(app: &mut DarkBurn, index: usize, entry: Entry) -> Result<(), String> {
     let old = app.extras.library.lib.entries.get(index).map(Entry::link_name).ok_or_else(|| tr("library.no_entry", "No such entry"))?;
+    // The name stays the entry's own (layers are linked by it): a number is put after it if
+    // another entry is called the same, as when an entry is added.
+    let base = entry.description.clone();
+    let mut entry = entry;
+    let mut n = 1;
+    while app.extras.library.lib.entries.iter().enumerate().any(|(i, e)| i != index && e.link_name() == entry.link_name()) {
+        n += 1;
+        entry.description = if base.is_empty() { format!("{n}") } else { format!("{base} {n}") };
+    }
     let new = entry.link_name();
     app.extras.library.lib.entries[index] = entry;
     app.extras.library.touch();

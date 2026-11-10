@@ -67,9 +67,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] SVG import: a path with `fill="none"` and no stroke is left out while a `<line>` with no stroke is kept; an old Inkscape file (90 px per inch) with sizes in bare pixels comes in at 96 px per inch
 - [ ] `Shape::image_keys` does not look into `array.source`, so a picture used only by a virtual array's originals may not be counted as used
 - [ ] Clipboard and art library content (`Clipboard::from_text`) is pasted without the tidy a project file gets on open; `project::tidy` clamps only the first level of array sources (no failure found: layer access clamps everywhere)
-- [ ] `write_atomic` and the library / art library `save` leave a partial `<name>.tmp` behind after a failed write, and overwrite a file that already has that name
-- [ ] Cut library and art library Save As use `path.with_extension(..)`: a name with a dot and no extension ("Birch 3.5") would become "Birch 3.dbclb" unless the file dialog adds the extension first
-- [ ] Cut library: `replace_entry` allows renaming an entry to the name another entry is linked by; deleting an entry cannot be undone while the unlinking it causes can
 - [ ] Art library: a library file changed by another running copy is overwritten on save when this copy has changes; `ArtLibrary::add` says a folder is made past the end but the index is clamped
 - [ ] `restore_autosave` does not run `on_open_project` or open the notes the way File > Open does (may be meant for a restored session)
 - [ ] HPGL import: `EA` / `ER` rectangles do not count against the item budget (`hpgl.rs`)
@@ -83,3 +80,8 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] Galvo: vector shapes on a layer in Image mode are left out of a galvo job without a warning (`galvo_job.rs`); pictures on a layer not in Image mode do get one
 - [ ] Galvo MOPA: a layer without a pulse width after one with a pulse width keeps the earlier width, as no command sets it back (`job.rs`, `q_pulse_ns`)
 - [ ] Preview image export with shade by power draws the burnt lines grouped by colour, lightest last, so where a weak and a strong burn cross the weak one lies on top (`preview.rs`, `render_png`); the window draws them in job order
+- [ ] Cut library: deleting an entry cannot be undone while the unlinking it causes can
+- [ ] Import: an image that came in from an SVG file remembers the SVG as its file, so Refresh Image on it fails with a read error instead of saying there is no file; images inside an imported group get no file at all (`import.rs` `set_source`)
+- [ ] `.rd` import: a layer whose first instruction is a cut (no move before it) starts at 0,0 and not where the layer before it ended (`rd_import.rs`); HPGL `SP0` (pen put away) is read as pen 1, so what is drawn after it comes in (`hpgl.rs`)
+- [ ] Cut library: the headless `library.save_as` may not put the new file in the list of libraries to open again the way the panel's Save as does (not checked)
+- [ ] Project file made by a newer version: what this version does not know is dropped at the next save (there is a warning on open, nothing at save)

@@ -79,14 +79,7 @@ impl ArtLibrary {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        std::fs::write(&tmp, self.to_json()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+        crate::files::write_atomic(path, self.to_json().as_bytes()).map_err(|e| e.to_string())
     }
 
     /// Add `item` to folder `folder` (created if the index is past the end). An item with the same
@@ -238,18 +231,23 @@ impl Open {
         Ok(Open { lib, path: Some(path.to_path_buf()), dirty: false, mtime: mtime(path) })
     }
 
+    /// Save under a name the person gave: the file ending is added when it is not there.
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
-        let path = path.with_extension(FILE_EXTENSION);
+        self.write_to(crate::files::with_ending(path, FILE_EXTENSION))
+    }
+
+    /// Save to the library's own file, whatever it is called.
+    pub fn save(&mut self) -> Result<(), String> {
+        let path = self.path.clone().ok_or_else(|| tr("art.no_file", "The library has no file yet: use Save as"))?;
+        self.write_to(path)
+    }
+
+    fn write_to(&mut self, path: PathBuf) -> Result<(), String> {
         self.lib.save(&path)?;
         self.mtime = mtime(&path);
         self.path = Some(path);
         self.dirty = false;
         Ok(())
-    }
-
-    pub fn save(&mut self) -> Result<(), String> {
-        let path = self.path.clone().ok_or_else(|| tr("art.no_file", "The library has no file yet: use Save as"))?;
-        self.save_as(&path)
     }
 }
 
@@ -329,7 +327,7 @@ impl ArtState {
                 continue;
             }
             let result = match (self.libs[i].path.clone(), settings_dir) {
-                (Some(p), _) => self.libs[i].save_as(&p),
+                (Some(_), _) => self.libs[i].save(),
                 (None, Some(dir)) => {
                     let _ = std::fs::create_dir_all(dir);
                     let path = free_file(dir, &self.libs[i].lib.name);

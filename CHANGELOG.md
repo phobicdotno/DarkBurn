@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.454 (build 6)
+## v0.0.458 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -38,6 +38,10 @@
 - Fix: A galvo job that needs an axis move the board cannot make is refused at start instead of stopping half way with a link error
 - Fix: a turned, mirrored or cropped picture on a galvo is now engraved the way it looks on screen
 - Fix: pausing a GRBL machine that runs without laser mode now switches the laser off while it waits
+- Fix: saving a project or a library no longer overwrites a file that happens to be called the same with .tmp after it, and very long file names can be saved
+- Fix: Saving a cut or art library under a name with a dot in it ("Birch 3.5") keeps the whole name
+- Fix: Editing a cut library entry so it gets the same name as another one no longer mixes the two up
+- Fix: An art library opened from a file not ending in .dbart is saved back to that same file
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

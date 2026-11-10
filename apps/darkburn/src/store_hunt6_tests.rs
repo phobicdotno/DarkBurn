@@ -1,0 +1,175 @@
+//! Bug hunt pass 6, storing: writing files safely, the clipboard, the cut and art libraries.
+
+use std::path::PathBuf;
+
+use darkburn_core::kurbo::Rect;
+use darkburn_core::{Shape, ShapeId};
+use serde_json::{Value, json};
+
+use crate::DarkBurn;
+use crate::api::execute_headless;
+use crate::prefs::Prefs;
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(tag: &str) -> TempDir {
+        let d = std::env::temp_dir().join(format!("darkburn-hunt6-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        TempDir(d)
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn app() -> DarkBurn {
+    DarkBurn::new(Prefs::default())
+}
+
+fn run(app: &mut DarkBurn, id: &str, args: Value) -> Result<Value, String> {
+    execute_headless(app, id, &args)
+}
+
+fn add_rect(a: &mut DarkBurn) -> ShapeId {
+    let mut id = ShapeId(0);
+    a.editor.edit("Add", |d, _| {
+        id = d.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1));
+        true
+    });
+    id
+}
+
+/// Saving `plan.dbrn` goes through a temporary file. That file must not be one the person
+/// already has: a `plan.dbrn.tmp` beside the project is theirs and stays as it is.
+#[test]
+fn saving_leaves_a_file_named_like_the_project_with_tmp_after_it_alone() {
+    let dir = TempDir::new("tmpname");
+    let mut a = app();
+    add_rect(&mut a);
+    let project = dir.path("plan.dbrn");
+    let neighbour = dir.path("plan.dbrn.tmp");
+    std::fs::write(&neighbour, b"mine").unwrap();
+    crate::files::save_to(&mut a, &project).unwrap();
+    assert!(project.is_file());
+    assert_eq!(std::fs::read(&neighbour).ok().as_deref(), Some(&b"mine"[..]), "the neighbour file is untouched");
+    // Nothing else is left in the folder.
+    let mut names: Vec<String> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    assert_eq!(names, ["plan.dbrn", "plan.dbrn.tmp"]);
+    // The same for the two libraries.
+    for name in ["cuts.dbclb", "art.dbart"] {
+        let file = dir.path(name);
+        let tmp = dir.path(&format!("{name}.tmp"));
+        std::fs::write(&tmp, b"mine").unwrap();
+        if name.ends_with("dbclb") {
+            crate::library::Library::default().save(&file).unwrap();
+        } else {
+            crate::art_library::ArtLibrary::default().save(&file).unwrap();
+        }
+        assert!(file.is_file());
+        assert_eq!(std::fs::read(&tmp).ok().as_deref(), Some(&b"mine"[..]), "{name}.tmp is untouched");
+    }
+}
+
+/// A file name may be as long as the file system allows (255 characters on Windows and most
+/// others). The temporary file's name must not be longer than the name asked for.
+#[test]
+fn a_project_with_the_longest_file_name_the_system_allows_can_be_saved() {
+    let dir = TempDir::new("longname");
+    let mut a = app();
+    add_rect(&mut a);
+    let name = format!("{}.dbrn", "n".repeat(250));
+    assert_eq!(name.len(), 255);
+    let project = dir.path(&name);
+    // The system takes the name as it is.
+    std::fs::write(&project, b"x").expect("the file system allows this name");
+    std::fs::remove_file(&project).unwrap();
+    crate::files::save_to(&mut a, &project).expect("the project is saved under the long name");
+    assert!(project.is_file());
+    assert!(!a.editor.is_modified());
+}
+
+/// "Save as" of the two libraries adds the file ending to the name that was typed. A name with
+/// a dot in it ("Birch 3.5") keeps what is after the dot; before, it was written to
+/// "Birch 3.dbclb", over a library of that name if there was one.
+#[test]
+fn a_library_saved_under_a_name_with_a_dot_keeps_the_whole_name() {
+    let dir = TempDir::new("dotname");
+    // The cut library.
+    let other = dir.path("Birch 3.dbclb");
+    std::fs::write(&other, b"another library").unwrap();
+    let mut a = app();
+    run(&mut a, "library.save_as", json!({ "path": dir.path("Birch 3.5").to_string_lossy() })).unwrap();
+    assert_eq!(std::fs::read(&other).unwrap(), b"another library", "the library beside it is not written over");
+    assert!(dir.path("Birch 3.5.dbclb").is_file());
+    assert_eq!(a.extras.library.path.as_deref(), Some(dir.path("Birch 3.5.dbclb").as_path()));
+    // A name that has the ending already (in any case) is taken as it is.
+    run(&mut a, "library.save_as", json!({ "path": dir.path("Oak.DBCLB").to_string_lossy() })).unwrap();
+    assert_eq!(a.extras.library.path.as_deref(), Some(dir.path("Oak.DBCLB").as_path()));
+    // The art library.
+    let other = dir.path("Signs v2.dbart");
+    std::fs::write(&other, b"another library").unwrap();
+    let l = run(&mut a, "art.new", json!({})).unwrap()["library"].as_u64().unwrap();
+    run(&mut a, "art.save_as", json!({ "library": l, "path": dir.path("Signs v2.1").to_string_lossy() })).unwrap();
+    assert_eq!(std::fs::read(&other).unwrap(), b"another library", "the library beside it is not written over");
+    assert!(dir.path("Signs v2.1.dbart").is_file());
+    assert_eq!(a.extras.art.libs[l as usize].path.as_deref(), Some(dir.path("Signs v2.1.dbart").as_path()));
+}
+
+/// Two entries of a cut library never have the same name (layers are linked by it). Editing an
+/// entry so that it would get another entry's name gives it a number, as adding one does;
+/// before, deleting the renamed entry unlinked the layers of the other one.
+#[test]
+fn editing_a_library_entry_onto_another_entrys_name_keeps_the_names_apart() {
+    use crate::library::{self, Entry};
+    let mut a = app();
+    let entry = |d: &str| Entry { material: "Ply".into(), thickness_mm: Some(3.0), description: d.into(), ..Default::default() };
+    let cut = a.extras.library.lib.add(entry("Cut"));
+    let score = a.extras.library.lib.add(entry("Score"));
+    library::link_layer(&mut a, cut, 4).unwrap();
+    assert_eq!(a.editor.doc.layer(4).library_link.as_deref(), Some("Ply - 3 mm - Cut"));
+    // "Score" is edited and called "Cut" too.
+    library::replace_entry(&mut a, score, entry("Cut")).unwrap();
+    let names: Vec<String> = a.extras.library.lib.entries.iter().map(Entry::link_name).collect();
+    assert_ne!(names[cut], names[score], "the two entries still have names of their own");
+    assert_eq!(names[cut], "Ply - 3 mm - Cut");
+    // Deleting the edited one leaves the layer linked to the first.
+    library::delete_entry(&mut a, score).unwrap();
+    assert_eq!(a.editor.doc.layer(4).library_link.as_deref(), Some("Ply - 3 mm - Cut"));
+    // Saving an entry without changing its name is not a clash with itself.
+    library::replace_entry(&mut a, cut, entry("Cut")).unwrap();
+    assert_eq!(a.extras.library.lib.entries[cut].link_name(), "Ply - 3 mm - Cut");
+}
+
+/// An art library is saved to the file it was opened from, whatever that file is called;
+/// before, one whose name did not end in ".dbart" had its changes written to another file.
+#[test]
+fn an_art_library_is_saved_to_the_file_it_was_opened_from() {
+    let dir = TempDir::new("artfile");
+    let file = dir.path("shapes.backup");
+    crate::art_library::ArtLibrary::default().save(&file).unwrap();
+    let mut a = app();
+    let l = run(&mut a, "art.open", json!({ "path": file.to_string_lossy() })).unwrap()["library"].as_u64().unwrap() as usize;
+    let id = add_rect(&mut a);
+    a.editor.selection.set([id]);
+    run(&mut a, "art.add_selection", json!({ "library": l, "name": "Box" })).unwrap();
+    assert!(a.extras.art.libs[l].dirty);
+    assert_eq!(a.extras.art.save_changes(None), 0);
+    let names: Vec<String> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["shapes.backup"], "no other file is made");
+    assert!(std::fs::read_to_string(&file).unwrap().contains("Box"), "the change is in the file");
+    assert_eq!(a.extras.art.libs[l].path.as_deref(), Some(file.as_path()));
+    // The Save button's way too.
+    a.extras.art.libs[l].dirty = true;
+    a.extras.art.libs[l].save().unwrap();
+    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1);
+}

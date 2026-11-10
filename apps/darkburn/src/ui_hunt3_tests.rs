@@ -267,3 +267,123 @@ fn tab_walk(g: &mut Gui, presses: usize) -> (Vec<String>, Vec<String>) {
     }
     (reached, problems)
 }
+
+/// With a dialog open, Tab walks the dialog's own controls: the first press lands in it, every
+/// press stays in it, and nothing behind it is touched. The walk used to start on the
+/// application bar behind the dialog.
+#[test]
+fn tab_stays_in_the_open_dialog() {
+    let mut g = Gui::standard();
+    let ids: Vec<&str> = crate::commands::COMMANDS.iter().chain(crate::machine_ui::COMMANDS).map(|c| c.id).collect();
+    let mut seen = 0;
+    let mut all = Vec::new();
+    for id in ids {
+        g.close_dialogs();
+        crate::files::new_project(&mut g.app());
+        g.sample_design();
+        g.run_command(id);
+        if g.dialog_windows().is_empty() {
+            continue;
+        }
+        seen += 1;
+        let doc = g.app().editor.doc.clone();
+        let (reached, problems) = tab_walk(&mut g, 14);
+        all.extend(problems.into_iter().map(|p| format!("{id}: {p}")));
+        if reached.iter().all(|r| r == "nothing") {
+            all.push(format!("{id}: Tab reaches nothing in the window"));
+        }
+        if g.app().editor.doc != doc {
+            all.push(format!("{id}: Tab changed the drawing behind the window"));
+        }
+        eprintln!("{id}: {reached:?}");
+    }
+    assert!(seen >= 15, "only {seen} dialogs were opened");
+    assert!(all.is_empty(), "{} problems:\n{}", all.len(), all.join("\n"));
+}
+
+/// Tab until the keyboard is on the button `label`.
+fn tab_to_button(g: &mut Gui, label: &str) {
+    for _ in 0..60 {
+        g.key(Key::Tab, Modifiers::NONE);
+        g.frames(2);
+        let focused = g.ctx().memory(|m| m.focused()).map(|i| i.value());
+        if g.a11y().into_iter().any(|n| Some(n.id) == focused && n.role == "Button" && n.label.as_deref() == Some(label)) {
+            return;
+        }
+    }
+    panic!("Tab never reached the button {label}");
+}
+
+/// Enter presses the button that holds the keyboard, also in a window with fields: there Enter
+/// on Cancel or on the OK button did nothing at all (Space worked). Enter that ends typing in a
+/// field still does not press OK.
+#[test]
+fn enter_presses_the_focused_button_of_a_dialog_with_fields() {
+    let open = |g: &mut Gui| {
+        g.close_dialogs();
+        crate::files::new_project(&mut g.app());
+        g.sample_design();
+        g.run_command("edit.convert_bitmap");
+        assert!(g.app().images.convert.is_some());
+    };
+    let images = |g: &Gui| g.app().editor.doc.iter().filter(|s| s.is_image()).count();
+    let mut g = Gui::standard();
+    open(&mut g);
+    tab_to_button(&mut g, "Cancel");
+    g.enter();
+    g.frames(3);
+    assert!(g.app().images.convert.is_none(), "Enter on Cancel left the window open");
+    assert_eq!(images(&g), 0, "Enter on Cancel converted the shapes");
+
+    open(&mut g);
+    tab_to_button(&mut g, "Convert");
+    g.enter();
+    g.frames(3);
+    assert!(g.app().images.convert.is_none(), "Enter on Convert left the window open");
+    assert_eq!(images(&g), 1, "Enter on Convert did not convert");
+
+    // Enter that ends typing in a field is not OK.
+    open(&mut g);
+    type_into(&mut g, "SpinButton", "DPI", "100");
+    g.frames(2);
+    assert!(g.app().images.convert.as_ref().is_some_and(|d| d.args.dpi == 100.0), "the typed DPI is in the window, and it is still open");
+    assert_eq!(images(&g), 0);
+    g.close_dialogs();
+}
+
+/// A field in a panel that was clicked into keeps the keyboard and its Tab order while a window
+/// is open beside it: Tab moves on to the next panel field and does not jump into the window.
+#[test]
+fn tab_in_a_panel_field_moves_on_while_a_window_is_open() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.run_command("laser.focus_test");
+    g.settle();
+    let window = g.find_a11y(Some("Window"), "Focus Test").into_iter().next().expect("the window is open").rect;
+    g.click_id("dialog:control:Speed");
+    g.frames(2);
+    let first = g.ctx().memory(|m| m.focused());
+    assert!(first.is_some(), "the click went into the Speed field of the panel");
+    g.key(Key::Tab, Modifiers::NONE);
+    g.frames(2);
+    let second = g.ctx().memory(|m| m.focused());
+    assert!(second.is_some() && second != first, "Tab did not move on from the panel field: {first:?} then {second:?}");
+    let node = g.a11y().into_iter().find(|n| Some(n.id) == second.map(|i| i.value()));
+    assert!(node.as_ref().is_none_or(|n| !window.contains(n.rect.center())), "Tab jumped from the panel into the window: {node:?}");
+    // With the keyboard nowhere, Tab goes into the window.
+    g.escape();
+    g.frames(2);
+    if g.find_a11y(Some("Window"), "Focus Test").is_empty() {
+        g.run_command("laser.focus_test");
+        g.settle();
+    }
+    g.ctx().memory_mut(|m| m.stop_text_input());
+    g.frames(1);
+    g.key(Key::Tab, Modifiers::NONE);
+    g.frames(2);
+    let focused = g.ctx().memory(|m| m.focused()).map(|i| i.value());
+    let node = g.a11y().into_iter().find(|n| Some(n.id) == focused);
+    let window = g.find_a11y(Some("Window"), "Focus Test").into_iter().next().expect("the window is open").rect;
+    assert!(node.as_ref().is_some_and(|n| window.contains(n.rect.center())), "Tab did not go into the window: {node:?}");
+    g.close_dialogs();
+}

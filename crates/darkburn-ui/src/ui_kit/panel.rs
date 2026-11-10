@@ -1158,8 +1158,10 @@ impl<'a> Window<'a> {
                     body(ui);
                 }
             });
-            if !self.enter_submits {
-                ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            if !self.enter_submits && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+                // The key is kept from OK (Enter ends the typing in a field), but a footer
+                // button that holds the keyboard is still pressed by it.
+                super::actions::note_enter_kept_from_ok(ui.ctx());
             }
             if !self.escape_closes {
                 ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));

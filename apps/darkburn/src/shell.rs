@@ -326,6 +326,7 @@ impl DarkBurn {
         // Forget last frame's published widget rectangles (else the registry grows every frame).
         solidcraft_ui_registry::clear_handles();
         keep_tab_for_the_canvas(ui.ctx());
+        crate::tab_focus::keep_tab_in_the_top_window(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());

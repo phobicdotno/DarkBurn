@@ -109,6 +109,7 @@ mod shape_ui;
 mod shell;
 mod sounds;
 mod startup;
+mod tab_focus;
 mod text_cmds;
 mod text_render;
 #[cfg(test)]

@@ -69,7 +69,7 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] SVG import: a path with `fill="none"` and no stroke is left out while a `<line>` with no stroke is kept; an old Inkscape file (90 px per inch) with sizes in bare pixels comes in at 96 px per inch
 - [ ] `Shape::image_keys` does not look into `array.source`, so a picture used only by a virtual array's originals may not be counted as used
 - [ ] Clipboard and art library content (`Clipboard::from_text`) is pasted without the tidy a project file gets on open; `project::tidy` clamps only the first level of array sources (no failure found: layer access clamps everywhere)
-- [ ] Cut library: `replace_entry` allows renaming an entry to the name another entry is linked by; deleting an entry cannot be undone while the unlinking it causes can
+- [ ] Cut library: deleting an entry cannot be undone while the unlinking it causes can
 - [ ] Art library: a library file changed by another running copy is overwritten on save when this copy has changes; `ArtLibrary::add` says a folder is made past the end but the index is clamped
 - [ ] `restore_autosave` does not run `on_open_project` or open the notes the way File > Open does (may be meant for a restored session)
 - [ ] HPGL import: `EA` / `ER` rectangles do not count against the item budget (`hpgl.rs`)

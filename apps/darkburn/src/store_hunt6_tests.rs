@@ -149,3 +149,27 @@ fn editing_a_library_entry_onto_another_entrys_name_keeps_the_names_apart() {
     library::replace_entry(&mut a, cut, entry("Cut")).unwrap();
     assert_eq!(a.extras.library.lib.entries[cut].link_name(), "Ply - 3 mm - Cut");
 }
+
+/// An art library is saved to the file it was opened from, whatever that file is called;
+/// before, one whose name did not end in ".dbart" had its changes written to another file.
+#[test]
+fn an_art_library_is_saved_to_the_file_it_was_opened_from() {
+    let dir = TempDir::new("artfile");
+    let file = dir.path("shapes.backup");
+    crate::art_library::ArtLibrary::default().save(&file).unwrap();
+    let mut a = app();
+    let l = run(&mut a, "art.open", json!({ "path": file.to_string_lossy() })).unwrap()["library"].as_u64().unwrap() as usize;
+    let id = add_rect(&mut a);
+    a.editor.selection.set([id]);
+    run(&mut a, "art.add_selection", json!({ "library": l, "name": "Box" })).unwrap();
+    assert!(a.extras.art.libs[l].dirty);
+    assert_eq!(a.extras.art.save_changes(None), 0);
+    let names: Vec<String> = std::fs::read_dir(&dir.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["shapes.backup"], "no other file is made");
+    assert!(std::fs::read_to_string(&file).unwrap().contains("Box"), "the change is in the file");
+    assert_eq!(a.extras.art.libs[l].path.as_deref(), Some(file.as_path()));
+    // The Save button's way too.
+    a.extras.art.libs[l].dirty = true;
+    a.extras.art.libs[l].save().unwrap();
+    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 1);
+}

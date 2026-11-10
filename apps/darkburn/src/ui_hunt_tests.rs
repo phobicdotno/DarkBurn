@@ -168,3 +168,19 @@ fn plain_keys_over_an_open_dialog_do_not_edit_the_drawing() {
     g.key(Key::F1, Modifiers::NONE);
     assert!(g.app().extras.help_open, "F1 still opens the help");
 }
+
+/// The canvas's right-click menu: Preview opens the preview, and each item shows the key it
+/// has now, not the default it was given.
+#[test]
+fn the_canvas_menu_opens_the_preview_and_shows_the_keys_in_use() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.exec("hotkeys.set", serde_json::json!({ "command": "edit.copy", "key": "Ctrl+Alt+C" }));
+    let empty = g.mm_to_screen(300.0, 300.0);
+    g.right_click_pos(empty);
+    assert!(g.has_text("Ctrl+Alt+C"), "the menu shows the key Copy has now: {:?}", g.visible_texts());
+    assert!(!g.has_text("Ctrl+C"));
+    g.click_label("Preview");
+    g.frames(2);
+    assert!(g.app().job.preview.open, "Preview in the canvas menu opens the preview");
+}

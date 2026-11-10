@@ -60,6 +60,8 @@ struct Block {
     settings: CutSettings,
     mode: CutMode,
     layer: usize,
+    /// Index into the layer's settings.
+    setting: usize,
 }
 
 enum UnitKind {
@@ -99,7 +101,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
 
     // Flatten every shape once.
     let flat: Vec<Vec<Vec<Poly>>> = input.layers.iter().map(|l| l.shapes.iter().map(|s| geom::flatten(&s.path, tol)).collect()).collect();
-    let job_bounds = job_bounds(input, &flat).ok_or(JobError::Empty)?;
+    let job_bounds = job_bounds(input, tol).ok_or(JobError::Empty)?;
     let start = opts.origin.map_or(Point::ZERO, |o| o.design_start(job_bounds));
 
     let mut tp = Toolpath { space: CoordSpace::Design, layers: Vec::new(), ops: Vec::new(), start };
@@ -135,7 +137,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
                 CutMode::Image => &[CutMode::Image],
             };
             for &mode in modes {
-                blocks.push(Block { ir_layer, settings: s.clone(), mode, layer: li });
+                blocks.push(Block { ir_layer, settings: s.clone(), mode, layer: li, setting: si });
             }
         }
     }
@@ -147,7 +149,17 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         let layer = &input.layers[b.layer];
         let polys = &flat[b.layer];
         match b.mode {
-            CutMode::Line => line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items),
+            CutMode::Line => {
+                // A sub-layer with a kerf offset cuts its own outlines.
+                let own: Vec<Vec<Poly>>;
+                let polys = if layer.shapes.iter().any(|s| s.line_paths.iter().any(|(i, _)| *i == b.setting)) {
+                    own = layer.shapes.iter().map(|s| geom::flatten(s.line_path(b.setting), tol)).collect();
+                    &own
+                } else {
+                    polys
+                };
+                line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items)
+            }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
                 for (ii, img) in layer.images.iter().enumerate() {
@@ -242,16 +254,21 @@ fn fmt_num(v: f64) -> String {
     if s == "-0" { "0".into() } else { s.to_string() }
 }
 
-fn job_bounds(input: &JobInput, flat: &[Vec<Vec<Poly>>]) -> Option<Rect> {
+/// The bounds of a job in design coordinates: every outline its layers use (flattened with
+/// `tolerance`, mm) and every image scan line. This is the box the job origin is anchored on.
+pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
+    let tol = tolerance.max(1e-4);
     let mut r: Option<Rect> = None;
     let mut add = |p: Point| r = Some(r.map_or(Rect::from_points(p, p), |r| r.union_pt(p)));
-    for (li, layer) in input.layers.iter().enumerate() {
+    for layer in &input.layers {
         if !layer.output {
             continue;
         }
-        for shape in &flat[li] {
-            for poly in shape {
-                poly.pts.iter().for_each(|p| add(*p));
+        for shape in &layer.shapes {
+            for path in shape.outlines_used(&layer.settings) {
+                for poly in geom::flatten(path, tol) {
+                    poly.pts.iter().for_each(|p| add(*p));
+                }
             }
         }
         for img in &layer.images {
@@ -469,6 +486,9 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                         }
                     }
                 }
+                if f.bidirectional {
+                    shift_by_direction(&mut ordered, f.direction_offset);
+                }
                 let e = RowEmit {
                     frame: Affine::rotate(a),
                     speed: s.speed,
@@ -511,6 +531,22 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
     }
 }
 
+/// Scanning offset: rows scanned forward move back by half of `offset`, rows scanned in reverse
+/// forward by half.
+fn shift_by_direction(ordered: &mut [(ScanRow, bool)], offset: f64) {
+    let half = offset / 2.0;
+    if half == 0.0 {
+        return;
+    }
+    for (row, forward) in ordered.iter_mut() {
+        let d = if *forward { -half } else { half };
+        for r in row.runs.iter_mut() {
+            r.x0 += d;
+            r.x1 += d;
+        }
+    }
+}
+
 /// Operations for an image's scanlines.
 fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
     let is = &s.image;
@@ -546,15 +582,8 @@ fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
             }
         }
     }
-    let half = img.direction_offset / 2.0;
-    if is.bidirectional && half != 0.0 {
-        for (row, forward) in ordered.iter_mut() {
-            let d = if *forward { -half } else { half };
-            for r in row.runs.iter_mut() {
-                r.x0 += d;
-                r.x1 += d;
-            }
-        }
+    if is.bidirectional {
+        shift_by_direction(&mut ordered, img.direction_offset);
     }
     let e = RowEmit {
         frame: img.transform,
@@ -721,6 +750,69 @@ mod tests {
             }
             assert_eq!(burns(0.4, false, y0), burns(0.0, false, y0), "a one-way scan is not shifted");
         }
+    }
+
+    #[test]
+    fn a_fill_scan_offset_follows_the_direction_of_each_line() {
+        let burns = |offset: f64, bidirectional: bool| {
+            let mut s = CutSettings::fill(100.0, 50.0, 1.0);
+            s.fill.bidirectional = bidirectional;
+            s.fill.direction_offset = offset;
+            let tp = run(LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(5.0, 5.0, 10.0, 4.0))), &JobOptions::default());
+            let mut pos = Point::ZERO;
+            let mut out = Vec::new();
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    out.push((pos, *to));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            out
+        };
+        let plain = burns(0.0, true);
+        let shifted = burns(0.4, true);
+        assert_eq!(plain.len(), 4);
+        for (a, b) in plain.iter().zip(&shifted) {
+            let want = if a.1.x > a.0.x { -0.2 } else { 0.2 };
+            assert!((b.0.x - a.0.x - want).abs() < 1e-9 && (b.1.x - a.1.x - want).abs() < 1e-9, "{a:?} {b:?}");
+        }
+        assert_eq!(burns(0.4, false), burns(0.0, false), "a one-way scan is not shifted");
+    }
+
+    #[test]
+    fn a_line_sub_layer_cuts_its_own_outline_and_the_fill_keeps_the_drawn_one() {
+        // Fill, then a line with a 1 mm kerf offset (the grown outline is handed in).
+        let mut l = LayerInput::new(0, "A", CutSettings::fill(100.0, 20.0, 1.0));
+        l.settings.push(CutSettings::line(10.0, 80.0));
+        let mut sh = ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0));
+        sh.line_paths.push((1, rect_path(9.0, 9.0, 12.0, 12.0)));
+        let input = JobInput { layers: vec![l.with_shape(sh)] };
+        let tp = generate(&input, &JobOptions::default(), &mut Progress::none()).unwrap();
+        let mut pos = Point::ZERO;
+        let (mut fill, mut line) = (Rect::new(f64::MAX, f64::MAX, f64::MIN, f64::MIN), Rect::new(f64::MAX, f64::MAX, f64::MIN, f64::MIN));
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                let r = if *power == 20.0 { &mut fill } else { &mut line };
+                *r = r.union_pt(pos).union_pt(*to);
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        assert_eq!(fill, Rect::new(10.0, 10.5, 20.0, 19.5), "the fill stays inside the drawn square");
+        assert_eq!(line, Rect::new(9.0, 9.0, 21.0, 21.0), "the line follows the kerf outline");
+        assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(9.0, 9.0, 21.0, 21.0)), "the bounds hold both");
+        // A line-only layer is bounded by what it cuts, not by the drawn outline.
+        let mut sh = ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0));
+        sh.line_paths.push((0, rect_path(11.0, 11.0, 8.0, 8.0)));
+        let input = JobInput { layers: vec![LayerInput::new(0, "A", CutSettings::line(10.0, 80.0)).with_shape(sh)] };
+        assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(11.0, 11.0, 19.0, 19.0)));
     }
 
     #[test]

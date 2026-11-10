@@ -366,6 +366,9 @@ pub fn build_input(app: &DarkBurn) -> BuildInput {
     // The selected device profile decides the bed, origin corner, axes and Z.
     let mut device = app.machine.active().job_device();
     device.swap_xy |= app.job.gcode.swap_xy;
+    if app.machine.active().family() == crate::machine_api::Family::Grbl && app.job.gcode.fast_whitespace_scan {
+        device.fast_whitespace = Some(app.job.gcode.fast_whitespace_speed);
+    }
     device.tolerance = crate::settings_wiring::output_tolerance_mm(&app.prefs.opts);
     let mut settings = current_settings(app).with_device_finish(app.job.gcode.return_to_finish);
     settings.discard_out_of_bounds = crate::settings_wiring::discard_out_of_bounds(&settings, &app.prefs.opts);

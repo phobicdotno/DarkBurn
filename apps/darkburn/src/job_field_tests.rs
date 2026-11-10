@@ -670,6 +670,10 @@ fn fill_and_line_runs_both() {
 // ----- IMGL --------------------------------------------------------------------------------------
 
 pub(crate) fn image_doc(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>) -> Document {
+    image_doc_with(setting, px, darkburn_core::ImageAdjust::default())
+}
+
+pub(crate) fn image_doc_with(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>, adjust: darkburn_core::ImageAdjust) -> Document {
     let mut d = Document::new();
     {
         let s = d.layer_mut(3).main_mut();
@@ -687,11 +691,71 @@ pub(crate) fn image_doc(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>) -
     image::DynamicImage::ImageLuma8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
     let key = d.add_image(darkburn_core::ImageData { format: "png".into(), bytes: std::sync::Arc::from(png), px_width: 4, px_height: 4 });
     d.add(Shape::new(
-        ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, ..Default::default() }),
+        ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, adjust, ..Default::default() }),
         Affine::translate((10.0, 10.0)),
         3,
     ));
     d
+}
+
+/// What is burned is what Adjust Image showed: the job and the preview read the image settings
+/// the same way.
+#[test]
+fn the_job_burns_an_image_the_way_adjust_image_shows_it() {
+    use layer::ImageMode as M;
+    let px: Vec<u8> = vec![0, 60, 120, 255, 200, 30, 90, 180, 255, 10, 140, 70, 100, 220, 40, 160];
+    let sharpened = darkburn_core::ImageAdjust { enhance_amount: 100.0, enhance_radius: 1.0, enhance_denoise: 30.0, ..Default::default() };
+    for (mode, adjust) in [(M::Sketch, darkburn_core::ImageAdjust::default()), (M::Dither, sharpened), (M::Jarvis, sharpened)] {
+        let d = image_doc_with(|s| s.image_mode = mode, px.clone(), adjust);
+        let shown: f64 =
+            crate::images::try_scan_plans(&d, 3, 0, &crate::scan_offsets::ScanTuning::default()).unwrap().iter().map(|p| p.burn_length()).sum();
+        let burned = burn_len(&build(d).toolpath);
+        assert!(shown > 1.0, "{mode:?} shows something");
+        assert!((burned - shown).abs() < 1e-6, "{mode:?}: the job burns {burned} mm, Adjust Image showed {shown} mm");
+    }
+}
+
+#[test]
+fn the_kerf_of_a_line_sub_layer_leaves_the_fill_of_its_layer_alone() {
+    // Fill a 20 mm square, then cut it out with a 1 mm kerf offset on a sub-layer.
+    let mut d = fill_doc(1.0, 20.0);
+    {
+        let l = d.layer_mut(0);
+        let mut sub = l.settings[0].clone();
+        sub.mode = Mode::Line;
+        sub.kerf = 1.0;
+        sub.max_power = 90.0;
+        l.settings.push(sub);
+    }
+    let b = build(d);
+    let span = |power: f64| {
+        let xs: Vec<f64> = segs(&b.toolpath).iter().filter(|s| s.kind == 'C' && s.power == power).flat_map(|s| [s.from.x, s.to.x]).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let (f0, f1) = span(40.0);
+    assert!((f0 - 10.0).abs() < 1e-6 && (f1 - 30.0).abs() < 1e-6, "the fill covers the square as drawn: {f0} {f1}");
+    let (c0, c1) = span(90.0);
+    assert!((c0 - 9.0).abs() < 0.05 && (c1 - 31.0).abs() < 0.05, "the cut runs 1 mm outside: {c0} {c1}");
+    assert!((b.bounds.width() - 22.0).abs() < 0.05, "the job is as wide as the cut: {}", b.bounds.width());
+}
+
+#[test]
+fn every_line_sub_layer_cuts_with_its_own_kerf() {
+    let mut d = line_doc(20.0);
+    {
+        let l = d.layer_mut(0);
+        l.settings[0].kerf = 0.5;
+        let mut sub = l.settings[0].clone();
+        sub.kerf = -1.0;
+        sub.max_power = 90.0;
+        l.settings.push(sub);
+    }
+    let b = build(d);
+    let x0 =
+        |power: f64| segs(&b.toolpath).iter().filter(|s| s.kind == 'C' && s.power == power).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((x0(50.0) - 9.5).abs() < 0.05, "{}", x0(50.0));
+    assert!((x0(90.0) - 11.0).abs() < 0.05, "{}", x0(90.0));
+    assert!(b.warnings.is_empty(), "{:?}", b.warnings);
 }
 
 #[test]

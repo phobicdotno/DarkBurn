@@ -339,3 +339,48 @@ fn tool_layers_are_framed_only_when_asked_and_never_burn() {
     let job = build_job_simple(&i).unwrap();
     assert!((job.bounds.x1 - 30.0).abs() < 1e-6);
 }
+
+#[test]
+fn scan_offsets_shift_the_lines_of_a_fill_too() {
+    let mk = |tuning: crate::scan_offsets::ScanTuning, bidirectional: bool| {
+        let mut d = fill_doc(2.0, 20.0);
+        d.layer_mut(0).main_mut().bidirectional = bidirectional;
+        let mut i = input(d);
+        i.tuning = Some(tuning);
+        let b = build_job_simple(&i).unwrap();
+        segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect::<Vec<_>>()
+    };
+    let mut t = crate::scan_offsets::ScanTuning::default();
+    t.offsets.set(100.0, 0.4);
+    let (base, shifted) = (mk(crate::scan_offsets::ScanTuning::default(), true), mk(t.clone(), true));
+    assert_eq!(base.len(), 10);
+    assert_eq!(base.len(), shifted.len());
+    for (a, b) in base.iter().zip(&shifted) {
+        let forward = a.to.x > a.from.x;
+        let dx = b.from.x - a.from.x;
+        assert!((dx - if forward { -0.2 } else { 0.2 }).abs() < 1e-6, "forward lines move back, reverse lines forward: {dx}");
+    }
+    let (base, shifted) = (mk(crate::scan_offsets::ScanTuning::default(), false), mk(t, false));
+    for (a, b) in base.iter().zip(&shifted) {
+        assert!((b.from.x - a.from.x).abs() < 1e-9, "a one-way fill is not shifted");
+    }
+}
+
+#[test]
+fn the_time_estimate_knows_the_fast_whitespace_scan() {
+    let mut a = crate::shape_ops::tests::app();
+    let mut d = fill_doc(1.0, 40.0);
+    sq(&mut d, 0, 15.0, 15.0, 9.0); // a hole: nine rows cross 9 mm of blank
+    d.layer_mut(0).main_mut().speed = 5.0;
+    a.editor.doc = d;
+    let seconds = |a: &crate::shell::DarkBurn| {
+        let job = build_job_simple(&crate::job_cmds::build_input(a)).unwrap();
+        crate::job_cmds::summary(a, &job)["seconds"].as_f64().unwrap()
+    };
+    let plain = seconds(&a);
+    a.job.gcode.fast_whitespace_scan = true;
+    a.job.gcode.fast_whitespace_speed = 400.0;
+    let fast = seconds(&a);
+    // 81 mm of blank: 16 s at 5 mm/s, well under a second at 400 mm/s.
+    assert!(fast < plain - 10.0, "the estimate is shorter with fast whitespace on: {plain} s, then {fast} s");
+}

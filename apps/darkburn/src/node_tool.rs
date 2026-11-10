@@ -266,9 +266,14 @@ pub fn apply_op(
     let mut desc: Vec<NodeRef> = nodes.to_vec();
     desc.sort_by_key(|n| std::cmp::Reverse((n.subpath, n.node)));
     desc.dedup();
+    // A selected node stands for the line or curve that leaves it; the end node of an open
+    // subpath has none.
     let segs: Vec<(usize, usize)> = match seg {
         Some(s) => vec![s],
-        None => desc.iter().map(|n| (n.subpath, n.node)).collect(),
+        None => {
+            let cs = contours(path);
+            desc.iter().filter(|n| cs.get(n.subpath).is_none_or(|c| c.closed || n.node < c.segs.len())).map(|n| (n.subpath, n.node)).collect()
+        }
     };
     let mut p = path.clone();
     let each = |p: &mut BezPath, f: &dyn Fn(&BezPath, usize, usize) -> Result<BezPath, NodeError>, items: &[(usize, usize)]| -> Result<(), String> {
@@ -1865,6 +1870,25 @@ mod tests {
             assert_eq!(c.segs.len(), 2);
             assert!(corners.contains(&c.start().unwrap()) && corners.contains(&c.end().unwrap()), "{c:?}");
         }
+    }
+
+    #[test]
+    fn the_end_node_of_an_open_line_does_not_stop_segment_edits() {
+        // Every node of an open line selected: its end node has no line of its own.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        let all = [NodeRef::new(0, 0), NodeRef::new(0, 1), NodeRef::new(0, 2)];
+        let curved = apply_op(&p, NodeOp::ToCurve, &all, None, Point::ZERO, &[]).unwrap();
+        assert!(contours(&curved)[0].segs.iter().all(|s| matches!(s, PathSeg::Cubic(_))));
+        let lines = apply_op(&curved, NodeOp::ToLine, &all, None, Point::ZERO, &[]).unwrap();
+        assert_eq!(lines, p);
+        let gone = apply_op(&p, NodeOp::DeleteSegment, &all, None, Point::ZERO, &[]).unwrap();
+        assert!(gone.elements().is_empty());
+        // Only the end node: there is nothing to change, and the message says what to pick.
+        let err = apply_op(&p, NodeOp::ToCurve, &[NodeRef::new(0, 2)], None, Point::ZERO, &[]).unwrap_err();
+        assert!(err.contains("select"), "{err}");
     }
 
     #[test]

@@ -62,11 +62,20 @@ pub fn work_offset(app: &DarkBurn) -> Vec2 {
 /// True for a G-code file DarkBurn saved with absolute coordinates: its moves are bed (machine)
 /// positions. Files from other programs, and jobs saved to start from the current position
 /// (`G91`), are not.
+///
+/// A file of DarkBurn's has a comment line that says so among its first lines (after a
+/// Snapmaker header; a LinuxCNC program has its title), and its own header sets the units and
+/// then the distance mode, after whatever the start script did.
 pub fn gcode_in_machine_coordinates(text: &str) -> bool {
-    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
-    let ours = lines.next().is_some_and(|l| l.starts_with("; DarkBurn job") || l.starts_with("(DarkBurn job"));
-    // The header ends with the distance mode, before the first move.
-    ours && lines.take(200).find(|l| *l == "G90" || *l == "G91") == Some("G90")
+    let head: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).take(400).collect();
+    let ours = head.iter().filter(|l| l.starts_with(';') || l.starts_with('(')).any(|l| {
+        let c = l.trim_start_matches([';', '(', ' ']);
+        c.starts_with("DarkBurn job") || c.starts_with("DarkBurn laser job")
+    });
+    let code: Vec<&str> = head.iter().copied().filter(|l| !l.starts_with(';') && !l.starts_with('(')).collect();
+    let mode = |l: &str| l == "G90" || l == "G91";
+    let own_header = code.windows(2).rev().find(|w| (w[0] == "G21" || w[0] == "G20") && mode(w[1])).map(|w| w[1]);
+    ours && own_header.or_else(|| code.iter().copied().find(|l| mode(l))) == Some("G90")
 }
 
 /// The points a toolpath visits, as work coordinates for the connected controller.
@@ -344,7 +353,14 @@ pub fn rd_file_bytes(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>) -> 
     if tp.space == CoordSpace::RelativeToStart {
         options.reference = ruida::RefPoint::CurrentPosition;
     }
-    let rd = toolpath_to_rd_with(&tp, Vec2::ZERO, options)?;
+    let mut rd = toolpath_to_rd_with(&tp, Vec2::ZERO, options)?;
+    // The finish position of the Move panel, as in a started job: one last move with the laser
+    // off. It is a bed position, so a file that is measured from the head cannot hold it.
+    if tp.space != CoordSpace::RelativeToStart
+        && let (Some((x, y)), Some(last)) = (app.machine.jog.finish, rd.layers.last_mut())
+    {
+        last.ops.push(ruida::RdOp::Move(Point::new(x, y)));
+    }
     rd.to_rd_file(ruida::Magic::DEFAULT).map_err(|e| e.to_string())
 }
 

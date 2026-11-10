@@ -101,6 +101,18 @@ pub struct EmuStats {
     pub resets: usize,
     pub homes: usize,
     pub max_power: f64,
+    /// Every move that started with the laser powered, in order.
+    pub burns: Vec<Burn>,
+}
+
+/// A move the laser was powered for: machine positions in mm, the power as a share of full
+/// power (0 to 1), and whether it was a rapid (`G0`, which must never burn).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Burn {
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub power: f64,
+    pub rapid: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -873,6 +885,12 @@ impl LineEmulator {
                             Item::Dwell(s) => (*s, self.mpos),
                             Item::Sync => (0.0, self.mpos),
                         };
+                        if let Item::Move { to, power, rapid, .. } = &q.item
+                            && *power > 0.0
+                            && total > 0.0
+                        {
+                            self.stats.burns.push(Burn { from: [from[0], from[1]], to: [to[0], to[1]], power: *power, rapid: *rapid });
+                        }
                         self.exec = Some(Exec { item: q.item, from, total, left: total, ack: q.ack });
                     }
                     None => break,

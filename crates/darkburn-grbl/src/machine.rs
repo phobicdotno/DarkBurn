@@ -37,6 +37,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -127,6 +128,8 @@ const POLL_STALE: Duration = Duration::from_secs(1);
 const STOP_STEP_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long `disconnect` (and dropping the handle) waits for the worker to finish.
 const DISCONNECT_WAIT: Duration = Duration::from_secs(1);
+/// How long it then waits for the worker to let the link go once it was told to give up.
+const GIVE_UP_WAIT: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Errors returned straight from [`GrblMachine`] methods.
@@ -618,6 +621,9 @@ pub struct GrblMachine {
     shared: Arc<Mutex<Snapshot>>,
     opts: ConnectOptions,
     worker: Option<JoinHandle<()>>,
+    /// Set when `disconnect` stops waiting: the worker then resets the controller and lets the
+    /// link go at once.
+    give_up: Arc<AtomicBool>,
 }
 
 impl GrblMachine {
@@ -635,9 +641,11 @@ impl GrblMachine {
             ..Default::default()
         };
         let shared = Arc::new(Mutex::new(snap.clone()));
-        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), opts.clone(), snap);
+        let give_up = Arc::new(AtomicBool::new(false));
+        let mut worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), opts.clone(), snap);
+        worker.give_up = give_up.clone();
         let handle = std::thread::Builder::new().name("darkburn-grbl".into()).spawn(move || worker.run()).expect("spawn GRBL worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle) }
+        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle), give_up }
     }
 
     /// Everything that happened since the last call. Never blocks.
@@ -686,11 +694,19 @@ impl GrblMachine {
         if let Some(h) = self.worker.take() {
             // The worker stops the job and turns the laser off before it lets the link go. With
             // a controller that no longer answers that takes several seconds of waiting, and
-            // the caller is usually the UI thread: wait a little, then let the worker finish
-            // the same steps on its own. It closes the link when it is done.
-            let end = Instant::now() + DISCONNECT_WAIT;
-            while !h.is_finished() && Instant::now() < end {
-                std::thread::sleep(Duration::from_millis(2));
+            // the caller is usually the UI thread: wait a little, then tell the worker to give
+            // up. It sends a reset (the laser goes off with it) and closes the link, so the
+            // port is free for the next connection when this returns.
+            let wait = |d: Duration| {
+                let end = Instant::now() + d;
+                while !h.is_finished() && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            };
+            wait(DISCONNECT_WAIT);
+            if !h.is_finished() {
+                self.give_up.store(true, Ordering::SeqCst);
+                wait(GIVE_UP_WAIT);
             }
             if h.is_finished() {
                 let _ = h.join();
@@ -1298,6 +1314,7 @@ struct Worker {
     home_alarm_count: u64,
     outbox: RefCell<Vec<Event>>,
     detector: crate::detect::LaserDetector,
+    give_up: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -1335,6 +1352,7 @@ impl Worker {
             home_alarm_count: 0,
             outbox: RefCell::new(Vec::new()),
             detector: crate::detect::LaserDetector::default(),
+            give_up: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1482,18 +1500,28 @@ impl Worker {
             if busy && self.stop.is_none() {
                 let _ = self.begin_stop();
             }
+            let gave_up = |w: &Self| w.give_up.load(Ordering::SeqCst);
             let end = Instant::now() + STOP_STEP_TIMEOUT * 2;
-            while self.stop.is_some() && Instant::now() < end {
+            while self.stop.is_some() && Instant::now() < end && !gave_up(self) {
                 if self.iterate().is_err() {
                     break;
                 }
             }
+            if self.stop.is_some() && gave_up(self) {
+                // The caller stopped waiting for a controller that does not answer the stop.
+                // A reset is the last thing that can still turn the laser off; then the link
+                // is let go, so the port is not held for seconds more.
+                if !self.snap.alarm_locked {
+                    let _ = self.write(&[rt::SOFT_RESET]);
+                }
+                self.stop = None;
+            }
             // Laser off where the controller accepts G-code; an alarm already keeps it off.
-            if !self.snap.alarm_locked && self.in_flight_bytes + 6 <= self.capacity() && self.write(b"M5 S0\n").is_ok() {
+            else if !self.snap.alarm_locked && self.in_flight_bytes + 6 <= self.capacity() && self.write(b"M5 S0\n").is_ok() {
                 self.in_flight.push_back(Pending { len: 6, origin: Origin::Internal(Tag::Plain), text: "M5 S0".into() });
                 self.in_flight_bytes += 6;
                 let end = Instant::now() + Duration::from_millis(500);
-                while !self.in_flight.is_empty() && Instant::now() < end {
+                while !self.in_flight.is_empty() && Instant::now() < end && !gave_up(self) {
                     if self.iterate().is_err() {
                         break;
                     }

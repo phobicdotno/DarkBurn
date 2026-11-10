@@ -94,23 +94,162 @@ struct Item {
     depth: usize,
     /// The smallest shape of the layer this one lies inside.
     parent: Option<usize>,
+    /// The cut direction set on the shape.
+    direction: darkburn_core::CutDirection,
+    /// Manually placed tabs (document coordinates).
+    tabs: Vec<Point>,
 }
 
 impl Item {
     /// The outline as it is marked: grown by the kerf (shrunk for a hole), started at its forced
     /// start points and moved to the board's coordinates.
     fn placed(&self, kerf: f64, shift: Affine) -> BezPath {
-        let mut p = if kerf != 0.0 {
-            darkburn_geom::offset::kerf_offset(&self.path, if self.depth % 2 == 1 { -kerf } else { kerf }, crate::job_build::TOLERANCE)
-        } else {
-            self.path.clone()
-        };
+        let mut p = self.grown(kerf);
         if !self.starts.is_empty() {
             p = started_at(&p, &self.starts);
         }
+        p = directed(&p, self.direction);
         p.apply_affine(shift);
         p
     }
+
+    /// The outline grown by the kerf (shrunk for a hole), in document coordinates.
+    fn grown(&self, kerf: f64) -> BezPath {
+        if kerf != 0.0 {
+            darkburn_geom::offset::kerf_offset(&self.path, if self.depth % 2 == 1 { -kerf } else { kerf }, crate::job_build::TOLERANCE)
+        } else {
+            self.path.clone()
+        }
+    }
+
+    /// The outline as a Line layer marks it when the layer has tabs: what is marked at full
+    /// power goes to `cut`, the stretches of partly cut tabs to `partial` with their power.
+    /// Tabs sit where they do on every other machine (`darkburn_job::line`): the automatic ones
+    /// spaced evenly from the drawn start, a manual one on the outline nearest to it.
+    fn tabbed(
+        &self,
+        kerf: f64,
+        shift: Affine,
+        tabs: &darkburn_job::TabSettings,
+        power: f64,
+        cut: &mut Vec<BezPath>,
+        partial: &mut Vec<(f64, BezPath)>,
+    ) {
+        use darkburn_job::{Op, geom, line};
+        let tol = crate::job_build::TOLERANCE / 4.0;
+        let drawn = geom::flatten(&self.grown(kerf), tol);
+        let placed = geom::flatten(&self.placed(kerf, shift), tol);
+        let ring = |poly: &geom::Poly| {
+            let mut pts = poly.pts.clone();
+            if poly.closed && !pts.is_empty() {
+                pts.push(pts[0]);
+            }
+            pts
+        };
+        // A manual tab belongs to the sub-path nearest to it.
+        let mut manual: Vec<Vec<Point>> = vec![Vec::new(); drawn.len()];
+        for t in &self.tabs {
+            let nearest = (0..drawn.len()).map(|i| (geom::nearest_arclen(&ring(&drawn[i]), *t).1, i)).min_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some((_, i)) = nearest {
+                manual[i].push(*t);
+            }
+        }
+        let mut settings = darkburn_job::CutSettings::line(1.0, power);
+        settings.line.tabs = *tabs;
+        for (i, poly) in placed.iter().enumerate() {
+            let centres: Vec<Point> = match drawn.get(i) {
+                Some(d) if drawn.len() == placed.len() => {
+                    line::tab_centres(&d.pts, d.closed, self.depth, tabs, (!self.tabs.is_empty()).then_some(manual[i].as_slice()))
+                        .into_iter()
+                        .map(|c| shift * c)
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
+            let pts = ring(poly);
+            if centres.is_empty() || pts.len() < 2 {
+                cut.push(polyline(&poly.pts, poly.closed));
+                continue;
+            }
+            let ctx = line::PathContext { settings: &settings, power_scale: 1.0, depth: self.depth, tabs: &centres, backlash: None };
+            let mut ops = Vec::new();
+            line::emit_path(&pts, poly.closed, &ctx, &mut ops);
+            // Runs of cuts at one power become one polyline each; laser-off stretches are left out.
+            let mut pos = pts[0];
+            let mut run: Option<(f64, Vec<Point>)> = None;
+            let mut flush = |run: &mut Option<(f64, Vec<Point>)>| {
+                if let Some((pw, pts)) = run.take()
+                    && pw > 0.0
+                    && pts.len() > 1
+                {
+                    if pw >= power - 1e-9 { cut.push(polyline(&pts, false)) } else { partial.push((pw, polyline(&pts, false))) }
+                }
+            };
+            for op in &ops {
+                match op {
+                    Op::Cut { to, power: pw, .. } => {
+                        if run.as_ref().is_none_or(|(p, _)| (p - pw).abs() > 1e-9) {
+                            flush(&mut run);
+                            run = Some((*pw, vec![pos]));
+                        }
+                        if let Some((_, r)) = run.as_mut() {
+                            r.push(*to);
+                        }
+                        pos = *to;
+                    }
+                    other => {
+                        flush(&mut run);
+                        if let Some(t) = other.target() {
+                            pos = t;
+                        }
+                    }
+                }
+            }
+            flush(&mut run);
+        }
+    }
+}
+
+fn polyline(pts: &[Point], closed: bool) -> BezPath {
+    let mut out = BezPath::new();
+    let mut it = pts.iter();
+    if let Some(p) = it.next() {
+        out.move_to(*p);
+    }
+    for p in it {
+        out.line_to(*p);
+    }
+    if closed {
+        out.close_path();
+    }
+    out
+}
+
+/// `path` with its outlines turned the way the shape's cut direction asks: clockwise and
+/// counter-clockwise turn closed outlines (they keep their start), reversed turns every outline
+/// round. Automatic leaves the path as it is. Turned outlines become polylines.
+fn directed(path: &BezPath, direction: darkburn_core::CutDirection) -> BezPath {
+    use darkburn_core::CutDirection as D;
+    if direction == D::Auto {
+        return path.clone();
+    }
+    let mut out = BezPath::new();
+    for mut poly in darkburn_job::geom::flatten(path, crate::job_build::TOLERANCE / 4.0) {
+        let counter_clockwise = darkburn_job::geom::signed_area(&poly.pts) > 0.0;
+        let turn = match direction {
+            D::Auto => false,
+            D::Reversed => true,
+            D::Clockwise => poly.closed && counter_clockwise,
+            D::CounterClockwise => poly.closed && !counter_clockwise,
+        };
+        if turn && poly.closed && poly.pts.len() > 1 {
+            poly.pts[1..].reverse();
+        } else if turn {
+            poly.pts.reverse();
+        }
+        out.extend(polyline(&poly.pts, poly.closed));
+    }
+    out
 }
 
 /// Work out which shapes lie inside which (the same test the kerf offset of the other machines
@@ -254,6 +393,8 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                     starts: leaf.start_points().map(|q| leaf.transform * Point::new(q[0], q[1])).collect(),
                     depth: 0,
                     parent: None,
+                    direction: leaf.direction,
+                    tabs: leaf.tabs.iter().map(|q| leaf.transform * Point::new(q[0], q[1])).collect(),
                 });
             }
         }
@@ -301,14 +442,37 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                 }
                 let mut params = layer_params.clone();
                 params.power_pct = (params.power_pct * group.1).clamp(0.0, 100.0);
-                let mut push = |mode: LayerMode, tag: &str, geometry: Vec<BezPath>| {
+                let mut push_at = |mode: LayerMode, tag: &str, geometry: Vec<BezPath>, power: f64| {
                     if geometry.is_empty() {
                         return;
                     }
-                    let mut gl = galvo::Layer::new(&format!("{name}{tag}"), mode, params.clone(), geometry);
+                    let mut params = params.clone();
+                    params.power_pct = power;
+                    let mut gl = galvo::Layer::new(&format!("{name}{tag}"), mode, params, geometry);
                     gl.passes = passes;
                     gl.wobble = gs.wobble_for(&s.galvo);
                     job.layers.push(gl);
+                };
+                let mut push = |mode: LayerMode, tag: &str, geometry: Vec<BezPath>| push_at(mode, tag, geometry, params.power_pct);
+                // The outlines of a Line layer: whole, or with the layer's tabs left out. Partly
+                // cut tabs are marked as layers of their own at the tab power.
+                let line = |push_at: &mut dyn FnMut(LayerMode, &str, Vec<BezPath>, f64), tag: &str| {
+                    let tabs = crate::job_build::tab_settings(s);
+                    if !tabs.enabled || tabs.size <= 0.0 {
+                        return push_at(LayerMode::Line, tag, outlines(group, s.kerf), params.power_pct);
+                    }
+                    let (mut cut, mut partial) = (Vec::new(), Vec::new());
+                    for it in items.iter().filter(|it| (it.priority, it.scale) == group) {
+                        it.tabbed(s.kerf, shift, &tabs, params.power_pct, &mut cut, &mut partial);
+                    }
+                    push_at(LayerMode::Line, tag, cut, params.power_pct);
+                    let mut powers: Vec<f64> = partial.iter().map(|(p, _)| *p).collect();
+                    powers.sort_by(f64::total_cmp);
+                    powers.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+                    for pw in powers {
+                        let pieces = partial.iter().filter(|(p, _)| (*p - pw).abs() < 1e-9).map(|(_, b)| b.clone()).collect();
+                        push_at(LayerMode::Line, &format!("{tag} tabs"), pieces, pw);
+                    }
                 };
                 let fill = |s: &CutSetting| {
                     let f = fill_settings(s);
@@ -324,7 +488,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                         "",
                         outlines(group, 0.0),
                     ),
-                    Mode::Line => push(LayerMode::Line, "", outlines(group, s.kerf)),
+                    Mode::Line => line(&mut push_at, ""),
                     Mode::Fill | Mode::OffsetFill => {
                         let (mode, geometry) = fill(s);
                         push(mode, "", geometry);
@@ -332,7 +496,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                     Mode::FillLine => {
                         let (mode, geometry) = fill(s);
                         push(mode, " fill", geometry);
-                        push(LayerMode::Line, " line", outlines(group, s.kerf));
+                        line(&mut push_at, " line");
                     }
                     Mode::Image => {}
                 }

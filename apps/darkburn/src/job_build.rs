@@ -474,6 +474,22 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
     map_settings_with(s, layer, z_enabled, &crate::scan_offsets::ScanTuning::default())
 }
 
+/// The tab settings of a cut setting as the job engine takes them.
+pub fn tab_settings(s: &CutSetting) -> job::TabSettings {
+    job::TabSettings {
+        enabled: s.tabs.enabled,
+        auto: s.tabs.auto_spacing,
+        spacing: s.tabs.spacing.max(0.1),
+        min_count: s.tabs.min_count,
+        max_count: s.tabs.max_count.max(s.tabs.min_count),
+        size: s.tabs.size.max(0.0),
+        tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
+        skip_inner: s.tabs.skip_inner,
+        // The device's tab pulse width is filled in by the job builder.
+        pulse_width: 0.0,
+    }
+}
+
 /// [`map_settings`] with the device's scan tuning (fast skip over blank stretches, DS-08).
 pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning: &crate::scan_offsets::ScanTuning) -> job::CutSettings {
     let lead = |l: &layer::Lead| {
@@ -507,18 +523,7 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
     };
     c.line = job::LineSettings {
         perforation: s.perforation.then_some(job::Perforation { cut: s.perf_cut.max(0.01), skip: s.perf_skip.max(0.0) }),
-        tabs: job::TabSettings {
-            enabled: s.tabs.enabled,
-            auto: s.tabs.auto_spacing,
-            spacing: s.tabs.spacing.max(0.1),
-            min_count: s.tabs.min_count,
-            max_count: s.tabs.max_count.max(s.tabs.min_count),
-            size: s.tabs.size.max(0.0),
-            tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
-            skip_inner: s.tabs.skip_inner,
-            // The device's tab pulse width is filled in by the job builder.
-            pulse_width: 0.0,
-        },
+        tabs: tab_settings(s),
         start_pause_ms: s.start_pause_ms.max(0.0),
         end_pause_ms: s.end_pause_ms.max(0.0),
         cut_through_start: s.cut_through_start,
@@ -699,22 +704,26 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
-    // Kerf: a shape drawn inside another shape of its layer is a hole, and its kerf goes the
-    // other way. These are the closed outlines of the cut shapes on layers with a kerf offset,
-    // each with the number of its shape.
-    let mut kerf_outlines: Vec<Vec<(usize, Rect, Vec<Point>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+    // Kerf: a shape drawn inside another shape that is cut is a hole, and its kerf goes the
+    // other way. The shape around it may be on another layer (holes are often given a layer of
+    // their own to cut them first). These are the closed outlines of the shapes on the layers
+    // that cut lines, each with the number of its shape; they are only needed when some layer
+    // has a kerf offset.
+    let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
+    let any_kerf = (0..layer::LAYER_COUNT).any(|li| doc.layer(li).outputs() && !kerfs_of(doc.layer(li)).is_empty());
+    let mut kerf_outlines: Vec<(usize, Rect, Vec<Point>)> = Vec::new();
     let mut leaf_no = 0usize;
     for top in &tops {
         for leaf in top.leaves() {
             leaf_no += 1;
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
-            if !l.outputs() || leaf.is_image() || kerfs_of(l).is_empty() {
+            if !any_kerf || !l.outputs() || leaf.is_image() || !cuts_lines(l) {
                 continue;
             }
             for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
                 if poly.closed {
-                    kerf_outlines[li].push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                    kerf_outlines.push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
                 }
             }
         }
@@ -788,9 +797,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let kerfs = kerfs_of(l);
             let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
             if !kerfs.is_empty() {
-                // How many other shapes of the layer this one lies inside: odd means a hole.
+                // How many other cut shapes this one lies inside: odd means a hole.
                 let depth = match path.elements().first() {
-                    Some(PathEl::MoveTo(p0)) => kerf_outlines[li]
+                    Some(PathEl::MoveTo(p0)) => kerf_outlines
                         .iter()
                         .filter(|(no, r, pts)| {
                             *no != leaf_no
@@ -824,7 +833,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     // Nothing of the shape is left to cut.
                     continue;
                 }
-                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()).cloned());
+                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()));
             }
             // Tabs and forced start points are stored in the shape's local coordinates; they
             // go through the same mapping as the outline (the kerf offset keeps them: each
@@ -1101,7 +1110,14 @@ fn for_device(tp: Toolpath, dev: &DeviceGcodeSettings) -> Toolpath {
 
 /// G-code for the job, or for the job from operation `from_op` on.
 pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings) -> String {
-    let settings = dev.to_gcode();
+    gcode_text_for(job, from_op, dev, false)
+}
+
+/// [`gcode_text`] for a controller that may have no laser mode (`m3_only`, GRBL 1.1e and
+/// older): its travel moves switch the laser off themselves.
+pub fn gcode_text_for(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings, m3_only: bool) -> String {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
     match from_op {
         Some(op) => job::gcode::emit(&for_device(job.toolpath_from(op), dev), &settings),
         None => job::gcode::emit(&for_device(job.toolpath.clone(), dev), &settings),
@@ -1110,7 +1126,14 @@ pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSetti
 
 /// G-code lines to stream to a controller.
 pub fn gcode_lines(tp: &Toolpath, dev: &DeviceGcodeSettings) -> Vec<String> {
-    job::gcode::lines(&for_device(tp.clone(), dev), &dev.to_gcode()).collect()
+    gcode_lines_for(tp, dev, false)
+}
+
+/// [`gcode_lines`] for a controller that may have no laser mode (see [`gcode_text_for`]).
+pub fn gcode_lines_for(tp: &Toolpath, dev: &DeviceGcodeSettings, m3_only: bool) -> Vec<String> {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
+    job::gcode::lines(&for_device(tp.clone(), dev), &settings).collect()
 }
 
 /// File extensions the G-code save offers (EXP-06).

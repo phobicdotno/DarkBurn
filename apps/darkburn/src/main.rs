@@ -17,6 +17,8 @@ mod completion_ui_tests;
 mod connections;
 #[cfg(test)]
 mod connections_tests;
+#[cfg(test)]
+mod cross_machine_tests;
 mod cut_settings;
 mod cuts_panel;
 mod devices;

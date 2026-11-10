@@ -356,7 +356,7 @@ pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
 /// The lines to stream to `dev` for `tp`.
 pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec<String> {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_lines(tp, base);
+        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only());
     }
     let neutral = crate::job_build::gcode_lines(tp, &neutral_gcode(base));
     translate_for(dev, &neutral)
@@ -365,11 +365,17 @@ pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec
 /// The text of a G-code file for `dev` (Save G-code). Snapmaker files get their header.
 pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &DeviceGcodeSettings) -> String {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_text(job, from_op, base);
+        return crate::job_build::gcode_text_for(job, from_op, base, dev.m3_only());
     }
     let neutral = crate::job_build::gcode_text(job, from_op, &neutral_gcode(base));
     let lines: Vec<String> = neutral.lines().map(str::to_owned).collect();
-    let out = translate_for(dev, &lines);
+    let mut out = translate_for(dev, &lines);
+    // The translation drops comments, and with them the line that says the file is DarkBurn's
+    // (Run G-code reads it to know the file holds bed positions). A LinuxCNC program has its
+    // own title line.
+    if dev.kind.lib_kind() != Some(gp::DeviceKind::LinuxCnc) {
+        out.insert(0, format!("; DarkBurn job for {}", dev.kind.label()));
+    }
     if dev.kind.lib_kind() == Some(gp::DeviceKind::Snapmaker) {
         let p = to_profile(dev);
         let info = gc::snapmaker::JobInfo { bounds: job.bounds, work_speed: 0.0, estimated_seconds: 0.0, power_percent: 0.0 };
@@ -378,6 +384,38 @@ pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &Dev
     let mut text = out.join("\n");
     text.push('\n');
     text
+}
+
+/// A G-code file for `dev` with the move to the Move panel's finish position (a machine
+/// position) at its end, as a started job gets it: after the laser is off and the end script,
+/// before the line that ends the program.
+pub fn with_finish_move(dev: &Device, text: String, finish: Option<(f64, f64)>) -> String {
+    let Some((x, y)) = finish else { return text };
+    let num = |v: f64| {
+        let s = format!("{:.3}", if v.abs() < 0.0005 { 0.0 } else { v });
+        s.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    let go: Vec<String> = if dev.kind.is_translated() {
+        vec!["G90".into(), format!("G0 X{} Y{}", num(x), num(y))]
+    } else {
+        vec![format!("G90 G53 G0 X{} Y{}", num(x), num(y))]
+    };
+    let mut lines: Vec<&str> = text.lines().collect();
+    // A controller stops reading at the first program end, so the move goes before that one.
+    let program_end = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("M2") || l.trim().eq_ignore_ascii_case("M30"));
+    let at = program_end.unwrap_or_else(|| {
+        let mut at = lines.len();
+        while at > 0 && (lines[at - 1].trim().is_empty() || lines[at - 1].trim() == "%") {
+            at -= 1;
+        }
+        at
+    });
+    for (i, l) in go.iter().enumerate() {
+        lines.insert(at + i, l);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// The start and end scripts the device writes around a job, as the job file shows them

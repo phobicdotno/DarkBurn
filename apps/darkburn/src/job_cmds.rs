@@ -432,6 +432,7 @@ pub fn open_preview(app: &mut DarkBurn) {
 /// Write the G-code of `job` to `path`. `from_op` starts part-way (Save from here).
 pub fn write_gcode(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) -> Result<usize, String> {
     let text = crate::gcode_machines::job_text(app.machine.active(), job, from_op, &app.job.gcode);
+    let text = crate::gcode_machines::with_finish_move(app.machine.active(), text, app.machine.jog.finish);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -1097,6 +1098,69 @@ mod tests {
         let body: Vec<&str> = text.lines().skip_while(|l| !l.starts_with("M8")).collect();
         assert_eq!(body, ["M8", "G0 X20 Y20", "G1 X50 F1800 S102", "G1 Y40", "G1 X20", "G1 Y20", "M9", "M5", "M2"]);
         assert!(a.job.last_position.is_some(), "saving remembers where the job landed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_finish_position_of_the_move_panel_reaches_a_saved_file() {
+        let mut a = app();
+        with_square(&mut a);
+        let dir = temp("finish");
+        let file = dir.join("job.gc");
+        let tail = |a: &mut DarkBurn| -> Vec<String> {
+            run(a, "job.save_gcode", json!({ "path": file.to_string_lossy() })).unwrap();
+            let text = std::fs::read_to_string(&file).unwrap();
+            let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+            lines[lines.len() - 3..].to_vec()
+        };
+        assert_eq!(tail(&mut a), ["M9", "M5", "M2"], "no finish position: the file ends where the job ends");
+        a.machine.jog.finish = Some((350.0, 12.5));
+        // After the laser is off, in machine coordinates as a started job sends it, before the program ends.
+        assert_eq!(tail(&mut a), ["M5", "G90 G53 G0 X350 Y12.5", "M2"]);
+
+        // A Marlin file (no G53 there): an absolute move, as its driver sends it at the end of a job.
+        let id = run(&mut a, "device.add", json!({ "type": "Marlin" })).unwrap()["id"].as_u64().unwrap();
+        run(&mut a, "device.select", json!({ "id": id })).unwrap();
+        a.machine.jog.finish = Some((100.0, 20.0));
+        let _ = tail(&mut a);
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let go = lines.iter().position(|l| *l == "G0 X100 Y20").unwrap_or_else(|| panic!("no finish move: {text}"));
+        assert_eq!(lines[go - 1], "G90", "{text}");
+        assert!(go > lines.iter().rposition(|l| l.starts_with("G1")).unwrap(), "after the last cut: {text}");
+
+        // A LinuxCNC program stops at its first M2: the move comes before it.
+        let id = run(&mut a, "device.add", json!({ "type": "LinuxCnc" })).unwrap()["id"].as_u64().unwrap();
+        run(&mut a, "device.select", json!({ "id": id })).unwrap();
+        a.machine.jog.finish = Some((100.0, 20.0));
+        let _ = tail(&mut a);
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let go = lines.iter().position(|l| *l == "G0 X100 Y20").unwrap_or_else(|| panic!("no finish move: {text}"));
+        assert!(go < lines.iter().position(|l| *l == "M2").unwrap(), "{text}");
+        assert!(go > lines.iter().rposition(|l| l.starts_with("G1")).unwrap(), "{text}");
+
+        // A Ruida file: one last move with the laser off.
+        let id = run(&mut a, "device.add", json!({ "type": "Ruida" })).unwrap()["id"].as_u64().unwrap();
+        run(&mut a, "device.select", json!({ "id": id })).unwrap();
+        let rd = dir.join("job.rd");
+        let last_op = |a: &mut DarkBurn| {
+            run(a, "job.save_gcode", json!({ "path": rd.to_string_lossy() })).unwrap();
+            let job = darkburn_ruida::RdJob::from_rd_file(&std::fs::read(&rd).unwrap(), None).unwrap();
+            job.layers.last().unwrap().ops.last().cloned().unwrap()
+        };
+        a.machine.jog.finish = None;
+        assert!(matches!(last_op(&mut a), darkburn_ruida::RdOp::Cut { .. }), "{:?}", last_op(&mut a));
+        a.machine.jog.finish = Some((300.0, 200.0));
+        match last_op(&mut a) {
+            darkburn_ruida::RdOp::Move(p) => assert!(p.distance(Point::new(300.0, 200.0)) < 0.002, "{p:?}"),
+            other => panic!("the file ends with {other:?}"),
+        }
+        // A file that is measured from the head cannot hold a bed position.
+        run(&mut a, "job.set_origin", json!({ "start_from": "current_position" })).unwrap();
+        run(&mut a, "job.save_gcode", json!({ "path": rd.to_string_lossy(), "allow_out_of_bounds": true })).unwrap();
+        let job = darkburn_ruida::RdJob::from_rd_file(&std::fs::read(&rd).unwrap(), None).unwrap();
+        assert!(matches!(job.layers.last().unwrap().ops.last(), Some(darkburn_ruida::RdOp::Cut { .. })));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -98,26 +98,53 @@ impl ShapeInput {
         self.line_paths.iter().find(|(i, _)| *i == setting).map_or(&self.path, |(_, p)| p)
     }
 
-    /// Every outline of this shape that the layer's `settings` use: what the job bounds and
-    /// the frame are made of.
-    pub fn outlines_used(&self, settings: &[CutSettings]) -> Vec<&BezPath> {
-        let mut base = false;
-        let mut out: Vec<&BezPath> = Vec::new();
+    /// Every outline of this shape that the layer's `settings` burn: what the job bounds and
+    /// the frame are made of. A line setting cuts its own (kerf) outline or the drawn one; a
+    /// fill fills the closed sub-paths of the drawn one; an image setting burns no outline.
+    /// Empty when nothing of the shape burns (an open shape on a Fill layer, a vector shape on
+    /// an Image layer).
+    pub fn outlines_used(&self, settings: &[CutSettings]) -> Vec<BezPath> {
+        let (mut whole, mut closed) = (false, false);
+        let mut out: Vec<BezPath> = Vec::new();
         for (i, s) in settings.iter().enumerate().filter(|(_, s)| s.enabled && s.passes > 0) {
-            let line = matches!(s.mode, CutMode::Line | CutMode::FillLine);
-            match self.line_paths.iter().find(|(k, _)| *k == i) {
-                Some((_, p)) if line => {
-                    out.push(p);
-                    base |= s.mode == CutMode::FillLine;
+            if matches!(s.mode, CutMode::Line | CutMode::FillLine) {
+                match self.line_paths.iter().find(|(k, _)| *k == i) {
+                    Some((_, p)) => out.push(p.clone()),
+                    None => whole = true,
                 }
-                _ => base = true,
             }
+            closed |= matches!(s.mode, CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill);
         }
-        if base || out.is_empty() {
-            out.insert(0, &self.path);
+        if whole {
+            out.insert(0, self.path.clone());
+        } else if closed {
+            let part = closed_part(&self.path);
+            if !part.elements().is_empty() {
+                out.insert(0, part);
+            }
         }
         out
     }
+}
+
+/// The closed sub-paths of `path` (what a fill fills), by the rule of [`crate::geom::flatten`].
+fn closed_part(path: &BezPath) -> BezPath {
+    let mut out = BezPath::new();
+    let mut sub = BezPath::new();
+    let take = |sub: &mut BezPath, out: &mut BezPath| {
+        if crate::geom::flatten(sub, 0.05).iter().any(|p| p.closed) {
+            out.extend(sub.elements().iter().copied());
+        }
+        *sub = BezPath::new();
+    };
+    for el in path.elements() {
+        if matches!(el, kurbo::PathEl::MoveTo(_)) {
+            take(&mut sub, &mut out);
+        }
+        sub.push(*el);
+    }
+    take(&mut sub, &mut out);
+    out
 }
 
 /// One raster scanline already in millimetres, in the image's scan frame.

@@ -78,9 +78,12 @@ enum UnitKind {
         scales: Vec<f64>,
         reversible: bool,
     },
+    /// `levels`: the rings of the fill, level by level ([`fill::offset_levels`]). They are
+    /// worked out once here: planning and every pass burn the same rings.
     Offset {
         polys: Vec<Vec<Point>>,
         scales: Vec<f64>,
+        levels: Vec<Vec<Vec<Point>>>,
     },
     Image {
         image: usize,
@@ -142,6 +145,21 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         }
     }
 
+    // The closed outlines each layer cuts as lines. A shape that lies inside one of them is a
+    // hole (tabs, lead side), also when the outline around it is cut on another layer.
+    let cut_outlines: Vec<Vec<(Rect, Vec<Point>)>> = input
+        .layers
+        .iter()
+        .zip(&flat)
+        .map(|(l, shapes)| {
+            let cuts = l.output && l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, CutMode::Line | CutMode::FillLine));
+            if !cuts {
+                return Vec::new();
+            }
+            shapes.iter().flatten().filter(|p| p.closed).map(|p| (geom::bbox(&p.pts), p.pts.clone())).collect()
+        })
+        .collect();
+
     // Build plannable units.
     let mut units: Vec<Unit> = Vec::new();
     let mut items: Vec<PlanItem> = Vec::new();
@@ -158,7 +176,8 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
                 } else {
                     polys
                 };
-                line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items)
+                let around: Vec<&(Rect, Vec<Point>)> = cut_outlines.iter().enumerate().filter(|(i, _)| *i != b.layer).flat_map(|(_, v)| v).collect();
+                line_units(bi, b, layer, polys, &around, &opts.planner, &mut units, &mut items)
             }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
@@ -266,7 +285,7 @@ pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
         }
         for shape in &layer.shapes {
             for path in shape.outlines_used(&layer.settings) {
-                for poly in geom::flatten(path, tol) {
+                for poly in geom::flatten(&path, tol) {
                     poly.pts.iter().for_each(|p| add(*p));
                 }
             }
@@ -296,7 +315,18 @@ fn poly_distance(poly: &Poly, p: Point) -> f64 {
     geom::nearest_arclen(&pts, p).1
 }
 
-fn line_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSettings, units: &mut Vec<Unit>, items: &mut Vec<PlanItem>) {
+/// `around`: the closed outlines the other layers cut (bounding box and points).
+#[allow(clippy::too_many_arguments)]
+fn line_units(
+    bi: usize,
+    b: &Block,
+    layer: &LayerInput,
+    polys: &[Vec<Poly>],
+    around: &[&(Rect, Vec<Point>)],
+    ps: &PlannerSettings,
+    units: &mut Vec<Unit>,
+    items: &mut Vec<PlanItem>,
+) {
     let mut list: Vec<(Poly, usize)> = Vec::new();
     for (si, shape) in polys.iter().enumerate() {
         for p in shape {
@@ -352,7 +382,16 @@ fn line_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], ps:
                     && geom::point_in_polygon(poly.pts[0], &q.pts)
                     && geom::point_in_polygon(poly.pts[poly.pts.len() / 2], &q.pts)
             })
-            .count();
+            .count()
+            + around
+                .iter()
+                .filter(|(r, q)| {
+                    geom::rect_inside(bb, *r)
+                        && (!poly.closed || geom::signed_area(q).abs() > area)
+                        && geom::point_in_polygon(poly.pts[0], q)
+                        && geom::point_in_polygon(poly.pts[poly.pts.len() / 2], q)
+                })
+                .count();
         let mut pts = poly.pts.clone();
         let mut forced_start = None;
         if poly.closed
@@ -410,7 +449,9 @@ fn fill_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], sta
         let group = layer.shapes[shape_of[c[0]]].group;
         let priority = c.iter().map(|&i| layer.shapes[shape_of[i]].priority).min().unwrap_or(0);
         let kind = if b.mode == CutMode::OffsetFill {
-            UnitKind::Offset { polys: cpolys, scales }
+            let refs: Vec<&[Point]> = cpolys.iter().map(|p| p.as_slice()).collect();
+            let levels = fill::offset_levels(&refs, b.settings.fill.interval.max(1e-3));
+            UnitKind::Offset { polys: cpolys, scales, levels }
         } else {
             UnitKind::Fill { polys: cpolys, scales, reversible: b.settings.fill.bidirectional }
         };
@@ -503,13 +544,12 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                 fill::emit_rows(&ordered, &e, out);
             }
         }
-        UnitKind::Offset { polys, scales } => {
-            let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
+        UnitKind::Offset { polys, scales, levels } => {
             let interval = f.interval.max(1e-3);
             // Every ring with its level and bounds; `None` once it is burned.
             let mut rings: Vec<Option<(usize, Vec<Point>, Rect)>> = Vec::new();
             let mut by_level: Vec<Vec<usize>> = Vec::new();
-            for (level, level_rings) in fill::offset_levels(&refs, interval).into_iter().enumerate() {
+            for (level, level_rings) in levels.iter().cloned().enumerate() {
                 by_level.push((rings.len()..rings.len() + level_rings.len()).collect());
                 rings.extend(level_rings.into_iter().map(|r| {
                     let bb = geom::bbox(&r);
@@ -930,6 +970,57 @@ mod tests {
         assert_eq!(job_bounds(&input, 0.01), Some(Rect::new(11.0, 11.0, 19.0, 19.0)));
     }
 
+    /// The job bounds (the frame, the box the job origin is anchored on) hold what burns.
+    #[test]
+    fn shapes_that_never_burn_are_not_in_the_job_bounds() {
+        let open = |x: f64| {
+            let mut p = BezPath::new();
+            p.move_to((x, 50.0));
+            p.line_to((x + 10.0, 60.0));
+            p
+        };
+        let burned = |input: &JobInput| {
+            let tp = generate(input, &JobOptions::default(), &mut Progress::none()).unwrap();
+            let mut pos = tp.start;
+            let mut r: Option<Rect> = None;
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    let seg = Rect::from_points(pos, *to);
+                    r = Some(r.map_or(seg, |r| r.union(seg)));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            r.unwrap()
+        };
+        // An open line on a Fill layer is not filled, so it is not part of the job.
+        for mode in [CutMode::Fill, CutMode::OffsetFill] {
+            let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+            s.mode = mode;
+            let l = LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0))).with_shape(ShapeInput::new(open(80.0)));
+            let input = JobInput { layers: vec![l] };
+            let b = job_bounds(&input, 0.01).unwrap();
+            assert_eq!(b, Rect::new(10.0, 10.0, 20.0, 20.0), "{mode:?}");
+            let cut = burned(&input);
+            assert!(cut.x1 <= 20.0 + 1e-9 && cut.y1 <= 20.0 + 1e-9, "{mode:?}: the open line is not burned: {cut:?}");
+        }
+        // On a Fill + Line layer it is cut as a line, so it counts.
+        let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+        s.mode = CutMode::FillLine;
+        let l = LayerInput::new(0, "A", s).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 10.0, 10.0))).with_shape(ShapeInput::new(open(80.0)));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(10.0, 10.0, 90.0, 60.0)));
+        // A vector shape on an Image layer is not burned: only the picture counts.
+        let mut l = LayerInput::new(0, "A", CutSettings::image(100.0, 50.0, 0.0)).with_shape(ShapeInput::new(rect_path(50.0, 50.0, 30.0, 30.0)));
+        l.images.push(ImageInput::new(vec![crate::input::Scanline { y: 5.5, runs: vec![(4.0, 6.0, 1.0)] }]));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(4.0, 5.5, 6.0, 5.5)));
+        // A shape with nothing left to burn alone is no job.
+        let l = LayerInput::new(0, "A", CutSettings::fill(100.0, 20.0, 1.0)).with_shape(ShapeInput::new(open(80.0)));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), None);
+    }
+
     #[test]
     fn an_image_with_an_outline_is_bounded_by_it() {
         let lines = vec![crate::input::Scanline { y: 5.5, runs: vec![(4.0, 6.0, 1.0)] }];
@@ -1015,6 +1106,61 @@ mod tests {
 
     fn run(l: LayerInput, opts: &JobOptions) -> Toolpath {
         generate(&JobInput { layers: vec![l] }, opts, &mut Progress::none()).unwrap()
+    }
+
+    /// A hole cut on a layer of its own (inner shapes first, on another colour) is still a hole.
+    #[test]
+    fn a_hole_on_its_own_layer_is_a_hole_for_tabs_and_lead_in() {
+        let mut inner = tab_settings(true);
+        inner.line.tabs.skip_inner = true;
+        inner.line.lead_in = Some(crate::input::Lead { length: 2.0, angle_deg: 90.0, style: crate::input::LeadStyle::Line });
+        let outer = CutSettings::line(10.0, 50.0);
+        let hole = LayerInput::new(1, "Holes", inner.clone()).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 20.0, 20.0)));
+        let plate = |s: CutSettings| LayerInput::new(0, "Plate", s).with_shape(ShapeInput::new(rect_path(0.0, 0.0, 40.0, 40.0)));
+        let cut = |layers: Vec<LayerInput>| {
+            let tp = generate(&JobInput { layers }, &JobOptions::default(), &mut Progress::none()).unwrap();
+            // The ops of the hole's layer only.
+            let li = tp.layers.iter().position(|l| l.name == "Holes").unwrap();
+            let mut on = false;
+            let mut ops = Vec::new();
+            let mut pos = tp.start;
+            let mut entry = None;
+            for op in &tp.ops {
+                if let Op::LayerStart { layer } = op {
+                    on = *layer == li;
+                }
+                if on {
+                    if let Op::Cut { .. } = op
+                        && entry.is_none()
+                    {
+                        entry = Some(pos);
+                    }
+                    ops.push(op.clone());
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            (gaps(&Toolpath { space: tp.space, layers: tp.layers.clone(), ops, start: tp.start }).len(), entry.unwrap())
+        };
+        // The lead-in starts at a corner, so it runs along a side: on the square counts as inside.
+        let inside = |p: Point| p.x > 10.0 - 1e-9 && p.x < 30.0 + 1e-9 && p.y > 10.0 - 1e-9 && p.y < 30.0 + 1e-9;
+        // Alone, the square is an outer shape: tabs, and the lead-in comes from outside it.
+        let (tabs, entry) = cut(vec![hole.clone()]);
+        assert_eq!(tabs, 4);
+        assert!(!inside(entry), "{entry:?}");
+        // Inside a plate that another layer cuts: no tabs (skip inner shapes), lead-in from inside.
+        let (tabs, entry) = cut(vec![plate(outer.clone()), hole.clone()]);
+        assert_eq!(tabs, 0, "a hole gets no automatic tabs with Skip inner shapes on");
+        assert!(inside(entry), "the lead-in of a hole starts in the waste, inside it: {entry:?}");
+        // A filled (engraved) shape around it cuts nothing free: the square stays an outer shape.
+        let (tabs, entry) = cut(vec![plate(CutSettings::fill(100.0, 20.0, 1.0)), hole.clone()]);
+        assert_eq!(tabs, 4);
+        assert!(!inside(entry), "{entry:?}");
+        // A layer that is not output does not count either.
+        let mut off = plate(outer);
+        off.output = false;
+        assert_eq!(cut(vec![off, hole]).0, 4);
     }
 
     #[test]

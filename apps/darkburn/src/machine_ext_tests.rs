@@ -631,6 +631,103 @@ fn galvo_job_keeps_power_scale_priority_kerf_and_start_points() {
 }
 
 #[test]
+fn galvo_job_keeps_the_cut_direction_and_the_tabs() {
+    use darkburn_core::kurbo::{PathEl, Point};
+    use darkburn_core::{CutDirection, ShapeId};
+    let (mut a, id) = galvo_app();
+    let dev = a.machine.devices.get(id).unwrap().clone();
+    let sq =
+        ShapeId(run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 30, "height": 30, "layer": 0 })).unwrap()["id"].as_u64().unwrap());
+    a.editor.doc.layer_mut(0).main_mut().max_power = 40.0;
+    let build = |a: &DarkBurn| crate::galvo_job::build_job(&crate::galvo_job::job_document(a).unwrap(), &dev).unwrap().job;
+    let points =
+        |p: &darkburn_core::kurbo::BezPath| -> Vec<Point> { darkburn_job::geom::flatten(p, 0.001).into_iter().flat_map(|q| q.pts).collect() };
+    let area = |j: &galvo::Job| darkburn_job::geom::signed_area(&points(&j.layers[0].geometry[0]));
+    let length = |l: &galvo::Layer| -> f64 {
+        l.geometry
+            .iter()
+            .flat_map(|p| darkburn_job::geom::flatten(p, 0.001))
+            .map(|q| {
+                let mut pts = q.pts.clone();
+                if q.closed {
+                    pts.push(pts[0]);
+                }
+                darkburn_job::geom::polyline_length(&pts)
+            })
+            .sum()
+    };
+
+    // Cut direction: clockwise and counter-clockwise turn the outline, reversed turns the drawn one round.
+    let drawn = area(&build(&a));
+    assert!((drawn.abs() - 900.0).abs() < 1e-6, "{drawn}");
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Clockwise;
+    assert!(area(&build(&a)) < 0.0, "clockwise (Y up): {}", area(&build(&a)));
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::CounterClockwise;
+    assert!(area(&build(&a)) > 0.0, "counter-clockwise: {}", area(&build(&a)));
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Reversed;
+    assert!(area(&build(&a)) * drawn < 0.0, "reversed: {} against {drawn}", area(&build(&a)));
+    // A forced start point stays the start whichever way round.
+    let local = a.editor.doc.get(sq).unwrap().transform.inverse() * Point::new(40.0, 25.0);
+    a.editor.doc.get_mut(sq).unwrap().start_point = Some([local.x, local.y]);
+    for d in CutDirection::ALL {
+        a.editor.doc.get_mut(sq).unwrap().direction = d;
+        let j = build(&a);
+        let first = points(&j.layers[0].geometry[0])[0];
+        assert!(first.distance(Point::new(40.0 - 55.0, 25.0 - 55.0)) < 1e-6, "{d:?}: {first:?}");
+        assert_eq!(j.layers[0].geometry[0].elements().iter().filter(|e| matches!(e, PathEl::ClosePath)).count(), 1, "{d:?}: still closed");
+    }
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Auto;
+    a.editor.doc.get_mut(sq).unwrap().start_point = None;
+
+    // Automatic tabs: four gaps of 2 mm in the 120 mm outline.
+    {
+        let t = &mut a.editor.doc.layer_mut(0).main_mut().tabs;
+        t.enabled = true;
+        t.auto_spacing = true;
+        t.spacing = 30.0;
+        t.size = 2.0;
+        t.min_count = 4;
+        t.max_count = 4;
+    }
+    let j = build(&a);
+    assert_eq!(j.layers.len(), 1);
+    assert!((length(&j.layers[0]) - 112.0).abs() < 1e-6, "marked {} mm of 120", length(&j.layers[0]));
+    for mid in [Point::new(25.0, 10.0), Point::new(40.0, 25.0), Point::new(25.0, 40.0), Point::new(10.0, 25.0)] {
+        let board = Point::new(mid.x - 55.0, mid.y - 55.0);
+        let near = j.layers[0].geometry.iter().flat_map(&points).map(|p| p.distance(board)).fold(f64::MAX, f64::min);
+        assert!((near - 1.0).abs() < 1e-6, "the tab at {mid:?} is a 2 mm gap: nearest mark {near}");
+    }
+
+    // A manual tab replaces the automatic ones on its shape.
+    let local = a.editor.doc.get(sq).unwrap().transform.inverse() * Point::new(20.0, 10.0);
+    a.editor.doc.get_mut(sq).unwrap().tabs = vec![[local.x, local.y]];
+    let j = build(&a);
+    assert!((length(&j.layers[0]) - 118.0).abs() < 1e-6, "{}", length(&j.layers[0]));
+    let board = Point::new(20.0 - 55.0, 10.0 - 55.0);
+    let near = j.layers[0].geometry.iter().flat_map(&points).map(|p| p.distance(board)).fold(f64::MAX, f64::min);
+    assert!((near - 1.0).abs() < 1e-6, "{near}");
+
+    // Partly cut tabs are marked at the tab power, not left out.
+    a.editor.doc.layer_mut(0).main_mut().tabs.partial = true;
+    a.editor.doc.layer_mut(0).main_mut().tabs.tab_power = 10.0;
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| l.params.power_pct).collect::<Vec<_>>(), vec![40.0, 10.0]);
+    assert!(
+        (length(&j.layers[0]) - 118.0).abs() < 1e-6 && (length(&j.layers[1]) - 2.0).abs() < 1e-6,
+        "{} {}",
+        length(&j.layers[0]),
+        length(&j.layers[1])
+    );
+    crate::galvo_job::compile(&j, &dev).expect("the job with tabs compiles");
+
+    // Tabs off: the whole outline, closed, as before.
+    a.editor.doc.layer_mut(0).main_mut().tabs.enabled = false;
+    let j = build(&a);
+    assert_eq!(j.layers.len(), 1);
+    assert!((length(&j.layers[0]) - 120.0).abs() < 1e-6);
+}
+
+#[test]
 fn galvo_device_settings_edit_import_and_compile() {
     let (mut a, _) = galvo_app();
     run(

@@ -1,6 +1,8 @@
 # Changelog
 
-## v0.0.402 (build 6)
+## v0.0.417 (build 6)
+
+- New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -379,6 +381,20 @@
 - Fix: Enter presses the button you tabbed to
 - Fix: One bad value in the settings file no longer resets all settings
 - Fix: Two DarkBurn windows no longer undo each other's settings
+- Fix: an AI agent can always stop or pause a real machine
+- Fix: an AI agent can no longer end the connection to a real machine by switching device
+- Fix: Stop on a Ruida with nothing running no longer says a job was stopped
+- Fix: reconnecting right after disconnecting from a laser that stopped answering no longer finds the port busy
+- Fix: galvo jobs follow the cut direction of a shape and leave its tabs
+- Fix: the finish position is also written into saved G-code and RD files
+- Fix: a saved Marlin, Smoothieware, Snapmaker, LinuxCNC or custom G-code file is no longer run shifted on a machine with an origin set
+- Fix: dot mode with overcut no longer fires the first dots twice
+- Fix: the frame and the job origin no longer count shapes that are not burned
+- Fix: fine pictures (300 DPI and up) keep the exact size of their dots in G-code
+- Fix: a hole on its own layer is treated as a hole for kerf offset, lead-in side and tabs
+- Fix: offset fill of round shapes is worked out several times faster
+- Fix: old GRBL boards without laser mode no longer burn between shapes
+- Fix: Marlin (M3 and M4 power mode) and custom G-code machines no longer burn between shapes
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

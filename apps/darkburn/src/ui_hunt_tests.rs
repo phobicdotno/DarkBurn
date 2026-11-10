@@ -101,3 +101,34 @@ fn the_display_settings_leave_the_modes_toolbar_as_it_was() {
     g.exec("setting.set", serde_json::json!({ "key": "show_rotary_toggles", "value": true }));
     assert!(g.app().prefs.toolbar("modes"));
 }
+
+/// The position and size fields of the ribbon are named after their labels (X, Y, W, H ...), not
+/// after their units, and take sums and units.
+#[test]
+fn the_ribbon_number_fields_are_named_and_take_sums_and_units() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    let first = g.app().editor.doc.iter().next().unwrap().id;
+    g.app().editor.selection.set([first]);
+    g.frames(2);
+    let ids = g.app().editor.selected();
+    for label in ["X", "Y", "W", "H", "W %", "H %", "Rotate"] {
+        assert_eq!(g.find_a11y(Some("SpinButton"), label).len(), 1, "a number field named {label}");
+    }
+    for unit in ["mm", "in", "%", "deg"] {
+        assert!(g.find_a11y(Some("SpinButton"), unit).is_empty(), "a number field is named after its unit {unit}");
+    }
+    g.app().prefs.lock_aspect = false;
+    g.click_a11y(Some("SpinButton"), "W");
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("10in/4");
+    g.enter();
+    let bb = g.app().editor.doc.bbox_of(&ids).unwrap();
+    assert!((bb.width() - 63.5).abs() < 1e-6 && (bb.height() - 50.0).abs() < 1e-6, "{bb:?}");
+    g.click_a11y(Some("SpinButton"), "H");
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("2cm + 5");
+    g.enter();
+    let bb = g.app().editor.doc.bbox_of(&ids).unwrap();
+    assert!((bb.height() - 25.0).abs() < 1e-6, "{bb:?}");
+}

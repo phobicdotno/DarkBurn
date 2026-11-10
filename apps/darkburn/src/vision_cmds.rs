@@ -808,6 +808,28 @@ fn rotary_json(app: &DarkBurn) -> Value {
 
 pub fn rotary_set(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     sync(app);
+    let (rotary, split) = rotary_with(app, a)?;
+    app.vision.state.rotary = rotary;
+    app.vision.state.rotary_split = split;
+    commit(app, "Rotary setup", true);
+    Ok(rotary_json(app))
+}
+
+/// The test rotation the settings `a` would give, without keeping them: the Rotary Setup window
+/// plans from what it shows, and only its Apply button changes the project.
+pub fn rotary_plan_for(app: &mut DarkBurn, a: &Value, revolutions: f64) -> Result<Value, String> {
+    sync(app);
+    if revolutions == 0.0 {
+        return Err("revolutions must not be zero".into());
+    }
+    let (mut r, _) = rotary_with(app, a)?;
+    r.enabled = true;
+    let plan = rotary::test_rotation_plan(&r, revolutions).map_err(|e| e.to_string())?;
+    Ok(json!({ "plan": plan, "sent": false, "note": "This is the plan only; the machine side sends it." }))
+}
+
+/// The project's rotary setup and split settings with the changes `a` asks for.
+fn rotary_with(app: &DarkBurn, a: &Value) -> Result<(darkburn_vision::rotary::RotaryParams, crate::vision_state::SplitSettings), String> {
     let mut r = app.vision.state.rotary;
     if let Some(v) = flag(a, "enabled") {
         r.enabled = v;
@@ -843,9 +865,9 @@ pub fn rotary_set(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if r.enabled {
         r.validate().map_err(|e| e.to_string())?;
     }
-    app.vision.state.rotary = r;
+    let mut split = app.vision.state.rotary_split;
     if let Some(m) = text(a, "split") {
-        app.vision.state.rotary_split.mode = match m {
+        split.mode = match m {
             "off" => SplitMode::Off,
             "slice" => SplitMode::Slice,
             "shape" => SplitMode::Shape,
@@ -856,10 +878,9 @@ pub fn rotary_set(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         if !(v > 0.0) {
             return Err("the split size must be above zero".into());
         }
-        app.vision.state.rotary_split.max_size = v;
+        split.max_size = v;
     }
-    commit(app, "Rotary setup", true);
-    Ok(rotary_json(app))
+    Ok((r, split))
 }
 
 fn rotary_test_plan(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {

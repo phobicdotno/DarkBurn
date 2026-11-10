@@ -549,3 +549,47 @@ fn panel_and_dialog_number_fields_take_sums_and_units() {
     set(&mut g, "Distance", "2 in");
     assert!((distance(&g) - 50.8).abs() < 1e-9, "{}", distance(&g));
 }
+
+/// Rotary Setup: Plan test shows what the settings in the window would do and keeps nothing;
+/// closing the window afterwards leaves the project's rotary setup (and Enable rotary) as it
+/// was. Apply keeps them, as one undo step.
+#[test]
+fn planning_a_rotary_test_does_not_keep_the_settings() {
+    let mut g = Gui::standard();
+    g.app().editor.mark_saved();
+    let steps = g.app().editor.history.len();
+    let before = g.app().vision.state.rotary;
+    assert!(!before.enabled);
+    g.run_command("laser.rotary");
+    g.settle();
+    assert!(g.dialog_open());
+    g.click_label("Enable rotary");
+    let at = g.find_a11y(Some("SpinButton"), "Steps per rotation").into_iter().next().expect("the field is in the window").rect.center();
+    g.click_pos(at);
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("12300 + 45");
+    g.enter();
+    assert!(g.has_text("12345"), "the field takes a sum: {:?}", g.visible_texts());
+    g.click_label("Plan test");
+    g.frames(2);
+    assert!(g.visible_texts().iter().any(|t| t.starts_with("Turn axis")), "the plan is shown: {:?}", g.visible_texts());
+    assert!(g.app().vision.state.rotary == before, "Plan test changed the project's rotary setup");
+    assert_eq!(g.app().editor.history.len(), steps, "Plan test made an undo step");
+    g.click_label("Close");
+    g.frames(3);
+    assert!(!g.dialog_open());
+    assert!(g.app().vision.state.rotary == before && !g.app().editor.is_modified(), "closing the window kept settings that were only tried");
+    // Apply keeps what the window shows.
+    g.run_command("laser.rotary");
+    g.settle();
+    g.click_label("Enable rotary");
+    g.click_label("Apply");
+    g.frames(2);
+    assert!(g.app().vision.state.rotary.enabled);
+    assert_eq!(g.app().editor.history.len(), steps + 1);
+    g.click_label("Close");
+    g.frames(2);
+    g.key(Key::Z, Modifiers::COMMAND);
+    g.frames(2);
+    assert!(!g.app().vision.state.rotary.enabled, "one undo takes Apply back");
+}

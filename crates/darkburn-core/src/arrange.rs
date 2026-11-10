@@ -194,9 +194,14 @@ pub fn distribute(doc: &mut Document, ids: &[ShapeId], how: Distribute) -> bool 
     }
     items.sort_by(|a, b| a.1.total_cmp(&b.1));
     let n = items.len();
+    // What the shapes span together: a wide shape can reach past the one that begins last.
     let first = items[0].1;
-    let last_end = items[n - 1].1 + items[n - 1].2;
+    let last_end = items.iter().map(|i| i.1 + i.2).fold(f64::NEG_INFINITY, f64::max);
     let total: f64 = items.iter().map(|i| i.2).sum();
+    // The even kinds go by the centres: the shapes with the outermost centres are the ends.
+    if matches!(how, Distribute::Horizontally | Distribute::Vertically | Distribute::HCentres | Distribute::VCentres) {
+        items.sort_by(|a, b| (a.1 + a.2 / 2.0).total_cmp(&(b.1 + b.2 / 2.0)));
+    }
     let starts: Vec<f64> = match how {
         Distribute::Horizontally | Distribute::Vertically => {
             if n < 3 {
@@ -485,6 +490,44 @@ mod tests {
         spans.sort_by(|a, b| a.y0.total_cmp(&b.y0));
         assert!(near(spans[0].y1, spans[1].y0) && near(spans[1].y1, spans[2].y0));
         assert!(!distribute(&mut d, &ids[..2], Distribute::Horizontally), "even gaps need three");
+    }
+
+    fn row(spans: &[(f64, f64)]) -> (Document, Vec<ShapeId>) {
+        let mut d = Document::new();
+        let ids = spans.iter().map(|(x0, x1)| d.add(Shape::rect(Rect::new(*x0, 0.0, *x1, 10.0), 0.0, 0))).collect();
+        (d, ids)
+    }
+
+    fn span(d: &Document, id: ShapeId) -> (f64, f64) {
+        let b = bb(d, id);
+        ((b.x0 * 1e6).round() / 1e6, (b.x1 * 1e6).round() / 1e6)
+    }
+
+    /// Centres 50, 15 and 35: the outer two centres (15 and 50) stay and the one between them goes
+    /// to the middle, 32.5. The wide shape begins furthest left, but its centre is furthest right.
+    #[test]
+    fn distributing_centres_goes_by_the_centres_not_the_left_edges() {
+        let (mut d, ids) = row(&[(0.0, 100.0), (10.0, 20.0), (30.0, 40.0)]);
+        assert!(distribute(&mut d, &ids, Distribute::HCentres));
+        assert_eq!(span(&d, ids[0]), (0.0, 100.0));
+        assert_eq!(span(&d, ids[1]), (10.0, 20.0));
+        assert_eq!(span(&d, ids[2]), (27.5, 37.5));
+    }
+
+    /// Shapes 0..10, 20..100 and 30..40 span 0..100 and are 100 wide together: with even gaps
+    /// (none here) they still span 0..100.
+    #[test]
+    fn distributing_keeps_the_span_of_the_selection_when_a_wide_shape_reaches_past_the_last() {
+        let (mut d, ids) = row(&[(0.0, 10.0), (20.0, 100.0), (30.0, 40.0)]);
+        assert!(distribute(&mut d, &ids, Distribute::Horizontally));
+        assert_eq!(span(&d, ids[0]), (0.0, 10.0));
+        assert_eq!(span(&d, ids[2]), (10.0, 20.0));
+        assert_eq!(span(&d, ids[1]), (20.0, 100.0));
+        // Moved together: side by side about the middle of what they spanned (50), 110 wide.
+        let (mut d, ids) = row(&[(0.0, 100.0), (10.0, 20.0)]);
+        assert!(distribute(&mut d, &ids, Distribute::HTogether));
+        assert_eq!(span(&d, ids[0]), (-5.0, 95.0));
+        assert_eq!(span(&d, ids[1]), (95.0, 105.0));
     }
 
     #[test]

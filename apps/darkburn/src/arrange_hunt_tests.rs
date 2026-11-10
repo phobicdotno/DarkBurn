@@ -1,4 +1,5 @@
 //! Arrange, clipboard and layer commands checked against numbers worked out by hand.
+use darkburn_core::{ShapeId, ShapeKind};
 use serde_json::json;
 
 use crate::shape_ops::tests::{add_rect, app, run, select};
@@ -36,4 +37,25 @@ fn copy_and_cut_with_nothing_selected_keep_what_was_copied() {
     }
     a.run(&ctx, "edit.paste");
     assert_eq!(a.editor.doc.len(), 2);
+}
+
+/// Copy Along Path follows the shape selected last, also when it was drawn first: three copies of
+/// a 4 mm square along a line from 0 to 100 sit centred on 0, 50 and 100.
+#[test]
+fn copy_along_path_follows_the_last_selected_shape_not_the_topmost() {
+    let mut a = app();
+    let line = run(&mut a, "shape.add_path", json!({ "svg_path": "M0 0 L100 0", "layer": 0 })).unwrap()["id"].as_u64().unwrap();
+    let r = add_rect(&mut a, 0.0, 50.0, 4.0, 4.0, 0);
+    select(&mut a, &[r, ShapeId(line)]);
+    run(&mut a, "arrange.copy_along_path", json!({ "count": 3 })).unwrap();
+    let mut centres: Vec<(f64, f64)> = a
+        .editor
+        .doc
+        .iter()
+        .filter(|s| matches!(s.kind, ShapeKind::Rect { .. }))
+        .map(|s| ((s.bbox().center().x * 1e6).round() / 1e6, (s.bbox().center().y * 1e6).round() / 1e6))
+        .collect();
+    centres.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(centres, vec![(0.0, 0.0), (50.0, 0.0), (100.0, 0.0)]);
+    assert!(a.editor.doc.get(ShapeId(line)).is_some(), "the line stays");
 }

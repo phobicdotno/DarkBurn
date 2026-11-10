@@ -244,7 +244,8 @@ fn copy_along_path(e: &mut Editor, a: &Value) -> R {
     let mut ids = selected_items(e)?;
     let path_id = match a.get("path_shape").and_then(Value::as_u64) {
         Some(p) => ShapeId(p),
-        None => *ids.last().ok_or("nothing is selected")?,
+        // The last selected one (`ids` is in draw order, where the path may come first).
+        None => e.selected().last().copied().ok_or("nothing is selected")?,
     };
     ids.retain(|i| *i != path_id);
     if ids.is_empty() {

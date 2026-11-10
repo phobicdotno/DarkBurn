@@ -7,7 +7,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] A shape inside a group cannot get tabs or a start point without ungrouping first (`tabs.add` and `shape.set_start_point` take top-level shapes only); tabs and start points set before grouping do work in the job
 - [ ] Art Library: a library with unsaved changes (the `*` after its name) is lost when DarkBurn closes, without a question, and the open art libraries are not opened again at the next start (`art_library.rs`: `Open::dirty` is only shown, never asked about or auto-saved)
 - [ ] File > Open of artwork (DXF, SVG, PDF...) reads on a worker thread while the window stays usable; edits made while it reads are thrown away without a question when the file arrives (`file_io::finish_open` calls `open_loaded`, which starts a new project)
-- [ ] A NaN coordinate in the document would be saved as `null` and make the project unopenable; no way to get one in was found, but save should refuse or clean it
 - [ ] Camera slider changes are written to the document without marking it changed
 - [ ] Job: the kerf offset of a Line sub-layer moves the outline for every sub-layer of the layer, so a Fill sub-layer on the same layer fills the grown shape (`job_build::collect` hands the engine one path per shape)
 - [ ] Job: after the last layer with a Z offset or Z step the head stays at that height when the job ends; the next job then starts from there. Not changed because what Z the job should end at needs a decision (absolute `G0 Z..` versus "relative Z moves only")

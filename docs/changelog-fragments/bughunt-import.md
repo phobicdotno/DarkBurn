@@ -7,3 +7,4 @@ Fix: a PDF image whose mask points at itself no longer closes DarkBurn
 Fix: a PDF fax image with an absurd width is skipped instead of closing DarkBurn
 Fix: Same Width against a line with no width no longer flattens the other shapes
 Fix: deleting a layer with its shapes keeps the other shapes of a group
+Fix: a shape with a broken coordinate can no longer make a saved project impossible to open

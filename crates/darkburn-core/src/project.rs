@@ -121,7 +121,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
             px_height: d.px_height,
         })
         .collect();
-    let json = ProjectJson {
+    let mut json = ProjectJson {
         format: FORMAT_NAME.into(),
         version: FORMAT_VERSION,
         app_version: app_version.into(),
@@ -136,7 +136,21 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         variables: doc.variables.clone(),
         vision_settings: doc.vision_settings.clone(),
     };
-    let text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    let mut text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    // A number that is not a number is written as `null`, and a file with one never opens again.
+    // So what is written is read back first; shapes that do not survive that are left out (they
+    // cannot be drawn or burned either), and anything else that stops it refuses the save.
+    if serde_json::from_slice::<ProjectJson>(&text).is_err() {
+        json.shapes = json.shapes.iter().filter_map(readable).collect();
+        for l in &mut json.layers {
+            for s in &mut l.settings {
+                s.sanitise();
+            }
+        }
+        text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+        serde_json::from_slice::<ProjectJson>(&text)
+            .map_err(|e| ProjectError::Damaged(format!("the project holds a value that cannot be written ({e})")))?;
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -152,6 +166,24 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         zip.write_all(png)?;
     }
     Ok(zip.finish().map_err(zerr)?.into_inner())
+}
+
+/// `shape` as it can be written and read back: a group keeps its readable children, anything
+/// else that does not come back from its own JSON (a coordinate that is not a number) is `None`.
+fn readable(shape: &Shape) -> Option<Shape> {
+    let round_trips = |s: &Shape| serde_json::to_vec(s).ok().is_some_and(|t| serde_json::from_slice::<Shape>(&t).is_ok());
+    if round_trips(shape) {
+        return Some(shape.clone());
+    }
+    if let crate::shape::ShapeKind::Group { children } = &shape.kind {
+        let kept: Vec<Shape> = children.iter().filter_map(readable).collect();
+        if !kept.is_empty() {
+            let mut group = shape.clone();
+            group.kind = crate::shape::ShapeKind::Group { children: kept };
+            return round_trips(&group).then_some(group);
+        }
+    }
+    None
 }
 
 /// The most a project may unpack to (its description and every image together). A file's
@@ -291,6 +323,28 @@ mod tests {
         d.vision_settings = Some(serde_json::json!({ "version": 1, "rotary": { "enabled": true } }));
         d.show_notes_on_load = true;
         d
+    }
+
+    #[test]
+    fn a_coordinate_that_is_not_a_number_does_not_make_the_saved_project_unopenable() {
+        let mut d = Document::new();
+        let good = d.add(Shape::rect(Rect::new(0.0, 0.0, 20.0, 10.0), 0.0, 3));
+        // A transform, a size and a path point that are not numbers.
+        d.add(Shape::new(ShapeKind::Rect { width: 5.0, height: 5.0, radius: 0.0 }, Affine::new([1.0, 0.0, 0.0, 1.0, f64::NAN, 0.0]), 1));
+        d.add(Shape::new(ShapeKind::Ellipse { rx: f64::NAN, ry: 2.0 }, Affine::IDENTITY, 1));
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((f64::INFINITY, 1.0));
+        let kids = vec![Shape::path(p, 2), Shape::rect(Rect::new(2.0, 0.0, 3.0, 1.0), 0.0, 2)];
+        let group = d.add(Shape::new(ShapeKind::Group { children: kids }, Affine::IDENTITY, 2));
+        let bytes = save(&d, "test", None).expect("the save goes through");
+        let back = load(&bytes).expect("and the file opens again").doc;
+        assert_eq!(back.len(), 2, "the rectangle and the group");
+        assert_eq!(back.get(good).unwrap().bbox(), Rect::new(0.0, 0.0, 20.0, 10.0));
+        match &back.get(group).unwrap().kind {
+            ShapeKind::Group { children } => assert_eq!(children.len(), 1, "the broken path is left out of the group"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

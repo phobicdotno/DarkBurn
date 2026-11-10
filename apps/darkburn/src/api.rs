@@ -151,17 +151,22 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
             let (x, y, w, h) = (num(a, "x")?, num(a, "y")?, num(a, "width")?, num(a, "height")?);
             let layer = opt_layer(a, app.editor.current_layer)?;
             let radius = opt_num(a, "radius").unwrap_or(0.0);
+            sized(w, h)?;
             add(app, "Add rectangle", Shape::rect(Rect::new(x, y, x + w, y + h), radius, layer))
         })(),
         "shape.add_ellipse" => (|| {
             let (x, y, w, h) = (num(a, "x")?, num(a, "y")?, num(a, "width")?, num(a, "height")?);
             let layer = opt_layer(a, app.editor.current_layer)?;
+            sized(w, h)?;
             add(app, "Add ellipse", Shape::ellipse(Rect::new(x, y, x + w, y + h), layer))
         })(),
         "shape.add_polygon" => (|| {
             let (cx, cy, r) = (num(a, "cx")?, num(a, "cy")?, num(a, "radius")?);
             let sides = a.get("sides").and_then(Value::as_u64).ok_or("argument sides must be a whole number")? as u32;
             let layer = opt_layer(a, app.editor.current_layer)?;
+            if r < MIN_DRAWN {
+                return Err("radius must be above zero".into());
+            }
             add(app, "Add polygon", Shape::polygon(Point::new(cx, cy), sides, r, layer))
         })(),
         "shape.add_path" => (|| {
@@ -294,6 +299,16 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         _ if crate::image_ui::handles(id) => crate::image_ui::execute(app, id, a),
         _ => return crate::file_io::with_args(app, id, a).or_else(|| crate::extras::with_args(app, id, a)),
     })
+}
+
+/// The smallest size (mm) the rectangle, ellipse and polygon tools draw; a drag shorter than
+/// this makes no shape, and neither do the commands.
+const MIN_DRAWN: f64 = 1e-3;
+
+/// A width and height a shape can be drawn with (either may be negative: the box then lies on
+/// the other side of its corner).
+fn sized(w: f64, h: f64) -> Result<(), String> {
+    if w.abs() < MIN_DRAWN || h.abs() < MIN_DRAWN { Err("width and height must not be zero".into()) } else { Ok(()) }
 }
 
 fn add(app: &mut DarkBurn, label: &str, shape: Shape) -> Result<Value, String> {

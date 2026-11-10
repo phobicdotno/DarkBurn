@@ -241,3 +241,38 @@ fn copy_along_a_path_whose_length_cannot_be_worked_out_is_refused_not_a_crash() 
     }
     assert!(a.editor.doc.len() >= before);
 }
+
+// ---------------------------------------------------------------- drawing: tools and commands
+
+#[test]
+fn the_shape_commands_refuse_what_the_drawing_tools_cannot_draw() {
+    use crate::shape_ops::tests::run;
+    use serde_json::json;
+    let mut a = app();
+    // The rectangle, ellipse and polygon tools make nothing from a drag without size.
+    let refused = [
+        ("shape.add_rect", json!({ "x": 0, "y": 0, "width": 0, "height": 10 })),
+        ("shape.add_rect", json!({ "x": 0, "y": 0, "width": 10, "height": 0 })),
+        ("shape.add_ellipse", json!({ "x": 0, "y": 0, "width": 0, "height": 0 })),
+        ("shape.add_polygon", json!({ "cx": 0, "cy": 0, "sides": 6, "radius": 0 })),
+        ("shape.add_polygon", json!({ "cx": 0, "cy": 0, "sides": 6, "radius": -5 })),
+        // A layer that does not exist is an error everywhere else.
+        ("shape.add_line", json!({ "points": [[0, 0], [10, 0]], "layer": 99 })),
+        ("shape.add_line", json!({ "points": [[0, 0], [10, 0]], "layer": -1 })),
+    ];
+    let mut drawn = Vec::new();
+    for (id, args) in refused {
+        let r = run(&mut a, id, args.clone());
+        if r.is_ok() {
+            drawn.push(format!("{id} {args} answered {r:?}"));
+        }
+    }
+    assert!(drawn.is_empty(), "{}", drawn.join("\n"));
+    assert_eq!(a.editor.doc.len(), 0, "nothing was drawn");
+    assert!(!a.editor.history.can_undo(), "and there is nothing to undo");
+    // What the tools can draw still works, a rectangle given from its far corner too.
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": -4, "height": -2 })).unwrap();
+    let b = a.editor.doc.iter().next().unwrap().bbox();
+    assert!((b.x0 - 6.0).abs() < 1e-9 && (b.y0 - 8.0).abs() < 1e-9 && (b.width() - 4.0).abs() < 1e-9 && (b.height() - 2.0).abs() < 1e-9, "{b:?}");
+    run(&mut a, "shape.add_line", json!({ "points": [[0, 0], [10, 0]], "layer": 31 })).unwrap();
+}

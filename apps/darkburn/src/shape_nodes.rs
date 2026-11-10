@@ -680,7 +680,13 @@ fn add_line(e: &mut Editor, a: &Value, _env: &Env) -> R {
     if closed {
         path.close_path();
     }
-    let layer = num(a, "layer", e.current_layer as f64).clamp(0.0, 31.0) as usize;
+    let layer = match a.get("layer") {
+        None => e.current_layer,
+        Some(l) => match l.as_u64() {
+            Some(l) if l < darkburn_core::LAYER_COUNT as u64 => l as usize,
+            _ => return Err(format!("layer {l} does not exist (0 to 31)")),
+        },
+    };
     let connect = flag(a, "connect", true) && !closed;
     let tol = num(a, "tolerance", 0.05).max(1e-6);
     let mut result = (ShapeId(0), false);

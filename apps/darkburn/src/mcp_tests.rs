@@ -216,6 +216,9 @@ impl Backend for Spy {
     fn events(&mut self, since: u64) -> Result<EventPage, CommandError> {
         self.inner.events(since)
     }
+    fn confirmation_scope(&mut self) -> String {
+        self.inner.confirmation_scope()
+    }
     fn request_confirmation(&mut self, id: &str, c: &str, s: &str) -> Result<(), CommandError> {
         self.inner.request_confirmation(id, c, s)
     }
@@ -754,4 +757,57 @@ fn a_wrong_token_never_gets_a_backend() {
     assert_eq!(e.code, ErrorCode::Transport);
     let ok = win.on_ui(|g| g.inner().inspect("design", 0).map(|v| v["shape_count"].clone()).ok());
     assert_eq!(ok, Some(json!(0)), "the design is untouched");
+}
+
+// ----- third bug hunt: side doors around the gate ------------------------------------------------------
+
+/// Ask for `id`, let the user click Confirm, and return the token.
+fn confirmed_token(gate: &mut Gate<Spy>, id: &str, args: Value) -> String {
+    let e = gate.execute(id, args).unwrap_err();
+    assert_eq!(e.code, ErrorCode::ConfirmationRequired, "{}", e.message);
+    let pid = e.pending_id.unwrap();
+    gate.resolve_confirmation(&pid, true).unwrap();
+    let PendingState::Done { result: Ok(v), .. } = gate.pending(&pid).unwrap() else { panic!("confirmed") };
+    v["confirmation_token"].as_str().unwrap().to_string()
+}
+
+#[test]
+fn a_job_start_the_user_confirmed_does_not_start_a_design_changed_since() {
+    let policy = McpPolicy { allow_hardware: true, ..McpPolicy::default() };
+    let start = |gate: &mut Gate<Spy>, token: &str| {
+        gate.execute_ctx("job.start", json!({}), &CallContext { tool: "execute".into(), confirmation_token: Some(token.to_string()) })
+    };
+    // The design changes after the user's click: a new shape, more power, another device.
+    let changes: [(&str, Value); 4] = [
+        ("shape.add_rect", json!({"x": 300, "y": 300, "width": 50, "height": 50})),
+        ("layer.set_param", json!({"layer": 0, "field": "max_power", "value": 100})),
+        ("layer.set_cut_settings", json!({"layer": 0, "settings": {"passes": 9}})),
+        ("job.set_origin", json!({"start_from": "current_position"})),
+    ];
+    for (change, args) in changes {
+        let (mut gate, seen, _app) = spy_gate(policy);
+        gate.execute("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+        let token = confirmed_token(&mut gate, "job.start", json!({}));
+        gate.execute(change, args).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+        seen.borrow_mut().clear();
+        let e = start(&mut gate, &token).unwrap_err();
+        assert_eq!(e.code, ErrorCode::ConfirmationInvalid, "{change}: {}", e.message);
+        assert!(seen.borrow().is_empty(), "{change}: the changed job reached the machine code");
+    }
+    // Another device selected after the click.
+    let (mut gate, seen, app) = spy_gate(policy);
+    let other = app.borrow_mut().machine.devices.add(crate::devices::Device::new(crate::devices::DeviceType::ALL[0]));
+    let token = confirmed_token(&mut gate, "job.start", json!({}));
+    app.borrow_mut().machine.select_device(other);
+    let e = start(&mut gate, &token).unwrap_err();
+    assert_eq!(e.code, ErrorCode::ConfirmationInvalid, "{}", e.message);
+    assert!(seen.borrow().is_empty());
+    // Nothing changed (looking at the design is not a change): the token starts the job.
+    let (mut gate, seen, _app) = spy_gate(policy);
+    gate.execute("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})).unwrap();
+    let token = confirmed_token(&mut gate, "job.start", json!({}));
+    gate.inspect("design", 2).unwrap();
+    seen.borrow_mut().clear();
+    let _ = start(&mut gate, &token);
+    assert_eq!(seen.borrow().as_slice(), ["job.start"]);
 }

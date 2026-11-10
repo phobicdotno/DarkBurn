@@ -22,3 +22,11 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] Images: scanning offsets are applied to image scans only; fill scans (Fill, Fill+Line) at the same speed are not shifted
 - [ ] Galvo: a galvo job ignores per-shape power scale, cut order priority, kerf offset and start points (`galvo_job::build_job` hands the board whole layers)
 - [ ] Job: a saved G-code file is written in machine coordinates; run later (Run G-code) on a GRBL machine that has an origin set, it lands shifted by the work offset. A job started from the app is now shifted to work coordinates (`machine_job::request_for`), a file cannot know the offset
+- [ ] Offset with the sharp join: a corner past the miter limit is clipped at the limit, not bevelled as `offset.rs` says, and a corner sharper than about 5 degrees stops well short of a true miter (the overlay engine's own limit); the result is a valid outline, only the corner differs
+- [ ] Kerf offset: a hole smaller than the kerf vanishes from the job without a warning (`kerf_offset` returns nothing for it)
+- [ ] A manual tab longer than the whole outline of a small shape leaves nothing of that shape to cut (`tabs::place_tabs_at`); automatic tabs reduce their count instead
+- [ ] `edit.convert_path` on a text with no visible characters leaves an empty path shape in the document
+- [ ] Booleans and offsets read a text's stored outline; a text that was never rendered would give its placeholder rectangle (not seen in a test: the text commands render after every change)
+- [ ] Adjust Image is slow at the limits: forty mode and DPI changes on a 2 x 1 mm image at 25400 DPI with 1000 halftone cells took over a minute in a test (results were right)
+- [ ] `darkburn-grbl` `tests/driver.rs` `frame_rectangle_with_and_without_laser` failed once in a full workspace run under load (`laser_switch_ons >= 1`, driver.rs:514) and passed three times in a row on its own
+- [ ] Flaky under load: `darkburn` `connections_tests::every_grbl_flavour_pauses_resumes_stops_and_reports_an_alarm` (panic at connections_tests.rs:380, 69 s, once in a full run beside four other builds; 4 of 4 alone)

@@ -170,7 +170,7 @@ fn place_array(e: &mut Editor, ids: &[ShapeId], def: ArrayDef, virtual_array: bo
     if transforms.is_empty() {
         return Err("the array is empty".into());
     }
-    if transforms.len() > 100_000 {
+    if transforms.len() > garray::MAX_COPIES {
         return Err("that is too many copies".into());
     }
     let layer = def.source.first().map(|s| s.layer).unwrap_or(0);
@@ -284,6 +284,9 @@ fn array_edit(e: &mut Editor, a: &Value, env: &Env) -> R {
         ("along_path", ArrayKind::AlongPath(p)) | ("", ArrayKind::AlongPath(p)) => ArrayKind::AlongPath(along_from(a, p)),
         (other, _) => return Err(format!("cannot change the array to kind {other:?}")),
     };
+    if (ArrayDef { source: def.source.clone(), kind: kind.clone() }).transforms().len() > garray::MAX_COPIES {
+        return Err("that is too many copies".into());
+    }
     let done = e.edit("Edit array", |d, sel| {
         if let Some(s) = d.get_mut(id)
             && let Some(def) = s.array.as_mut()
@@ -641,6 +644,36 @@ mod tests {
         select(&mut app, &[r, ShapeId(p["id"].as_u64().unwrap())]);
         run(&mut app, "arrange.copy_along_path", json!({ "count": 5, "rotate_items": false })).unwrap();
         assert_eq!(app.editor.doc.len(), 6, "five copies and the path");
+    }
+
+    #[test]
+    fn an_array_with_too_many_copies_is_refused() {
+        let mut app = app();
+        let r = add_rect(&mut app, 0.0, 0.0, 10.0, 10.0, 1);
+        select(&mut app, &[r]);
+        for args in [
+            json!({ "rows": 1_000_000, "cols": 1_000_000 }),
+            json!({ "rows": 1_000_000, "cols": 1_000_000, "virtual": true }),
+            json!({ "rows": 2, "cols": 2, "fit_width": 1e12 }),
+        ] {
+            let err = run(&mut app, "arrange.grid_array", args.clone()).unwrap_err();
+            assert!(err.contains("too many"), "{args}: {err}");
+            assert_eq!(app.editor.doc.len(), 1, "nothing was added");
+        }
+        // A copy every hundredth of a micrometre along a metre of line.
+        let line =
+            ShapeId(run(&mut app, "shape.add_line", json!({ "points": [[0, 0], [1000, 0]], "connect": false })).unwrap()["id"].as_u64().unwrap());
+        select(&mut app, &[r, line]);
+        let err = run(&mut app, "arrange.copy_along_path", json!({ "spacing": 0.00001 })).unwrap_err();
+        assert!(err.contains("too many"), "{err}");
+        assert_eq!(app.editor.doc.len(), 2);
+        // Editing a virtual array up to that many copies is refused and leaves it as it was.
+        select(&mut app, &[r]);
+        let out = run(&mut app, "arrange.grid_array", json!({ "rows": 1, "cols": 3, "virtual": true })).unwrap();
+        let gid = ShapeId(out["ids"][0].as_u64().unwrap());
+        let err = run(&mut app, "arrange.array_edit", json!({ "rows": 1_000_000, "cols": 1_000_000 })).unwrap_err();
+        assert!(err.contains("too many"), "{err}");
+        assert!(matches!(&app.editor.doc.get(gid).unwrap().kind, ShapeKind::Group { children } if children.len() == 3));
     }
 
     #[test]

@@ -651,12 +651,19 @@ fn optimize_contour(c: &Contour, tol: f64) -> Option<Contour> {
 /// Optimizes a path: flattens curves, then refits each subpath with as few straight lines
 /// and circular arcs (as cubic Béziers) as possible while staying within `tol` of the
 /// original. Closed/open status is kept. A closed subpath may get a new start node when
-/// its old start sat in the middle of a straight run. Reports node counts before and after.
+/// its old start sat in the middle of a straight run. A subpath so small that it would shrink
+/// to a point or to a line without area (a hole smaller than `tol`) is kept as it was: only
+/// a subpath that had no length to begin with is dropped. Reports node counts before and after.
 pub fn optimize(path: &BezPath, tol: f64) -> (BezPath, OptimizeReport) {
     let tol = tol.max(1e-6);
     let cs = contours(path);
     let before: usize = cs.iter().map(Contour::node_count).sum();
-    let out: Vec<Contour> = cs.iter().filter_map(|c| optimize_contour(c, tol)).collect();
+    let collapsed = |c: &Contour, o: &Contour| {
+        let lines_only = o.segs.iter().all(|s| matches!(s, PathSeg::Line(_)));
+        o.length() <= 1e-12 || (c.closed && lines_only && o.segs.len() < 3)
+    };
+    let out: Vec<Contour> =
+        cs.iter().filter_map(|c| optimize_contour(c, tol).map(|o| if collapsed(c, &o) && c.length() > 1e-12 { c.clone() } else { o })).collect();
     let after: usize = out.iter().map(Contour::node_count).sum();
     (from_contours(out.iter()), OptimizeReport { nodes_before: before, nodes_after: after })
 }
@@ -961,5 +968,25 @@ mod tests {
         let f = flatten_curves(&c, 0.01);
         assert!(f.segments().all(|s| matches!(s, PathSeg::Line(_))));
         assert!(is_closed(&f, 0.0));
+    }
+
+    #[test]
+    fn optimize_keeps_shapes_smaller_than_the_tolerance() {
+        // A plate with a 0.3 mm hole, optimised with 0.5 mm: the hole is still cut.
+        let mut plate = kurbo::Rect::new(0.0, 0.0, 50.0, 30.0).to_path(0.1);
+        let hole = kurbo::Rect::new(10.0, 10.0, 10.3, 10.3).to_path(0.1);
+        plate.extend(hole.clone());
+        let (out, report) = optimize(&plate, 0.5);
+        let cs = contours(&out);
+        assert_eq!(cs.len(), 2, "the hole was dropped");
+        assert!(cs[1].closed);
+        assert!((cs[1].signed_area().abs() - 0.09).abs() < 1e-9, "{}", cs[1].signed_area());
+        assert_eq!(report.nodes_after, 8);
+        // A shape smaller than the tolerance on its own is not wiped out either.
+        let (alone, _) = optimize(&hole, 100.0);
+        assert_eq!(alone, hole);
+        let dot = Circle::new((5.0, 5.0), 0.2).to_path(1e-3);
+        let (kept, _) = optimize(&dot, 1.0);
+        assert!((signed_area(&kept).abs() - std::f64::consts::PI * 0.04).abs() < 1e-3);
     }
 }

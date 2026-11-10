@@ -173,8 +173,12 @@ pub fn shape_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     (!s.is_group() && !s.is_image()).then(|| s.outline())
 }
 
-/// Give shape `id` the document-space outline `path` (it becomes a path shape).
+/// Give shape `id` the document-space outline `path` (it becomes a path shape). A `path` with
+/// nothing left to draw (its last nodes were deleted) takes the shape out of the document.
 pub fn set_shape_path(doc: &mut Document, id: ShapeId, path: BezPath) -> bool {
+    if gpath::contours(&path).is_empty() {
+        return doc.remove(&[id]) > 0;
+    }
     let Some(s) = doc.get_mut(id) else { return false };
     map_shape(s, &mut |_| Some(path.clone())) > 0
 }
@@ -477,6 +481,12 @@ impl OffsetParams {
 
 /// Offset results of shapes `ids`: one `(path, layer, name)` per result.
 pub fn offset_results(doc: &Document, ids: &[ShapeId], p: &OffsetParams) -> Vec<Part> {
+    offset_results_by_shape(doc, ids, p).into_iter().flat_map(|(_, parts)| parts).collect()
+}
+
+/// The offset results of each shape of `ids` (none for an image, or for an open line when open
+/// shapes are not offset).
+fn offset_results_by_shape(doc: &Document, ids: &[ShapeId], p: &OffsetParams) -> Vec<(ShapeId, Vec<Part>)> {
     let opts = OffsetOptions {
         distance: p.distance,
         side: p.side,
@@ -486,8 +496,9 @@ pub fn offset_results(doc: &Document, ids: &[ShapeId], p: &OffsetParams) -> Vec<
         fill_rule: FillRule::EvenOdd,
         tol: p.tolerance,
     };
-    let mut out = Vec::new();
+    let mut by_shape = Vec::new();
     for id in ids {
+        let mut out = Vec::new();
         for part in parts_of(doc, *id) {
             let subs = gpath::subpaths(&part.path);
             let (closed, open): (Vec<_>, Vec<_>) = subs.into_iter().partition(|s| gpath::is_closed(s, 1e-6));
@@ -503,8 +514,9 @@ pub fn offset_results(doc: &Document, ids: &[ShapeId], p: &OffsetParams) -> Vec<
             }
             out.extend(results.into_iter().map(|path| Part { path, layer: part.layer, name: part.name.clone() }));
         }
+        by_shape.push((*id, out));
     }
-    out
+    by_shape
 }
 
 /// What Offset would draw, for the dialog's live preview.
@@ -515,7 +527,11 @@ pub fn offset_preview(doc: &Document, ids: &[ShapeId], p: &OffsetParams) -> Vec<
 fn offset_cmd(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
     let p = OffsetParams::from_json(a)?;
-    let results = offset_results(&e.doc, &ids, &p);
+    let by_shape = offset_results_by_shape(&e.doc, &ids, &p);
+    // Only a shape that was offset is replaced by its offset; an image or an open line that
+    // gave nothing stays.
+    let ids: Vec<ShapeId> = by_shape.iter().filter(|(_, parts)| !parts.is_empty()).map(|(id, _)| *id).collect();
+    let results: Vec<Part> = by_shape.into_iter().flat_map(|(_, parts)| parts).collect();
     if results.is_empty() {
         return Err("the offset left nothing (the distance may be too large)".into());
     }
@@ -539,6 +555,17 @@ fn offset_cmd(e: &mut Editor, a: &Value) -> R {
 
 fn operands(doc: &Document, ids: &[ShapeId]) -> Vec<(ShapeId, Vec<Part>)> {
     ids.iter().map(|id| (*id, parts_of(doc, *id))).filter(|(_, p)| !p.is_empty()).collect()
+}
+
+/// The shapes of `ids` that enclose an area, with their outlines: what a boolean operation
+/// works on. An image, a straight line or anything else without an area takes no part in it
+/// and is left alone.
+fn area_operands(doc: &Document, ids: &[ShapeId]) -> Vec<(ShapeId, Vec<Part>)> {
+    operands(doc, ids).into_iter().filter(|(_, parts)| parts.iter().any(|p| gpath::area(&p.path, FillRule::EvenOdd, TOL) > 1e-9)).collect()
+}
+
+fn ids_of(ops: &[(ShapeId, Vec<Part>)]) -> Vec<ShapeId> {
+    ops.iter().map(|o| o.0).collect()
 }
 
 fn paths_of(parts: &[Part]) -> Vec<BezPath> {
@@ -568,10 +595,10 @@ pub fn boolean_preview(doc: &Document, a: &[ShapeId], b: &[ShapeId], op: &str) -
 }
 
 fn boolean_cmd(e: &mut Editor, a: &Value, op: &str) -> R {
-    let ids = selected(e)?;
-    let ops = operands(&e.doc, &ids);
+    let ops = area_operands(&e.doc, &selected(e)?);
+    let ids = ids_of(&ops);
     if ops.len() < 2 {
-        return Err("select at least two shapes".into());
+        return Err("select at least two closed shapes".into());
     }
     // The bottom shape is the subject; the shapes above it cut into it (difference) or are
     // combined with it.
@@ -633,15 +660,16 @@ fn boolean_assistant(e: &mut Editor, a: &Value) -> R {
         });
         return ok(true, &out);
     }
-    let consumed: Vec<ShapeId> = ids_a.iter().chain(&ids_b).copied().collect();
+    let chosen: Vec<ShapeId> = ids_a.iter().chain(&ids_b).copied().collect();
+    let consumed = ids_of(&area_operands(&e.doc, &chosen));
     finish_boolean(e, &consumed, &pa[0], result, "Boolean assistant")
 }
 
 fn cut_shapes(e: &mut Editor, _a: &Value) -> R {
-    let ids = selected(e)?;
-    let ops = operands(&e.doc, &ids);
+    let ops = area_operands(&e.doc, &selected(e)?);
+    let ids = ids_of(&ops);
     if ops.len() < 2 {
-        return Err("select at least two shapes".into());
+        return Err("select at least two closed shapes".into());
     }
     let all: Vec<BezPath> = ops.iter().flat_map(|o| paths_of(&o.1)).collect();
     let pieces = boolean::cut_shapes(&all, FillRule::EvenOdd, TOL);
@@ -1162,6 +1190,48 @@ pub(crate) mod tests {
 
     fn area(app: &DarkBurn) -> f64 {
         app.editor.doc.iter().map(|s| gpath::area(&s.outline(), FillRule::EvenOdd, TOL)).sum()
+    }
+
+    #[test]
+    fn booleans_and_offset_leave_the_shapes_that_took_no_part() {
+        use crate::images::testutil::{add_image, png};
+        let scene = |app: &mut DarkBurn| {
+            let a = add_rect(app, 0.0, 0.0, 10.0, 10.0, 0);
+            let b = add_rect(app, 5.0, 5.0, 10.0, 10.0, 0);
+            let image = add_image(&mut app.editor.doc, png(4, 4, |_, _| 0), (4, 4), (10.0, 10.0), (5.0, 5.0), 3);
+            let line =
+                ShapeId(run(app, "shape.add_line", json!({ "points": [[100, 100], [120, 100]], "connect": false })).unwrap()["id"].as_u64().unwrap());
+            (a, b, image, line)
+        };
+        for cmd in ["tools.union", "tools.difference", "tools.weld", "tools.cut_shapes"] {
+            let mut app = app();
+            let (a, b, image, line) = scene(&mut app);
+            select(&mut app, &[a, b, image, line]);
+            run(&mut app, cmd, json!({})).unwrap();
+            let d = &app.editor.doc;
+            assert!(d.get(image).is_some(), "{cmd} keeps the picture that was selected with the shapes");
+            assert!(d.get(line).is_some(), "{cmd} keeps the line");
+            assert!(d.get(a).is_none() && d.get(b).is_none(), "{cmd} replaces the two squares");
+            app.editor.undo();
+            assert_eq!(app.editor.doc.len(), 4);
+        }
+        let mut one = app();
+        let (a, b, image, line) = scene(&mut one);
+        run(&mut one, "tools.boolean_assistant", json!({ "a": [a.0, image.0], "b": [b.0, line.0], "op": "union" })).unwrap();
+        assert!(one.editor.doc.get(image).is_some() && one.editor.doc.get(line).is_some());
+        assert_eq!(one.editor.doc.len(), 3);
+        // A picture and a line alone are nothing to combine.
+        select(&mut one, &[image, line]);
+        assert!(run(&mut one, "tools.union", json!({})).is_err());
+        // Offset with "delete original": only what was offset is replaced.
+        let mut two = app();
+        let (a, b, image, line) = scene(&mut two);
+        select(&mut two, &[a, image, line]);
+        run(&mut two, "tools.offset", json!({ "distance": 1, "delete_original": true })).unwrap();
+        let d = &two.editor.doc;
+        assert!(d.get(a).is_none(), "the square was replaced by its offset");
+        assert!(d.get(image).is_some() && d.get(line).is_some() && d.get(b).is_some());
+        assert_eq!(d.len(), 4);
     }
 
     #[test]

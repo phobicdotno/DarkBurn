@@ -25,11 +25,17 @@ impl Default for NestOptions {
     }
 }
 
-/// Rotation angles `0, step, 2·step, …` below 360°. A step ≤ 0 gives just `[0]`.
+/// The finest rotation step nesting tries, degrees.
+pub const MIN_ROTATION_STEP: f64 = 0.1;
+
+/// Rotation angles `0, step, 2·step, …` below 360°. A step ≤ 0 gives just `[0]`; a step finer
+/// than [`MIN_ROTATION_STEP`] is taken as that.
 pub fn rotation_steps(step_deg: f64) -> Vec<f64> {
-    if step_deg <= 1e-9 {
+    if step_deg <= 1e-9 || step_deg.is_nan() {
         return vec![0.0];
     }
+    // Finer than a tenth of a degree gains nothing and a mistyped step would ask for billions.
+    let step_deg = step_deg.max(MIN_ROTATION_STEP);
     let n = (360.0 / step_deg - 1e-9).ceil().max(1.0) as usize;
     (0..n).map(|i| i as f64 * step_deg).collect()
 }
@@ -207,6 +213,10 @@ mod tests {
         check_no_overlap(&[b], sheet, 0.0);
         assert_eq!(rotation_steps(90.0), vec![0.0, 90.0, 180.0, 270.0]);
         assert_eq!(rotation_steps(0.0), vec![0.0]);
+        assert_eq!(rotation_steps(f64::NAN), vec![0.0]);
+        // A step of a millionth of a degree used to ask for 360 million rotations.
+        assert_eq!(rotation_steps(1e-6).len(), 3600);
+        assert_eq!(rotation_steps(1e-6)[1], MIN_ROTATION_STEP);
     }
 
     #[test]

@@ -279,7 +279,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LASER-17 Devices button; right-click resets connection
 - [x] LASER-18 Port picker with auto choice, remembered port, excluded ports
 - [x] LASER-19 Device profile picker
-- [~] LASER-20 Rescan network bridge
+- [~] LASER-20 Rescan network bridge *(Rescan bridge in the Laser panel checks that the bridge answers at its address; no search of the network, and not tried against a real bridge)*
 - [x] LASER-21 Red light toggle (galvo)
 - [x] LASER-22 Rotary and cylinder correction toggles, mode status text
 - [x] LASER-23 Option to disable Start on machines that take uploads
@@ -676,38 +676,38 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ### Device management
 - [x] DEV-01 Devices dialog: list, drag reorder, sort by name or type
-- [~] DEV-02 Find my laser: auto-detect serial, USB and network machines
+- [~] DEV-02 Find my laser: auto-detect serial, USB and network machines *(serial ports and USB devices are listed and the laser is named once connected; the network is not searched)*
 - [x] DEV-03 New device wizard: type, connection, name and size, origin and homing, summary
 - [x] DEV-04 Edit, duplicate, remove device
 - [x] DEV-05 Import and export device profiles
-- [ ] DEV-06 Network bridge setup wizard
+- [~] DEV-06 Network bridge setup wizard *(the wizard adds the device and tests the address; the relay itself is unconfirmed, see CONN-03)*
 - [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups
 - [x] DEV-08 Design-only device with no laser
 
 ### Connections
-- [ ] CONN-01 USB serial with baud choice
-- [ ] CONN-02 TCP/IP
-- [ ] CONN-03 TCP relay through a network bridge
+- [x] CONN-01 USB serial with baud choice
+- [x] CONN-02 TCP/IP
+- [~] CONN-03 TCP relay through a network bridge *(works against DarkBurn's own loopback relay; the packet framing comes from one public description and needs a real bridge to confirm)*
 - [ ] CONN-04 UDP (Ruida Ethernet)
-- [ ] CONN-05 Raw USB
+- [~] CONN-05 Raw USB *(selectable for G-code devices and tested through an in-memory pipe; the real USB pipe has never been opened on a device)*
 - [ ] CONN-06 FTDI packet USB (Ruida over USB)
-- [ ] CONN-07 HTTP
-- [ ] CONN-08 Bluetooth serial
-- [ ] CONN-09 UDP automation socket for start and status commands
+- [~] CONN-07 HTTP *(one request per line, works against a loopback web server; what a real controller answers is unconfirmed)*
+- [x] CONN-08 Bluetooth serial
+- [x] CONN-09 UDP automation socket for start and status commands
 
 ### G-code family
-- [ ] GRBL-01 GRBL 1.1 streaming with buffer tracking
-- [ ] GRBL-02 Older GRBL (M3 only)
-- [ ] GRBL-03 GRBL-LPC
-- [ ] GRBL-04 grblHAL
-- [ ] GRBL-05 FluidNC
+- [x] GRBL-01 GRBL 1.1 streaming with buffer tracking
+- [x] GRBL-02 Older GRBL (M3 only)
+- [x] GRBL-03 GRBL-LPC
+- [x] GRBL-04 grblHAL
+- [x] GRBL-05 FluidNC
 - [x] GRBL-06 $J jogging and continuous jog
 - [x] GRBL-07 Settings editor for $$ values, with backup
 - [x] GRBL-08 Alarm and error codes shown in plain words
 - [x] GRBL-09 Feed and power overrides while running
 - [x] GRBL-10 Fire button
-- [~] GRBL-11 DTR control
-- [ ] GRBL-12 Auto-detect common diode lasers (xTool, Ortur, Atomstack, Sculpfun)
+- [x] GRBL-11 DTR control
+- [x] GRBL-12 Auto-detect common diode lasers (xTool, Ortur, Atomstack, Sculpfun)
 - [x] GCODE-01 Smoothieware, including fast raster clustering
 - [x] GCODE-02 Marlin with M3, M106 or inline power
 - [x] GCODE-03 LinuxCNC

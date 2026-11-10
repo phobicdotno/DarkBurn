@@ -55,3 +55,17 @@ Source: `docs/research/other-controllers.md`.
 - [ ] Ruida: laser 2 and U axis read and write through Machine Settings and the Move panel (addresses above)
 - [ ] Ruida: file list, upload with the overwrite question, run, delete and calculate time on a real controller
 - [ ] Find My Laser: the USB VID/PID table (CH340, CP210x, FTDI, Arduino, ESP32, STM32) only describes ports; confirm names on real hardware
+
+## Connections and GRBL flavours (built against the simulators and loopback listeners only)
+- [ ] GRBL-M3 device type on a GRBL 1.1e or 0.9 board: the job runs with M3 only, and Stop leaves the board in an alarm that Unlock clears
+- [ ] GRBL-LPC on a Smoothieboard: banner text, the `[OPT:...]` buffer size (the simulator assumes 8192) and that opening the port does not reset the board
+- [ ] grblHAL and FluidNC: a full job with the buffer size each reports
+- [ ] USB serial at baud rates other than 115200
+- [ ] TCP/IP to FluidNC telnet (port 23) and to a grblHAL Ethernet board
+- [ ] Bluetooth serial: the paired port is marked as Bluetooth by the operating system and a job streams over it
+- [ ] DTR: "Pulse DTR when connecting" resets an Arduino board; "Keep DTR on while connected" off lets an ESP32 board start
+- [ ] HTTP: what FluidNC (and other web interfaces) answer to `/command?plain=`, and whether G-code lines are accepted there at all
+- [ ] Raw USB: open a controller by vendor and product ID, find its bulk endpoints, stream a job
+- [ ] Network bridge: the TCP framing (0x4C, two length bytes, then the UDP packet with its checksum, port 5005) against a real bridge, and whether answers come back framed the same way
+- [ ] Automation socket: START from another computer with "Accept commands from other computers" on
+- [ ] Diode laser names: Ortur and xTool strings match what owners posted; whether Atomstack and Sculpfun boards print their name at all (the simulator assumes `[MSG:Using machine:...]`)

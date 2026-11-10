@@ -717,4 +717,46 @@ mod norwegian {
         check(had_none, hint_of(&mut g, &format!("ribbon:{had_none}")), &format!("{} (Ctrl+Alt+F8)", commands::find(had_none).unwrap().label));
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
+
+    #[test]
+    fn shortcuts_and_drawing_work_the_same_in_norwegian_as_through_commands() {
+        use darkburn_core::Shape;
+        use egui::{Key, Modifiers};
+        let mut g = norwegian_gui();
+        // The keys follow the commands, not their translated names.
+        g.key(Key::R, Modifiers::COMMAND);
+        g.frames(2);
+        assert_eq!(g.app().tool, crate::tools::Tool::Rect, "Ctrl+R picks the rectangle tool");
+        g.drag_mm((30.0, 30.0), (90.0, 60.0));
+        g.click_id("tool:tools.ellipse");
+        g.drag_mm((100.0, 30.0), (140.0, 60.0));
+        g.click_id("tool:tools.line");
+        g.click_mm(10.0, 80.0);
+        g.click_mm(50.0, 80.0);
+        g.click_mm(50.0, 100.0);
+        g.enter();
+        g.frames(2);
+        let drawn: Vec<Shape> = g.app().editor.doc.iter().cloned().collect();
+        assert_eq!(drawn.len(), 3, "a rectangle, an ellipse and a line");
+        // The same three through the commands, which take the design's own coordinates (Y up from
+        // the bottom of the 400 mm work area; the canvas of the default device counts from the top).
+        let mut a = crate::shape_ops::tests::app();
+        let run = crate::shape_ops::tests::run;
+        run(&mut a, "shape.add_rect", serde_json::json!({ "x": 30, "y": 340, "width": 60, "height": 30 })).unwrap();
+        run(&mut a, "shape.add_ellipse", serde_json::json!({ "x": 100, "y": 340, "width": 40, "height": 30 })).unwrap();
+        run(&mut a, "shape.add_line", serde_json::json!({ "points": [[10, 320], [50, 320], [50, 300]] })).unwrap();
+        let made: Vec<Shape> = a.editor.doc.iter().cloned().collect();
+        let mut wrong = Vec::new();
+        for (d, m) in drawn.iter().zip(&made) {
+            let (bd, bm) = (d.bbox(), m.bbox());
+            let near = (bd.x0 - bm.x0).abs() < 0.01 && (bd.y0 - bm.y0).abs() < 0.01 && (bd.x1 - bm.x1).abs() < 0.01 && (bd.y1 - bm.y1).abs() < 0.01;
+            let same_settings = Shape { id: m.id, kind: m.kind.clone(), transform: m.transform, ..d.clone() } == *m;
+            if d.kind_name() != m.kind_name() || !near || !same_settings {
+                wrong.push(format!("drawn {} {bd:?} {d:?}\nmade {} {bm:?} {m:?}", d.kind_name(), m.kind_name()));
+            }
+        }
+        // Three undo steps either way.
+        assert_eq!(g.app().editor.history.len(), a.editor.history.len());
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
 }

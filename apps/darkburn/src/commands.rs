@@ -1356,7 +1356,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        assert!(!works("laser.material_test_galvo"), "the galvo material test arrives in a later phase");
+        assert!(works("laser.material_test_galvo") && !hardware("laser.material_test_galvo"), "it only adds shapes to the project");
         assert!(works("laser.repeat_marking") && works("laser.lens_test"));
     }
 

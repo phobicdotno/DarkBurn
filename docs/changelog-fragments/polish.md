@@ -7,3 +7,5 @@ Library entries show an icon for line, fill or image.
 Help > Camera Selection Help explains how to pick a camera and what to check when it is missing.
 Preview: Run from here and Send from here are only offered on machines that can do it.
 A galvo no longer marks the whole job when asked to start part way.
+Material Test (galvo): small filled cells, speed against frequency, sized for the lens field.
+The material test warns when the device cannot do what the grid varies.

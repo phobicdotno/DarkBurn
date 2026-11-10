@@ -178,7 +178,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LT-16 Get controller info
 - [x] LT-17 Repeat marking (galvo)
 - [x] LT-18 Lens correction test (galvo)
-- [ ] LT-19 Material test, galvo variant
+- [x] LT-19 Material test, galvo variant
 
 ### Window
 - [x] WIN-01 Reset to default layout
@@ -681,7 +681,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DEV-04 Edit, duplicate, remove device
 - [x] DEV-05 Import and export device profiles
 - [ ] DEV-06 Network bridge setup wizard
-- [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups
+- [~] DEV-07 Per device: libraries, units, grid, origin, panel layout, default layers, port, settings backups *(units, grid and its spacing, origin corner, panel layout, default layers, port and backups follow the device; the library follows the device by its name, and the job origin and start-from stay with the project)*
 - [x] DEV-08 Design-only device with no laser
 
 ### Connections

@@ -551,3 +551,162 @@ fn a_saved_project_brings_back_variable_text_state_a_virtual_array_and_a_missing
     assert!(matches!(&b.editor.doc.get(array).unwrap().kind, ShapeKind::Group { children } if children.len() == 8));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ----- LT-19: material test, galvo variant ------------------------------------------------------
+
+/// A galvo simulator device, selected (not connected), with `source` as its laser source.
+fn galvo_device(app: &mut DarkBurn, source: crate::galvo_settings::Source) -> u64 {
+    let id = run(app, "device.add", json!({ "type": "SimulatorGalvo" })).unwrap()["id"].as_u64().unwrap();
+    app.machine.devices.get_mut(id).unwrap().settings.galvo.source = source;
+    run(app, "device.select", json!({ "id": id })).unwrap();
+    id
+}
+
+fn near(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-6
+}
+
+#[test]
+fn galvo_material_test_starts_small_filled_and_inside_the_lens_field() {
+    use crate::material_test::{Axis, MaterialTestParams, generate, validate};
+    let p = MaterialTestParams::galvo_defaults((110.0, 110.0));
+    validate(&p).unwrap();
+    assert!(p.galvo && p.fill);
+    assert_eq!((p.x_axis, p.y_axis), (Axis::Speed, Axis::Frequency));
+    assert!(p.base_interval <= 0.05 && p.base_speed >= 500.0);
+    let mut doc = darkburn_core::Document::new();
+    let r = generate(&mut doc, &p).unwrap();
+    assert!(r.bounds.x0 >= 0.0 && r.bounds.y0 >= 0.0 && r.bounds.x1 <= 110.0 && r.bounds.y1 <= 110.0, "{:?}", r.bounds);
+    // A small field still gets a sheet that starts inside it.
+    let small = MaterialTestParams::galvo_defaults((20.0, 20.0));
+    assert!(small.x >= 0.0 && small.y >= 0.0);
+    // The plain test is unchanged and leaves the galvo settings of its layers alone.
+    let plain = MaterialTestParams::default();
+    assert!(!plain.galvo);
+    let mut doc2 = darkburn_core::Document::new();
+    let before = doc2.layer(0).main().galvo.frequency_khz;
+    generate(&mut doc2, &plain).unwrap();
+    assert_eq!(doc2.layer(0).main().galvo.frequency_khz, before);
+}
+
+#[test]
+fn galvo_material_test_becomes_a_galvo_job_with_its_own_speed_and_frequency_per_cell() {
+    use darkburn_galvo::LayerMode;
+    let mut a = DarkBurn::new(Prefs::default());
+    galvo_device(&mut a, crate::galvo_settings::Source::Fiber);
+    let r = run(&mut a, "job.material_test", json!({ "galvo": true, "columns": 3, "rows": 2, "base_power": 35 })).unwrap();
+    assert_eq!(r["galvo"], true);
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(r["layers"].as_array().unwrap().len(), 7, "six cells and the labels");
+
+    let dev = a.machine.active().clone();
+    let b = crate::galvo_job::build_job(&a.editor.doc, &dev).unwrap();
+    assert!(b.warnings.is_empty(), "{:?}", b.warnings);
+    let cells: Vec<_> = b.job.layers.iter().filter(|l| matches!(l.mode, LayerMode::Fill(_))).collect();
+    let labels: Vec<_> = b.job.layers.iter().filter(|l| matches!(l.mode, LayerMode::Line)).collect();
+    assert_eq!((cells.len(), labels.len()), (6, 1));
+    // Rows vary the frequency (20 and 60 kHz), columns the speed (500, 1500, 2500 mm/s).
+    let mut seen: Vec<(i64, i64)> = cells.iter().map(|l| (l.params.frequency_khz.round() as i64, l.params.speed_mm_s.round() as i64)).collect();
+    seen.sort();
+    assert_eq!(seen, [(20, 500), (20, 1500), (20, 2500), (60, 500), (60, 1500), (60, 2500)]);
+    for l in &cells {
+        assert!(near(l.params.power_pct, 35.0));
+        assert!(l.params.q_pulse_ns.is_none(), "a Q-switched source has no Q-pulse");
+        match &l.mode {
+            LayerMode::Fill(f) => assert!(near(f.interval_mm, 0.03)),
+            _ => unreachable!(),
+        }
+    }
+    // It compiles for the board, inside the field (centred coordinates).
+    let c = crate::galvo_job::compile(&b.job, &dev).unwrap();
+    let half = dev.bed().0 / 2.0;
+    assert!(c.bounds_mm.x0 >= -half && c.bounds_mm.x1 <= half && c.bounds_mm.y0 >= -half && c.bounds_mm.y1 <= half, "{:?}", c.bounds_mm);
+    assert!(!c.list_commands().is_empty());
+    // One undo takes the whole sheet away again.
+    run(&mut a, "edit.undo", Value::Null).unwrap();
+    assert_eq!(a.editor.doc.len(), 0);
+}
+
+#[test]
+fn galvo_material_test_varies_q_pulse_only_on_a_mopa_source() {
+    use darkburn_galvo::LayerMode;
+    let args =
+        json!({ "galvo": true, "columns": 3, "rows": 1, "x_axis": "q_pulse", "x_min": 50, "x_max": 250, "y_axis": "speed", "base_frequency": 45 });
+    let mut a = DarkBurn::new(Prefs::default());
+    galvo_device(&mut a, crate::galvo_settings::Source::Fiber);
+    let e = run(&mut a, "job.material_test", args.clone()).unwrap_err();
+    assert!(e.contains("Q-pulse") && e.contains("MOPA"), "{e}");
+    assert_eq!(a.editor.doc.len(), 0, "nothing was added");
+
+    let mut m = DarkBurn::new(Prefs::default());
+    galvo_device(&mut m, crate::galvo_settings::Source::Mopa);
+    run(&mut m, "job.material_test", args).unwrap();
+    let dev = m.machine.active().clone();
+    let b = crate::galvo_job::build_job(&m.editor.doc, &dev).unwrap();
+    let mut widths: Vec<u32> = b.job.layers.iter().filter(|l| matches!(l.mode, LayerMode::Fill(_))).map(|l| l.params.q_pulse_ns.unwrap()).collect();
+    widths.sort();
+    assert_eq!(widths, [50, 150, 250]);
+    assert!(
+        b.job.layers.iter().filter(|l| matches!(l.mode, LayerMode::Fill(_))).all(|l| near(l.params.frequency_khz, 45.0)),
+        "the base frequency is on every cell"
+    );
+    crate::galvo_job::compile(&b.job, &dev).unwrap();
+}
+
+#[test]
+fn material_test_warns_when_it_cannot_do_what_is_asked_on_this_device() {
+    // Frequency on a G-code laser: made, with a warning.
+    let mut a = DarkBurn::new(Prefs::default());
+    let r = run(&mut a, "job.material_test", json!({ "y_axis": "frequency", "y_min": 20, "y_max": 60 })).unwrap();
+    assert!(r["warnings"][0].as_str().unwrap().contains("galvo"), "{r}");
+    // A sheet placed outside the lens field: made, with a warning.
+    let mut g = DarkBurn::new(Prefs::default());
+    galvo_device(&mut g, crate::galvo_settings::Source::Fiber);
+    let r = run(&mut g, "job.material_test", json!({ "galvo": true, "x": 100, "y": 100 })).unwrap();
+    assert!(r["warnings"][0].as_str().unwrap().contains("does not fit"), "{r}");
+}
+
+#[test]
+fn galvo_material_test_runs_on_the_galvo_emulator() {
+    let mut a = DarkBurn::new(Prefs::default());
+    connect(&mut a, DeviceType::SimulatorGalvo);
+    run(&mut a, "job.material_test", json!({ "galvo": true, "columns": 2, "rows": 2 })).unwrap();
+    run(&mut a, "machine.galvo_arm", json!({ "on": true })).unwrap();
+    // The board wants the job framed first unless the device says otherwise.
+    if let Err(e) = run(&mut a, "machine.start", Value::Null) {
+        assert!(e.to_lowercase().contains("fram"), "{e}");
+        run(&mut a, "machine.galvo_frame", json!({ "repeat": false })).unwrap();
+        tick_until(&mut a, "framed", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+        run(&mut a, "machine.galvo_arm", json!({ "on": true })).unwrap();
+        run(&mut a, "machine.start", Value::Null).unwrap();
+    }
+    tick_until(&mut a, "marked", |a| finished(a) == 1);
+    assert!(a.machine.handle.snapshot().simulator, "only ever the emulator");
+}
+
+#[test]
+fn material_test_galvo_command_opens_the_window_on_the_galvo_values() {
+    let info = crate::commands::describe("laser.material_test_galvo").unwrap();
+    assert!(info.implemented && !info.hardware);
+    assert_eq!(info.checklist, ["LT-19"]);
+    let mut g = Gui::standard();
+    g.run_command("laser.material_test_galvo");
+    g.frames(2);
+    assert!(g.app().job.material_open && g.app().job.material.galvo);
+    assert!(g.window_titles().contains(&"Material Test".to_string()), "{:?}", g.window_titles());
+    for label in ["Galvo test (frequency and Q-pulse)", "Base frequency", "Base Q-pulse"] {
+        assert!(g.has_text(label), "{label}; texts: {:?}", g.visible_texts());
+    }
+    g.screenshot("material-test-galvo");
+    // Unticking the box goes back to the plain test.
+    g.click_label("Galvo test (frequency and Q-pulse)");
+    assert!(!g.app().job.material.galvo);
+    assert!(!g.has_text("Base frequency"));
+    g.click_label("Galvo test (frequency and Q-pulse)");
+    assert!(g.app().job.material.galvo);
+    // Generate adds the sheet to the project.
+    g.click_label("Generate");
+    g.frames(2);
+    assert!(g.app().editor.doc.len() > 25, "25 cells and their labels");
+    g.close_dialogs();
+}

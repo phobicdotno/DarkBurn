@@ -222,12 +222,12 @@ fn burn_by_cell(design: &Toolpath, shift: Point) -> BTreeMap<(usize, usize, usiz
         if let Op::LayerStart { layer: l } = op {
             layer = (design.layers[*l].layer_index, design.layers[*l].sublayer);
         }
-        if let Op::Cut { to, power, .. } | Op::Arc { to, power, .. } = op {
-            if *power > 0.0 {
-                let mid = pos.midpoint(*to);
-                let cell = cell_of(mid, shift).unwrap_or(usize::MAX);
-                *map.entry((cell, layer.0, layer.1)).or_insert(0.0) += pos.distance(*to);
-            }
+        if let Op::Cut { to, power, .. } | Op::Arc { to, power, .. } = op
+            && *power > 0.0
+        {
+            let mid = pos.midpoint(*to);
+            let cell = cell_of(mid, shift).unwrap_or(usize::MAX);
+            *map.entry((cell, layer.0, layer.1)).or_insert(0.0) += pos.distance(*to);
         }
         if let Some(t) = op.target() {
             pos = t;
@@ -249,17 +249,18 @@ fn burns_over(design: &Toolpath, li: usize, si: usize, p: Point) -> usize {
         if let Op::LayerStart { layer: l } = op {
             on = design.layers[*l].layer_index == li && design.layers[*l].sublayer == si;
         }
-        if let Op::Cut { to, power, .. } = op {
-            if on && *power > 0.0 {
-                let (a, b) = (pos, *to);
-                let ab = b - a;
-                let len2 = ab.hypot2();
-                if len2 > 1e-12 {
-                    let t = (p - a).dot(ab) / len2;
-                    let foot = a + ab * t.clamp(0.0, 1.0);
-                    if foot.distance(p) < 1e-4 && t > -1e-9 && t < 1.0 - 1e-9 {
-                        n += 1;
-                    }
+        if let Op::Cut { to, power, .. } = op
+            && on
+            && *power > 0.0
+        {
+            let (a, b) = (pos, *to);
+            let ab = b - a;
+            let len2 = ab.hypot2();
+            if len2 > 1e-12 {
+                let t = (p - a).dot(ab) / len2;
+                let foot = a + ab * t.clamp(0.0, 1.0);
+                if foot.distance(p) < 1e-4 && t > -1e-9 && t < 1.0 - 1e-9 {
+                    n += 1;
                 }
             }
         }
@@ -292,10 +293,10 @@ fn check_case(seed: u64) -> Result<(), String> {
 
     // (a) Travel moves carry no power, and nothing has a power that is not a number in 0..100.
     for (i, op) in b.toolpath.ops.iter().enumerate() {
-        if let Op::Cut { power, speed, to } | Op::Arc { power, speed, to, .. } = op {
-            if !(0.0..=100.0).contains(power) || !(*speed > 0.0) || !to.x.is_finite() || !to.y.is_finite() {
-                return Err(format!("op {i} is not sane: {op:?}"));
-            }
+        if let Op::Cut { power, speed, to } | Op::Arc { power, speed, to, .. } = op
+            && (!(0.0..=100.0).contains(power) || !(*speed > 0.0) || !to.x.is_finite() || !to.y.is_finite())
+        {
+            return Err(format!("op {i} is not sane: {op:?}"));
         }
     }
 
@@ -528,10 +529,10 @@ fn run_gcode(text: &str, dev: &DeviceGcodeSettings, start: Point) -> Ran {
             Some(67) | Some(68) => q = get('Q').unwrap_or(0.0),
             _ => {}
         }
-        if m != Some(106) {
-            if let Some(v) = get('S') {
-                s = v;
-            }
+        if m != Some(106)
+            && let Some(v) = get('S')
+        {
+            s = v;
         }
         for w in &words {
             if w.0 == 'G' {
@@ -625,8 +626,8 @@ fn check_outputs(seed: u64) -> Result<(), String> {
             let mut dev = DeviceGcodeSettings::default();
             dev.set_flavor_index(flavor);
             dev.marlin_power = mp;
-            dev.overscan_as_g0 = seed % 3 == 0;
-            dev.s_every_g1 = seed % 5 == 0;
+            dev.overscan_as_g0 = seed.is_multiple_of(3);
+            dev.s_every_g1 = seed.is_multiple_of(5);
             let text = gcode_text(&b, None, &dev);
             let ran = run_gcode(&text, &dev, b.toolpath.start);
             let name = DeviceGcodeSettings::flavor_names()[flavor];

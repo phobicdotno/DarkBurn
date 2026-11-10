@@ -120,13 +120,19 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
     if let Some(pf) = ls.perforation
         && pf.cut > 0.0
         && pf.skip > 0.0
-        && total > pf.cut
+        && total > EPS
     {
-        let period = pf.cut + pf.skip;
-        let mut a = pf.cut;
-        while a < total {
-            intervals.push((a, (a + pf.skip).min(total), 0.0));
-            a += period;
+        if total < pf.cut + pf.skip {
+            // Too short for a whole cut and skip: it still gets one skip, at its end and no
+            // longer than half of it, or a small part would be cut free.
+            intervals.push((total - pf.skip.min(total / 2.0), total, 0.0));
+        } else {
+            let period = pf.cut + pf.skip;
+            let mut a = pf.cut;
+            while a < total {
+                intervals.push((a, (a + pf.skip).min(total), 0.0));
+                a += period;
+            }
         }
     }
     let power_at = |s_mid: f64| -> f64 { intervals.iter().filter(|(a, b, _)| s_mid > *a && s_mid < *b).fold(power, |p, (_, _, q)| p.min(*q)) };
@@ -426,6 +432,30 @@ mod tests {
         assert!(g.iter().all(|(a, b)| (a.x - 2.5).abs() < 1e-9 && (b.x - 3.5).abs() < 1e-9 && a.y == 0.0), "{g:?}");
         let Op::Rapid { to } = ops[0] else { panic!() };
         assert!(to.distance(Point::new(0.0, -2.0)) < 1e-9, "the lead-in is still there: {to:?}");
+    }
+
+    /// Perforation always leaves at least one bridge, or a small part would be cut free.
+    #[test]
+    fn a_shape_shorter_than_the_cut_length_still_gets_one_perforation() {
+        let small = [Point::new(0.0, 0.0), Point::new(1.0, 0.0), Point::new(1.0, 1.0), Point::new(0.0, 1.0), Point::new(0.0, 0.0)];
+        let mut s = CutSettings::line(10.0, 50.0);
+        // 4 mm of outline, 5 mm cuts with 1 mm skips
+        s.line.perforation = Some(Perforation { cut: 5.0, skip: 1.0 });
+        let mut ops = Vec::new();
+        emit_path(&small, true, &ctx(&s), &mut ops);
+        assert!((cut_len(&ops, false) - 1.0).abs() < 1e-9, "one skip: {}", cut_len(&ops, false));
+        assert!((cut_len(&ops, true) - 3.0).abs() < 1e-9, "{}", cut_len(&ops, true));
+        // a skip longer than the shape takes half of it at most
+        s.line.perforation = Some(Perforation { cut: 5.0, skip: 10.0 });
+        let mut ops = Vec::new();
+        emit_path(&small, true, &ctx(&s), &mut ops);
+        assert!((cut_len(&ops, false) - 2.0).abs() < 1e-9, "{}", cut_len(&ops, false));
+        assert!((cut_len(&ops, true) - 2.0).abs() < 1e-9, "{}", cut_len(&ops, true));
+        // a shape a hair longer than the cut length gets a whole skip, not a hair of one
+        s.line.perforation = Some(Perforation { cut: 3.99, skip: 1.0 });
+        let mut ops = Vec::new();
+        emit_path(&small, true, &ctx(&s), &mut ops);
+        assert!((cut_len(&ops, false) - 1.0).abs() < 1e-9, "{}", cut_len(&ops, false));
     }
 
     #[test]

@@ -124,6 +124,26 @@ fn a_line_after_closing_starts_a_new_part_at_the_start_point() {
 }
 
 #[test]
+fn page_box_origin_rotation_and_user_unit() {
+    // The page box starts at (100,200): its corner is the origin.
+    let doc = read(&pdf("/MediaBox [100 200 400 600]", "110 220 m 150 260 l S", &[]));
+    let b = paths(&doc)[0].path.bounding_box();
+    assert!(box_pt(b, 10.0, 20.0, 50.0, 60.0), "{b:?}");
+    // Turned a quarter clockwise: the page is 300 wide and 400 high, (x,y) goes to (y, 300 - x).
+    let doc = read(&pdf("/MediaBox [100 200 400 600] /Rotate 90", "110 220 m 150 260 l S", &[]));
+    let b = paths(&doc)[0].path.bounding_box();
+    assert!(box_pt(b, 20.0, 250.0, 60.0, 290.0), "{b:?}");
+    // The crop box wins over the media box.
+    let doc = read(&pdf("/MediaBox [0 0 400 600] /CropBox [100 200 300 400]", "110 220 m 150 260 l S", &[]));
+    let b = paths(&doc)[0].path.bounding_box();
+    assert!(box_pt(b, 10.0, 20.0, 50.0, 60.0), "{b:?}");
+    // UserUnit 2: one unit is 2/72 inch, so 36 units are an inch.
+    let doc = read(&pdf("/MediaBox [0 0 300 300] /UserUnit 2", "0 0 36 72 re S", &[]));
+    let b = paths(&doc)[0].path.bounding_box();
+    assert!((b.width() - 25.4).abs() < 1e-6 && (b.height() - 50.8).abs() < 1e-6, "{b:?}");
+}
+
+#[test]
 fn a_form_inside_a_form_carries_every_matrix() {
     // Page: move by (100,0). Form 5 (matrix: scale 2) draws form 6 (matrix: move by (0,10)),
     // which draws a line from (0,0) to (10,0): on the page from (100,20) to (120,20).

@@ -273,7 +273,9 @@ impl<'a> Interp<'a> {
             270 => Affine::new([0.0, 1.0, -1.0, 0.0, h, 0.0]),
             _ => Affine::IDENTITY,
         };
-        let base = Affine::scale(PT_TO_MM) * rot * Affine::translate((-x0, -y0));
+        // UserUnit (PDF 1.6): the size of one unit in 1/72 inch, for pages larger than 200 inches.
+        let unit = dict_get(doc, page, b"UserUnit").and_then(num).filter(|u| *u > 0.0).unwrap_or(1.0);
+        let base = Affine::scale(PT_TO_MM * unit) * rot * Affine::translate((-x0, -y0));
         let mut dicts = Vec::new();
         if let Ok((inline, ids)) = doc.get_page_resources(page_id) {
             if let Some(d) = inline {

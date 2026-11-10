@@ -451,7 +451,10 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         });
     }
     origin_fields(ui, d);
-    ui_kit::checkbox(ui, "Home when a job starts", &mut d.auto_home);
+    // The same setting as on the G-code page: it is what the job reads.
+    if d.family() == Family::Grbl {
+        ui_kit::checkbox(ui, "Home when a job starts", &mut d.settings.gcode.auto_home);
+    }
     ui_kit::checkbox(ui, "Negative coordinates (zero at the far corner)", &mut d.settings.negative_coords);
     ui_kit::section_heading(ui, "Red dot pointer");
     ui_kit::row(ui, "Offset X", |ui| {

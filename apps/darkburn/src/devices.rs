@@ -446,6 +446,8 @@ pub struct Device {
     pub height_mm: f64,
     /// Where the machine's 0,0 is.
     pub origin: Corner,
+    /// The New Device wizard's "home when a job starts"; a finished device keeps it in
+    /// `settings.gcode.auto_home`, which is what a job reads.
     pub auto_home: bool,
     pub settings: DeviceSettings,
     pub state: DeviceState,

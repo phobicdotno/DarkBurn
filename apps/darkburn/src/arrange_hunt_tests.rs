@@ -75,3 +75,20 @@ fn a_moved_array_changed_to_circular_turns_about_the_page_centre() {
     let b = a.editor.doc.get(ShapeId(id)).unwrap().bbox();
     assert!((b.x0 - 46.0).abs() < 1e-6 && (b.x1 - 354.0).abs() < 1e-6 && (b.y0 - 198.0).abs() < 1e-6, "{b:?}");
 }
+
+/// Deleting a layer with its shapes also takes them out of a virtual array's originals: editing
+/// the array afterwards must not bring them back.
+#[test]
+fn shapes_of_a_deleted_layer_do_not_come_back_when_a_virtual_array_is_edited() {
+    let mut a = app();
+    let r1 = add_rect(&mut a, 0.0, 0.0, 10.0, 10.0, 2);
+    let r2 = add_rect(&mut a, 20.0, 0.0, 10.0, 10.0, 5);
+    select(&mut a, &[r1, r2]);
+    let v = run(&mut a, "arrange.grid_array", json!({ "rows": 1, "cols": 2, "virtual": true })).unwrap();
+    let id = v["ids"][0].as_u64().unwrap();
+    run(&mut a, "layer.delete", json!({ "layer": 2, "with_shapes": true })).unwrap();
+    assert_eq!(a.editor.doc.used_layers(), vec![5]);
+    run(&mut a, "arrange.array_edit", json!({ "id": id, "cols": 3 })).unwrap();
+    assert_eq!(a.editor.doc.used_layers(), vec![5]);
+    assert_eq!(a.editor.doc.get(ShapeId(id)).unwrap().leaves().len(), 3, "three copies of the one square left");
+}

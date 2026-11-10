@@ -297,6 +297,11 @@ fn without_layer(shape: &Shape, layer: usize) -> Option<Shape> {
                 group.layer = first;
             }
             group.kind = ShapeKind::Group { children: kept };
+            // A virtual array loses its originals on the layer too, or they would be back the next
+            // time the array is edited.
+            if let Some(a) = &mut group.array {
+                a.source = a.source.iter().filter_map(|s| without_layer(s, layer)).collect();
+            }
             Some(group)
         }
         _ => (shape.layer != layer).then(|| shape.clone()),

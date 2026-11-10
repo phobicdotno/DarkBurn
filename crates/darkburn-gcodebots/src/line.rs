@@ -988,8 +988,12 @@ impl Worker {
                     return Flow::Quit;
                 }
             }
-            Cmd::Line { text, tag } => self.enqueue(text, tag),
+            Cmd::Line { text, tag } => {
+                self.fire_off_before(&tag);
+                self.enqueue(text, tag);
+            }
             Cmd::Lines { lines, tag } => {
+                self.fire_off_before(&tag);
                 for l in lines {
                     self.enqueue(l, tag.clone());
                 }
@@ -1034,6 +1038,10 @@ impl Worker {
         if self.job.is_some() || self.stop.is_some() {
             self.emit(MachineEvent::Rejected("A job is already running.".into()));
             return;
+        }
+        if self.fire_until.is_some() {
+            // Off now, ahead of the job's first line, not from the timer in the middle of it.
+            self.fire_off();
         }
         let Job { lines, total_lines, finish, stop_on_error, .. } = job;
         self.job = Some(ActiveJob {
@@ -1083,8 +1091,22 @@ impl Worker {
         self.queue.push_front(Out { text, tag: Tag::Plain, urgent: true });
     }
 
+    /// The fire button never stays on while another command runs: homing and long moves
+    /// would hold back the timed switch-off until they are done.
+    fn fire_off_before(&mut self, tag: &Tag) {
+        if self.fire_until.is_some() && *tag != Tag::Poll {
+            self.fire_off();
+        }
+    }
+
     fn fire_off(&mut self) {
         self.fire_until = None;
+        if self.job.is_some() {
+            // A job controls the laser itself; a switch-off between its lines would leave
+            // the rest of it unburned.
+            self.snap.fire_on = false;
+            return;
+        }
         if self.snap.fire_on || self.stop.is_none() {
             // Drop queued fire-on lines first so they cannot switch the laser on afterwards.
             self.queue.retain(|o| o.tag != Tag::Fire);

@@ -824,3 +824,44 @@ fn disconnecting_in_the_middle_of_a_job_stops_the_cut() {
         });
     }
 }
+
+#[test]
+fn a_job_started_while_the_fire_button_is_on_keeps_its_laser() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+    let p = marlin_profile();
+    let (m, mut log) = connect(&p, &emu);
+    // The fire button's own timer runs out while the job is cutting.
+    m.fire(5.0, Duration::from_millis(600)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_armed())));
+    m.start_job(translated_job(&p, 40)).unwrap();
+    assert!(log.wait(m.as_ref(), Duration::from_secs(30), |e| matches!(e, MachineEvent::JobFinished(_))));
+    let lines = emu.with(|e| e.stats().arrived.clone());
+    let first = lines.iter().position(|l| l.starts_with("G1")).expect("the job cut something");
+    let last = lines.iter().rposition(|l| l.starts_with("G1")).expect("the job cut something");
+    assert!(last - first > 70, "{lines:?}");
+    assert!(!lines[first..last].iter().any(|l| l == "M5"), "the laser was switched off in the middle of the job: {lines:?}");
+    assert!(lines[..first].iter().any(|l| l == "M5"), "the fire button is switched off before the job: {lines:?}");
+    assert!(!m.snapshot().fire_on);
+    m.disconnect();
+}
+
+#[test]
+fn homing_switches_the_fire_button_off_first() {
+    for (flavor, p) in [(EmuFlavor::Marlin, marlin_profile()), (EmuFlavor::Smoothie, smoothie_profile())] {
+        let emu = LineEmuHandle::with_config(EmuConfig::new(flavor).with_time_scale(1.0));
+        let (m, mut log) = connect(&p, &emu);
+        m.fire(5.0, Duration::from_secs(8)).unwrap();
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_on() || e.laser_armed())), "{flavor:?}");
+        m.home().unwrap();
+        assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Homed)), "{flavor:?}");
+        emu.with(|e| {
+            let a = &e.stats().arrived;
+            let home = a.iter().rposition(|l| l.starts_with("G28") || l.starts_with("$H")).expect("homing was sent");
+            let off = a.iter().position(|l| l == "M5" || l == "fire off" || l.starts_with("M107"));
+            assert!(off.is_some_and(|i| i < home), "{flavor:?}: the laser stayed on while homing: {a:?}");
+            assert!(!e.laser_on());
+        });
+        assert!(!m.snapshot().fire_on);
+        m.disconnect();
+    }
+}

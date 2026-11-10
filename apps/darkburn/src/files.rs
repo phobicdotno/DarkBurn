@@ -999,7 +999,7 @@ mod tests {
         let mut a = app(&dir);
         frame(&ctx, &mut a);
         assert_eq!(a.files.restore.as_deref(), Some(settings.join(AUTOSAVE_FILE).as_path()));
-        assert!(a.files.open_dialogs().iter().any(|d| *d == "restore_autosave"));
+        assert!(a.files.open_dialogs().contains(&"restore_autosave"));
         // Safe mode and a second window of the same copy never offer it (and leave the files).
         for (safe, secondary) in [(true, false), (false, true)] {
             let mut b = app(&dir);

@@ -1211,6 +1211,9 @@ enum StopPhase {
 struct StopSeq {
     phase: StopPhase,
     since: Instant,
+    /// Where the last status report after the feed hold put the machine. GRBL 0.9 does not
+    /// say when a hold is complete, so the reset waits until two reports agree.
+    held_at: Option<Axes>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1626,12 +1629,14 @@ impl Worker {
         // is stale; only a reset stops it.
         let homing = self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H"));
         let now = Instant::now();
-        if self.snap.is_v11() && may_move && !homing && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
+        // Feed hold first on every GRBL version: a reset while the machine moves raises an
+        // alarm and loses the position.
+        if may_move && !homing && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
             self.write(&[rt::FEED_HOLD])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now, held_at: None });
         } else {
             self.write(&[rt::SOFT_RESET])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now, held_at: None });
         }
         self.publish();
         Ok(())
@@ -1639,12 +1644,12 @@ impl Worker {
 
     fn stop_reset(&mut self) -> Result<(), String> {
         self.write(&[rt::SOFT_RESET])?;
-        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now(), held_at: None });
         Ok(())
     }
 
     fn stop_after_reset(&mut self) -> Result<(), String> {
-        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now(), held_at: None });
         self.poll(true)
     }
 
@@ -2146,11 +2151,20 @@ impl Worker {
         if changed {
             self.emit(Event::StateChanged(r.state.clone()));
         }
-        if let Some(stop) = &self.stop {
+        let v11 = self.snap.is_v11();
+        let mpos = self.snap.status.mpos;
+        if let Some(stop) = &mut self.stop {
             match stop.phase {
                 StopPhase::Hold => {
                     let after_hold = poll_time.is_some_and(|t| t > stop.since);
-                    if after_hold && !r.state.is_moving() {
+                    // GRBL 1.1 reports `Hold:1` while it slows down. GRBL 0.9 reports a plain
+                    // `Hold` all the way, so there the machine stands still once two reports
+                    // in a row give the same position.
+                    let still = v11 || !matches!(r.state, MachineState::Hold(_)) || stop.held_at == Some(mpos);
+                    if after_hold {
+                        stop.held_at = Some(mpos);
+                    }
+                    if after_hold && !r.state.is_moving() && still {
                         self.stop_reset()?;
                     }
                 }

@@ -693,3 +693,70 @@ fn stop_during_homing_acts_at_once() {
     m.unlock().unwrap();
     wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
 }
+
+#[test]
+fn stop_on_grbl_09_holds_first_and_waits_for_the_machine_to_stand_still() {
+    // Real time, and a machine that needs 0.7 s to slow down: a reset before it stands still
+    // raises "ALARM: Abort during cycle" and loses the position.
+    let mut cfg = EmulatorConfig::flavor(EmulatorFlavor::Grbl09);
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    wait_emu(&emu, "M5 after reset", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    emu.with(|e| {
+        assert!(!e.laser_on());
+        assert_eq!(e.stats().soft_resets, 1);
+        assert!(e.stats().realtime.contains(&rt::FEED_HOLD));
+        assert_eq!(e.state_name(), "Idle");
+    });
+    wait_snap(&m, "idle after stop", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+}
+
+#[test]
+fn stop_on_grbl_11_waits_out_a_slow_feed_hold() {
+    let mut cfg = EmulatorConfig::atomstack();
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
+#[test]
+fn stop_after_jog_pause_or_start_leaves_no_alarm() {
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(5.0));
+    let m = connect(&emu, ConnectOptions::default());
+    m.jog(JogStep { dx: 300.0, feed: 3000.0, ..Default::default() }).unwrap();
+    wait_emu(&emu, "jogging", |e| e.state_name() == "Jog");
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after a pause, while still decelerating.
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on());
+    m.pause().unwrap();
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after starting, many times.
+    for i in 0..15 {
+        m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+        std::thread::sleep(Duration::from_millis(i * 7));
+        m.stop().unwrap();
+        let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+        assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop {i}: {events:?}");
+        wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+        emu.with(|e| assert!(!e.laser_on()));
+    }
+}

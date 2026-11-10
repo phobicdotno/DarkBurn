@@ -55,6 +55,9 @@ pub struct EmulatorConfig {
     pub homing_seconds: f64,
     /// Make `$H` fail with ALARM:9.
     pub homing_fails: bool,
+    /// Simulated seconds the machine takes to slow down after a feed hold; it still moves
+    /// (at half speed) during that time.
+    pub decel_seconds: f64,
     /// Keep every processed line in [`EmulatorStats::lines`].
     pub record_lines: bool,
     /// Settings that differ from the built-in defaults.
@@ -85,6 +88,7 @@ impl EmulatorConfig {
             force_set_origin: true,
             homing_seconds: 2.0,
             homing_fails: false,
+            decel_seconds: DECEL_SECONDS,
             record_lines: true,
             settings: Vec::new(),
             welcome: Vec::new(),
@@ -526,6 +530,9 @@ impl GrblEmulator {
         }
         if let Some(t) = self.timer_until {
             let d = (t - self.now).max(0.0);
+            if self.state == (State::Hold { complete: false }) {
+                self.decelerate(d.min(max));
+            }
             if d > max {
                 self.now += max;
                 return max;
@@ -595,6 +602,21 @@ impl GrblEmulator {
             return (max_xy * f64::from(self.ov.1) / 100.0).max(1.0);
         }
         (b.feed * f64::from(self.ov.0) / 100.0).min(max_xy).max(1.0)
+    }
+
+    /// The machine keeps moving while it slows down after a feed hold.
+    fn decelerate(&mut self, dt: f64) {
+        let Some(mut cur) = self.current else { return };
+        if cur.dwell_left > 0.0 || cur.length <= 0.0 {
+            return;
+        }
+        let rate = self.effective_rate(&cur.block) / 60.0 * 0.5;
+        cur.done = (cur.done + rate * dt).min(cur.length);
+        let f = cur.done / cur.length;
+        for i in 0..3 {
+            self.mpos[i] = cur.start[i] + (cur.block.target[i] - cur.start[i]) * f;
+        }
+        self.current = Some(cur);
     }
 
     fn step_motion(&mut self, max: f64) -> f64 {
@@ -891,7 +913,7 @@ impl GrblEmulator {
         match self.state {
             State::Run => {
                 self.state = State::Hold { complete: false };
-                self.timer_until = Some(self.now + DECEL_SECONDS);
+                self.timer_until = Some(self.now + self.cfg.decel_seconds);
             }
             State::Jog => self.cancel_jog(),
             State::Idle if self.cycle_pending() => {

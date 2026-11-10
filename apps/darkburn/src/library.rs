@@ -189,7 +189,16 @@ impl Library {
         if value.get("format").and_then(|f| f.as_str()) != Some(FILE_FORMAT) {
             return Err(tr("library.bad_file", "This is not a cut library"));
         }
-        serde_json::from_value(value).map_err(|e| bad(e.to_string()))
+        let mut lib: Library = serde_json::from_value(value).map_err(|e| bad(e.to_string()))?;
+        // As for a project file: only what the Cut Settings editor could have made.
+        for e in &mut lib.entries {
+            e.settings.truncate(darkburn_core::MAX_SUB_LAYERS);
+            if e.settings.is_empty() {
+                e.settings.push(CutSetting::default());
+            }
+            e.settings.iter_mut().for_each(CutSetting::sanitise);
+        }
+        Ok(lib)
     }
 
     /// Save to `path`, keeping the previous file as `<name>.dbclb.bak`.

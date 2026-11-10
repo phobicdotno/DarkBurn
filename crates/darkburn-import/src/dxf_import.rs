@@ -407,7 +407,8 @@ impl Ctx<'_> {
                 let mut p = BezPath::new();
                 p.move_to(pt(&l.p1));
                 p.line_to(pt(&l.p2));
-                self.push_path(e, inh, p, ocs(l.extrusion_direction.z));
+                // A line's points are world coordinates; its extrusion only steers a thickness.
+                self.push_path(e, inh, p, Affine::IDENTITY);
             }
             EntityType::Circle(c) => {
                 self.push_path(e, inh, circle_path(pt(&c.center), c.radius), ocs(c.normal.z));
@@ -469,9 +470,7 @@ impl Ctx<'_> {
                 self.push_path(e, inh, quad_path(c), ocs(s.extrusion_direction.z));
             }
             EntityType::Text(t) => {
-                let anchor = if t.horizontal_text_justification == HorizontalTextJustification::Left
-                    && t.vertical_text_justification == VerticalTextJustification::Baseline
-                {
+                let anchor = if at_first_point(t.horizontal_text_justification, t.vertical_text_justification) {
                     pt(&t.location)
                 } else {
                     pt(&t.second_alignment_point)
@@ -544,9 +543,7 @@ impl Ctx<'_> {
         if a.flags & 1 != 0 {
             return; // invisible attribute
         }
-        let anchor = if a.horizontal_text_justification == HorizontalTextJustification::Left
-            && a.vertical_text_justification == VerticalTextJustification::Baseline
-        {
+        let anchor = if at_first_point(a.horizontal_text_justification, a.vertical_text_justification) {
             pt(&a.location)
         } else {
             pt(&a.second_alignment_point)
@@ -704,6 +701,16 @@ struct TextRec {
     h: HAlign,
     v: VAlign,
     ocs_z: f64,
+}
+
+/// Whether text is anchored at its first point: plain left baseline text, and Aligned and Fit
+/// text, which runs from its first point to its second and is read as left aligned.
+fn at_first_point(h: HorizontalTextJustification, v: VerticalTextJustification) -> bool {
+    match h {
+        HorizontalTextJustification::Aligned | HorizontalTextJustification::Fit => true,
+        HorizontalTextJustification::Left => v == VerticalTextJustification::Baseline,
+        _ => false,
+    }
 }
 
 fn text_align(h: HorizontalTextJustification, v: VerticalTextJustification) -> (HAlign, VAlign) {

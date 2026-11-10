@@ -388,3 +388,76 @@ fn device_settings_default_layers_go_to_the_edited_device_on_ok_only() {
     assert_eq!(g.app().editor.doc.layer(1).main().speed, 77.0, "Apply used another device's defaults");
     assert_eq!(g.app().editor.history.len(), steps + 1);
 }
+
+/// Starting to type a text and leaving again with nothing typed (or nothing changed) is not a
+/// change to the project.
+#[test]
+fn a_text_that_was_not_typed_or_not_changed_leaves_a_saved_project_saved() {
+    let mut g = Gui::standard();
+    g.app().editor.mark_saved();
+    g.app().set_tool(Tool::Text);
+    g.frames(2);
+    g.click_mm(100.0, 100.0);
+    assert!(g.app().text.typing.is_some());
+    g.escape();
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.len(), 0);
+    assert!(!g.app().editor.is_modified(), "a click with the text tool and Escape changed the project");
+    // A text that exists: into it and out again without a change.
+    g.click_mm(100.0, 100.0);
+    g.type_text("ab");
+    g.escape();
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.len(), 1);
+    g.app().editor.mark_saved();
+    let steps = g.app().editor.history.len();
+    g.app().set_tool(Tool::Text);
+    g.frames(2);
+    let at = g.app().editor.doc.bbox().unwrap().center();
+    g.click_mm(at.x as f32, 400.0 - at.y as f32);
+    assert!(g.app().text.typing.is_some(), "the click went into the text");
+    g.escape();
+    g.frames(2);
+    assert_eq!(g.app().editor.history.len(), steps, "an undo step for no change");
+    assert!(!g.app().editor.is_modified(), "going into a text and out again changed the project");
+}
+
+/// A value changed in the Cut Settings Editor and taken back with Cancel is not a change to the
+/// project: a saved project stays saved. OK with a change makes it a changed project.
+#[test]
+fn cancel_in_the_cut_settings_editor_leaves_a_saved_project_saved() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.app().editor.mark_saved();
+    let edit_speed = |g: &mut Gui, value: &str| {
+        g.app().cut_settings_open = Some(1);
+        g.settle();
+        let window = g.dialog_windows().into_iter().next().expect("the editor is open");
+        let field = g.find_a11y(Some("SpinButton"), "Speed").into_iter().find(|f| window.contains(f.rect.center())).expect("a Speed field");
+        g.click_pos(field.rect.center());
+        g.key(Key::A, Modifiers::COMMAND);
+        g.type_text(value);
+        g.enter();
+    };
+    edit_speed(&mut g, "55");
+    assert_eq!(g.app().editor.doc.layer(1).main().speed, 55.0, "the edit shows live");
+    assert!(g.app().editor.is_modified());
+    g.click_id("dialog:cancel");
+    g.frames(3);
+    assert!(g.app().cut_settings_open.is_none());
+    assert_eq!(g.app().editor.doc.layer(1).main().speed, 100.0);
+    assert!(!g.app().editor.is_modified(), "Cancel put the value back but left the project changed");
+    // Looked at and closed with OK: nothing changed.
+    g.app().cut_settings_open = Some(1);
+    g.settle();
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(!g.app().editor.is_modified());
+    // OK with a change is a change.
+    edit_speed(&mut g, "66");
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(g.app().editor.is_modified());
+    g.key(Key::Z, Modifiers::COMMAND);
+    assert_eq!(g.app().editor.doc.layer(1).main().speed, 100.0);
+}

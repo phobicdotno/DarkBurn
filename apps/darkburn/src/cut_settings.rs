@@ -29,6 +29,12 @@ struct Session {
     /// The sub-layer shown.
     sub: usize,
     advanced: bool,
+    /// The project had no unsaved changes when the editor opened: the number of undo steps then.
+    clean_at: Option<usize>,
+    /// The project was saved while the editor's live edits were in it.
+    saved_since: bool,
+    /// A live edit was made.
+    edited: bool,
 }
 
 fn session_id() -> Id {
@@ -171,7 +177,13 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         selected: vec![open],
         sub: 0,
         advanced: false,
+        clean_at: (!app.editor.is_modified()).then(|| app.editor.history.len()),
+        saved_since: false,
+        edited: false,
     });
+    if s.edited && !app.editor.is_modified() {
+        s.saved_since = true;
+    }
     if s.opened_for != open {
         // Another layer was double-clicked while the editor is open.
         s.opened_for = open;
@@ -185,6 +197,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         .fields()
         .actions("OK", "Cancel", None)
         .show(ctx, true, |ui| body(ui, app, &mut s));
+    s.edited |= app.editor.doc.layers != s.original;
     match (closed, action) {
         (_, ui_kit::Action::Ok) => {
             finish(app, &s, true);
@@ -211,7 +224,13 @@ fn close(ctx: &egui::Context, app: &mut DarkBurn) {
 fn finish(app: &mut DarkBurn, s: &Session, keep: bool) {
     let e = &mut app.editor;
     let edited = e.doc.layers.clone();
+    // With the layers as they were at the start, a project that had no unsaved changes then has
+    // none now, unless it was saved or something else was done or undone meanwhile.
+    let saved_again = s.clean_at == Some(e.history.len()) && !s.saved_since && e.is_modified();
     if edited == s.original {
+        if s.edited && saved_again {
+            e.mark_saved();
+        }
         return;
     }
     e.doc.layers = s.original.clone();
@@ -222,6 +241,9 @@ fn finish(app: &mut DarkBurn, s: &Session, keep: bool) {
         });
     } else {
         e.touch();
+        if saved_again {
+            e.mark_saved();
+        }
     }
 }
 
@@ -888,7 +910,7 @@ mod tests {
             d.add(Shape::rect(KRect::new(0.0, 0.0, 1.0, 1.0), 0.0, 2));
             true
         });
-        let session = Session { opened_for: 2, original: app.editor.doc.layers.clone(), primary: 2, selected: vec![2, 5], sub: 0, advanced: false };
+        let session = Session { opened_for: 2, original: app.editor.doc.layers.clone(), primary: 2, selected: vec![2, 5], ..Default::default() };
         // Two live edits, applied to both selected layers.
         for speed in [50.0, 60.0] {
             let before = app.editor.doc.layer(2).main().clone();

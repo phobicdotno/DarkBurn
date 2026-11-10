@@ -349,8 +349,8 @@ pub struct AdjustDialog {
     preview: Option<(String, TextureHandle, TextureHandle, bool)>,
     pub warning: Option<String>,
     pub notice: Option<String>,
-    /// The project had no unsaved changes when the window opened.
-    clean_at_open: bool,
+    /// The project had no unsaved changes when the window opened: the number of undo steps then.
+    clean_at_open: Option<usize>,
     /// A live edit was written to the document.
     touched: bool,
     /// The project was saved while live edits were in it.
@@ -384,7 +384,7 @@ impl AdjustDialog {
             preview: None,
             warning: None,
             notice: None,
-            clean_at_open: !app.editor.is_modified(),
+            clean_at_open: (!app.editor.is_modified()).then(|| app.editor.history.len()),
             touched: false,
             saved_since: false,
         })
@@ -443,7 +443,8 @@ impl AdjustDialog {
             *doc.layer_mut(*l).main_mut() = c.clone();
         }
         app.editor.touch();
-        if self.clean_at_open && !saved_since {
+        // (Not when something was undone or done meanwhile: the document is then another one.)
+        if self.clean_at_open == Some(app.editor.history.len()) && !saved_since {
             app.editor.mark_saved();
         }
     }

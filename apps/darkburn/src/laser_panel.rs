@@ -157,7 +157,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
         go(app, "device.select", json!({ "id": id }));
     }
     // Port [LASER-18, LASER-20]
-    if dev.connection == crate::devices::ConnectionKind::Serial && !dev.is_simulator() {
+    if matches!(dev.connection, crate::devices::ConnectionKind::Serial | crate::devices::ConnectionKind::Bluetooth) && !dev.is_simulator() {
         port_picker(ui, app);
     } else if !dev.is_simulator() && !design_only {
         ui.label(RichText::new(format!("Connection: {}", dev.connection.label())).size(t.font_small).color(t.text_dim));
@@ -168,6 +168,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     {
         app.machine.rescan_ports();
     }
+    crate::connections::laser_panel_rows(ui, app);
 
     // Mode status [LASER-22]
     ui.add_space(t.space_6);

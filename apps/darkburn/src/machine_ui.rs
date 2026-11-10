@@ -136,6 +136,7 @@ pub const COMMANDS: &[Cmd] = &[
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
     crate::machine_ext::handles(id)
+        || crate::connections::handles(id)
         || crate::machine_job::handles(id)
         || id.starts_with("machine.")
         || id.starts_with("device.")
@@ -154,6 +155,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     let ext = crate::machine_ext::checklist(id);
     if !ext.is_empty() {
         return ext;
+    }
+    let conn = crate::connections::checklist(id);
+    if !conn.is_empty() {
+        return conn;
     }
     match id {
         "job.start" => &["LASER-03", "LASER-24"],
@@ -298,6 +303,8 @@ pub struct MachineUi {
     pub cylinder_on: bool,
     /// Dialogs and fields of the G-code, galvo and Gweike pieces (`machine_ext.rs`).
     pub ext: crate::machine_ext::ExtUi,
+    /// The automation socket, the bridge wizard and the detected laser (`connections.rs`).
+    pub conn: crate::connections::ConnUi,
     /// The machine events of the last frame, for tests and the log.
     pub last_events: Vec<MachineEvent>,
     /// When the running job began, for the "elapsed" display of machines that do not report it.
@@ -336,6 +343,7 @@ impl MachineUi {
             rotary_on: false,
             cylinder_on: false,
             ext: Default::default(),
+            conn: Default::default(),
             last_events: Vec::new(),
             job_log: Vec::new(),
             applied_device: None,
@@ -585,6 +593,9 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     crate::machine_job::update_head(app);
     if src == Source::Api && is_hardware(id) && app.machine.handle.is_real_machine() {
         return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+    }
+    if let Some(r) = crate::connections::run(app, id, a, src) {
+        return Some(r);
     }
     if let Some(r) = crate::machine_ext::run(app, id, a, src) {
         return Some(r);
@@ -977,6 +988,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     sync_job_state(app);
     crate::machine_job::update_head(app);
     let events = app.machine.tick();
+    crate::connections::frame_tick(app);
     crate::settings_wiring::on_machine_events(app, &events);
     let excluded = app.prefs.opts.excluded_ports.clone();
     crate::settings_wiring::filter_ports(&mut app.machine.ports, &excluded);

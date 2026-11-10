@@ -14,8 +14,12 @@ default = []
 # Real USB serial ports. Off by default and never enabled in tests (hardware safety rule).
 # `serialport` is MPL-2.0 and used unmodified.
 serial = ["dep:serialport"]
+# Raw USB bulk endpoints. Off by default and never opened in tests (hardware safety rule).
+# `nusb` is MIT OR Apache-2.0 and pure Rust.
+rawusb = ["dep:nusb"]
 
 [dependencies]
 kurbo = "0.13.1"
 log = { workspace = true }
 serialport = { version = "4.10.1", optional = true, default-features = false }
+nusb = { version = "0.1", optional = true }

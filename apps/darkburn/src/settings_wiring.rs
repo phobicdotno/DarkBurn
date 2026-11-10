@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn excluded_ports_are_not_listed() {
-        let p = |n: &str| PortInfo { name: n.into(), vid: None, pid: None, manufacturer: None, product: None, serial_number: None };
+        let p = |n: &str| PortInfo { name: n.into(), ..Default::default() };
         let mut ports = vec![p("COM3"), p("COM9"), p("COM4")];
         filter_ports(&mut ports, &["com9".into(), " ".into()]);
         assert_eq!(ports.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["COM3", "COM4"]);

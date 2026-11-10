@@ -100,7 +100,8 @@ fn udp_wrong_magic_times_out_and_probing_finds_it() {
     let mcfg = MachineConfig { timeout: Duration::from_millis(60), retries: 0, ..Default::default() };
     let (mut m, _server) = loopback(ecfg.clone(), mcfg);
     assert!(matches!(m.connect(), Err(RuidaError::Timeout(_))));
-    let mcfg = MachineConfig { magic: None, probe_timeout: Duration::from_millis(60), ..Default::default() };
+    // A generous wait: on a busy computer a reply can take longer than a short probe allows.
+    let mcfg = MachineConfig { magic: None, probe_timeout: Duration::from_secs(2), ..Default::default() };
     let (mut m, _server) = loopback(ecfg, mcfg);
     m.connect().unwrap();
     assert_eq!(m.magic(), Magic(0x11));

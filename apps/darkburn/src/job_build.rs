@@ -60,6 +60,8 @@ pub struct JobDevice {
     /// Partly cut tabs are made of full-power pulses of this length, mm (DS-05). 0: the tab
     /// is cut at the tab power instead.
     pub tab_pulse_width: f64,
+    /// The controller has no dynamic power: every layer is written with M3 (GRBL-02).
+    pub m3_only: bool,
 }
 
 impl Default for JobDevice {
@@ -75,6 +77,7 @@ impl Default for JobDevice {
             pointer_offset: [0.0, 0.0],
             tolerance: TOLERANCE,
             tab_pulse_width: 0.0,
+            m3_only: false,
         }
     }
 }
@@ -728,8 +731,15 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let entry = layers[li].get_or_insert_with(|| {
-                let mut settings: Vec<job::CutSettings> =
-                    l.settings.iter().map(|s| map_settings_with(s, l, input.device.z_enabled, &tuning)).collect();
+                let mut settings: Vec<job::CutSettings> = l
+                    .settings
+                    .iter()
+                    .map(|s| {
+                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                        c.constant_power |= input.device.m3_only;
+                        c
+                    })
+                    .collect();
                 for s in &mut settings {
                     s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
                 }

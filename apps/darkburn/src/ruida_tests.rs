@@ -161,7 +161,7 @@ fn a_drawing_runs_on_a_ruida_over_loopback_udp_from_the_app() {
 #[test]
 fn a_real_ruida_ethernet_link_is_offered_but_never_opened_in_tests() {
     let mut d = Device::new(DeviceType::Ruida);
-    assert_eq!(d.kind.connections(), &[ConnectionKind::Udp, ConnectionKind::Usb]);
+    assert_eq!(d.kind.connections(), &[ConnectionKind::Udp, ConnectionKind::Usb, ConnectionKind::Bridge]);
     d.connection = ConnectionKind::Udp;
     d.host = "not an address".into();
     assert!(d.validate().iter().any(|m| m.contains("IP address")));

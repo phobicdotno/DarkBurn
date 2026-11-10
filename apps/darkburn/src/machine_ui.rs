@@ -695,6 +695,15 @@ fn run_gcode_file(app: &mut DarkBurn, a: &Value, src: Source) -> Result<Value, S
     if app.machine.handle.snapshot().family != Family::Grbl {
         return Err("Run G-code is for G-code machines.".into());
     }
+    // A job DarkBurn saved with absolute coordinates holds bed positions, but the controller
+    // reads them from its origin once one is set: the job would land shifted by that much.
+    let offset = crate::machine_job::work_offset(app);
+    if offset.hypot() > 1e-6 && crate::machine_job::gcode_in_machine_coordinates(&text) {
+        return Err(format!(
+            "This file was saved in bed coordinates, and the machine has an origin set: it would run {:.2} mm, {:.2} mm away from where it was drawn. Use Clear origin first, or start the job from the project.",
+            offset.x, offset.y
+        ));
+    }
     match app.machine.begin_start(job)? {
         StartOutcome::Started => Ok(json!({ "ok": true })),
         StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),

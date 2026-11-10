@@ -54,9 +54,19 @@ pub fn update_head(app: &mut DarkBurn) {
 
 /// Offset that turns machine coordinates into the controller's work coordinates (GRBL: the work
 /// offset; Ruida has none).
-fn work_offset(app: &DarkBurn) -> Vec2 {
+pub fn work_offset(app: &DarkBurn) -> Vec2 {
     let s = app.machine.handle.snapshot();
     if s.family == Family::Grbl { Vec2::new(s.machine_pos[0] - s.work_pos[0], s.machine_pos[1] - s.work_pos[1]) } else { Vec2::ZERO }
+}
+
+/// True for a G-code file DarkBurn saved with absolute coordinates: its moves are bed (machine)
+/// positions. Files from other programs, and jobs saved to start from the current position
+/// (`G91`), are not.
+pub fn gcode_in_machine_coordinates(text: &str) -> bool {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let ours = lines.next().is_some_and(|l| l.starts_with("; DarkBurn job") || l.starts_with("(DarkBurn job"));
+    // The header ends with the distance mode, before the first move.
+    ours && lines.take(200).find(|l| *l == "G90" || *l == "G91") == Some("G90")
 }
 
 /// The points a toolpath visits, as work coordinates for the connected controller.

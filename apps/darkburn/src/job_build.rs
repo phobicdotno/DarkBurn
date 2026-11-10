@@ -474,6 +474,22 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
     map_settings_with(s, layer, z_enabled, &crate::scan_offsets::ScanTuning::default())
 }
 
+/// The tab settings of a cut setting as the job engine takes them.
+pub fn tab_settings(s: &CutSetting) -> job::TabSettings {
+    job::TabSettings {
+        enabled: s.tabs.enabled,
+        auto: s.tabs.auto_spacing,
+        spacing: s.tabs.spacing.max(0.1),
+        min_count: s.tabs.min_count,
+        max_count: s.tabs.max_count.max(s.tabs.min_count),
+        size: s.tabs.size.max(0.0),
+        tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
+        skip_inner: s.tabs.skip_inner,
+        // The device's tab pulse width is filled in by the job builder.
+        pulse_width: 0.0,
+    }
+}
+
 /// [`map_settings`] with the device's scan tuning (fast skip over blank stretches, DS-08).
 pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning: &crate::scan_offsets::ScanTuning) -> job::CutSettings {
     let lead = |l: &layer::Lead| {
@@ -507,18 +523,7 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
     };
     c.line = job::LineSettings {
         perforation: s.perforation.then_some(job::Perforation { cut: s.perf_cut.max(0.01), skip: s.perf_skip.max(0.0) }),
-        tabs: job::TabSettings {
-            enabled: s.tabs.enabled,
-            auto: s.tabs.auto_spacing,
-            spacing: s.tabs.spacing.max(0.1),
-            min_count: s.tabs.min_count,
-            max_count: s.tabs.max_count.max(s.tabs.min_count),
-            size: s.tabs.size.max(0.0),
-            tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
-            skip_inner: s.tabs.skip_inner,
-            // The device's tab pulse width is filled in by the job builder.
-            pulse_width: 0.0,
-        },
+        tabs: tab_settings(s),
         start_pause_ms: s.start_pause_ms.max(0.0),
         end_pause_ms: s.end_pause_ms.max(0.0),
         cut_through_start: s.cut_through_start,

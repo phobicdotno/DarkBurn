@@ -63,10 +63,25 @@ struct Block {
 }
 
 enum UnitKind {
-    Path { closed: bool, shape: usize, depth: usize },
-    Fill { polys: Vec<Vec<Point>>, scale: f64, reversible: bool },
-    Offset { polys: Vec<Vec<Point>>, scale: f64 },
-    Image { image: usize },
+    /// `tabs`: the tab centres on this sub-path (manual or automatic).
+    Path {
+        closed: bool,
+        shape: usize,
+        depth: usize,
+        tabs: Vec<Point>,
+    },
+    Fill {
+        polys: Vec<Vec<Point>>,
+        scale: f64,
+        reversible: bool,
+    },
+    Offset {
+        polys: Vec<Vec<Point>>,
+        scale: f64,
+    },
+    Image {
+        image: usize,
+    },
 }
 
 struct Unit {
@@ -131,7 +146,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         let layer = &input.layers[b.layer];
         let polys = &flat[b.layer];
         match b.mode {
-            CutMode::Line => line_units(bi, layer, polys, &opts.planner, &mut units, &mut items),
+            CutMode::Line => line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items),
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
                 for (ii, img) in layer.images.iter().enumerate() {
@@ -243,7 +258,16 @@ fn job_bounds(input: &JobInput, flat: &[Vec<Vec<Poly>>]) -> Option<Rect> {
     r
 }
 
-fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSettings, units: &mut Vec<Unit>, items: &mut Vec<PlanItem>) {
+/// Distance from `p` to a sub-path.
+fn poly_distance(poly: &Poly, p: Point) -> f64 {
+    let mut pts = poly.pts.clone();
+    if poly.closed {
+        pts.push(poly.pts[0]);
+    }
+    geom::nearest_arclen(&pts, p).1
+}
+
+fn line_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSettings, units: &mut Vec<Unit>, items: &mut Vec<PlanItem>) {
     let mut list: Vec<(Poly, usize)> = Vec::new();
     for (si, shape) in polys.iter().enumerate() {
         for p in shape {
@@ -255,16 +279,34 @@ fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSe
     }
     // Containment depth among closed paths (for tabs and lead side).
     let closed: Vec<(Rect, &Poly)> = list.iter().filter(|(p, _)| p.closed).map(|(p, _)| (geom::bbox(&p.pts), p)).collect();
-    // A forced start point belongs to the closed sub-path of its shape that lies nearest to it.
-    let mut start_owner: std::collections::HashMap<usize, (usize, f64)> = std::collections::HashMap::new();
-    for (li, (poly, si)) in list.iter().enumerate() {
-        if let (true, Some(sp)) = (poly.closed, layer.shapes[*si].start_point) {
-            let mut ring = poly.pts.clone();
-            ring.push(poly.pts[0]);
-            let d = geom::point_at(&ring, geom::nearest_arclen(&ring, sp).0).0.distance(sp);
-            let e = start_owner.entry(*si).or_insert((li, d));
-            if d < e.1 {
-                *e = (li, d);
+    // The sub-paths of each shape, as indices into `list`.
+    let mut subs: Vec<Vec<usize>> = vec![Vec::new(); layer.shapes.len()];
+    for (li, (_, si)) in list.iter().enumerate() {
+        subs[*si].push(li);
+    }
+    // A forced start point belongs to the closed sub-path of its shape that lies nearest to it
+    // (a compound shape may have one for each sub-path); a sub-path takes its nearest one.
+    // A manual tab belongs to the sub-path of its shape nearest to it, open or closed.
+    let mut forced: Vec<Option<(Point, f64)>> = vec![None; list.len()];
+    let mut manual: Vec<Vec<Point>> = vec![Vec::new(); list.len()];
+    for (si, shape) in layer.shapes.iter().enumerate() {
+        let nearest = |p: Point, closed_only: bool| {
+            subs[si]
+                .iter()
+                .filter(|&&li| list[li].0.closed || !closed_only)
+                .map(|&li| (li, poly_distance(&list[li].0, p)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+        };
+        for sp in shape.start_point.iter().chain(&shape.extra_start_points) {
+            if let Some((li, d)) = nearest(*sp, true)
+                && forced[li].is_none_or(|f| d < f.1)
+            {
+                forced[li] = Some((*sp, d));
+            }
+        }
+        for t in &shape.tabs {
+            if let Some((li, _)) = nearest(*t, false) {
+                manual[li].push(*t);
             }
         }
     }
@@ -285,8 +327,7 @@ fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSe
         let mut pts = poly.pts.clone();
         let mut forced_start = None;
         if poly.closed
-            && start_owner.get(si).is_some_and(|o| o.0 == li)
-            && let Some(sp) = shape.start_point
+            && let Some((sp, _)) = forced[li]
         {
             // Insert the forced start point on the polygon.
             let mut ring = pts.clone();
@@ -311,7 +352,8 @@ fn line_units(bi: usize, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSe
                 }
             }
         }
-        units.push(Unit { block: bi, kind: UnitKind::Path { closed: poly.closed, shape: *si, depth } });
+        let tabs = line::tab_centres(&poly.pts, poly.closed, depth, &b.settings.line.tabs, (!shape.tabs.is_empty()).then_some(manual[li].as_slice()));
+        units.push(Unit { block: bi, kind: UnitKind::Path { closed: poly.closed, shape: *si, depth, tabs } });
         let mut it = PlanItem::new(if poly.closed { ItemGeom::Closed(pts) } else { ItemGeom::Open(pts) });
         it.layer_rank = bi;
         it.group = shape.group;
@@ -369,10 +411,10 @@ fn ends(ops: &[Op]) -> Option<(Point, Point, Rect)> {
 fn emit_unit(unit: &Unit, p: &Planned, items: &[PlanItem], b: &Block, layer: &LayerInput, pass: u32, ps: &PlannerSettings, out: &mut Vec<Op>) {
     let backlash = (ps.optimize && ps.hide_backlash).then_some(ps.backlash_approach);
     match &unit.kind {
-        UnitKind::Path { closed, shape, depth } => {
+        UnitKind::Path { closed, shape, depth, tabs } => {
             let pts = p.ordered_points(items);
             let sh = &layer.shapes[*shape];
-            let ctx = PathContext { settings: &b.settings, power_scale: sh.power_scale, depth: *depth, manual_tabs: &sh.tabs, backlash };
+            let ctx = PathContext { settings: &b.settings, power_scale: sh.power_scale, depth: *depth, tabs, backlash };
             line::emit_path(&pts, *closed, &ctx, out);
         }
         UnitKind::Fill { .. } | UnitKind::Offset { .. } => {
@@ -581,6 +623,142 @@ mod tests {
         let tp = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none()).unwrap();
         let first = tp.ops.iter().find_map(|o| if let Op::Rapid { to } = o { Some(*to) } else { None }).unwrap();
         assert!(first.distance(Point::new(5.0, 0.0)) < 1e-9, "{first:?}");
+    }
+
+    /// The laser-off stretches of the cuts, as (from, to).
+    fn gaps(tp: &Toolpath) -> Vec<(Point, Point)> {
+        let mut pos = Point::ZERO;
+        let mut out: Vec<(Point, Point)> = Vec::new();
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power == 0.0
+            {
+                match out.last_mut() {
+                    Some(g) if g.1.distance(pos) < 1e-9 => g.1 = *to,
+                    _ => out.push((pos, *to)),
+                }
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        out
+    }
+
+    fn tab_settings(auto: bool) -> CutSettings {
+        let mut s = CutSettings::line(10.0, 50.0);
+        s.line.tabs.enabled = true;
+        s.line.tabs.auto = auto;
+        s.line.tabs.size = 2.0;
+        s.line.tabs.spacing = 20.0;
+        s.line.tabs.min_count = 1;
+        s.line.tabs.max_count = 10;
+        s
+    }
+
+    fn run(l: LayerInput, opts: &JobOptions) -> Toolpath {
+        generate(&JobInput { layers: vec![l] }, opts, &mut Progress::none()).unwrap()
+    }
+
+    #[test]
+    fn a_manual_tab_goes_on_the_sub_path_it_was_placed_on() {
+        // A frame: outer 40 x 40 and an inner 20 x 20 hole, as one compound shape.
+        let mut path = rect_path(0.0, 0.0, 40.0, 40.0);
+        path.extend(rect_path(10.0, 10.0, 20.0, 20.0));
+        path.move_to((50.0, 0.0));
+        path.line_to((50.0, 40.0));
+        let mut sh = ShapeInput::new(path);
+        sh.tabs = vec![Point::new(20.0, 0.0), Point::new(30.0, 20.0), Point::new(50.0, 25.0)];
+        for optimize in [true, false] {
+            let opts = JobOptions { planner: PlannerSettings { optimize, ..Default::default() }, ..Default::default() };
+            let tp = run(LayerInput::new(0, "A", tab_settings(false)).with_shape(sh.clone()), &opts);
+            let g = gaps(&tp);
+            assert_eq!(g.len(), 3, "one gap for each tab, none on the other sub-paths: {g:?}");
+            let mid: Vec<Point> = g.iter().map(|(a, b)| a.midpoint(*b)).collect();
+            for want in &sh.tabs {
+                assert!(mid.iter().any(|m| m.distance(*want) < 1e-6), "a gap centred on {want:?}: {g:?}");
+            }
+            assert!(g.iter().all(|(a, b)| (a.distance(*b) - 2.0).abs() < 1e-6), "{g:?}");
+        }
+    }
+
+    #[test]
+    fn manual_tabs_replace_the_automatic_ones_on_their_shape_only() {
+        let mut with = ShapeInput::new(rect_path(0.0, 0.0, 20.0, 20.0));
+        with.tabs = vec![Point::new(10.0, 0.0)];
+        let without = ShapeInput::new(rect_path(100.0, 0.0, 20.0, 20.0));
+        let tp = run(LayerInput::new(0, "A", tab_settings(true)).with_shape(with).with_shape(without), &JobOptions::default());
+        let g = gaps(&tp);
+        assert_eq!(g.iter().filter(|(a, _)| a.x < 50.0).count(), 1, "{g:?}");
+        assert_eq!(g.iter().filter(|(a, _)| a.x > 50.0).count(), 4, "80 mm at 20 mm spacing: {g:?}");
+    }
+
+    #[test]
+    fn automatic_tabs_stay_put_when_the_start_point_moves() {
+        let mids = |start: Option<Point>, direction| {
+            let mut sh = ShapeInput::new(rect_path(0.0, 0.0, 30.0, 10.0));
+            sh.start_point = start;
+            sh.direction = direction;
+            let tp = run(LayerInput::new(0, "A", tab_settings(true)).with_shape(sh), &JobOptions::default());
+            let mut m: Vec<(i64, i64)> =
+                gaps(&tp).iter().map(|(a, b)| a.midpoint(*b)).map(|p| ((p.x * 1e3).round() as i64, (p.y * 1e3).round() as i64)).collect();
+            m.sort();
+            m
+        };
+        let base = mids(None, None);
+        assert_eq!(base.len(), 4);
+        assert_eq!(mids(Some(Point::new(17.0, 10.0)), None), base);
+        assert_eq!(mids(Some(Point::new(30.0, 3.0)), Some(crate::input::ForcedDirection::Clockwise)), base);
+    }
+
+    #[test]
+    fn every_sub_path_of_a_compound_shape_can_have_its_own_start_point() {
+        let mut path = rect_path(0.0, 0.0, 10.0, 10.0);
+        path.extend(rect_path(50.0, 0.0, 10.0, 10.0));
+        path.extend(rect_path(100.0, 0.0, 10.0, 10.0));
+        let mut sh = ShapeInput::new(path);
+        sh.start_point = Some(Point::new(5.0, 10.5));
+        sh.extra_start_points = vec![Point::new(60.0, 4.0), Point::new(61.0, 6.0)];
+        for optimize in [true, false] {
+            let opts = JobOptions { planner: PlannerSettings { optimize, ..Default::default() }, ..Default::default() };
+            let tp = run(LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(sh.clone()), &opts);
+            let rapids: Vec<Point> = tp.ops.iter().filter_map(|o| if let Op::Rapid { to } = o { Some(*to) } else { None }).collect();
+            assert_eq!(rapids.len(), 3);
+            assert!(rapids.iter().any(|p| p.distance(Point::new(5.0, 10.0)) < 1e-9), "{rapids:?}");
+            assert!(rapids.iter().any(|p| p.distance(Point::new(60.0, 4.0)) < 1e-9), "the nearer of two points on one sub-path wins: {rapids:?}");
+        }
+    }
+
+    #[test]
+    fn a_forced_start_point_holds_with_lead_in_and_every_planner_option() {
+        let mut s = CutSettings::line(10.0, 50.0);
+        s.line.lead_in = Some(crate::input::Lead { length: 2.0, angle_deg: 90.0, style: crate::input::LeadStyle::Line });
+        let mut sh = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+        sh.start_point = Some(Point::new(10.0, 4.0));
+        sh.direction = Some(crate::input::ForcedDirection::Clockwise);
+        let far = ShapeInput::new(rect_path(40.0, 40.0, 10.0, 10.0));
+        let l = LayerInput::new(0, "A", s).with_shape(far).with_shape(sh);
+        for bits in 0..32u32 {
+            let on = |b: u32| bits & (1 << b) != 0;
+            let planner = PlannerSettings {
+                optimize: on(0),
+                best_start: on(1),
+                prefer_corners: on(2),
+                best_direction: on(3),
+                reduce_direction_changes: on(4),
+                ..Default::default()
+            };
+            let tp = run(l.clone(), &JobOptions { planner, ..Default::default() });
+            // The lead-in comes in from the waste side (outside, +X) and ends on the start point;
+            // the first move of the outline then heads down (clockwise).
+            let i = tp
+                .ops
+                .iter()
+                .position(|o| matches!(o, Op::Rapid { to } if to.distance(Point::new(12.0, 4.0)) < 1e-9))
+                .unwrap_or_else(|| panic!("lead-in start, options {bits:05b}: {:?}", tp.ops));
+            assert_eq!(tp.ops[i + 1].target(), Some(Point::new(10.0, 4.0)), "options {bits:05b}");
+            assert_eq!(tp.ops[i + 2].target(), Some(Point::new(10.0, 0.0)), "options {bits:05b}");
+        }
     }
 
     #[test]

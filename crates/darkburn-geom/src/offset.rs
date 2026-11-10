@@ -130,6 +130,26 @@ fn line_cap(c: Cap, r: f64, tol: f64) -> LineCap<[f64; 2]> {
     }
 }
 
+/// Ends closer than this (mm) make a subpath closed even without a closing element, the same
+/// distance the document uses to decide that a shape is closed and can be filled.
+const CLOSED_GAP: f64 = 1e-6;
+
+/// Marks a contour whose end lies on its start as closed (the end point is put exactly on the
+/// start point). Other contours are returned as they are.
+fn close_if_ends_meet(mut c: Contour) -> Contour {
+    if !c.closed && c.is_closed_within(CLOSED_GAP) {
+        let start = c.start().unwrap_or_default();
+        match c.segs.last_mut() {
+            Some(PathSeg::Line(l)) => l.p1 = start,
+            Some(PathSeg::Quad(q)) => q.p2 = start,
+            Some(PathSeg::Cubic(cb)) => cb.p3 = start,
+            None => {}
+        }
+        c.closed = true;
+    }
+    c
+}
+
 /// True when every point of the contour is a usable coordinate.
 fn usable_contour(c: &Contour) -> bool {
     c.segs.iter().all(|s| match s {
@@ -155,7 +175,7 @@ pub fn offset_open(path: &BezPath, distance: f64, join: Join, cap: Cap, tol: f64
         return Vec::new();
     }
     let mut all = Vec::new();
-    for c in contours(path) {
+    for c in contours(path).into_iter().map(close_if_ends_meet) {
         let pl = flatten_contour(&c, tol);
         if pl.points.len() < 2 || !pl.points.iter().all(|p| usable_point(*p)) {
             continue;
@@ -189,8 +209,8 @@ pub fn offset(paths: &[BezPath], opts: &OffsetOptions) -> OffsetResult {
     let mut closed_paths: Vec<BezPath> = Vec::new();
     let mut open_path = BezPath::new();
     for p in paths {
-        let cs = contours(p);
-        let (closed, open): (Vec<Contour>, Vec<Contour>) = cs.into_iter().partition(|c| c.closed);
+        let cs = contours(p).into_iter().map(close_if_ends_meet);
+        let (closed, open): (Vec<Contour>, Vec<Contour>) = cs.partition(|c| c.closed);
         if !closed.is_empty() {
             closed_paths.push(from_contours(closed.iter()));
         }
@@ -304,13 +324,13 @@ fn pline_to_contour(pl: &CPline<f64>) -> Option<Contour> {
 /// nearest point on the offset) and the travel direction of its source. Open subpaths are
 /// returned unchanged, and so are closed subpaths with no area to grow or shrink (a line drawn
 /// out and back, a figure of eight whose halves cancel) or with coordinates that are not usable
-/// numbers: they are still cut where they were drawn. Circular arcs stay exact arcs; other
-/// curves are flattened within `tol`.
+/// numbers: they are still cut where they were drawn. A subpath whose end lies on its start
+/// counts as closed. Circular arcs stay exact arcs; other curves are flattened within `tol`.
 pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
     if kerf == 0.0 || !kerf.is_finite() {
         return path.clone();
     }
-    let cs = contours(path);
+    let cs: Vec<Contour> = contours(path).into_iter().map(close_if_ends_meet).collect();
     if cs.is_empty() {
         return path.clone();
     }
@@ -576,6 +596,30 @@ mod tests {
         let subs = subpaths(&k);
         assert_eq!(subs.len(), 2, "the rectangle and the line");
         assert!(subs.contains(&back));
+    }
+
+    #[test]
+    fn a_path_ending_on_its_start_is_a_closed_shape() {
+        // Imported outlines often end on their start point without a closing element.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.line_to((0.0, 0.0));
+        let o = offset(std::slice::from_ref(&p), &opts(1.0, OffsetSide::Outward, Join::Miter { limit: 4.0 }));
+        assert_eq!(o.outward.len(), 1);
+        assert_eq!(subpaths(&o.outward[0]).len(), 1, "one outline, not a band around the line");
+        assert!((area(&o.outward) - 144.0).abs() < 1e-3, "{}", area(&o.outward));
+        let i = offset(std::slice::from_ref(&p), &opts(1.0, OffsetSide::Inward, Join::Miter { limit: 4.0 }));
+        assert!(i.outward.is_empty());
+        assert!((area(&i.inward) - 64.0).abs() < 1e-3, "{}", area(&i.inward));
+        // The kerf moves it like any closed shape.
+        let k = kerf_offset(&p, -0.1, 0.001);
+        assert!((signed_area(&k).abs() - 9.8 * 9.8).abs() < 1e-6, "{}", signed_area(&k));
+        // As a line to offset on both sides it has a joint at the start, not two caps.
+        let band = offset_open(&p, 1.0, Join::Miter { limit: 4.0 }, Cap::Square, 0.001);
+        assert!((area(&band) - (144.0 - 64.0)).abs() < 1e-3, "{}", area(&band));
     }
 
     #[test]

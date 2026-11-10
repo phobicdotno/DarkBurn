@@ -470,6 +470,85 @@ fn marlin_pause_in_a_cut_switches_the_laser_off_and_resume_puts_it_back() {
     }
 }
 
+/// A custom G-code controller is not known to switch the laser off by itself when the head
+/// stands still: it holds the last `S` of an `M3`/`M4`. A pause in the middle of a cut must
+/// switch it off, and the rest of the cut must burn after the resume.
+#[test]
+fn custom_pause_in_a_cut_switches_the_laser_off_and_resume_puts_it_back() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Plain).with_time_scale(1.0));
+    let mut p = DeviceProfile::for_kind(DeviceKind::Custom);
+    p.gcode.s_max = 255.0;
+    p.gcode.transfer = TransferMode::Buffered;
+    (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+    let (m, mut log) = connect(&p, &emu);
+    // One cut of sixty pieces, 1 mm each, then a second cut after a travel move.
+    let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M3 S0".to_owned(), "G0 X10 Y10".to_owned()];
+    for i in 1..=60 {
+        src.push(format!("G1 X{} Y10{}", 10 + i, if i == 1 { " S500 F3000" } else { "" }));
+    }
+    src.push("G0 X10 Y20".to_owned());
+    src.push("G1 X20 Y20".to_owned());
+    src.push("M5".to_owned());
+    let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(&p));
+    let n = out.len();
+    m.start_job(Job::from_lines(out).with_total(n)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 12)));
+    m.pause().unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.paused));
+    // What the controller already has runs out, then the head stands still.
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.planner_len() == 0)), "the planner never ran empty");
+    worker_passes(m.as_ref(), 25);
+    let burned = emu.with(|e| {
+        assert_eq!(e.planner_len(), 0);
+        assert!(!e.laser_armed(), "paused in a cut with the laser left on: {:?}", e.stats().lines.iter().rev().take(4).collect::<Vec<_>>());
+        e.stats().burned_mm
+    });
+    assert!(burned > 1.0 && burned < 59.0, "paused inside the cut, {burned} mm burned");
+    m.resume().unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    emu.with(|e| {
+        assert!((e.stats().burned_mm - 70.0).abs() < 1e-6, "both cuts burn whole, {} mm", e.stats().burned_mm);
+        assert_eq!(e.stats().rapid_burn_mm, 0.0);
+        assert!(e.stats().burns.iter().all(|b| (b.power - 128.0 / 255.0).abs() < 1e-9), "the power after the resume is the cut's own");
+        assert!(!e.laser_armed());
+    });
+    m.disconnect();
+}
+
+/// A paused travel move of the same machine: nothing to switch off, and the resume must not
+/// switch the laser on over the travel that follows.
+#[test]
+fn custom_pause_between_cuts_does_not_fire_on_resume() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Plain).with_time_scale(1.0));
+    let mut p = DeviceProfile::for_kind(DeviceKind::Custom);
+    p.gcode.s_max = 255.0;
+    (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+    let (m, mut log) = connect(&p, &emu);
+    let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M3 S0".to_owned(), "G0 X10 Y10".to_owned(), "G1 X20 Y10 S500 F3000".to_owned()];
+    for i in 1..=40 {
+        src.push(format!("G0 X{} Y20", 20 + i));
+    }
+    src.push("G1 X70 Y20".to_owned());
+    src.push("M5".to_owned());
+    let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(&p));
+    let n = out.len();
+    m.start_job(Job::from_lines(out).with_total(n)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 12)));
+    m.pause().unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.paused));
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.planner_len() == 0)));
+    worker_passes(m.as_ref(), 25);
+    emu.with(|e| assert!(!e.laser_armed()));
+    m.resume().unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    emu.with(|e| {
+        assert!((e.stats().burned_mm - 20.0).abs() < 1e-6, "{} mm", e.stats().burned_mm);
+        assert_eq!(e.stats().rapid_burn_mm, 0.0);
+        assert!(!e.laser_armed());
+    });
+    m.disconnect();
+}
+
 #[test]
 fn marlin_settings_m503_m92_m500() {
     let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin));

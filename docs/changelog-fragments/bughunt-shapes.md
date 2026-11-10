@@ -11,3 +11,4 @@ Fix: Text no longer vanishes when it is put on a path with no length
 Fix: Bent text on a path follows the curve on every edge of a letter
 Fix: Bending very large text on a path no longer closes the program
 Fix: Optimize Shapes no longer wipes out holes and shapes smaller than its tolerance
+Fix: Nesting with a very small rotation step no longer closes the program

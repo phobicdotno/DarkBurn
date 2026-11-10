@@ -461,3 +461,91 @@ fn cancel_in_the_cut_settings_editor_leaves_a_saved_project_saved() {
     g.key(Key::Z, Modifiers::COMMAND);
     assert_eq!(g.app().editor.doc.layer(1).main().speed, 100.0);
 }
+
+fn field_in_window(g: &Gui, role: &str, label: &str) -> egui::Pos2 {
+    let window = g.dialog_windows().into_iter().next().expect("a window is open");
+    let found = g.find_a11y(Some(role), label).into_iter().find(|f| window.contains(f.rect.center()));
+    found.unwrap_or_else(|| panic!("no {role} named {label} in the window: {:?}", g.a11y())).rect.center()
+}
+
+/// Create QR Code: Cancel and Escape add nothing; a size typed and confirmed with Enter is the
+/// size of the code OK makes; OK is one undo step.
+#[test]
+fn the_qr_dialog_cancels_cleanly_and_ok_uses_what_was_typed() {
+    let mut g = Gui::standard();
+    let steps = g.app().editor.history.len();
+    g.run_command("tools.qr");
+    g.settle();
+    assert!(g.dialog_open());
+    g.click_id("dialog:cancel");
+    g.frames(3);
+    assert!(!g.app().text.qr.open && g.app().editor.doc.len() == 0 && g.app().editor.history.len() == steps);
+    g.run_command("tools.qr");
+    g.settle();
+    g.escape();
+    g.frames(3);
+    assert!(!g.app().text.qr.open && g.app().editor.doc.len() == 0, "Escape closes it and adds nothing");
+
+    g.run_command("tools.qr");
+    g.settle();
+    let text = field_in_window(&g, "MultilineTextInput", "Text");
+    g.click_pos(text);
+    g.type_text("hello");
+    let size = field_in_window(&g, "SpinButton", "Size");
+    g.click_pos(size);
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("20 + 22");
+    g.enter();
+    if g.app().text.qr.open {
+        g.click_id("dialog:ok");
+    }
+    g.frames(3);
+    assert!(!g.app().text.qr.open, "OK closed the window");
+    assert_eq!(g.app().editor.doc.len(), 1, "one code was made: {:?}", g.app().note);
+    assert_eq!(g.app().editor.history.len(), steps + 1, "OK is one undo step");
+    let bb = g.app().editor.doc.bbox().unwrap();
+    assert!((bb.width() - 42.0).abs() < 0.5 && (bb.height() - 42.0).abs() < 0.5, "the code is {bb:?}, not the 42 mm that was typed");
+    assert!((bb.center().x - 200.0).abs() < 0.5 && (bb.center().y - 200.0).abs() < 0.5, "{bb:?}");
+    g.key(Key::Z, Modifiers::COMMAND);
+    assert_eq!(g.app().editor.doc.len(), 0);
+}
+
+/// The number fields of the panels and dialogs take sums and units like the ribbon's: a typed
+/// sum, a length with its unit, and the field's own unit after the number. They used to keep
+/// the old value without a word for anything but a plain number.
+#[test]
+fn panel_and_dialog_number_fields_take_sums_and_units() {
+    let mut g = Gui::standard();
+    show_panel(&mut g, "move");
+    let set = |g: &mut Gui, label: &str, text: &str| {
+        let dock = g.rect_of("panel:area:RightBottom").unwrap();
+        let field = g.find_a11y(Some("SpinButton"), label).into_iter().find(|f| dock.contains(f.rect.center()));
+        let at = field.unwrap_or_else(|| panic!("a field named {label} in the Move panel")).rect.center();
+        g.click_pos(at);
+        g.key(Key::A, Modifiers::COMMAND);
+        g.type_text(text);
+        g.enter();
+    };
+    let distance = |g: &Gui| g.app().machine.jog.distance;
+    for (typed, mm) in [("20 + 22", 42.0), ("10in/4", 63.5), ("7 mm", 7.0), ("2,5", 2.5), ("3cm", 30.0)] {
+        set(&mut g, "Distance", typed);
+        assert!((distance(&g) - mm).abs() < 1e-9, "Distance {typed:?} gave {} mm, not {mm}", distance(&g));
+    }
+    // Not a number: the value stays.
+    set(&mut g, "Distance", "abc");
+    assert!((distance(&g) - 30.0).abs() < 1e-9);
+    // A field that is not a length: a sum of plain numbers, and its unit typed after the number.
+    set(&mut g, "Speed", "50 + 25");
+    assert_eq!(g.app().machine.jog.speed, 75.0);
+    set(&mut g, "Speed", "80 mm/s");
+    assert_eq!(g.app().machine.jog.speed, 80.0);
+    // A field shown in inches: a bare number is inches, a length is converted.
+    g.app().prefs.numeric_inches = true;
+    g.frames(2);
+    set(&mut g, "Distance", "1/2");
+    assert!((distance(&g) - 12.7).abs() < 1e-9, "{}", distance(&g));
+    set(&mut g, "Distance", "50.8 mm");
+    assert!((distance(&g) - 50.8).abs() < 1e-9, "{}", distance(&g));
+    set(&mut g, "Distance", "2 in");
+    assert!((distance(&g) - 50.8).abs() < 1e-9, "{}", distance(&g));
+}

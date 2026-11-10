@@ -8,3 +8,4 @@ Fix: adding a new laser or removing the one in use ends the open connection, so 
 Fix: "Use current layers as defaults" in Device Settings belongs to the laser you are editing, and Cancel takes it back
 Fix: looking at Adjust Image and cancelling no longer marks the project as changed
 Fix: Cancel in the Cut Settings Editor no longer leaves the project marked as changed
+Fix: number fields in the panels and dialogs take sums and units (20 + 22, 10in/4, 7 mm), not only plain numbers

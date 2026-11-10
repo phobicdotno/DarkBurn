@@ -388,7 +388,9 @@ impl McpBackend {
                     json!(sim.per_layer.iter().map(|l| json!({"layer": l.layer, "pass": l.pass, "seconds": l.time})).collect::<Vec<_>>());
                 v["sent_to_machine"] = json!(false);
                 if gcode {
-                    let text = job_build::gcode_text(job, None, &app.job.gcode);
+                    // What the selected device would be sent (its dialect, its scripts), as Save
+                    // G-code writes it.
+                    let text = crate::gcode_machines::job_text(app.machine.active(), job, None, &app.job.gcode);
                     let total = text.lines().count();
                     v["gcode_lines"] = json!(total);
                     if total > max_lines {

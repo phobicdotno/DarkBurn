@@ -1109,7 +1109,7 @@ mod tests {
         with_square(&mut a);
         let dir = temp("ends");
         let file = dir.join("job.gc");
-        let mut saved = |a: &mut DarkBurn, ty: &str, end_script: Option<&str>| -> Vec<String> {
+        let saved = |a: &mut DarkBurn, ty: &str, end_script: Option<&str>| -> Vec<String> {
             let id = run(a, "device.add", json!({ "type": ty })).unwrap()["id"].as_u64().unwrap();
             if let Some(e) = end_script {
                 a.machine.devices.get_mut(id).unwrap().settings.gcode.end_script = e.into();

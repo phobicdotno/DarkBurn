@@ -198,7 +198,9 @@ fn convert_path(e: &mut Editor, _a: &Value) -> R {
     let mut n = 0;
     let done = e.edit("Convert to path", |d, _| {
         crate::text_render::refresh(d);
-        n = map_shapes(d, &ids, &mut |s| (!matches!(s.kind, ShapeKind::Path { .. })).then(|| s.outline()));
+        // A shape with nothing to draw (a text of spaces) stays what it is: as a path it would
+        // be an empty shape nobody can see, select by clicking or type into.
+        n = map_shapes(d, &ids, &mut |s| (!matches!(s.kind, ShapeKind::Path { .. })).then(|| s.outline()).filter(|o| !gpath::contours(o).is_empty()));
         n > 0
     });
     Ok(json!({ "changed": done, "converted": n }))

@@ -61,8 +61,11 @@ pub fn scan_polygons_powers(polys: &[&[Point]], powers: &[f64], rule: FillRule, 
     let mut active: Vec<usize> = Vec::new();
     let mut next = 0;
     let mut xs: Vec<(f64, i32, usize)> = Vec::new();
-    // Winding of each polygon at the current x (only the polygons crossed so far on this row).
-    let mut winds: Vec<(usize, i32)> = Vec::new();
+    // With one power for all there is no need to know which polygon a stretch lies in.
+    let uniform = powers.windows(2).all(|w| w[0] == w[1]);
+    // Winding of each polygon at the current x, and the polygons the current x lies in.
+    let mut winds: Vec<i32> = if uniform { Vec::new() } else { vec![0; polys.len()] };
+    let mut open: Vec<usize> = Vec::new();
     for k in k0..=k1 {
         let y = (k as f64 + 0.5) * interval;
         while next < edges.len() && edges[next].0.y <= y {
@@ -82,12 +85,14 @@ pub fn scan_polygons_powers(polys: &[&[Point]], powers: &[f64], rule: FillRule, 
         let mut wind = 0;
         let mut inside = false;
         let mut x_start = 0.0;
-        winds.clear();
+        for p in open.drain(..) {
+            winds[p] = 0;
+        }
         for &(x, w, pi) in &xs {
             if inside && x - x_start > EPS {
-                // The stretch up to this crossing lies in the polygons with a winding.
-                let owner = winds.iter().filter(|(_, n)| *n != 0).map(|(p, _)| *p).min_by(|a, b| areas[*a].total_cmp(&areas[*b]));
-                let power = owner.map_or(0.0, |p| powers[p]);
+                // The stretch up to this crossing lies in the `open` polygons.
+                let power =
+                    if uniform { powers[0] } else { open.iter().copied().min_by(|a, b| areas[*a].total_cmp(&areas[*b])).map_or(0.0, |p| powers[p]) };
                 match runs.last_mut() {
                     // Merge runs that touch.
                     Some(m) if x_start - m.x1 < EPS && m.power == power => m.x1 = x,
@@ -95,9 +100,14 @@ pub fn scan_polygons_powers(polys: &[&[Point]], powers: &[f64], rule: FillRule, 
                 }
             }
             wind += w;
-            match winds.iter_mut().find(|(p, _)| *p == pi) {
-                Some((_, n)) => *n += w,
-                None => winds.push((pi, w)),
+            if !uniform {
+                let was = winds[pi];
+                winds[pi] += w;
+                if was == 0 {
+                    open.push(pi);
+                } else if winds[pi] == 0 {
+                    open.retain(|p| *p != pi);
+                }
             }
             inside = match rule {
                 FillRule::EvenOdd => !inside,

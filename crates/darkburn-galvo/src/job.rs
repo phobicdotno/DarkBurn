@@ -964,7 +964,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
         for (li, layer) in job.layers.iter().enumerate().filter(|(_, l)| l.enabled) {
             if let LayerMode::Sliced(s) = &layer.mode {
                 flush(&mut w, dev, &field, &mut body, &mut est);
-                emit_sliced(dev, &field, layer, s, &mut body, &mut est)?;
+                emit_sliced(dev, &field, layer, s, job.door_protect, &mut body, &mut est)?;
                 continue;
             }
             let shapes = layer_polys(layer, li, win, opt);
@@ -1019,12 +1019,17 @@ fn emit_sliced(
     field: &Field,
     layer: &Layer,
     s: &SlicedImage,
+    door_protect: bool,
     body: &mut Vec<Step>,
     est: &mut Estimate,
 ) -> Result<(), CompileError> {
     let run = |lines: Vec<Vec<(Point, Point)>>, params: &MarkParams, z: f64, body: &mut Vec<Step>, est: &mut Estimate| -> Result<(), CompileError> {
         if lines.is_empty() {
             return Ok(());
+        }
+        // Every slice is a stage of its own, so each gets the door check a layer pass gets.
+        if door_protect {
+            body.push(Step::WaitDoorClosed);
         }
         body.push(Step::MoveZ { mm: z });
         est.motion_s += MOTION_STEP_S;
@@ -1600,6 +1605,52 @@ mod tests {
         let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
         assert_eq!(c.steps.iter().filter(|s| matches!(s, Step::MoveAxis { .. })).count(), 4);
         assert_eq!(shots(&c).len(), 8, "four corners each: {:?}", shots(&c));
+    }
+
+    fn step_name(s: &Step) -> &'static str {
+        match s {
+            Step::List(_) => "list",
+            Step::MoveAxis { .. } => "axis",
+            Step::MoveZ { .. } => "z",
+            Step::WaitDoorClosed => "door",
+            Step::WaitFootSwitch => "foot",
+        }
+    }
+
+    #[test]
+    fn door_protect_waits_before_every_stage_of_a_sliced_image() {
+        let img = SlicedImage {
+            width_px: 2,
+            height_px: 1,
+            depth: vec![100, 250],
+            origin: Point::new(-1.0, -0.5),
+            size_mm: (2.0, 1.0),
+            slices: 2,
+            z_step_mm: 0.1,
+            interval_mm: 1.0,
+            bidirectional: false,
+            cleanup: Some(MarkParams::default()),
+        };
+        let mut job = Job::new();
+        job.door_protect = true;
+        job.layers.push(line_layer(vec![rect_path(-5.0, -5.0, 10.0, 10.0)]));
+        job.layers.push(Layer::new("3D", LayerMode::Sliced(img), MarkParams::default(), vec![]));
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let names: Vec<&str> = c.steps.iter().map(step_name).collect();
+        let mut waited = false;
+        let mut lists = 0;
+        for s in &c.steps {
+            match s {
+                Step::WaitDoorClosed => waited = true,
+                Step::List(_) => {
+                    assert!(waited, "a stage fires without a door check before it: {names:?}");
+                    waited = false;
+                    lists += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(lists, 4, "the outline, two slices and the cleanup");
     }
 
     #[test]

@@ -168,3 +168,54 @@ fn group_rotate_flip_same_width_align_and_page_corner_give_the_hand_computed_box
     let u = a.editor.doc.bbox().unwrap();
     assert!((u.x1 - 400.0).abs() < 1e-6 && u.y0.abs() < 1e-6, "{u:?}");
 }
+
+fn span_x(a: &crate::shell::DarkBurn, id: ShapeId) -> (f64, f64) {
+    let b = a.editor.doc.get(id).unwrap().bbox();
+    ((b.x0 * 1e6).round() / 1e6, (b.x1 * 1e6).round() / 1e6)
+}
+
+fn span_y(a: &crate::shell::DarkBurn, id: ShapeId) -> (f64, f64) {
+    let b = a.editor.doc.get(id).unwrap().bbox();
+    ((b.y0 * 1e6).round() / 1e6, (b.y1 * 1e6).round() / 1e6)
+}
+
+/// Docking one by one, as a group, against a shape that is not selected and with inner shapes
+/// locked, then spacing and move-together with the padding field: all against hand numbers.
+#[test]
+fn docking_spacing_and_move_together_give_the_hand_computed_places() {
+    let mut a = app();
+    let p = add_rect(&mut a, 50.0, 0.0, 10.0, 10.0, 0);
+    let q = add_rect(&mut a, 80.0, 0.0, 10.0, 10.0, 0);
+    select(&mut a, &[q, p]);
+    run(&mut a, "arrange.dock_left", json!({ "padding": 2.0, "as_group": false })).unwrap();
+    assert_eq!((span_x(&a, p), span_x(&a, q)), ((0.0, 10.0), (12.0, 22.0)));
+    run(&mut a, "arrange.dock_right", json!({ "padding": 2.0, "as_group": true })).unwrap();
+    assert_eq!((span_x(&a, p), span_x(&a, q)), ((378.0, 388.0), (390.0, 400.0)));
+    run(&mut a, "arrange.dock_up", json!({ "padding": 3.0, "as_group": false })).unwrap();
+    assert_eq!((span_y(&a, p), span_y(&a, q)), ((390.0, 400.0), (390.0, 400.0)));
+    // An obstacle that is not selected: a wall at x 200..210 over the whole height.
+    let wall = add_rect(&mut a, 200.0, 0.0, 10.0, 400.0, 0);
+    select(&mut a, &[p, q]);
+    run(&mut a, "arrange.dock_left", json!({ "padding": 5.0, "as_group": false })).unwrap();
+    assert_eq!((span_x(&a, p), span_x(&a, q)), ((215.0, 225.0), (230.0, 240.0)));
+    // Lock inner: a small square inside a big one follows it.
+    let big = add_rect(&mut a, 300.0, 100.0, 50.0, 50.0, 0);
+    let small = add_rect(&mut a, 310.0, 110.0, 5.0, 5.0, 0);
+    select(&mut a, &[big, small]);
+    run(&mut a, "arrange.dock_down", json!({ "padding": 0.0, "as_group": false, "lock_inner": true })).unwrap();
+    assert_eq!((span_y(&a, big), span_y(&a, small)), ((0.0, 50.0), (10.0, 15.0)));
+    let _ = wall;
+    // Spacing and together through the padding field.
+    let mut a = app();
+    let p = add_rect(&mut a, 50.0, 0.0, 10.0, 10.0, 0);
+    let q = add_rect(&mut a, 80.0, 0.0, 20.0, 10.0, 0);
+    let r = add_rect(&mut a, 5.0, 0.0, 10.0, 10.0, 0);
+    select(&mut a, &[p, q, r]);
+    a.padding = 4.0;
+    let ctx = egui::Context::default();
+    a.run(&ctx, "arrange.distribute_h_spacing");
+    assert_eq!((span_x(&a, r), span_x(&a, p), span_x(&a, q)), ((5.0, 15.0), (19.0, 29.0), (33.0, 53.0)));
+    a.run(&ctx, "arrange.move_h_together");
+    // 40 wide together about the middle of 5..53 (29): 9..49.
+    assert_eq!((span_x(&a, r), span_x(&a, p), span_x(&a, q)), ((9.0, 19.0), (19.0, 29.0), (29.0, 49.0)));
+}

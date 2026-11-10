@@ -597,7 +597,15 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
 
 /// Before a paste: take shapes from the system clipboard when it holds something newer.
 pub fn pull_system_clipboard(app: &mut DarkBurn, _ctx: &egui::Context) {
-    pull_from(app, &mut Arboard::open());
+    pull_if_used(app, &mut Arboard::open());
+}
+
+/// [`pull_from`], unless the system clipboard is turned off in the settings: then Paste gives
+/// what was copied in this window, whatever other programs have copied since.
+pub fn pull_if_used(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
+    if app.prefs.opts.system_clipboard {
+        pull_from(app, sys);
+    }
 }
 
 // ----- Each frame -----
@@ -1173,6 +1181,23 @@ mod tests {
         b.editor.clipboard.shapes.clear();
         pull_from(&mut b, &mut sys);
         assert!(b.editor.clipboard.shapes.is_empty());
+    }
+
+    /// With "Use the system clipboard" off, Paste does not take what another program copied.
+    #[test]
+    fn paste_leaves_the_system_clipboard_alone_when_it_is_turned_off() {
+        let dir = TempDir::new("clip-off");
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        let ids = a.editor.doc.iter().map(|s| s.id).collect::<Vec<_>>();
+        a.editor.clipboard.copy(&a.editor.doc, &ids);
+        let mut sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        a.prefs.opts.system_clipboard = false;
+        pull_if_used(&mut a, &mut sys);
+        assert!(!a.editor.clipboard.shapes[0].is_image(), "the copied rectangle stays");
+        a.prefs.opts.system_clipboard = true;
+        pull_if_used(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image());
     }
 
     #[test]

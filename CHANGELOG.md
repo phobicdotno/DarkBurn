@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.303 (build 6)
+## v0.0.316 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -280,6 +280,19 @@
 - Fix: A galvo device set up with a port bit above 15 is now refused with a clear message instead of never finishing its connect
 - Fix: A galvo frequency too low for the board now gives the lowest frequency it can do, not a much higher one
 - Fix: An absurd fire time typed into a command no longer crashes the program
+- Fix: a LightBurn file with odd letters inside its path data no longer fails to open
+- Fix: SVG parts placed with a use element that has its own transform land in the right spot
+- Fix: PDF outlines that continue after a closed part keep their parts apart
+- Fix: PDF pages with a user unit come in at their real size
+- Fix: a damaged PDF layer entry that points at itself no longer closes DarkBurn
+- Fix: a PDF image whose mask points at itself no longer closes DarkBurn
+- Fix: a PDF fax image with an absurd width is skipped instead of closing DarkBurn
+- Fix: Same Width against a line with no width no longer flattens the other shapes
+- Fix: deleting a layer with its shapes keeps the other shapes of a group
+- Fix: a shape with a broken coordinate can no longer make a saved project impossible to open
+- Fix: changes made while a file is still being opened are asked about instead of thrown away
+- Fix: importing preferences no longer shows another machine's work area on the canvas
+- Fix: art libraries are saved when DarkBurn closes and are open again at the next start
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

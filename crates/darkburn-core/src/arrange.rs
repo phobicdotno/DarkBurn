@@ -242,6 +242,12 @@ fn running(items: &[(ShapeId, f64, f64)], from: f64, gap: f64) -> Vec<f64> {
 /// Make every shape as wide (or tall) as the last selected, about each one's centre.
 pub fn same_size(doc: &mut Document, ids: &[ShapeId], width: bool) -> bool {
     let Some(reference) = ids.last().and_then(|id| doc.get(*id)).map(Shape::bbox) else { return false };
+    // A reference with no width (a vertical line) or no height has no size to copy: scaling to
+    // it would flatten the other shapes for good.
+    let target = if width { reference.width() } else { reference.height() };
+    if !(target.is_finite() && target > 1e-9) {
+        return false;
+    }
     let mut changed = false;
     for id in &ids[..ids.len().saturating_sub(1)] {
         let Some(bb) = doc.get(*id).map(Shape::bbox) else { continue };
@@ -489,6 +495,22 @@ mod tests {
         assert!(near(bb(&d, ids[0]).x1, 400.0) && near(bb(&d, ids[0]).y1, 300.0));
         assert!(same_size(&mut d, &ids, true));
         assert!(ids.iter().all(|id| near(bb(&d, *id).width(), 20.0)));
+    }
+
+    #[test]
+    fn same_size_against_a_line_with_no_width_leaves_the_shapes_alone() {
+        let (mut d, mut ids) = three();
+        let mut upright = kurbo::BezPath::new();
+        upright.move_to((5.0, 0.0));
+        upright.line_to((5.0, 30.0));
+        ids.push(d.add(Shape::path(upright, 0)));
+        let before: Vec<Rect> = ids.iter().map(|id| bb(&d, *id)).collect();
+        assert!(!same_size(&mut d, &ids, true), "there is no width to copy");
+        let after: Vec<Rect> = ids.iter().map(|id| bb(&d, *id)).collect();
+        assert_eq!(before, after);
+        // Its height is a real size and is still copied.
+        assert!(same_size(&mut d, &ids, false));
+        assert!(ids.iter().all(|id| near(bb(&d, *id).height(), 30.0)));
     }
 
     #[test]

@@ -1730,10 +1730,14 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::Stop => {
                 self.note(ConsoleKind::Sent, "Stop");
-                self.job_started = None;
+                // The stop itself always goes out; a job is only reported as stopped when one
+                // (or a frame) was under way.
+                let had_job = self.job_started.take().is_some() || working;
                 self.framing_until = None;
                 self.snap.job = None;
-                self.out.push(MachineEvent::JobAborted("stopped".into()));
+                if had_job {
+                    self.out.push(MachineEvent::JobAborted("stopped".into()));
+                }
                 self.req(R::Stop, Op::Other("stop"))
             }
             C::FrameRect(r, f) => {

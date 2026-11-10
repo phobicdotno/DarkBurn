@@ -328,6 +328,29 @@ fn ruida_pause_resume_stop() {
 }
 
 #[test]
+fn ruida_stop_with_no_job_does_not_report_a_stopped_job() {
+    let mut h = connected(Family::Ruida, 0.2);
+    ready(&mut h);
+    // Stops, and says how many jobs were reported as stopped up to the controller's answer.
+    fn stop(h: &mut Sim) -> usize {
+        h.unseen.clear();
+        h.stop().unwrap();
+        assert!(h.wait_for(T, |_, ev| ev.iter().any(|e| matches!(e, MachineEvent::Stopped))));
+        h.unseen.iter().filter(|e| matches!(e, MachineEvent::JobAborted(_))).count()
+    }
+    assert_eq!(stop(&mut h), 0, "nothing ran, so no job was stopped; the stop itself still went out");
+    let mut job = simulator_square(Family::Ruida, 30.0);
+    if let JobData::Rd(j) = &mut job.data {
+        for i in 0..400 {
+            j.layers[0].ops.push(ruida::RdOp::Cut { to: Point::new(20.0 + (i % 2) as f64, 20.0), power: None, speed: None });
+        }
+    }
+    h.start_job(job).unwrap();
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Busy));
+    assert_eq!(stop(&mut h), 1, "a running job is reported as stopped");
+}
+
+#[test]
 fn ruida_home_jog_move_and_position() {
     let mut h = connected(Family::Ruida, 20.0);
     ready(&mut h);

@@ -1247,10 +1247,8 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
     let title = if q.editing.is_some() { "Edit Code" } else { "Create QR Code" };
     let args = q.args();
     let (payload_len, error, matrix) = qr_preview(&q);
-    let (closed, action) = ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(
-        ctx,
-        error.is_none() || q.barcode,
-        |ui| {
+    let (closed, action) =
+        ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(ctx, error.is_none(), |ui| {
             if q.editing.is_none() {
                 let mut i = q.barcode as usize;
                 if ui_kit::segmented(ui, &mut i, &["QR code", "Barcode"], ui_kit::Segments::default()) {
@@ -1320,8 +1318,7 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
             let (rect, _) = ui.allocate_exact_size(vec2(160.0, 160.0), Sense::hover());
             ui.painter().rect_filled(rect, tk.radius_sm, Color32::WHITE);
             paint_matrix(ui.painter(), rect.shrink(6.0), &matrix);
-        },
-    );
+        });
     match action {
         ui_kit::Action::Ok => {
             let cmd = match (q.barcode, q.editing) {
@@ -1360,6 +1357,10 @@ type Matrix = Vec<Vec<bool>>;
 fn qr_preview(q: &QrDialog) -> (usize, Option<String>, Matrix) {
     if q.barcode {
         let kind = BARCODES[q.code.min(BARCODES.len() - 1)].1;
+        if q.variable {
+            // Tokens turn into something else when the code is made: do not judge the data here.
+            return (q.data.len(), None, Vec::new());
+        }
         let spec = darkburn_text::BarcodeSpec { kind, data: q.data.clone(), ..Default::default() };
         return match spec.generate() {
             Ok(r) => {

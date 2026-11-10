@@ -71,3 +71,26 @@ fn read_from_the_controller_is_only_offered_for_the_connected_device() {
     g.click_id("dialog:cancel");
     g.frames(3);
 }
+
+/// Create QR Code with Barcode picked: OK waits for data the barcode can hold. It used to close
+/// the window and leave an empty code behind.
+#[test]
+fn the_barcode_dialog_keeps_ok_for_data_the_code_can_hold() {
+    let mut g = Gui::standard();
+    g.run_command("tools.qr");
+    g.settle();
+    g.click_label("Barcode");
+    g.frames(2);
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(g.app().text.qr.open, "OK closed the window with nothing to encode");
+    assert_eq!(g.app().editor.doc.len(), 0, "a barcode with no data was added");
+    let at = field_in_window(&g, "TextInput", "Data");
+    g.click_pos(at);
+    g.type_text("AB-123");
+    g.frames(2);
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(!g.app().text.qr.open, "OK works once the data fits: {:?}", g.visible_texts());
+    assert_eq!(g.app().editor.doc.len(), 1);
+}

@@ -86,11 +86,7 @@ fn var_kind(v: VariableText) -> VarKind {
 
 /// The state moved on by a copy's index offset.
 fn shifted(state: &VariableState, offset: i64) -> VariableState {
-    let mut s = state.clone();
-    for _ in 0..offset.unsigned_abs().min(100_000) {
-        s = if offset > 0 { s.next() } else { s.previous() };
-    }
-    s
+    state.stepped(offset.clamp(-100_000, 100_000))
 }
 
 /// The cut values a shape on `layer` shows in `{cut:..}` tokens.

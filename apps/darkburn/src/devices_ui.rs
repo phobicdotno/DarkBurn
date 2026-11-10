@@ -147,7 +147,7 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if small(ui, "Remove", "Remove it from the list (the last device stays)", has && n > 1)
                     && let Some(id) = sel
                 {
-                    app.machine.devices.remove(id);
+                    app.machine.remove_device(id);
                     app.machine.dlg.devices_sel = None;
                 }
                 if small(ui, "Export", "Save it as a .dbdev file", has)
@@ -263,7 +263,11 @@ fn wizard_dialog(ctx: &Context, app: &mut DarkBurn) {
     match action {
         Action::Ok => {
             if last {
-                match w.finish(&mut app.machine.devices) {
+                let was = app.machine.devices.active;
+                let added = w.finish(&mut app.machine.devices);
+                // The new device is the one in use now: a connection to the old one ends.
+                app.machine.end_link_if_device_changed(was);
+                match added {
                     Ok(id) => {
                         app.machine.dlg.devices_sel = Some(id);
                         app.machine.dlg.devices = true;

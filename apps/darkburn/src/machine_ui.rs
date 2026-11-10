@@ -522,6 +522,23 @@ impl MachineUi {
         self.applied_device = None;
     }
 
+    /// The device list changed (a device was added and made the active one, or the active one was
+    /// removed): when the active device is no longer `was`, an open connection belongs to another
+    /// device than the one the panels and the job builder now work for, so it is ended.
+    pub fn end_link_if_device_changed(&mut self, was: Option<u64>) {
+        if self.devices.active != was && (self.handle.is_connected() || self.handle.is_real_machine()) {
+            self.handle.disconnect();
+        }
+    }
+
+    /// Remove a device from the list [DEV-04]; a connection to it is ended.
+    pub fn remove_device(&mut self, id: u64) -> bool {
+        let was = self.devices.active;
+        let removed = self.devices.remove(id);
+        self.end_link_if_device_changed(was);
+        removed
+    }
+
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
@@ -935,7 +952,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "device.remove" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
-            if m.devices.remove(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
+            if m.remove_device(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
         }
         "device.export" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;

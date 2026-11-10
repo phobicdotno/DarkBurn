@@ -291,3 +291,46 @@ fn shape_dialogs_cancel_cleanly_and_ok_is_one_undo_step() {
         assert!(g.app().editor.doc != before, "{id}: redo brings it back");
     }
 }
+
+fn connect_simulator(g: &mut Gui) {
+    g.run_command("machine.connect");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while g.app().machine.handle.snapshot().state != crate::machine_api::LaserState::Ready {
+        assert!(std::time::Instant::now() < end, "the simulator connected");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        g.frames(2);
+    }
+}
+
+/// The New Device wizard makes its device the one in use, and Remove on the device in use hands
+/// over to another: a connection that was open belongs to the old device and is ended, so the
+/// panels and the job builder never work for one machine while another is connected.
+#[test]
+fn a_new_or_removed_device_in_use_ends_the_open_connection() {
+    use crate::devices::{DeviceType, Wizard, WizardStep};
+    let mut g = Gui::standard();
+    connect_simulator(&mut g);
+    let first = g.app().machine.devices.active;
+    let mut w = Wizard::new();
+    w.set_type(DeviceType::SimulatorRuida);
+    w.step = WizardStep::Summary;
+    g.app().machine.dlg.wizard = Some(w);
+    g.frames(2);
+    g.settle();
+    g.click_label("Add");
+    g.frames(2);
+    let added = g.app().machine.devices.active;
+    assert_ne!(added, first, "the new device is the one in use");
+    assert!(!g.app().machine.handle.is_connected(), "the first simulator is still connected though another device is in use");
+    g.close_dialogs();
+
+    // Remove the device in use while it is connected.
+    connect_simulator(&mut g);
+    g.run_command("laser.devices");
+    g.frames(2);
+    g.click_label("Remove");
+    g.frames(2);
+    assert_ne!(g.app().machine.devices.active, added, "the device in use was removed");
+    assert!(!g.app().machine.handle.is_connected(), "the removed device is still connected");
+    g.close_dialogs();
+}

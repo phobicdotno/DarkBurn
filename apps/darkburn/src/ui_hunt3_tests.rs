@@ -215,3 +215,55 @@ fn a_finished_job_moves_variable_text_on_when_auto_advance_is_ticked() {
     }
     assert!(current(&g) == 3 || g.app().machine.job_log.last().is_some_and(|l| l.starts_with("Job finished")), "a stopped job moved the number on");
 }
+
+/// The Variable Text panel: a value that is typed again as it was is no change (no undo step),
+/// and the column-names box still works when the CSV file has gone: the rows are in the project.
+#[test]
+fn the_variable_text_panel_makes_no_undo_step_for_no_change_and_keeps_a_lost_csv_usable() {
+    let mut g = Gui::standard();
+    let steps = g.app().editor.history.len();
+    let r = g.exec("variable.set", json!({ "start": 1, "padding": 0 }));
+    assert_eq!(r["changed"], false, "{r}");
+    let r = g.exec("variable.set", json!({}));
+    assert_eq!(r["changed"], false, "{r}");
+    assert_eq!(g.app().editor.history.len(), steps, "undo steps for no change");
+    let r = g.exec("variable.set", json!({ "start": 5 }));
+    assert_eq!(r["changed"], true);
+
+    let file = g.temp("names.csv");
+    std::fs::write(&file, "Name,Code\n\"Smith, John\",A1\nLee,\n").unwrap();
+    g.exec("variable.csv_load", json!({ "path": file.display().to_string(), "header": false }));
+    std::fs::remove_file(&file).unwrap();
+    show_panel(&mut g, "variable_text");
+    assert!(!g.app().editor.doc.variables.merge.header);
+    g.click_label("First row holds column names");
+    g.frames(2);
+    let m = g.app().editor.doc.variables.merge.clone();
+    assert!(m.header, "the box could not be ticked once the file was gone: {:?}", g.app().note);
+    assert_eq!((m.row_count(), m.value(0, 0)), (2, Some("Smith, John")), "the rows kept in the project are still used");
+}
+
+/// Every window a command opens: what Tab reaches, as (role, label), and what went wrong.
+fn tab_walk(g: &mut Gui, presses: usize) -> (Vec<String>, Vec<String>) {
+    let mut reached = Vec::new();
+    let mut problems = Vec::new();
+    for n in 0..presses {
+        g.key(Key::Tab, Modifiers::NONE);
+        g.frames(2);
+        let Some(f) = g.ctx().memory(|m| m.focused()).map(|i| i.value()) else {
+            reached.push("nothing".to_string());
+            continue;
+        };
+        let windows: Vec<egui::Rect> = g.dialog_windows();
+        match g.a11y().into_iter().find(|n| n.id == f) {
+            Some(node) => {
+                if !windows.iter().any(|w| w.expand(4.0).contains(node.rect.center())) {
+                    problems.push(format!("press {n}: the keyboard is on {} {:?} at {:?}, outside the window", node.role, node.label, node.rect));
+                }
+                reached.push(format!("{} {:?}", node.role, node.label.unwrap_or_default()));
+            }
+            None => reached.push("unnamed".to_string()),
+        }
+    }
+    (reached, problems)
+}

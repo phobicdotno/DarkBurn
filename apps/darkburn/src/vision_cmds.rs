@@ -1855,7 +1855,9 @@ mod tests {
         let mut app = app();
         let mut lens = darkburn_vision::lens::LensModel::ideal(640, 480, 500.0);
         lens.k[0] = -0.25;
+        sync(&mut app);
         app.vision.state.camera.lens = Some(lens.clone());
+        commit(&mut app, "Lens", true);
         app.vision.raw = Some(frame());
         // corrected pixel to millimetres from the head: 0.1 mm per pixel about the picture centre, Y up
         let offset = |u: Point| Point::new((u.x - 319.5) * 0.1, (239.5 - u.y) * 0.1);

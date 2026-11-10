@@ -969,8 +969,19 @@ impl DeviceStore {
         }
     }
 
+    /// The device list of the settings folder. A file that is there but cannot be read (damaged,
+    /// or from a newer DarkBurn) gives the defaults, and the next change is saved over it: so
+    /// it is first copied to `devices.json.unreadable` beside it, where it can be put back from.
     pub fn load(dir: &Path) -> Self {
-        std::fs::read_to_string(dir.join(Self::FILE)).map(|t| Self::from_json(&t)).unwrap_or_default()
+        let Ok(text) = std::fs::read_to_string(dir.join(Self::FILE)) else { return Self::default() };
+        if !text.trim().is_empty() && serde_json::from_str::<DeviceStore>(&text).is_err() {
+            let copy = dir.join(format!("{}.unreadable", Self::FILE));
+            match std::fs::write(&copy, &text) {
+                Ok(()) => log::warn!("the device list could not be read; it was kept as {}", copy.display()),
+                Err(e) => log::warn!("the device list could not be read, and no copy of it could be kept: {e}"),
+            }
+        }
+        Self::from_json(&text)
     }
 
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
@@ -1154,6 +1165,34 @@ mod tests {
 
     fn port(name: &str, vid: Option<u16>, pid: Option<u16>) -> PortInfo {
         PortInfo { name: name.into(), vid, pid, ..Default::default() }
+    }
+
+    #[test]
+    fn a_device_list_that_cannot_be_read_is_kept_beside_the_new_one() {
+        let dir = std::env::temp_dir().join(format!("darkburn-devices-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A list from a newer DarkBurn, with a device type this one does not know.
+        let mut store = DeviceStore::default();
+        let mut mine = Device::new(DeviceType::Ruida);
+        mine.name = "Workshop CO2".into();
+        mine.host = "10.0.0.7".into();
+        store.add(mine);
+        let text = store.to_json().replace("\"Ruida\"", "\"FutureLaser\"");
+        assert!(text.contains("FutureLaser"));
+        std::fs::write(dir.join(DeviceStore::FILE), &text).unwrap();
+        // It cannot be read, so the list starts again; the next change is saved over the file.
+        let mut loaded = DeviceStore::load(&dir);
+        assert_eq!(loaded, DeviceStore::default());
+        loaded.add(Device::new(DeviceType::Grbl));
+        loaded.save(&dir).unwrap();
+        let kept = std::fs::read_dir(&dir).unwrap().filter_map(Result::ok).any(|e| std::fs::read_to_string(e.path()).is_ok_and(|t| t == text));
+        assert!(kept, "the devices that could not be read are gone for good");
+        // A list that reads leaves no such copy.
+        let again = DeviceStore::load(&dir);
+        assert_eq!(again, loaded);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

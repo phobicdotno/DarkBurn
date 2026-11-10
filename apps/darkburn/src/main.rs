@@ -21,6 +21,8 @@ mod connections_tests;
 mod cross_machine_tests;
 mod cut_settings;
 mod cuts_panel;
+#[cfg(test)]
+mod device_file_tests;
 mod devices;
 mod devices_ui;
 mod dock_geom;

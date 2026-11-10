@@ -5,3 +5,4 @@ Fix: Deleting every node of a line inside a bigger shape no longer eats a node o
 Fix: Breaking or deleting lines at several nodes of a closed shape now hits the nodes you picked
 Fix: Convert to curve or line works with every node of an open line selected
 Fix: Deleting the last nodes of a shape removes the shape instead of leaving an invisible one
+Fix: A mistyped array count or spacing gives a message instead of freezing or closing the program

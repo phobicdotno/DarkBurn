@@ -6,3 +6,4 @@ Fix: Breaking or deleting lines at several nodes of a closed shape now hits the 
 Fix: Convert to curve or line works with every node of an open line selected
 Fix: Deleting the last nodes of a shape removes the shape instead of leaving an invisible one
 Fix: A mistyped array count or spacing gives a message instead of freezing or closing the program
+Fix: Union, Difference, Weld, Cut Shapes and Offset no longer delete a selected picture or line they did not use

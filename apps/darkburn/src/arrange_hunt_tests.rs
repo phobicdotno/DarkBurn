@@ -219,3 +219,23 @@ fn docking_spacing_and_move_together_give_the_hand_computed_places() {
     // 40 wide together about the middle of 5..53 (29): 9..49.
     assert_eq!((span_x(&a, r), span_x(&a, p), span_x(&a, q)), ((9.0, 19.0), (19.0, 29.0), (29.0, 49.0)));
 }
+
+/// Deleting a layer with its shapes also drops the pixels of the pictures that went with it, as
+/// the Cuts / Layers button does: they used to stay in the project file for good.
+#[test]
+fn deleting_a_layer_with_its_shapes_drops_the_pixels_of_its_pictures() {
+    use darkburn_core::kurbo::Affine;
+    use darkburn_core::{ImageData, ImageShape, Shape};
+    let mut a = app();
+    a.editor.edit("Add", |d, _| {
+        let key = d.add_image(ImageData { format: "png".into(), bytes: std::sync::Arc::from(&b"pixels"[..]), px_width: 2, px_height: 1 });
+        d.add(Shape::new(ShapeKind::Image(ImageShape { image: key, ..Default::default() }), Affine::IDENTITY, 4));
+        true
+    });
+    assert_eq!(a.editor.doc.images.len(), 1);
+    run(&mut a, "layer.delete", json!({ "layer": 4, "with_shapes": true })).unwrap();
+    assert!(a.editor.doc.is_empty());
+    assert!(a.editor.doc.images.is_empty(), "the pixels went with the picture");
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    assert_eq!((a.editor.doc.len(), a.editor.doc.images.len()), (1, 1), "undo brings both back");
+}

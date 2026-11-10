@@ -241,6 +241,8 @@ impl Document {
                     self.shapes.push(Arc::new(kept));
                 }
             }
+            // The pixels of the pictures that went are no longer needed.
+            self.prune_images();
         }
         self.layers[layer] = Layer::new(layer);
     }

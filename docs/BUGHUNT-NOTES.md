@@ -5,7 +5,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] Manual tab positions on shapes are not passed to the job engine
 - [ ] LightBurn `.lbrn2` import: confirm bitmap and Y-axis orientation with a real file
 - [ ] Per-shape start point is not in the document model (PLAN-13)
-- [ ] Flaky test: `darkburn-mcp` control `an_oversized_request_after_login_closes_only_that_connection` (the server closes the socket with unread data, so on Windows the reset can arrive before the client reads the error reply; fix with a lingering close: finish writing, shut down the write side, drain the input briefly, then close)
 - [ ] Flaky test: `darkburn` `machine_api_tests::ruida_simulator_runs_a_job_with_progress` (half-read bed size under load; the job-settings builder says it is fixed, confirm over many runs)
 - [ ] Window-size problem: dock panels were missing at some forced window sizes in the real app (reported by the devices builder); confirm with the UI harness
 - [ ] Widget ID clash warning "First/Second use of widget ID 6985" in the default layout

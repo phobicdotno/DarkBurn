@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -191,7 +191,8 @@ fn accept_loop(
                 let a2 = active.clone();
                 let spawned = std::thread::Builder::new().name("darkburn-control-conn".into()).spawn(move || {
                     connection(stream, tx, &token, &refused, &cfg);
-                    // Close the socket for real: the server's list holds a second handle to it.
+                    // The connection has ended and closed its side in an orderly way; drop the
+                    // server's second handle to the socket so it is really closed.
                     let mut list = my_streams.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(i) = list.iter().position(|(id, _)| *id == my_id) {
                         let (_, s) = list.swap_remove(i);
@@ -209,10 +210,40 @@ fn accept_loop(
     }
 }
 
+/// How long a closing connection may stay quiet before the server stops waiting for the client.
+const LINGER_IDLE: Duration = Duration::from_millis(250);
+/// The longest a closing connection is kept, however busy the client still is.
+const LINGER_MAX: Duration = Duration::from_secs(2);
+
 fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
+    serve(&mut stream, tx, token, refused, cfg);
+    linger_close(stream);
+}
+
+/// Closes a connection so that the last reply arrives.
+///
+/// Closing a socket that still holds unread input makes the system send a reset instead of a
+/// normal end of stream, and a reset can throw away a reply the client has not read yet (it
+/// does on Windows). So: end our side of the stream, which sends everything written so far,
+/// then read and discard what the client has sent until it closes too or goes quiet, and only
+/// then let go of the socket.
+fn linger_close(mut stream: TcpStream) {
+    use std::io::Read;
+    if stream.shutdown(std::net::Shutdown::Write).is_err() {
+        return;
+    }
+    let _ = stream.set_read_timeout(Some(LINGER_IDLE));
+    let end = Instant::now() + LINGER_MAX;
+    let mut sink = [0u8; 16 * 1024];
+    // Ends on end of stream, on a quiet client (the read times out), on any error and at the
+    // overall limit, so a client that never stops sending cannot hold the connection open.
+    while Instant::now() < end && matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+}
+
+fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
     // Handshake: the first frame is a small hello with the token, within five seconds.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let hello = read_frame(&mut stream, HELLO_MAX);
+    let hello = read_frame(stream, HELLO_MAX);
     let ok = match hello {
         Ok(Some(v)) => v["hello"]["token"].as_str().is_some_and(|t| ct_eq(t.as_bytes(), token.as_bytes())),
         _ => false,
@@ -222,24 +253,22 @@ fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &Ato
         // A pause makes guessing slow; the reply says nothing about which part was wrong.
         std::thread::sleep(Duration::from_millis(100));
         let _ = write_frame(
-            &mut stream,
+            stream,
             &json!({"ok": false, "error": "authentication failed: missing or wrong token (read it from DarkBurn's control.json)"}),
         );
-        let _ = stream.shutdown(std::net::Shutdown::Both);
         return;
     }
-    if write_frame(&mut stream, &json!({"ok": true, "server": "DarkBurn", "version": PROTOCOL})).is_err() {
+    if write_frame(stream, &json!({"ok": true, "server": "DarkBurn", "version": PROTOCOL})).is_err() {
         return;
     }
     let _ = stream.set_read_timeout(None);
     loop {
-        let req = match read_frame(&mut stream, cfg.max_frame) {
+        let req = match read_frame(stream, cfg.max_frame) {
             Ok(Some(v)) => v,
             Ok(None) => return,
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::InvalidData {
-                    let _ =
-                        write_frame(&mut stream, &json!({"id": null, "ok": false, "error": {"code": "invalid_params", "message": e.to_string()}}));
+                    let _ = write_frame(stream, &json!({"id": null, "ok": false, "error": {"code": "invalid_params", "message": e.to_string()}}));
                 }
                 return;
             }
@@ -265,7 +294,7 @@ fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &Ato
             Ok(v) => json!({"id": id, "ok": true, "result": v}),
             Err(e) => json!({"id": id, "ok": false, "error": e}),
         };
-        if write_frame(&mut stream, &frame).is_err() {
+        if write_frame(stream, &frame).is_err() {
             return;
         }
     }

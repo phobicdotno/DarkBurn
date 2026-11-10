@@ -9,6 +9,8 @@
 //! latest snapshot and return `Err` straight away; the worker checks again and reports late
 //! refusals as [`MachineEvent::Rejected`]. Events come back over a channel
 //! ([`GcodeMachine::poll_events`]) and the state sits in a shared [`MachineSnapshot`].
+//! The worker hands out the snapshot and the events that belong to it together, so the
+//! snapshot read after an event already shows what the event reports.
 //!
 //! # Streaming
 //!
@@ -25,6 +27,7 @@
 //! runs). Stop uses the controller's quick stop where one exists (`M410` on Marlin, the reset
 //! byte on Smoothieware), then switches the laser off and waits for the answers.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -790,6 +793,9 @@ struct Worker {
     t: Box<dyn darkburn_grbl::Transport>,
     cmds: Receiver<Cmd>,
     events: Sender<MachineEvent>,
+    /// Events raised since the last [`Worker::publish`]. They go out together with the
+    /// snapshot, so whoever receives an event finds the state it reports in the snapshot.
+    outbox: RefCell<Vec<MachineEvent>>,
     shared: Arc<Mutex<MachineSnapshot>>,
     starting: Arc<AtomicBool>,
     start_seen: bool,
@@ -832,6 +838,7 @@ impl Worker {
             t,
             cmds,
             events,
+            outbox: RefCell::new(Vec::new()),
             shared,
             starting,
             start_seen: false,
@@ -855,17 +862,27 @@ impl Worker {
         }
     }
 
+    /// Queues an event. It is delivered by the next [`Worker::publish`].
     fn emit(&self, e: MachineEvent) {
-        let _ = self.events.send(e);
+        self.outbox.borrow_mut().push(e);
     }
 
     fn note(&self, text: impl Into<String>) {
         self.emit(MachineEvent::Console(ConsoleLine { kind: ConsoleKind::Note, text: text.into() }));
     }
 
+    /// Stores the snapshot and delivers the queued events as one step: the events are sent
+    /// while the snapshot lock is held, so a reader never sees an event before the state it
+    /// reports, nor the new state before its events are waiting.
     fn publish(&mut self) {
         self.snap.updated = Some(Instant::now());
-        *self.shared.lock().unwrap_or_else(|p| p.into_inner()) = self.snap.clone();
+        {
+            let mut shared = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+            *shared = self.snap.clone();
+            for e in self.outbox.get_mut().drain(..) {
+                let _ = self.events.send(e);
+            }
+        }
         if self.start_seen {
             self.start_seen = false;
             self.starting.store(false, Ordering::SeqCst);
@@ -873,6 +890,12 @@ impl Worker {
     }
 
     fn run(mut self) {
+        self.run_loop();
+        // Whatever ended the loop, the last state and its events go out.
+        self.publish();
+    }
+
+    fn run_loop(&mut self) {
         let mut buf = [0u8; 512];
         loop {
             loop {
@@ -910,8 +933,8 @@ impl Worker {
         self.abort_job(&format!("The connection was lost: {reason}"));
         self.snap.connection = ConnectionState::Failed(reason.to_owned());
         self.snap.activity = Activity::Idle;
-        self.publish();
         self.emit(MachineEvent::Disconnected(Some(reason.to_owned())));
+        self.publish();
     }
 
     fn shutdown(&mut self, _why: Option<&str>) {
@@ -929,8 +952,8 @@ impl Worker {
         }
         self.snap.connection = ConnectionState::Disconnected;
         self.snap.activity = Activity::Idle;
-        self.publish();
         self.emit(MachineEvent::Disconnected(None));
+        self.publish();
     }
 
     // ----- commands -----
@@ -1471,8 +1494,8 @@ impl Worker {
     fn fail(&mut self, msg: String) {
         self.snap.connection = ConnectionState::Failed(msg.clone());
         self.phase = Phase::Ready;
-        self.publish();
         self.emit(MachineEvent::ConnectFailed(msg));
+        self.publish();
     }
 
     // ----- the loop body -----

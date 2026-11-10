@@ -6,8 +6,10 @@ use std::time::{Duration, Instant};
 use darkburn_gcodebots::emu::{EmuConfig, EmuFlavor, LineEmuHandle, SmoothieStatusStyle};
 use darkburn_gcodebots::profile::{DeviceKind, DeviceProfile, MarlinPowerMode, TransferMode};
 use darkburn_gcodebots::translate::{TranslateOptions, translate};
-use darkburn_gcodebots::{GcodeMachine, MachineError, MachineEvent, MachineFamily};
-use darkburn_grbl::{Activity, ConnectionState, EmulatorConfig, EmulatorHandle, FrameOptions, GrblEmulator, Job, JogStep, LaserStatus, MachineState};
+use darkburn_gcodebots::{GcodeMachine, MachineError, MachineEvent, MachineFamily, MachineSnapshot};
+use darkburn_grbl::{
+    Activity, ConnectionState, EmulatorConfig, EmulatorHandle, FrameOptions, GrblEmulator, Job, JogStep, LaserStatus, MachineState, Transport,
+};
 use kurbo::{Point, Rect};
 
 const T: Duration = Duration::from_secs(8);
@@ -628,4 +630,69 @@ fn bounds_check_and_busy_rules_apply() {
     assert!(m.frame_outline(&[], FrameOptions::default()).is_err());
     let _ = Point::new(0.0, 0.0);
     m.disconnect();
+}
+
+// ----- events and the snapshot -----
+
+/// A link that is slow to come back from a read, like a serial port waiting out its timeout.
+/// It stretches the time the worker spends between handling a command and its next pass.
+struct SlowLink<T: Transport> {
+    inner: T,
+    delay: Duration,
+}
+
+impl<T: Transport> Transport for SlowLink<T> {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        self.inner.write_all(data)
+    }
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        std::thread::sleep(self.delay);
+        self.inner.read(buf, timeout)
+    }
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+}
+
+/// Reads events one by one until `pred` matches and returns the snapshot taken at that moment.
+fn snapshot_at(m: &dyn GcodeMachine, pred: impl Fn(&MachineEvent) -> bool) -> MachineSnapshot {
+    let end = Instant::now() + T;
+    loop {
+        let left = end.checked_duration_since(Instant::now()).expect("the event never came");
+        if let Some(e) = m.next_event(left)
+            && pred(&e)
+        {
+            return m.snapshot();
+        }
+    }
+}
+
+#[test]
+fn the_snapshot_already_shows_what_an_event_reports() {
+    for kind in [DeviceKind::Marlin, DeviceKind::Smoothie] {
+        let flavor = if kind == DeviceKind::Marlin { EmuFlavor::Marlin } else { EmuFlavor::Smoothie };
+        let emu = LineEmuHandle::with_config(EmuConfig::new(flavor));
+        let p = if kind == DeviceKind::Marlin { marlin_profile() } else { smoothie_profile() };
+        let link = SlowLink { inner: emu.transport(), delay: Duration::from_millis(30) };
+        let m = p.connect(Box::new(link)).expect("connect");
+        let m = m.as_ref();
+
+        let s = snapshot_at(m, |e| matches!(e, MachineEvent::Connected(_)));
+        assert_eq!(s.connection, ConnectionState::Connected, "{kind:?}");
+
+        m.fire(5.0, Duration::from_millis(60)).unwrap();
+        let s = snapshot_at(m, |e| matches!(e, MachineEvent::FireOff));
+        assert!(!s.fire_on, "{kind:?}");
+
+        m.start_job(translated_job(&p, 4)).unwrap();
+        let s = snapshot_at(m, |e| matches!(e, MachineEvent::JobStarted));
+        assert_eq!(s.activity, Activity::Job, "{kind:?}");
+        let s = snapshot_at(m, |e| matches!(e, MachineEvent::JobFinished(_)));
+        assert_eq!(s.activity, Activity::Idle, "{kind:?}");
+
+        m.emergency_stop().unwrap();
+        let s = snapshot_at(m, |e| matches!(e, MachineEvent::Alarm(_)));
+        assert!(s.alarm.is_some(), "{kind:?}");
+        assert_eq!(s.laser_status(), LaserStatus::Alarm, "{kind:?}");
+    }
 }

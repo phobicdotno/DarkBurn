@@ -6,3 +6,4 @@ Fix: a drag that is cancelled or ends where it began no longer marks a saved pro
 Fix: a cut library that was never saved to a file of its own is there again the next time DarkBurn starts
 Fix: library entries made before the Library panel was first opened no longer disappear
 Fix: a damaged project file with impossible shape numbers or layers opens instead of crashing
+Fix: starting DarkBurn by opening a file after a crash no longer throws away the copy it offers to restore

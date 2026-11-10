@@ -366,12 +366,14 @@ pub fn write_autosave(dir: &Path, doc: &darkburn_core::Document, project: Option
 }
 
 /// The auto-save is now unneeded (saved, or the project let go). An extra window has none: the
-/// files belong to the first window.
+/// files belong to the first window. While a crashed session's copy is still being offered the
+/// files are that copy, and they stay until the question is answered.
 fn discard_autosave(app: &mut DarkBurn) {
     wait_for_autosave(app);
     if let Some(dir) = &app.settings_dir
         && !app.safe_mode
         && !app.fio.secondary
+        && app.files.restore.is_none()
     {
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_FILE));
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_PATH_FILE));
@@ -433,7 +435,8 @@ fn autosave_tick(app: &mut DarkBurn, now: Instant) -> Option<Duration> {
             Err(mpsc::TryRecvError::Disconnected) => app.files.autosave.writing = None,
         }
     }
-    if !autosave_enabled(app) {
+    if !autosave_enabled(app) || app.files.restore.is_some() {
+        // Off, or the file still holds a crashed session's copy that is being offered.
         app.files.autosave.due = None;
         return None;
     }
@@ -1208,5 +1211,38 @@ mod tests {
         open_path(&mut second, &dir.0.join("other.dbrn")).unwrap();
         assert!(settings.join(AUTOSAVE_FILE).is_file(), "the first window's auto-save is still there");
         assert!(settings.join(AUTOSAVE_PATH_FILE).is_file());
+    }
+
+    /// DarkBurn is started again after a crash by opening another project (a double click on a
+    /// file): the crashed session's copy must still be there when the restore question is answered.
+    #[test]
+    fn opening_a_file_at_the_start_after_a_crash_keeps_the_copy_to_restore() {
+        let dir = TempDir::new("crash-arg");
+        let settings = dir.0.join("settings");
+        let mine = dir.0.join("mine.dbrn");
+        leave_a_crashed_session(&settings, &mine);
+        let other = dir.0.join("other.dbrn");
+        let mut writer = DarkBurn::new(Prefs::default());
+        add_rect(&mut writer);
+        add_rect(&mut writer);
+        save_to(&mut writer, &other).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut a = app(&dir);
+        a.fio.pending_open = vec![other.clone()];
+        frame(&ctx, &mut a);
+        crate::file_io::frame(&ctx, &mut a);
+        assert_eq!(a.project_path.as_deref(), Some(other.as_path()), "the file from the command line is open");
+        assert_eq!(a.editor.doc.len(), 2);
+        let offered = a.files.restore.clone().expect("the restore question is still asked");
+        assert!(offered.is_file(), "and the copy it is about still exists");
+        restore_autosave(&mut a, &offered).unwrap();
+        assert_eq!(a.editor.doc.len(), 1, "the crashed session's project is back");
+        assert_eq!(a.project_path.as_deref(), Some(mine.as_path()));
+        // Answered: from now on a save removes the copy as usual.
+        a.files.restore = None;
+        save_to(&mut a, &mine).unwrap();
+        assert!(!settings.join(AUTOSAVE_FILE).exists());
+        end_session(&settings);
     }
 }

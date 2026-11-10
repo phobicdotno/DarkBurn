@@ -593,6 +593,8 @@ struct Window {
     shapes: Option<Vec<(usize, usize)>>,
     /// The lowest band of its design (or shape): the only one that owns its lower edge.
     first_band: bool,
+    /// The highest band of its design (or shape): the only one that owns its upper edge.
+    last_band: bool,
 }
 
 /// Takes the parts lying on the lower edge `y0` of a band out of a clipped piece. Such a part
@@ -653,7 +655,13 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
         let h = (b - a) / n as f64;
         for k in 0..n {
             let (y0, y1) = (a + h * k as f64, a + h * (k + 1) as f64);
-            out.push(Window { center_y: Some((y0 + y1) / 2.0), band: Some((y0, y1)), shapes: shapes.clone(), first_band: k == 0 });
+            out.push(Window {
+                center_y: Some((y0 + y1) / 2.0),
+                band: Some((y0, y1)),
+                shapes: shapes.clone(),
+                first_band: k == 0,
+                last_band: k + 1 == n,
+            });
         }
     };
     match rc.mode {
@@ -664,7 +672,13 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
             let (mut g0, mut g1) = (0.0, 0.0);
             let close = |group: &mut Vec<(usize, usize)>, g0: f64, g1: f64, out: &mut Vec<Window>| {
                 if !group.is_empty() {
-                    out.push(Window { center_y: Some((g0 + g1) / 2.0), band: None, shapes: Some(std::mem::take(group)), first_band: true });
+                    out.push(Window {
+                        center_y: Some((g0 + g1) / 2.0),
+                        band: None,
+                        shapes: Some(std::mem::take(group)),
+                        first_band: true,
+                        last_band: true,
+                    });
                 }
             };
             for (id, r) in shapes {
@@ -715,13 +729,13 @@ fn layer_polys(job_layer: &Layer, li: usize, win: &Window, opt: &CompileOptions)
 
 /// Drill mode: the outlines become rows of points, each fired at in place. Wobble does not
 /// apply. With a rotary, each window drills the points inside its band.
-fn emit_drill_layer(w: &mut Writer, shapes: &[Vec<Poly>], d: &DrillSettings, win: &Window, last_window: bool) -> Result<(), CompileError> {
+fn emit_drill_layer(w: &mut Writer, shapes: &[Vec<Poly>], d: &DrillSettings, win: &Window) -> Result<(), CompileError> {
     let dy = win.center_y.unwrap_or(0.0);
     for poly in shapes.iter().flatten() {
         for p in drill_points(&poly.pts, poly.closed, d.spacing_mm) {
             // A point on the line between two bands belongs to the upper one, so it is drilled once.
             if let Some((a, b)) = win.band
-                && !(p.y >= a && (p.y < b || (last_window && p.y <= b + 1e-9)))
+                && !(p.y >= a && (p.y < b || (win.last_band && p.y <= b + 1e-9)))
             {
                 continue;
             }
@@ -935,13 +949,13 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
     let bounds = job.bounds(opt.tolerance_mm).ok_or(CompileError::NothingToMark)?;
     let windows = match &job.rotary {
         Some(rc) => plan_windows(job, rc, dev.field.size_mm, opt)?,
-        None => vec![Window { center_y: None, band: None, shapes: None, first_band: true }],
+        None => vec![Window { center_y: None, band: None, shapes: None, first_band: true, last_band: true }],
     };
 
     // one repeat body
     let mut body: Vec<Step> = Vec::new();
     let mut est = Estimate::default();
-    for (wi, win) in windows.iter().enumerate() {
+    for win in &windows {
         if let (Some(rc), Some(cy)) = (&job.rotary, win.center_y) {
             body.push(Step::MoveAxis { axis: rc.axis, mm: cy });
             est.motion_s += MOTION_STEP_S;
@@ -965,7 +979,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
                 w.set_params(&layer.params);
                 match &layer.mode {
                     LayerMode::Line => emit_line_layer(&mut w, layer, &shapes, win, job, opt)?,
-                    LayerMode::Drill(d) => emit_drill_layer(&mut w, &shapes, d, win, wi + 1 == windows.len())?,
+                    LayerMode::Drill(d) => emit_drill_layer(&mut w, &shapes, d, win)?,
                     LayerMode::Fill(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, false, pass, win)?,
                     LayerMode::Flood(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, true, pass, win)?,
                     LayerMode::Sliced(_) => unreachable!("handled above"),
@@ -1575,6 +1589,17 @@ mod tests {
         let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
         let mm = marked_mm(&c);
         assert!((mm - (60.0 * 20.0 + 80.0)).abs() < 0.5, "60 scan lines of 20 mm and the 80 mm line, marked {mm}");
+    }
+
+    #[test]
+    fn rotary_by_shape_drills_the_top_of_a_sliced_shape() {
+        // The tall square is cut into three bands; the small one comes after it in its own window.
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, 0.0, 20.0, 90.0), rect_path(20.0, 5.0, 5.0, 5.0)], 1.0, 0.0));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::ByShape, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(c.steps.iter().filter(|s| matches!(s, Step::MoveAxis { .. })).count(), 4);
+        assert_eq!(shots(&c).len(), 8, "four corners each: {:?}", shots(&c));
     }
 
     #[test]

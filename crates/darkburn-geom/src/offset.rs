@@ -302,8 +302,10 @@ fn pline_to_contour(pl: &CPline<f64>) -> Option<Contour> {
 /// moves into the material). Outer contours grow and holes shrink, decided by nesting
 /// depth, whatever their winding. Each result contour keeps the start point (moved to the
 /// nearest point on the offset) and the travel direction of its source. Open subpaths are
-/// returned unchanged, and so are closed subpaths with coordinates that are not usable numbers.
-/// Circular arcs stay exact arcs; other curves are flattened within `tol`.
+/// returned unchanged, and so are closed subpaths with no area to grow or shrink (a line drawn
+/// out and back, a figure of eight whose halves cancel) or with coordinates that are not usable
+/// numbers: they are still cut where they were drawn. Circular arcs stay exact arcs; other
+/// curves are flattened within `tol`.
 pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
     if kerf == 0.0 || !kerf.is_finite() {
         return path.clone();
@@ -312,18 +314,14 @@ pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
     if cs.is_empty() {
         return path.clone();
     }
-    let offsettable = |c: &Contour| c.closed && usable_contour(c);
+    let offsettable = |c: &Contour| c.closed && usable_contour(c) && c.signed_area().abs() >= 1e-12;
     let closed_idx: Vec<usize> = (0..cs.len()).filter(|i| offsettable(&cs[*i])).collect();
     let closed_paths: Vec<BezPath> = closed_idx.iter().map(|i| cs[*i].to_bezpath()).collect();
     let tree = containment(&closed_paths, tol);
     let mut out: Vec<Contour> = Vec::new();
     for (k, &ci) in closed_idx.iter().enumerate() {
         let c = &cs[ci];
-        let area = c.signed_area();
-        if area.abs() < 1e-12 {
-            continue;
-        }
-        let s = area.signum();
+        let s = c.signed_area().signum();
         let outer = tree.depth[k].is_multiple_of(2);
         let d = -kerf * s * if outer { 1.0 } else { -1.0 };
         let pl = contour_to_pline(c, tol);
@@ -555,6 +553,29 @@ mod tests {
             assert_eq!(subpaths(&kerf_offset(&curve, 0.1, 0.001)).len(), 1);
         }
         assert_eq!(kerf_offset(&rect(0.0, 0.0, 1.0, 1.0), f64::NAN, 0.01), rect(0.0, 0.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn kerf_keeps_closed_contours_without_area() {
+        // A figure of eight whose two halves cancel, and a line drawn out and back: the kerf
+        // has no side to move them to, but they are still part of the job.
+        let mut eight = BezPath::new();
+        eight.move_to((0.0, 0.0));
+        eight.line_to((10.0, 10.0));
+        eight.line_to((10.0, 0.0));
+        eight.line_to((0.0, 10.0));
+        eight.close_path();
+        assert_eq!(kerf_offset(&eight, 0.5, 0.001), eight);
+        let mut back = BezPath::new();
+        back.move_to((0.0, 0.0));
+        back.line_to((10.0, 0.0));
+        back.close_path();
+        let mut both = rect(20.0, 0.0, 30.0, 10.0);
+        both.extend(back.clone());
+        let k = kerf_offset(&both, 0.5, 0.001);
+        let subs = subpaths(&k);
+        assert_eq!(subs.len(), 2, "the rectangle and the line");
+        assert!(subs.contains(&back));
     }
 
     #[test]

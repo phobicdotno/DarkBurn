@@ -594,3 +594,29 @@ fn a_controller_that_only_answers_the_right_magic_is_still_found() {
         assert_eq!(m.read_setting(addr::BED_Y).unwrap(), 400_000);
     }
 }
+
+// ---- acknowledges that arrive late ----------------------------------------------------------
+
+#[test]
+fn a_late_acknowledge_is_not_taken_for_the_next_datagram() {
+    use Fate::*;
+    let emu = emulator(EmulatorConfig::default());
+    let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), MachineConfig::default());
+    m.connect().unwrap();
+    let before = lock(&emu).motion.len();
+    // The acknowledge of the first move is late, so the move is sent again and both copies get
+    // answered. The second move is then lost on the way: the leftover acknowledge of the first
+    // must not pass for its own.
+    let n = m.transport().sent;
+    m.transport_mut().script = [vec![Pass; n], vec![Late, Pass, Lost]].concat();
+    m.move_to(Point::new(10.0, 10.0), false).unwrap();
+    assert_eq!(m.resends, 1);
+    m.move_to(Point::new(20.0, 20.0), false).unwrap();
+    m.move_to(Point::new(30.0, 30.0), false).unwrap();
+    let e = lock(&emu);
+    let pts: Vec<[i32; 2]> = e.motion[before..].iter().map(|r| [r.to[0], r.to[1]]).collect();
+    assert!(pts.contains(&[20_000, 20_000]), "the second move never reached the controller and nobody noticed: {pts:?}");
+    assert_eq!(pts.last(), Some(&[30_000, 30_000]));
+    drop(e);
+    assert_eq!(m.resends, 2, "the lost move was sent again");
+}

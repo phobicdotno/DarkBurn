@@ -6,6 +6,8 @@ mod actions;
 mod api;
 #[cfg(test)]
 mod arrange_hunt_tests;
+#[cfg(test)]
+mod arrange_origin_tests;
 mod art_library;
 mod canvas;
 mod canvas_input;

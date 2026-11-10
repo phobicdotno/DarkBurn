@@ -101,13 +101,16 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
     if tabs.enabled && tabs.size > 0.0 && perimeter > EPS {
         let tab_power = tabs.tab_power.unwrap_or(0.0).min(power);
         let mut centers: Vec<f64> = ctx.tabs.iter().map(|p| geom::nearest_arclen(pts, *p).0).collect();
-        centers.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        centers.sort_by(|a, b| a.total_cmp(b));
+        // Tabs hold the part; they never take more than half of its outline, or a small shape
+        // (or a tab longer than the shape) would not be cut at all.
+        let size = if centers.is_empty() { tabs.size } else { tabs.size.min(perimeter / (2.0 * centers.len() as f64)) };
         // A tab next to the start of a closed path wraps around it (and shows again in the overcut).
         let turns: &[f64] = if closed { &[-1.0, 0.0, 1.0] } else { &[0.0] };
         for c in centers {
             for turn in turns {
-                let a = (turn * perimeter + c - tabs.size / 2.0).max(0.0);
-                let b = (turn * perimeter + c + tabs.size / 2.0).min(total);
+                let a = (turn * perimeter + c - size / 2.0).max(0.0);
+                let b = (turn * perimeter + c + size / 2.0).min(total);
                 if b > a + EPS {
                     push_tab(&mut intervals, a, b, tab_power, power, tabs.pulse_width);
                 }
@@ -281,6 +284,34 @@ mod tests {
         let mut ops = Vec::new();
         emit_path(&square(), true, &PathContext { tabs: &auto, ..ctx(&s) }, &mut ops);
         assert!((cut_len(&ops, true) - 40.0).abs() < 1e-9, "tabs off: a solid cut");
+    }
+
+    /// Tabs hold a part in place; they must leave something of it to cut.
+    #[test]
+    fn tabs_never_take_the_whole_outline_of_a_small_shape() {
+        let small = [Point::new(0.0, 0.0), Point::new(1.0, 0.0), Point::new(1.0, 1.0), Point::new(0.0, 1.0), Point::new(0.0, 0.0)];
+        let mut s = CutSettings::line(10.0, 50.0);
+        s.line.tabs.enabled = true;
+        // one manual tab, longer than the 4 mm of outline
+        s.line.tabs.size = 10.0;
+        let manual = [Point::new(0.5, 0.0)];
+        let mut ops = Vec::new();
+        emit_path(&small, true, &PathContext { tabs: &manual, ..ctx(&s) }, &mut ops);
+        assert!((cut_len(&ops, true) - 2.0).abs() < 1e-9, "half is cut: {}", cut_len(&ops, true));
+        assert!((cut_len(&ops, false) - 2.0).abs() < 1e-9, "half is tab: {}", cut_len(&ops, false));
+        // four automatic tabs of 2 mm
+        s.line.tabs.size = 2.0;
+        s.line.tabs.min_count = 4;
+        let auto = tab_centres(&small[..4], true, 0, &s.line.tabs, None);
+        assert_eq!(auto.len(), 4);
+        let mut ops = Vec::new();
+        emit_path(&small, true, &PathContext { tabs: &auto, ..ctx(&s) }, &mut ops);
+        assert!((cut_len(&ops, true) - 2.0).abs() < 1e-9, "{}", cut_len(&ops, true));
+        // an open line with a tab longer than itself
+        s.line.tabs.size = 10.0;
+        let mut ops = Vec::new();
+        emit_path(&small[..2], false, &PathContext { tabs: &manual, ..ctx(&s) }, &mut ops);
+        assert!((cut_len(&ops, true) - 0.5).abs() < 1e-9, "{}", cut_len(&ops, true));
     }
 
     /// The laser-off stretches of a cut as (from, to).

@@ -7,3 +7,4 @@ Fix: Head camera alignment no longer applies the lens correction twice to the cl
 Fix: Convert to Path leaves a text of only spaces alone instead of making an invisible shape
 Fix: "Weld text automatically" also applies to text made with the text tool
 Fix: A warning when a hole or part is smaller than the kerf offset and gets left out
+Fix: Tabs never take more than half of a small shape, so there is always something left to cut

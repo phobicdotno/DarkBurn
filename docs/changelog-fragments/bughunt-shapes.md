@@ -9,3 +9,4 @@ Fix: A mistyped array count or spacing gives a message instead of freezing or cl
 Fix: Union, Difference, Weld, Cut Shapes and Offset no longer delete a selected picture or line they did not use
 Fix: Text no longer vanishes when it is put on a path with no length
 Fix: Bent text on a path follows the curve on every edge of a letter
+Fix: Bending very large text on a path no longer closes the program

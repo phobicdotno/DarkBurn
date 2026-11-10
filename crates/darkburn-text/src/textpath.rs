@@ -105,6 +105,9 @@ fn len_of(p: &[Point]) -> f64 {
     p.windows(2).map(|w| (w[1] - w[0]).hypot()).sum()
 }
 
+/// The most pieces one straight stretch of a letter is cut into before it is bent.
+const MAX_PIECES: f64 = 4096.0;
+
 fn flatten_fine(path: &BezPath, max_seg: f64) -> Vec<(Vec<Point>, bool)> {
     geomutil::flatten_polylines(path, 0.002)
         .into_iter()
@@ -118,7 +121,9 @@ fn flatten_fine(path: &BezPath, max_seg: f64) -> Vec<(Vec<Point>, bool)> {
             }
             for w in ring.windows(2) {
                 let (a, b) = (w[0], w[1]);
-                let n = (((b - a).hypot()) / max_seg).ceil().max(1.0) as usize;
+                // Enough pieces to follow the bend, but never so many that an enormous letter
+                // fills the memory.
+                let n = (((b - a).hypot()) / max_seg).ceil().clamp(1.0, MAX_PIECES) as usize;
                 for k in 0..n {
                     out.push(a.lerp(b, k as f64 / n as f64));
                 }
@@ -235,5 +240,18 @@ mod tests {
             let r = a.midpoint(b).to_vec2().hypot();
             assert!((8.9..=11.1).contains(&r), "an edge from {a:?} to {b:?} cuts across the circle (radius {r})");
         }
+    }
+
+    #[test]
+    fn bending_an_enormous_letter_does_not_fill_the_memory() {
+        let opts = PathTextOptions { distort: true, ..Default::default() };
+        // A letter a thousand kilometres tall used to ask for tens of gigabytes here.
+        let bent = text_on_path(&one_glyph(1e9), &corner(), &opts);
+        assert_eq!(bent.len(), 1);
+        let n = node_count(&bent[0].path);
+        assert!(n > 4 && n <= 4 * 4096 + 8, "{n}");
+        // An ordinary letter is still cut finely enough to follow the bend.
+        let small = text_on_path(&one_glyph(10.0), &corner(), &opts);
+        assert!(node_count(&small[0].path) >= 4 * 39, "{}", node_count(&small[0].path));
     }
 }

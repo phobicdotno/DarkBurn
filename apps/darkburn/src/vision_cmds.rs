@@ -734,6 +734,32 @@ fn head_solve_cmd(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     head_solve(app, marks, size)
 }
 
+/// A head camera mark from a click in the picture the wizard shows. That picture is already
+/// lens-corrected ([`undistorted`]); a mark holds the pixel of the camera's own picture, and the
+/// solver and the stitcher do the lens correction themselves.
+pub fn head_mark(app: &DarkBurn, click: Point, head: Point, bed: Point) -> HeadMark {
+    let cam = &app.vision.state.camera;
+    let image = match view_lens(app) {
+        Some(l) => l.distort_point_with(click, cam.focal_scale),
+        None => click,
+    };
+    HeadMark { image, head_pos: head, bed }
+}
+
+/// The lens [`undistorted`] corrects the current picture with, if it does.
+fn view_lens(app: &DarkBurn) -> Option<&darkburn_vision::lens::LensModel> {
+    let raw = app.vision.raw.as_ref()?;
+    app.vision.state.camera.lens.as_ref().filter(|l| l.width == raw.width() && l.height == raw.height())
+}
+
+/// Where a mark's pixel is in the lens-corrected picture the wizard shows.
+pub fn mark_in_view(app: &DarkBurn, mark: &HeadMark) -> Point {
+    match view_lens(app) {
+        Some(l) => l.undistort_point_with(mark.image, app.vision.state.camera.focal_scale),
+        None => mark.image,
+    }
+}
+
 pub fn head_add_capture(app: &mut DarkBurn, img: RgbaImage, head: Point) -> usize {
     app.vision.mosaic.push(MosaicCapture { head_pos: head, image: img });
     app.vision.mosaic.len()
@@ -1820,6 +1846,36 @@ mod tests {
         let c = o.img.get_pixel((100.0 * ppm) as u32, ((o.covers.height - 100.0) * ppm) as u32);
         assert_eq!(c.0[3], 255);
         assert_eq!(o.img.get_pixel(1, 1).0[3], 0);
+    }
+
+    /// The head camera wizard shows the lens-corrected picture; the clicks made in it must not be
+    /// lens-corrected a second time.
+    #[test]
+    fn head_camera_marks_clicked_in_the_corrected_picture() {
+        let mut app = app();
+        let mut lens = darkburn_vision::lens::LensModel::ideal(640, 480, 500.0);
+        lens.k[0] = -0.25;
+        app.vision.state.camera.lens = Some(lens.clone());
+        app.vision.raw = Some(frame());
+        // corrected pixel to millimetres from the head: 0.1 mm per pixel about the picture centre, Y up
+        let offset = |u: Point| Point::new((u.x - 319.5) * 0.1, (239.5 - u.y) * 0.1);
+        let head = Point::new(100.0, 80.0);
+        let clicks = [Point::new(60.0, 50.0), Point::new(580.0, 60.0), Point::new(570.0, 430.0), Point::new(70.0, 420.0), Point::new(320.0, 240.0)];
+        let marks: Vec<HeadMark> =
+            clicks.iter().map(|u| head_mark(&app, *u, head, Point::new(head.x + offset(*u).x, head.y + offset(*u).y))).collect();
+        for (m, u) in marks.iter().zip(&clicks) {
+            assert!((mark_in_view(&app, m) - *u).hypot() < 1e-6, "the mark is drawn where it was clicked");
+        }
+        let r = head_solve(&mut app, marks, (640, 480)).unwrap();
+        assert!(r["rms_mm"].as_f64().unwrap() < 1e-6, "{r}");
+        // a spot seen at corrected pixel (200, 150) is at this pixel of the camera's own picture
+        let u = Point::new(200.0, 150.0);
+        let raw = lens.distort_point_with(u, 1.0);
+        assert!((raw - u).hypot() > 2.0, "the lens bends this spot noticeably");
+        let cal = app.vision.state.camera.head.clone().unwrap();
+        let got = cal.bed_point(head, raw).unwrap();
+        let want = Point::new(head.x + offset(u).x, head.y + offset(u).y);
+        assert!((got - want).hypot() < 1e-4, "{got:?} against {want:?}");
     }
 
     #[test]

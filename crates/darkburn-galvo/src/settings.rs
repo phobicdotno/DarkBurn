@@ -114,18 +114,39 @@ impl Default for PortConfig {
 }
 
 impl PortConfig {
+    /// A bit number the port does not have never reads as pressed.
     pub fn foot_pressed(&self, port_bits: u16) -> bool {
         match self.foot_bit {
-            Some(b) => ((port_bits >> b) & 1 == 1) != self.foot_active_low,
+            Some(b) if b < 16 => ((port_bits >> b) & 1 == 1) != self.foot_active_low,
+            _ => false,
+        }
+    }
+
+    /// A bit number the port does not have reads as an open door: a door switch that cannot be
+    /// watched must not pass for a closed door.
+    pub fn door_open(&self, port_bits: u16) -> bool {
+        match self.door_bit {
+            Some(b) if b < 16 => ((port_bits >> b) & 1 == 1) != self.door_open_is_low,
+            Some(_) => true,
             None => false,
         }
     }
 
-    pub fn door_open(&self, port_bits: u16) -> bool {
-        match self.door_bit {
-            Some(b) => ((port_bits >> b) & 1 == 1) != self.door_open_is_low,
-            None => false,
+    /// Checks that every bit number is one the 16-bit port has.
+    pub fn validate(&self) -> Result<(), String> {
+        let bits = [
+            ("red light", Some(self.light_bit)),
+            ("marking", Some(self.mark_bit)),
+            ("foot switch", self.foot_bit),
+            ("door switch", self.door_bit),
+            ("done signal", self.done_bit),
+        ];
+        for (name, bit) in bits {
+            if let Some(b) = bit.filter(|b| *b > 15) {
+                return Err(format!("The {name} port bit is {b}; port bits go from 0 to 15."));
+            }
         }
+        Ok(())
     }
 }
 

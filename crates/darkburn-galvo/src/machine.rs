@@ -568,6 +568,15 @@ struct Worker {
 
 impl Worker {
     fn run(mut self) {
+        // Settings that cannot be right are refused before a single byte is sent.
+        if let Err(msg) = self.link.settings.ports.validate() {
+            self.sh.update(|s| {
+                s.connection = ConnectionState::Failed(msg.clone());
+                s.last_error = Some(msg.clone());
+            });
+            self.sh.emit(Event::Disconnected(Some(msg)));
+            return;
+        }
         if let Err(e) = self.bring_up() {
             self.link.safe_off();
             let msg = format!("Could not talk to the galvo board: {e}");

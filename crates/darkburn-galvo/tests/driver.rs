@@ -515,3 +515,31 @@ fn drill_job_fires_at_each_point_and_only_when_armed() {
         assert!(!e.laser_enabled() && !e.mo_open(), "all off afterwards");
     });
 }
+
+#[test]
+fn a_port_bit_the_port_does_not_have_is_refused_at_connect() {
+    // The port word has bits 0 to 15. A door switch on "bit 16" would, unchecked, either end the
+    // worker or watch some other input.
+    for ports in [
+        PortConfig { door_bit: Some(16), ..Default::default() },
+        PortConfig { foot_bit: Some(200), ..Default::default() },
+        PortConfig { light_bit: 16, ..Default::default() },
+        PortConfig { mark_bit: 99, ..Default::default() },
+        PortConfig { done_bit: Some(16), ..Default::default() },
+    ] {
+        let settings = DeviceSettings { ports, ..Default::default() };
+        let (t, emu) = MemoryTransport::new(GalvoEmulator::new(EmulatorConfig::default()));
+        let m = GalvoMachine::connect(Box::new(t), settings, opts());
+        let end = Instant::now() + Duration::from_secs(5);
+        while m.snapshot().connection == ConnectionState::Connecting && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let s = m.snapshot();
+        assert!(matches!(&s.connection, ConnectionState::Failed(why) if why.contains("0 to 15")), "{ports:?}: {:?}", s.connection);
+        assert!(!emu.lock().unwrap().laser_enabled(), "{ports:?}");
+    }
+    // Out-of-range bits never read as "door closed" or "foot pressed".
+    let p = PortConfig { door_bit: Some(16), foot_bit: Some(16), ..Default::default() };
+    assert!(p.door_open(0xFFFF) && p.door_open(0));
+    assert!(!p.foot_pressed(0xFFFF) && !p.foot_pressed(0));
+}

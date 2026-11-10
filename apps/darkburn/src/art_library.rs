@@ -79,14 +79,7 @@ impl ArtLibrary {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        std::fs::write(&tmp, self.to_json()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+        crate::files::write_atomic(path, self.to_json().as_bytes()).map_err(|e| e.to_string())
     }
 
     /// Add `item` to folder `folder` (created if the index is past the end). An item with the same

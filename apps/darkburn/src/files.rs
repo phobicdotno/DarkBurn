@@ -260,12 +260,27 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 }
 
 /// Write through a temporary file so a failed write never leaves half a project.
+///
+/// The temporary file is a new one beside `path` with a short name of its own: never a file
+/// that is already there (a `plan.dbrn.tmp` belongs to the person), and never a longer name
+/// than the one asked for (which may be as long as the file system allows). It is removed again
+/// when the write or the rename fails.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
+    use std::io::Write as _;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let (tmp, mut file) = loop {
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = dir.join(format!(".darkburn-{}-{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 10_000 => {}
+            Err(e) => return Err(e),
+        }
+    };
+    let written = file.write_all(bytes).and_then(|()| file.flush());
+    drop(file);
+    written.and_then(|()| std::fs::rename(&tmp, path)).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
 }

@@ -69,7 +69,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] SVG import: a path with `fill="none"` and no stroke is left out while a `<line>` with no stroke is kept; an old Inkscape file (90 px per inch) with sizes in bare pixels comes in at 96 px per inch
 - [ ] `Shape::image_keys` does not look into `array.source`, so a picture used only by a virtual array's originals may not be counted as used
 - [ ] Clipboard and art library content (`Clipboard::from_text`) is pasted without the tidy a project file gets on open; `project::tidy` clamps only the first level of array sources (no failure found: layer access clamps everywhere)
-- [ ] `write_atomic` and the library / art library `save` leave a partial `<name>.tmp` behind after a failed write, and overwrite a file that already has that name
 - [ ] Cut library and art library Save As use `path.with_extension(..)`: a name with a dot and no extension ("Birch 3.5") would become "Birch 3.dbclb" unless the file dialog adds the extension first
 - [ ] Cut library: `replace_entry` allows renaming an entry to the name another entry is linked by; deleting an entry cannot be undone while the unlinking it causes can
 - [ ] Art library: a library file changed by another running copy is overwritten on save when this copy has changes; `ArtLibrary::add` says a folder is made past the end but the index is clamped

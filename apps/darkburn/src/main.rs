@@ -123,6 +123,8 @@ mod shape_ui;
 mod shell;
 mod sounds;
 mod startup;
+#[cfg(test)]
+mod store_hunt6_tests;
 mod tab_focus;
 mod text_cmds;
 mod text_render;

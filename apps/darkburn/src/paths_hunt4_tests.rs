@@ -276,3 +276,34 @@ fn the_shape_commands_refuse_what_the_drawing_tools_cannot_draw() {
     assert!((b.x0 - 6.0).abs() < 1e-9 && (b.y0 - 8.0).abs() < 1e-9 && (b.width() - 4.0).abs() < 1e-9 && (b.height() - 2.0).abs() < 1e-9, "{b:?}");
     run(&mut a, "shape.add_line", json!({ "points": [[0, 0], [10, 0]], "layer": 31 })).unwrap();
 }
+
+#[test]
+fn text_from_a_command_is_held_to_the_ranges_of_the_text_fields() {
+    use crate::shape_ops::tests::run;
+    use serde_json::json;
+    let mut a = app();
+    let text = |a: &DarkBurn, id: u64| crate::text_cmds::find_text(&a.editor.doc, ShapeId(id)).unwrap().clone();
+    let mut wrong = Vec::new();
+    let id = run(&mut a, "text.add", json!({ "text": "Hi", "x": 10, "y": 10, "height": 1e300 })).unwrap()["id"].as_u64().unwrap();
+    if text(&a, id).height > 10_000.0 {
+        wrong.push(format!("height {:e}", text(&a, id).height));
+    }
+    run(&mut a, "text.set", json!({ "ids": [id], "height": 1e-300 })).unwrap();
+    if text(&a, id).height < 0.1 {
+        wrong.push(format!("height {:e}", text(&a, id).height));
+    }
+    run(&mut a, "text.set", json!({ "ids": [id], "letter_spacing": 1e300, "line_spacing": -1e300 })).unwrap();
+    let t = text(&a, id);
+    if t.letter_spacing > 1000.0 || t.line_spacing < -100.0 {
+        wrong.push(format!("spacing {:e} {:e}", t.letter_spacing, t.line_spacing));
+    }
+    run(&mut a, "text.set", json!({ "ids": [id], "offset": 9_000_000_000_000_000_000u64 })).unwrap();
+    if text(&a, id).offset.abs() > 100_000 {
+        wrong.push(format!("offset {}", text(&a, id).offset));
+    }
+    let b = a.editor.doc.get(ShapeId(id)).unwrap().bbox();
+    if !(b.x0.is_finite() && b.y0.is_finite() && b.x1.is_finite() && b.y1.is_finite()) {
+        wrong.push(format!("bbox {b:?}"));
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

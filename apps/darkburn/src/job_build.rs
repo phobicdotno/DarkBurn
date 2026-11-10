@@ -785,7 +785,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 }
             });
             if leaf.is_image() {
-                frame_paths.push(leaf.outline());
                 leaves_by_layer[li].push((leaf, group));
                 continue;
             }
@@ -888,6 +887,20 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             Some(s) => {
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
                 entry.images = image_inputs(doc, &refs, s, &tuning, &mut warnings);
+                // Only the pictures that burn are framed (one left out is not part of the job).
+                for img in &entry.images {
+                    let mut p = BezPath::new();
+                    for (i, pt) in img.outline.iter().enumerate() {
+                        if i == 0 {
+                            p.move_to(*pt);
+                        } else {
+                            p.line_to(*pt);
+                        }
+                    }
+                    if !p.elements().is_empty() {
+                        frame_paths.push(p);
+                    }
+                }
             }
             None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
         }

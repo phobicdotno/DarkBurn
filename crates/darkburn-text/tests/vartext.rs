@@ -204,7 +204,7 @@ fn serial_numbers_at_the_limits_of_whole_numbers_wrap() {
     assert_eq!(serial(i64::MIN, i64::MAX, i64::MAX, 1, 0).next().serial.current, i64::MIN);
     let s = serial(i64::MIN, i64::MAX, i64::MAX, -3, 0);
     let p = s.previous().serial.current;
-    assert!(p <= i64::MAX && (i128::from(i64::MAX) - i128::from(p)) % 3 == 0, "{p}");
+    assert!((i128::from(i64::MAX) - i128::from(p)) % 3 == 0, "{p}");
     // The everyday cases are unchanged.
     assert_eq!(serial(10, 32, 10, 5, 0).previous().serial.current, 30);
     assert_eq!(serial(10, 7, 10, -1, 0).previous().serial.current, 7);

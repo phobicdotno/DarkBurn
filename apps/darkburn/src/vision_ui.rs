@@ -983,31 +983,6 @@ fn pixel_on_screen(r: Rect, size: (u32, u32), m: Point) -> egui::Pos2 {
     pos2(r.left() + (m.x as f32 + 0.5) / size.0 as f32 * r.width(), r.top() + (m.y as f32 + 0.5) / size.1 as f32 * r.height())
 }
 
-#[cfg(test)]
-mod click_tests {
-    use super::*;
-
-    /// A click in the middle of a drawn pixel is that pixel's whole-number position, the way the
-    /// detectors and the lens code count pixels; it used to be half a pixel further on.
-    #[test]
-    fn a_click_on_the_middle_of_a_pixel_is_that_pixel() {
-        // 4 x 2 pixels drawn 100 points to the pixel
-        let r = Rect::from_min_size(pos2(10.0, 20.0), vec2(400.0, 200.0));
-        let first = pixel_at(r, (4, 2), pos2(60.0, 70.0));
-        assert!(first.x.abs() < 1e-6 && first.y.abs() < 1e-6, "{first:?}");
-        let last = pixel_at(r, (4, 2), pos2(360.0, 170.0));
-        assert!((last.x - 3.0).abs() < 1e-6 && (last.y - 1.0).abs() < 1e-6, "{last:?}");
-        // The same convention as the sampler: the value read at the clicked position is the pixel's own.
-        let mut img = image::GrayImage::new(4, 2);
-        img.put_pixel(3, 1, image::Luma([200]));
-        let got = darkburn_vision::imageops::sample_bilinear(&img, last.x, last.y);
-        assert_eq!(got.map(|p| p[0]), Some(200));
-        // A mark is drawn where it was clicked.
-        let back = pixel_on_screen(r, (4, 2), last);
-        assert!((back - pos2(360.0, 170.0)).length() < 1e-3, "{back:?}");
-    }
-}
-
 fn lens_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.vision.ui.lens);
     let mut closing = false;
@@ -1546,4 +1521,29 @@ pub fn status_chips(ui: &mut Ui, bar: Rect, app: &mut DarkBurn) -> f32 {
         x = br.left() - 4.0;
     }
     x - 8.0
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    /// A click in the middle of a drawn pixel is that pixel's whole-number position, the way the
+    /// detectors and the lens code count pixels; it used to be half a pixel further on.
+    #[test]
+    fn a_click_on_the_middle_of_a_pixel_is_that_pixel() {
+        // 4 x 2 pixels drawn 100 points to the pixel
+        let r = Rect::from_min_size(pos2(10.0, 20.0), vec2(400.0, 200.0));
+        let first = pixel_at(r, (4, 2), pos2(60.0, 70.0));
+        assert!(first.x.abs() < 1e-6 && first.y.abs() < 1e-6, "{first:?}");
+        let last = pixel_at(r, (4, 2), pos2(360.0, 170.0));
+        assert!((last.x - 3.0).abs() < 1e-6 && (last.y - 1.0).abs() < 1e-6, "{last:?}");
+        // The same convention as the sampler: the value read at the clicked position is the pixel's own.
+        let mut img = image::GrayImage::new(4, 2);
+        img.put_pixel(3, 1, image::Luma([200]));
+        let got = darkburn_vision::imageops::sample_bilinear(&img, last.x, last.y);
+        assert_eq!(got.map(|p| p[0]), Some(200));
+        // A mark is drawn where it was clicked.
+        let back = pixel_on_screen(r, (4, 2), last);
+        assert!((back - pos2(360.0, 170.0)).length() < 1e-3, "{back:?}");
+    }
 }

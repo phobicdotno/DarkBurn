@@ -387,3 +387,197 @@ fn tab_in_a_panel_field_moves_on_while_a_window_is_open() {
     assert!(node.as_ref().is_some_and(|n| window.contains(n.rect.center())), "Tab did not go into the window: {node:?}");
     g.close_dialogs();
 }
+
+/// Every value of the preferences, each one different from its default. Booleans are flipped;
+/// everything else is named here, so a setting added later fails the sweep until it is listed.
+fn non_default_prefs() -> crate::prefs::Prefs {
+    use crate::prefs::Prefs;
+    use serde_json::Value;
+    fn flip(v: &mut Value) {
+        match v {
+            Value::Bool(b) => *b = !*b,
+            Value::Object(m) => m.values_mut().for_each(flip),
+            Value::Array(a) => a.iter_mut().for_each(flip),
+            _ => {}
+        }
+    }
+    fn merge(into: &mut Value, from: &Value) {
+        match (into, from) {
+            (Value::Object(a), Value::Object(b)) => {
+                for (k, v) in b {
+                    match a.get_mut(k) {
+                        Some(old) if old.is_object() && v.is_object() && !old.as_object().is_some_and(|o| o.is_empty()) => merge(old, v),
+                        _ => {
+                            a.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            (a, b) => *a = b.clone(),
+        }
+    }
+    let mut v: Value = serde_json::from_str(&Prefs::default().to_json()).unwrap();
+    flip(&mut v);
+    let panels: serde_json::Map<String, Value> = crate::panels::PANELS
+        .iter()
+        .map(|p| {
+            (p.id.to_string(), json!({ "area": if p.home == crate::panels::Area::Left { "Bottom" } else { "Left" }, "visible": !p.shown_by_default }))
+        })
+        .collect();
+    let order: Vec<&str> = crate::prefs::TOOLBARS.iter().rev().map(|(id, _)| *id).collect();
+    merge(
+        &mut v,
+        &json!({
+            "active_tab": { "RightBottom": "library", "RightTop": "console", "Left": "cuts" },
+            "anchor": "TopLeft",
+            "art_libraries": ["C:/art/shop.dbart"],
+            "autosave_minutes": 7.5,
+            "backdrop": "Dark",
+            "dock_sizes": { "left": 300.0 },
+            "files": { "auto_join_tolerance": 0.2, "colour_map": "Unique", "dxf_unit": "Inch", "dxf_units": "Fallback", "export_dir": "C:/out", "export_ext": "dxf", "hpgl_units_per_mm": 1016.0 },
+            "fonts": { "default_family": "Arial", "default_size": 12.5, "favourites": ["Arial"], "max_recent": 5, "recent": ["Arial"] },
+            "grid_contrast": 0.8,
+            "grid_spacing": 25.0,
+            "hotkeys": { "file.new": "Ctrl+Alt+F9" },
+            "language": "nb",
+            "library_paths": { "": "C:/lib/shop.dblib" },
+            "mcp": { "port": 27880 },
+            "opts": {
+                "capture_height": 480, "capture_system": "dshow", "capture_width": 640, "click_tolerance_px": 7.0, "cursor_size": 12.0,
+                "curve_quality": "Fine", "excluded_ports": ["COM9"], "file_dialogs": "BuiltIn", "font_height": 12.0, "font_name": "Arial",
+                "grid_snap_mm": 2.5, "icon_size": "Large", "job_log_dir": "C:/logs", "locks": [true, false, true, true], "node_size": 6.0,
+                "nudge": 2.0, "nudge_ctrl": 0.2, "nudge_shift": 20.0, "object_snap_px": 12.0, "output_tolerance": 0.05, "ui_scale": 125.0,
+                "update_url": "https://example.com/latest"
+            },
+            "origin": "RearRight",
+            "page_height": 300.0,
+            "page_width": 600.0,
+            "panels": panels,
+            "recent": ["C:/projects/sign.dbrn"],
+            "ribbon_tab": "arrange",
+            "shx_fonts": ["shx:C:/fonts/romans.shx"],
+            "svg_dpi": 72.0,
+            "theme": "light",
+            "toolbar_order": order,
+            "view": { "offset": { "x": 12.0, "y": -7.0 }, "zoom": 2.0 }
+        }),
+    );
+    Prefs::from_json(&v.to_string())
+}
+
+/// The paths of the values of `a` that are the same in `b`.
+fn same_leaves(a: &serde_json::Value, b: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+    match (a, b) {
+        (serde_json::Value::Object(x), serde_json::Value::Object(y)) if !x.is_empty() => {
+            for (k, v) in x {
+                match y.get(k) {
+                    Some(w) => same_leaves(v, w, &format!("{path}.{k}"), out),
+                    None => continue,
+                }
+            }
+        }
+        _ if a == b => out.push(path.trim_start_matches('.').to_string()),
+        _ => {}
+    }
+}
+
+/// The settings sweep: every preference set to something other than its default is stored,
+/// comes back from the stored text and from an exported file, is still there after the app has
+/// started with it (nothing puts a default back in the first frames), and is the value the
+/// program works with.
+#[test]
+fn every_preference_survives_a_restart_and_is_in_force() {
+    use crate::prefs::Prefs;
+    let mut p = non_default_prefs();
+    // A recent project is kept while its file is there.
+    let project = std::env::temp_dir().join(format!("darkburn-sweep-{}.dbrn", std::process::id()));
+    std::fs::write(&project, "x").unwrap();
+    p.recent = vec![project.display().to_string()];
+    let value = |p: &Prefs| serde_json::from_str::<serde_json::Value>(&p.to_json()).unwrap();
+    let mut still_default = Vec::new();
+    same_leaves(&value(&p), &value(&Prefs::default()), "", &mut still_default);
+    assert!(still_default.is_empty(), "the sweep does not change these settings (or they were put back to the default when read): {still_default:?}");
+
+    // Stored and read again: as the settings store keeps them, and as an exported file.
+    assert_eq!(Prefs::from_json(&p.to_json()), p, "the stored text does not give the same settings back");
+    assert_eq!(
+        crate::prefs_files::from_file_text(&crate::prefs_files::to_file_text(&p)).unwrap(),
+        p,
+        "an exported file does not give the same settings back"
+    );
+    let file = std::env::temp_dir().join(format!("darkburn-sweep-{}.dbprefs", std::process::id()));
+    crate::prefs_files::export(&p, &file).unwrap();
+    let mut imported = Prefs { recent: vec!["mine.dbrn".into()], ..Default::default() };
+    crate::prefs_files::import(&mut imported, &file, None).unwrap();
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(Prefs { recent: p.recent.clone(), ..imported }, p, "import does not bring every setting (the recent projects aside)");
+
+    // A restart with them.
+    let mut g = Gui::with_prefs(1600.0, 1000.0, 1.0, Prefs::from_json(&p.to_json()));
+    g.frames(5);
+    let now = g.app().prefs.clone();
+    let mut changed = Vec::new();
+    {
+        let (a, b) = (value(&now), value(&p));
+        for (k, v) in a.as_object().unwrap() {
+            if b.get(k) != Some(v) {
+                changed.push(format!("{k}: {} was stored, {} after the start", b[k], v));
+            }
+        }
+    }
+    // The work area and the origin corner are the device's, and the art libraries and SHX fonts
+    // named here are files that do not exist.
+    changed.retain(|c| !["page_width", "page_height", "origin", "view", "art_libraries"].iter().any(|k| c.starts_with(&format!("{k}:"))));
+    assert!(changed.is_empty(), "settings that did not survive the start:\n{}", changed.join("\n"));
+
+    // In force: what the rest of the program reads.
+    assert!(crate::options::get() == p.opts, "the options in use are not the stored ones");
+    assert_eq!(crate::i18n::language(), "nb");
+    assert!((g.ctx().zoom_factor() - 1.25).abs() < 1e-6, "interface size {}", g.ctx().zoom_factor());
+    assert!(!g.ctx().tessellation_options(|t| t.feathering), "antialiasing is still on");
+    assert_eq!(crate::options::get().speed_unit(), "mm/min");
+    assert!(g.rect_of("status:cursor").is_none(), "the status bar is hidden");
+    // The changed key runs its command: New on a changed project asks about saving.
+    g.sample_design();
+    g.key(Key::F9, Modifiers::COMMAND | Modifiers::ALT);
+    g.frames(2);
+    assert!(g.dialog_open() || g.app().editor.doc.is_empty(), "Ctrl+Alt+F9 did not run New");
+    g.close_dialogs();
+
+    // Reset all settings: everything is the default again, and in force, except what belongs
+    // to this computer (recent projects) and to the device (work area, origin corner).
+    g.app().prefs.language = "en".into();
+    g.frames(2);
+    g.run_command("edit.settings");
+    g.settle();
+    g.click_label("Shared defaults");
+    g.frames(2);
+    g.click_label("Reset all settings");
+    g.frames(3);
+    let after = g.app().prefs.clone();
+    let want = Prefs {
+        recent: after.recent.clone(),
+        page_width: after.page_width,
+        page_height: after.page_height,
+        origin: after.origin,
+        view: after.view,
+        ..Prefs::default()
+    };
+    let mut left = Vec::new();
+    {
+        let (a, b) = (value(&after), value(&want));
+        for (k, v) in a.as_object().unwrap() {
+            if b.get(k) != Some(v) {
+                left.push(format!("{k}: {v}"));
+            }
+        }
+    }
+    assert!(left.is_empty(), "Reset all settings left these as they were:\n{}", left.join("\n"));
+    assert_eq!(after.recent, p.recent, "the recent projects stay");
+    assert!(crate::options::get() == Prefs::default().opts, "the options in use are not the defaults");
+    assert!((g.ctx().zoom_factor() - 1.0).abs() < 1e-6 && g.ctx().tessellation_options(|t| t.feathering));
+    assert!(g.rect_of("status:cursor").is_some(), "the status bar is back");
+    g.close_dialogs();
+    crate::i18n::set_language("en");
+    let _ = std::fs::remove_file(&project);
+}

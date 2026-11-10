@@ -104,9 +104,11 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
                 let path = PathBuf::from(path);
                 if path.exists() {
                     guard(app, ctx, Then::Open(Some(path)));
-                } else {
+                } else if drive_is_there(&path) {
                     app.prefs.recent.retain(|p| Path::new(p) != path);
                     app.files.message = Some(("Project not found".into(), format!("{} is no longer there.", path.display())));
+                } else {
+                    app.files.message = Some(("Project not found".into(), format!("{} is on a drive that is not connected now.", path.display())));
                 }
             }
         }
@@ -276,9 +278,15 @@ pub fn remember_recent(prefs: &mut Prefs, path: &Path) {
     prefs.recent.truncate(RECENT_MAX);
 }
 
-/// Drop recent projects whose files are gone.
+/// Whether the drive (or share) `path` is on can be reached. A memory stick that is not plugged
+/// in or a network drive that is not connected says nothing about the files on it.
+fn drive_is_there(path: &Path) -> bool {
+    path.ancestors().last().is_none_or(|root| root.as_os_str().is_empty() || root.exists())
+}
+
+/// Drop recent projects whose files are gone. One on a drive that is not there now is kept.
 pub fn prune_recent(prefs: &mut Prefs) {
-    prefs.recent.retain(|p| Path::new(p).is_file());
+    prefs.recent.retain(|p| Path::new(p).is_file() || !drive_is_there(Path::new(p)));
     prefs.recent.truncate(RECENT_MAX);
 }
 
@@ -872,6 +880,30 @@ mod tests {
         assert!(a.prefs.recent.is_empty());
         assert!(a.files.message.is_some());
         assert!(!run(&mut a, &ctx, "edit.copy"));
+    }
+
+    /// A drive letter with nothing behind it (a memory stick or network drive that is not there).
+    #[cfg(windows)]
+    fn absent_drive() -> Option<String> {
+        ('D'..='Z').rev().map(|c| format!("{c}:\\")).find(|d| !Path::new(d).exists())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recent_projects_on_a_drive_that_is_not_there_are_kept() {
+        let Some(drive) = absent_drive() else { return };
+        let dir = TempDir::new("recent-drive");
+        let mut a = app(&dir);
+        let away = format!("{drive}jobs\\sign.dbrn");
+        let gone = dir.0.join("gone.dbrn").to_string_lossy().into_owned();
+        a.prefs.recent = vec![away.clone(), gone];
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut a);
+        assert_eq!(a.prefs.recent, vec![away.clone()], "the deleted file goes, the one on the absent drive stays");
+        // Picking it says why it cannot be opened, and keeps it for when the drive is back.
+        assert!(run(&mut a, &ctx, "file.recent.0"));
+        assert!(a.files.message.is_some());
+        assert_eq!(a.prefs.recent, vec![away]);
     }
 
     #[test]

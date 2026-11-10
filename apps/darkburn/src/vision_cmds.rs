@@ -403,9 +403,19 @@ pub const fn live_built() -> bool {
     cfg!(feature = "live-camera")
 }
 
+/// The lens correction changed (a new calibration, none any more, another focal scale): an
+/// alignment made before was clicked in the picture as it was corrected then, so it no longer
+/// says where the bed is. It is dropped, and the user is told to run it again.
+fn drop_stale_alignment(app: &mut DarkBurn) {
+    if app.vision.state.camera.alignment.take().is_some() {
+        app.vision.message = Some("The lens correction changed: run the camera alignment again.".into());
+    }
+}
+
 fn camera_set(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     sync(app);
     let had_lens = app.vision.state.camera.lens.clone();
+    let had_scale = app.vision.state.camera.focal_scale;
     {
         let c = &mut app.vision.state.camera;
         if let Some(v) = flag(a, "show") {
@@ -477,6 +487,9 @@ fn camera_set(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         if let Some(b) = num(a, "brightness") {
             let _ = src.set_brightness(b);
         }
+    }
+    if app.vision.state.camera.lens.is_some() && app.vision.state.camera.focal_scale != had_scale {
+        drop_stale_alignment(app);
     }
     commit(app, "Camera settings", false);
     let rebuild =
@@ -565,6 +578,9 @@ pub fn calibrate_lens(app: &mut DarkBurn, spec: &PatternSpec, fisheye: bool, num
     let (mut result, used) = calibrate_from_images(spec, &app.vision.calib_frames, opts).map_err(|e| e.to_string())?;
     result.model.name = app.vision.state.camera.camera_name.clone();
     let rms = result.rms_px;
+    if app.vision.state.camera.lens.as_ref() != Some(&result.model) {
+        drop_stale_alignment(app);
+    }
     app.vision.state.camera.lens = Some(result.model);
     commit(app, "Lens calibration", true);
     app.vision.frame_gen += 1;
@@ -594,7 +610,9 @@ fn lens_calibrate_cmd(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
 
 pub fn clear_lens(app: &mut DarkBurn) -> Value {
     sync(app);
-    app.vision.state.camera.lens = None;
+    if app.vision.state.camera.lens.take().is_some() {
+        drop_stale_alignment(app);
+    }
     app.vision.frame_gen += 1;
     app.vision.calib_frames.clear();
     app.vision.calib_result = None;
@@ -1878,6 +1896,50 @@ mod tests {
         let got = cal.bed_point(head, raw).unwrap();
         let want = Point::new(head.x + offset(u).x, head.y + offset(u).y);
         assert!((got - want).hypot() < 1e-4, "{got:?} against {want:?}");
+    }
+
+    /// An alignment is clicked in the lens-corrected picture: when that correction changes (the
+    /// focal scale, no lens any more) the alignment is dropped, not kept to place the overlay wrongly.
+    #[test]
+    fn an_alignment_does_not_outlive_the_lens_correction_it_was_made_with() {
+        let clicks = json!([{ "x": 32, "y": 432 }, { "x": 608, "y": 432 }, { "x": 608, "y": 48 }, { "x": 32, "y": 48 }]);
+        let bed = json!([{ "x": 10, "y": 10 }, { "x": 190, "y": 10 }, { "x": 190, "y": 90 }, { "x": 10, "y": 90 }]);
+        let aligned = |with_lens: bool| {
+            let mut app = app();
+            sync(&mut app);
+            if with_lens {
+                let mut lens = darkburn_vision::lens::LensModel::ideal(640, 480, 500.0);
+                lens.k[0] = -0.25;
+                app.vision.state.camera.lens = Some(lens);
+                commit(&mut app, "Lens", true);
+            }
+            run(&mut app, "camera.align_solve", json!({ "points": clicks, "bed": bed, "image_width": 640, "image_height": 480 })).unwrap();
+            assert!(app.vision.state.camera.alignment.is_some());
+            app.vision.message = None;
+            app
+        };
+        // Another focal scale: the corrected picture is another picture.
+        let mut app = aligned(true);
+        run(&mut app, "camera.set", json!({ "focal_scale": 1.0, "fade": 0.5 })).unwrap();
+        assert!(app.vision.state.camera.alignment.is_some(), "the same focal scale and other settings change nothing");
+        run(&mut app, "camera.set", json!({ "focal_scale": 1.3 })).unwrap();
+        assert!(app.vision.state.camera.alignment.is_none(), "the alignment was kept though the focal scale changed");
+        assert!(app.vision.message.as_deref().is_some_and(|m| m.contains("alignment again")), "{:?}", app.vision.message);
+        assert_eq!(run(&mut app, "camera.get", json!({})).unwrap()["aligned"], false);
+        // The lens calibration is cleared.
+        let mut app = aligned(true);
+        run(&mut app, "camera.lens_clear", json!({})).unwrap();
+        assert!(app.vision.state.camera.alignment.is_none(), "the alignment was kept though the lens calibration was cleared");
+        // One undo brings back the lens and the alignment made with it.
+        app.editor.undo();
+        sync(&mut app);
+        assert!(app.vision.state.camera.lens.is_some() && app.vision.state.camera.alignment.is_some());
+        // Without a lens the focal scale corrects nothing, and clearing no lens changes nothing.
+        let mut app = aligned(false);
+        run(&mut app, "camera.set", json!({ "focal_scale": 1.3 })).unwrap();
+        run(&mut app, "camera.lens_clear", json!({})).unwrap();
+        assert!(app.vision.state.camera.alignment.is_some());
+        assert_eq!(app.vision.message, None);
     }
 
     #[test]

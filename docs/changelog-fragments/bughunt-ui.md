@@ -3,3 +3,4 @@ Fix: closing an art library with unsaved changes asks before they are lost
 Fix: the finish position is remembered for each laser, also after a restart
 Fix: with inches on, Move to and the position readout are in inches too
 Fix: a saved position no longer squeezes the Move panel out of view
+Fix: the camera alignment is dropped when the lens correction changes, with a note to run it again

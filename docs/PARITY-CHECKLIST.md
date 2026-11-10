@@ -965,7 +965,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] PLAT-03 Recent files in the Windows jump list
 - [x] PLAT-04 Debug log
 - [x] PLAT-05 Support data bundle
-- [~] PLAT-06 Crash restore file
+- [x] PLAT-06 Crash restore file
 - [x] PLAT-07 Automatic preference backups
 - [~] PLAT-08 Print support
 - [ ] PLAT-09 macOS build

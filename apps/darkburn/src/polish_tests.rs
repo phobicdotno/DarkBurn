@@ -492,3 +492,62 @@ fn a_galvo_job_cannot_start_part_way_and_says_so() {
     assert_eq!(finished(&a), 0);
     assert!(!a.machine.job_log.iter().any(|l| l.starts_with("Job started")), "nothing was marked: {:?}", a.machine.job_log);
 }
+
+// ----- PROJ-05: variable text state, virtual arrays and backup outlines in the project file ----
+
+#[test]
+fn a_saved_project_brings_back_variable_text_state_a_virtual_array_and_a_missing_font_outline() {
+    use darkburn_core::{ShapeId, ShapeKind};
+    let dir = temp("proj05");
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv = dir.join("names.csv");
+    std::fs::write(&csv, "name,size\nAda,\"10, large\"\nGrace,12\nEdsger,14\n").unwrap();
+    let file = dir.join("all three.dbrn");
+
+    let mut a = DarkBurn::new(Prefs::default());
+    // Variable text: serial numbers and a CSV file, both moved off their first value.
+    run(&mut a, "variable.set", json!({ "start": 5, "end": 50, "current": 9, "advance_by": 2, "padding": 4, "auto_advance": true })).unwrap();
+    run(&mut a, "variable.csv_load", json!({ "path": csv.to_string_lossy(), "header": true })).unwrap();
+    run(&mut a, "variable.next", Value::Null).unwrap();
+    let state = run(&mut a, "variable.get", Value::Null).unwrap();
+    assert_eq!(
+        (state["current"].as_i64(), state["csv"]["rows"].as_u64(), state["csv"]["current_row"].as_u64()),
+        (Some(11), Some(3), Some(1)),
+        "{state}"
+    );
+    // A text in a font this computer does not have: its outline is kept as a backup.
+    let text = ShapeId(
+        run(&mut a, "text.add", json!({ "text": "Keep me", "x": 10, "y": 60, "height": 10, "font": "A Font Nobody Has", "layer": 0 })).unwrap()["id"]
+            .as_u64()
+            .unwrap(),
+    );
+    let outline = a.editor.doc.get(text).unwrap().outline().elements().len();
+    assert!(outline > 10);
+    // A virtual array: one object, still an array.
+    let rect = run(&mut a, "shape.add_rect", json!({ "x": 0, "y": 0, "width": 10, "height": 10, "layer": 1 })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "selection.set", json!({ "ids": [rect] })).unwrap();
+    let made = run(&mut a, "arrange.grid_array", json!({ "rows": 2, "cols": 3, "dx": 5, "dy": 5, "virtual": true })).unwrap();
+    let array = ShapeId(made["ids"][0].as_u64().unwrap());
+    run(&mut a, "project.save_as", json!({ "path": file.to_string_lossy() })).unwrap();
+
+    // Another session opens the file.
+    let mut b = DarkBurn::new(Prefs::default());
+    run(&mut b, "project.open", json!({ "path": file.to_string_lossy() })).unwrap();
+    assert_eq!(run(&mut b, "variable.get", Value::Null).unwrap(), state, "serial numbers, the CSV file and the row it was on");
+    assert_eq!(b.editor.doc.variables, a.editor.doc.variables);
+    // The variable text carries on from where it was.
+    run(&mut b, "variable.next", Value::Null).unwrap();
+    let next = run(&mut b, "variable.get", Value::Null).unwrap();
+    assert_eq!((next["current"].as_i64(), next["csv"]["current_row"].as_u64()), (Some(13), Some(2)));
+    // The text still has its shape although the font is missing.
+    let t = b.editor.doc.get(text).expect("the text is there");
+    assert!(matches!(&t.kind, ShapeKind::Text(t) if t.backup.is_some() && t.backup_glyphs.is_some()));
+    assert_eq!(t.outline().elements().len(), outline);
+    // The array is still an array: its settings can be edited.
+    let g = b.editor.doc.get(array).expect("the array is there");
+    assert!(g.array.is_some() && matches!(&g.kind, ShapeKind::Group { children } if children.len() == 6));
+    run(&mut b, "selection.set", json!({ "ids": [array.0] })).unwrap();
+    run(&mut b, "arrange.array_edit", json!({ "cols": 4 })).unwrap();
+    assert!(matches!(&b.editor.doc.get(array).unwrap().kind, ShapeKind::Group { children } if children.len() == 8));
+    let _ = std::fs::remove_dir_all(&dir);
+}

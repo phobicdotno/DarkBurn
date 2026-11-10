@@ -769,7 +769,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PROJ-02 Open LightBurn `.lbrn2` projects
 - [x] PROJ-03 Open LightBurn `.lbrn` (older XML) projects
 - [x] PROJ-04 Embedded images, cut settings, planner settings, notes, thumbnail
-- [~] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts
+- [x] PROJ-05 Variable text state, virtual arrays, backup outlines for missing fonts *(in DarkBurn projects; variable text state and virtual arrays from LightBurn files are not carried over)*
 - [x] PROJ-06 Save in `.lbrn2` format for round trips *(decide)*
 
 ### Import

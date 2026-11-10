@@ -3,3 +3,4 @@ Fix: a G-code file that ends without switching the laser off no longer burns a l
 Fix: Rotary on a galvo no longer marks a line twice when it sits right where two bands meet
 Fix: Drilling on a galvo rotary no longer skips the top points of a tall shape
 Fix: Door protection on a galvo now also waits for the door before every slice of a 3D sliced image
+Fix: A galvo job that needs an axis move the board cannot make is refused at start instead of stopping half way with a link error

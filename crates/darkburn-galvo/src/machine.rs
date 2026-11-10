@@ -265,6 +265,12 @@ impl GalvoMachine {
 
     /// Starts a job. Requires an arm; stops a running frame first.
     pub fn start_job(&self, job: CompiledJob, opts: StartOptions) -> Result<(), GalvoError> {
+        // An axis move the board cannot make would otherwise stop the job half marked.
+        for step in &job.steps {
+            if let Step::MoveAxis { axis, mm } = step {
+                axis_words(&self.settings, *axis, *mm).map_err(GalvoError::Invalid)?;
+            }
+        }
         let mut s = self.snapshot.lock().expect("snapshot");
         if s.connection != ConnectionState::Connected {
             return Err(GalvoError::NotConnected);

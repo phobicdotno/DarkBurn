@@ -258,6 +258,20 @@ fn frame_rectangle_and_outline() {
 }
 
 #[test]
+fn a_coordinate_that_is_not_a_number_is_refused_not_sent_as_zero() {
+    let (mut m, emu) = udp_machine();
+    m.move_to(Point::new(50.0, 60.0), false).unwrap();
+    let before = lock(&emu).motion.len();
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(m.move_to(Point::new(bad, 10.0), false).is_err(), "x = {bad}");
+        assert!(m.move_to(Point::new(10.0, bad), true).is_err(), "y = {bad}");
+        assert!(m.frame_outline(&[Point::new(1.0, 1.0), Point::new(bad, 5.0), Point::new(1.0, 1.0)], true).is_err(), "outline with {bad}");
+        assert!(m.frame_rect(Rect::new(10.0, 10.0, bad, 20.0), false).is_err(), "rectangle with {bad}");
+    }
+    assert_eq!(lock(&emu).motion.len(), before, "nothing moved");
+}
+
+#[test]
 fn frame_on_controller_traces_last_job() {
     let (mut m, emu) = udp_machine();
     m.send_job("F", &square_job((10.0, 10.0), 20.0, 10.0), &SendOptions { start_immediately: true, ..Default::default() }, &mut never).unwrap();

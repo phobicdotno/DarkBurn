@@ -134,8 +134,21 @@ pub fn map_shape(s: &mut Shape, f: &mut dyn FnMut(&Shape) -> Option<BezPath>) ->
     match f(s) {
         Some(p) => {
             let old = s.transform;
-            s.tabs = s.tabs.iter().map(|t| old * Point::new(t[0], t[1])).map(|p| [p.x, p.y]).collect();
-            s.start_point = s.start_point.map(|t| old * Point::new(t[0], t[1])).map(|p| [p.x, p.y]);
+            // Tabs stay on the outline: each moves to the nearest point of the new one.
+            let onto = |t: &[f64; 2]| {
+                let q = old * Point::new(t[0], t[1]);
+                let q = query::nearest_point(&p, q).map_or(q, |h| h.point);
+                [q.x, q.y]
+            };
+            let mut tabs: Vec<[f64; 2]> = Vec::new();
+            for t in s.tabs.iter().map(onto) {
+                if !tabs.iter().any(|u| Point::new(u[0], u[1]).distance(Point::new(t[0], t[1])) < 1e-3) {
+                    tabs.push(t);
+                }
+            }
+            s.tabs = tabs;
+            let starts: Vec<[f64; 2]> = s.start_points().map(|t| old * Point::new(t[0], t[1])).map(|p| [p.x, p.y]).collect();
+            s.set_start_points(&starts);
             s.kind = ShapeKind::Path { path: p };
             s.transform = Affine::IDENTITY;
             1

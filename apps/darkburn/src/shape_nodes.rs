@@ -225,11 +225,11 @@ fn tabs_clear(e: &mut Editor, a: &Value) -> R {
 }
 
 /// The gaps the layer's automatic tab settings leave in shape `id` (none when its layer's tabs
-/// are off, unless `force`).
+/// are off, unless `force`, and none on a shape with manual tabs: those replace them).
 pub fn auto_gaps(doc: &Document, id: ShapeId, force: bool) -> Vec<Gap> {
     let Some(s) = doc.get(id) else { return Vec::new() };
     let t = doc.layer(s.layer).main().tabs;
-    if (!t.enabled && !force) || !t.auto_spacing {
+    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() {
         return Vec::new();
     }
     let opts = TabOptions {
@@ -274,8 +274,14 @@ fn tabs_auto(e: &mut Editor, a: &Value) -> R {
 pub fn marker_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     let s = doc.get(id)?;
     let mut path = shape_path(doc, id)?;
-    if let Some(st) = s.start_point {
-        path = gpath::set_start_point(&path, s.transform * Point::new(st[0], st[1]), false);
+    for st in s.start_points() {
+        let p = s.transform * Point::new(st[0], st[1]);
+        // Only closed sub-paths have a start point to choose; the job uses the same rule.
+        let mut subs = gpath::subpaths(&path);
+        if let Some(k) = nearest_closed(&subs, p) {
+            subs[k] = gpath::set_start_point(&subs[k], p, false);
+            path = subs.iter().flat_map(|b| b.elements().iter().copied()).collect();
+        }
     }
     path = match s.direction {
         CutDirection::Reversed => gpath::reverse(&path),
@@ -286,6 +292,21 @@ pub fn marker_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     Some(path)
 }
 
+/// The closed sub-path nearest to `p`.
+fn nearest_closed(subs: &[BezPath], p: Point) -> Option<usize> {
+    subs.iter()
+        .enumerate()
+        .filter(|(_, b)| darkburn_core::shape::path_is_closed(b))
+        .filter_map(|(i, b)| query::nearest_point(b, p).map(|h| (i, h.distance)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// Force where the cut of a closed shape starts: the point of its outline nearest to `x`, `y`.
+/// A compound shape keeps one start point for each closed sub-path: the click sets the one of
+/// the nearest sub-path (`all`: of every sub-path) and leaves the others alone. The points are
+/// kept on the shape, so the cut planner starts there whatever it optimises; a path shape also
+/// gets its nodes reordered, so the start node shows in Edit Nodes.
 fn set_start(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let p = Point::new(num(a, "x", 0.0), num(a, "y", 0.0));
@@ -294,28 +315,30 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
         let mut any = false;
         for id in &ids {
             let Some(path) = shape_path(d, *id) else { continue };
-            let Some(at) = query::nearest_point(&path, p).map(|h| h.point) else { continue };
-            let is_path = d.get(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Path { .. }));
-            if is_path {
-                // Paths keep their own sub-path order: rotate the nearest sub-path (or all).
+            let subs = gpath::subpaths(&path);
+            let Some(clicked) = nearest_closed(&subs, p) else { continue };
+            let chosen = |k: usize| darkburn_core::shape::path_is_closed(&subs[k]) && (all || k == clicked);
+            // The clicked sub-path first, then the others set with `all`.
+            let mut new: Vec<Point> = Vec::new();
+            for k in std::iter::once(clicked).chain((0..subs.len()).filter(|k| *k != clicked && chosen(*k))) {
+                if let Some(h) = query::nearest_point(&subs[k], p) {
+                    new.push(h.point);
+                }
+            }
+            if d.get(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Path { .. })) {
                 let q = gpath::set_start_point(&path, p, all);
                 if q != path {
                     any |= set_shape_path(d, *id, q);
                 }
-                // Remember the point too, so the cut planner keeps it when it orders the job.
-                if let Some(s) = d.get_mut(*id) {
-                    let local = s.transform.inverse() * p;
-                    s.start_point = Some([local.x, local.y]);
-                    any = true;
-                }
             }
-            if let Some(s) = d.get_mut(*id) {
-                let local = s.transform.inverse() * at;
-                let new = Some([local.x, local.y]);
-                if s.start_point != new {
-                    s.start_point = new;
-                    any = true;
-                }
+            let Some(s) = d.get_mut(*id) else { continue };
+            let (t, inv) = (s.transform, s.transform.inverse());
+            // Start points of the sub-paths that were not touched stay.
+            let kept = s.start_points().map(|q| t * Point::new(q[0], q[1])).filter(|q| nearest_closed(&subs, *q).is_some_and(|k| !chosen(k)));
+            let points: Vec<[f64; 2]> = new.iter().copied().chain(kept).map(|q| inv * q).map(|q| [q.x, q.y]).collect();
+            if s.start_points().collect::<Vec<_>>() != points {
+                s.set_start_points(&points);
+                any = true;
             }
         }
         any
@@ -380,9 +403,9 @@ fn clear_start(e: &mut Editor, a: &Value) -> R {
         let mut any = false;
         for id in &ids {
             if let Some(s) = d.get_mut(*id)
-                && s.start_point.is_some()
+                && s.start_points().next().is_some()
             {
-                s.start_point = None;
+                s.set_start_points(&[]);
                 any = true;
             }
         }

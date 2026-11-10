@@ -81,3 +81,27 @@ fn a_lightburn_file_keeps_a_fill_and_line_layer() {
     run(&mut b, "project.open", json!({ "path": file })).unwrap();
     assert_eq!(b.editor.doc.layer(1).main().mode, Mode::FillLine, "Fill+Line stays Fill+Line");
 }
+
+/// Kerf, Z offset and air assist of a layer come back from a LightBurn file the app wrote
+/// itself: the reader knows them, so the writer has to write them.
+#[test]
+fn a_lightburn_file_keeps_kerf_z_offset_and_air() {
+    let dir = TempDir::new("lbrnlayer");
+    let mut a = app();
+    run(&mut a, "shape.add_rect", json!({ "x": 20, "y": 30, "width": 40, "height": 20, "layer": 1 })).unwrap();
+    let air = !a.editor.doc.layer(1).air;
+    {
+        let l = a.editor.doc.layer_mut(1);
+        l.air = air;
+        let m = l.main_mut();
+        m.kerf = 0.15;
+        m.z_offset = 2.5;
+    }
+    let file = dir.file("layer.lbrn2");
+    run(&mut a, "project.export", json!({ "path": file })).unwrap();
+    let mut b = app();
+    run(&mut b, "project.open", json!({ "path": file })).unwrap();
+    let l = b.editor.doc.layer(1);
+    assert_eq!((l.main().kerf, l.main().z_offset), (0.15, 2.5));
+    assert_eq!(l.air, air, "air assist");
+}

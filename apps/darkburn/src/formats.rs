@@ -914,6 +914,9 @@ fn layer_settings_for(doc: &Document, used: &[usize]) -> Vec<di::LayerSettings> 
             values.insert("angle".to_string(), n(m.scan_angle));
             values.insert("bidir".to_string(), u8::from(m.bidirectional).to_string());
             values.insert("crossHatch".to_string(), u8::from(m.cross_hatch).to_string());
+            values.insert("kerf".to_string(), n(m.kerf));
+            values.insert("zOffset".to_string(), n(m.z_offset));
+            values.insert("enableAirAssist".to_string(), u8::from(l.air).to_string());
             values.insert("doOutput".to_string(), u8::from(l.output).to_string());
             values.insert("hide".to_string(), u8::from(!l.show).to_string());
             let prio = doc.layer_order.iter().position(|x| *x == i).unwrap_or(i);

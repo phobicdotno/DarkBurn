@@ -15,7 +15,7 @@ use crate::commands;
 use crate::shell::DarkBurn;
 
 /// Always allowed, whatever the policy says: they stop things.
-const STOP: &[&str] = &["machine.pause", "machine.stop", "job.pause", "job.stop", "machine.fire_off", "machine.jog_stop"];
+const STOP: &[&str] = &["machine.pause", "machine.stop", "machine.emergency_stop", "job.pause", "job.stop", "machine.fire_off", "machine.jog_stop"];
 
 /// Start a job, resume it, run a file or raw lines, or fire the laser.
 const FIRE_OR_JOB: &[&str] = &[

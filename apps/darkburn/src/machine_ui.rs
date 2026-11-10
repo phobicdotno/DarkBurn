@@ -659,7 +659,12 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
         },
         "job.pause" => {
             if app.machine.handle.snapshot().state == LaserState::Paused {
-                mach(app.machine.handle.resume())
+                // The button in the window toggles. For an agent, pause only ever pauses: it is
+                // one of the commands that are always allowed, and going on is machine.resume.
+                match src {
+                    Source::Ui => mach(app.machine.handle.resume()),
+                    Source::Api => Ok(json!({ "ok": true, "paused": true })),
+                }
             } else {
                 mach(app.machine.handle.pause())
             }
@@ -773,6 +778,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             Ok(json!({ "ok": true }))
         }
         "machine.reset_connection" => {
+            if src == Source::Api && !m.active().is_simulator() {
+                return Err("An agent may only connect to a simulator. Connect real machines from the Laser panel.".into());
+            }
             m.handle.disconnect();
             m.request_connect()?;
             Ok(json!({ "ok": true, "waiting_for_confirmation": m.dlg.confirm_connect.is_some() }))

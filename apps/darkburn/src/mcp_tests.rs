@@ -811,3 +811,88 @@ fn a_job_start_the_user_confirmed_does_not_start_a_design_changed_since() {
     let _ = start(&mut gate, &token);
     assert_eq!(seen.borrow().as_slice(), ["job.start"]);
 }
+
+/// Connect the GRBL simulator and start a slow job on it, the way the user would from the window.
+fn slow_job_on_the_simulator(app: &SharedApp) {
+    let mut a = app.borrow_mut();
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == crate::devices::DeviceType::SimulatorGrbl).unwrap().id;
+    crate::api::execute_headless(&mut a, "device.select", &json!({ "id": id })).unwrap();
+    crate::api::execute_headless(&mut a, "machine.connect", &json!({})).unwrap();
+    drop(a);
+    wait_state(app, "ready", |s| s == crate::machine_api::LaserState::Ready);
+    let lines = ["G21 G90".to_owned(), "M4 S100".to_owned()].into_iter().chain((0..200).map(|i| format!("G1 X{} Y10 F300", 10 + (i % 2) * 30)));
+    let mut job = crate::machine_api::JobRequest::gcode(lines.collect());
+    job.name = "slow".into();
+    app.borrow_mut().machine.begin_start(job).unwrap();
+    wait_state(app, "busy", |s| s == crate::machine_api::LaserState::Busy);
+}
+
+fn machine_state(app: &SharedApp) -> crate::machine_api::LaserState {
+    let mut a = app.borrow_mut();
+    a.machine.tick();
+    a.machine.handle.snapshot().state
+}
+
+fn wait_state(app: &SharedApp, what: &str, f: impl Fn(crate::machine_api::LaserState) -> bool) {
+    let end = std::time::Instant::now() + Duration::from_secs(20);
+    while !f(machine_state(app)) {
+        assert!(std::time::Instant::now() < end, "timed out waiting for {what}; state {:?}", machine_state(app));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn the_always_allowed_pause_never_resumes_a_paused_job() {
+    use crate::machine_api::LaserState;
+    // Machines are off for agents: only stop, pause and emergency stop get through.
+    let (mut gate, _seen, app) = spy_gate(McpPolicy::default());
+    slow_job_on_the_simulator(&app);
+    gate.execute("job.pause", json!({})).unwrap();
+    wait_state(&app, "paused", |s| s == LaserState::Paused);
+    // Pause again: the laser must stay off. Resuming is machine.resume, which is denied.
+    for id in ["job.pause", "machine.pause", "job.pause"] {
+        let _ = gate.execute(id, json!({}));
+        for _ in 0..40 {
+            assert_eq!(machine_state(&app), LaserState::Paused, "{id} set the paused job going again");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    assert_eq!(gate.execute("machine.resume", json!({})).unwrap_err().code, ErrorCode::Denied);
+    gate.execute("job.stop", json!({})).unwrap();
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn emergency_stop_is_open_to_an_agent_whatever_the_policy() {
+    use crate::machine_api::LaserState;
+    let mut b = backend();
+    let c = b.describe_command("machine.emergency_stop").unwrap().unwrap();
+    assert_eq!(c.hardware_class, Some(HardwareClass::Stop));
+    let (mut gate, seen, app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
+    slow_job_on_the_simulator(&app);
+    gate.execute("machine.emergency_stop", json!({})).unwrap_or_else(|e| panic!("emergency stop was refused: {}", e.message));
+    assert_eq!(seen.borrow().as_slice(), ["machine.emergency_stop"]);
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn an_agent_cannot_ask_for_a_real_connection_through_reset_connection() {
+    let app = shared();
+    {
+        let mut a = app.borrow_mut();
+        let id = a.machine.devices.add(crate::devices::Device {
+            name: "Real".into(),
+            connection: crate::devices::ConnectionKind::Tcp,
+            host: "192.168.1.77".into(),
+            ..crate::devices::Device::new(crate::devices::DeviceType::Grbl)
+        });
+        a.machine.devices.select(id);
+    }
+    // Even with machines allowed, an agent only connects simulators (as machine.connect says).
+    let mut b = McpBackend::new(app.clone(), egui::Context::default(), false);
+    for id in ["machine.connect", "machine.reset_connection"] {
+        let e = b.execute(id, json!({})).unwrap_err();
+        assert!(e.message.contains("simulator"), "{id}: {}", e.message);
+        assert!(app.borrow().machine.dlg.confirm_connect.is_none(), "{id} put the Connect question for a real machine on the user's screen");
+    }
+}

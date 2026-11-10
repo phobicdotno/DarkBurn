@@ -272,8 +272,10 @@ pub fn read_bytes(name: &Path, bytes: &[u8], opts: &ReadOptions) -> Result<ReadO
 
 fn read_inner(name: &Path, name_text: Option<&str>, bytes: &[u8], opts: &ReadOptions) -> Result<ReadOutcome, String> {
     if crate::rd_import::is_rd(name) {
-        let imported = crate::rd_import::import(bytes)?;
-        let loaded = convert(imported, opts, false);
+        let (imported, cuts) = crate::rd_import::import_with_settings(bytes)?;
+        let items = imported.items.len();
+        let mut loaded = convert(imported, opts, false);
+        crate::rd_import::carry_cut_settings(&mut loaded, &cuts, items);
         if loaded.imported.shapes.is_empty() {
             return Err("there is nothing in it to import".into());
         }

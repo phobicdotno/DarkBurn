@@ -487,9 +487,15 @@ fn scan_angle_rows(ui: &mut Ui, c: &mut CutSetting) {
 fn common(ui: &mut Ui, c: &mut CutSetting, modes: &[Mode], layer: &Layer, output: &mut bool, air: &mut bool, name: &mut String, sub: usize) {
     let t = Tokens::get();
     ui_kit::section_heading(ui, "Layer");
-    ui_kit::row(ui, "Layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name)));
+    ui_kit::row(ui, "Layer name", |ui| {
+        let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name));
+        crate::a11y::text(ui, &r, "Layer name");
+    });
     if sub > 0 || layer.is_multi() {
-        ui_kit::row(ui, "Sub-layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name)));
+        ui_kit::row(ui, "Sub-layer name", |ui| {
+            let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name));
+            crate::a11y::text(ui, &r, "Sub-layer name");
+        });
         ui_kit::checkbox(ui, "Sub-layer on", &mut c.enabled);
     }
     let mode_opts: Vec<(Mode, &str)> = modes.iter().map(|m| (*m, m.label())).collect();
@@ -668,6 +674,14 @@ fn lead(ui: &mut Ui, label: &str, l: &mut darkburn_core::layer::Lead) {
 fn galvo(ui: &mut Ui, c: &mut CutSetting) {
     let g = &mut c.galvo;
     ui_kit::section_heading(ui, "Galvo");
+    if c.mode == Mode::Line {
+        ui_kit::checkbox(ui, "Drill mode (fire at points along the outline)", &mut g.drill);
+        if g.drill {
+            num(ui, "Drill time", &mut g.drill_dwell_ms, Num::new(0.01..=60_000.0, 2, " ms"));
+            num(ui, "Point spacing", &mut g.drill_spacing_mm, mm(0.0, 1000.0));
+            ui_kit::caption(ui, "Point spacing", "0 drills only the corners and ends.");
+        }
+    }
     num(ui, "Frequency", &mut g.frequency_khz, Num::new(1.0..=4000.0, 1, " kHz"));
     num(ui, "Q-pulse width", &mut g.q_pulse_ns, Num::new(1.0..=10_000.0, 0, " ns"));
     num(ui, "Pause before", &mut g.pause_before_ms, Num::new(0.0..=60_000.0, 0, " ms"));

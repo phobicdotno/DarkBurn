@@ -693,11 +693,8 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
     if app.notes_open {
         let doc = &mut app.editor.doc;
         let (mut notes, mut show) = (doc.notes.clone(), doc.show_notes_on_load);
-        let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes")
-            .fields()
-            .keep_open_on_escape()
-            .actions("", "Close", None)
-            .show(ctx, true, |ui| {
+        let (closed, action) =
+            ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes").fields().actions("", "Close", None).show(ctx, true, |ui| {
                 ui_kit::text_area(ui, "Notes", egui::Id::unique("db_notes_text"), &mut notes, 12, 100_000);
                 ui_kit::checkbox(ui, "Show the notes when the project opens", &mut show);
             });
@@ -978,6 +975,96 @@ mod tests {
         assert_eq!(a.editor.doc.len(), 1);
         assert!(a.editor.doc.iter().next().unwrap().is_image());
         assert!(a.project_path.is_none());
+    }
+
+    /// What a crashed session leaves in the settings folder: the marker and an auto-save of a
+    /// project with one rectangle that was being edited as `mine.dbrn`.
+    fn leave_a_crashed_session(settings: &Path, project: &Path) {
+        let mut doc = darkburn_core::Document::new();
+        doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
+        assert_eq!(begin_session(settings), None);
+        write_autosave(settings, &doc, Some(project)).unwrap();
+    }
+
+    // PLAT-06: the next start finds the crash restore file and offers it.
+    #[test]
+    fn a_start_after_a_crash_offers_the_restore_file_and_a_clean_exit_does_not() {
+        let dir = TempDir::new("crash-start");
+        let settings = dir.0.join("settings");
+        leave_a_crashed_session(&settings, &dir.0.join("mine.dbrn"));
+        let ctx = egui::Context::default();
+        let mut a = app(&dir);
+        frame(&ctx, &mut a);
+        assert_eq!(a.files.restore.as_deref(), Some(settings.join(AUTOSAVE_FILE).as_path()));
+        assert!(a.files.open_dialogs().contains(&"restore_autosave"));
+        // Safe mode and a second window of the same copy never offer it (and leave the files).
+        for (safe, secondary) in [(true, false), (false, true)] {
+            let mut b = app(&dir);
+            b.safe_mode = safe;
+            b.fio.secondary = secondary;
+            frame(&ctx, &mut b);
+            assert!(b.files.restore.is_none());
+            assert!(settings.join(AUTOSAVE_FILE).is_file());
+        }
+        // After a clean exit there is nothing to offer.
+        end_session(&settings);
+        let mut c = app(&dir);
+        frame(&ctx, &mut c);
+        assert!(c.files.restore.is_none());
+        assert!(settings.join(SESSION_MARKER).is_file(), "this session is marked as running");
+        end_session(&settings);
+    }
+
+    #[test]
+    fn the_restore_dialog_brings_the_project_back_or_throws_the_copy_away() {
+        use crate::ui_harness::Gui;
+        for restore in [true, false] {
+            let mut g = Gui::standard();
+            let settings = g.temp("crashed");
+            let project = g.temp("mine.dbrn");
+            leave_a_crashed_session(&settings, &project);
+            {
+                let mut a = g.app();
+                a.settings_dir = Some(settings.clone());
+                a.safe_mode = false;
+                a.files.started = false; // as at a start
+            }
+            g.frames(2);
+            assert!(g.window_titles().contains(&"Restore auto-saved project?".to_string()), "{:?}", g.window_titles());
+            assert!(g.visible_texts().join(" ").contains("did not close properly"));
+            g.screenshot("crash-restore");
+            assert!(g.layout_problems().is_empty(), "{:?}", g.layout_problems());
+            assert_eq!(g.app().editor.doc.len(), 0, "nothing is opened before the answer");
+            g.click_label(if restore { "Restore" } else { "Discard" });
+            g.frames(2);
+            assert!(!g.window_titles().contains(&"Restore auto-saved project?".to_string()));
+            let mut a = g.app();
+            if restore {
+                assert_eq!(a.editor.doc.len(), 1, "the rectangle is back");
+                assert!(a.editor.is_modified(), "it still needs saving");
+                assert_eq!(a.project_path.as_deref(), Some(project.as_path()), "under the name it had");
+                assert!(!project.exists(), "the user's own file is not written by a restore");
+            } else {
+                assert_eq!(a.editor.doc.len(), 0);
+                assert!(a.project_path.is_none());
+                assert!(!settings.join(AUTOSAVE_FILE).exists(), "the copy is gone");
+                assert!(!settings.join(AUTOSAVE_PATH_FILE).exists());
+            }
+            // Leave nothing for the harness's own checks to trip over.
+            a.safe_mode = true;
+        }
+    }
+
+    #[test]
+    fn a_damaged_restore_file_is_reported_and_the_open_project_is_kept() {
+        let dir = TempDir::new("crash-bad");
+        let settings = dir.0.join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join(AUTOSAVE_FILE), b"not a project").unwrap();
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        assert!(restore_autosave(&mut a, &settings.join(AUTOSAVE_FILE)).is_err());
+        assert_eq!(a.editor.doc.len(), 1, "what was open is untouched");
     }
 
     #[test]

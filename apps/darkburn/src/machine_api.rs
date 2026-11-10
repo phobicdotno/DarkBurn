@@ -75,14 +75,25 @@ pub enum Link {
     Tcp { host: String, port: u16 },
     /// Ruida Ethernet.
     Udp { ip: String },
-    /// Ruida FTDI USB (needs the `usb` feature).
-    Usb { serial: Option<String> },
+    /// Ruida over USB: the serial port of the controller's FTDI chip (`port`), or the FTDI chip
+    /// itself by adapter serial number in builds with the `usb` feature.
+    Usb {
+        serial: Option<String>,
+        #[serde(default)]
+        port: Option<String>,
+    },
     /// An in-memory Smoothieware, Marlin, Snapmaker, custom or library-GRBL machine. Safe.
     SimulatorGcode(crate::gcode_machines::SimGcode),
     /// The in-memory galvo board. Safe.
     SimulatorGalvo,
     /// A galvo board over USB. Not built into this version: simulator only.
     GalvoUsb,
+    /// G-code sent as one HTTP request per line.
+    Http { host: String, port: u16, path: String },
+    /// G-code over two bulk endpoints of a USB device (needs the `rawusb` feature).
+    RawUsb { vid: u16, pid: u16, serial: Option<String>, interface: u8, ep_out: u8, ep_in: u8 },
+    /// Ruida through a network bridge: TCP to the bridge, which relays to the controller.
+    Bridge { host: String, port: u16 },
 }
 
 impl Link {
@@ -91,8 +102,10 @@ impl Link {
     }
     pub fn family(&self) -> Family {
         match self {
-            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) => Family::Grbl,
-            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } => Family::Ruida,
+            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) | Link::Http { .. } | Link::RawUsb { .. } => {
+                Family::Grbl
+            }
+            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } | Link::Bridge { .. } => Family::Ruida,
             Link::SimulatorGalvo | Link::GalvoUsb => Family::Galvo,
         }
     }
@@ -106,7 +119,10 @@ impl Link {
             Link::Serial { port, baud } => format!("{port} @ {baud}"),
             Link::Tcp { host, port } => format!("tcp://{host}:{port}"),
             Link::Udp { ip } => format!("udp://{ip}"),
-            Link::Usb { serial } => format!("USB {}", serial.as_deref().unwrap_or("(first FTDI)")),
+            Link::Usb { serial, port } => format!("USB {}", port.as_deref().or(serial.as_deref()).unwrap_or("(first FTDI)")),
+            Link::Http { host, port, path } => format!("http://{host}:{port}{path}"),
+            Link::RawUsb { vid, pid, interface, .. } => format!("USB {vid:04X}:{pid:04X} interface {interface}"),
+            Link::Bridge { host, port } => format!("bridge tcp://{host}:{port}"),
         }
     }
 }
@@ -151,6 +167,8 @@ pub struct ConnectConfig {
     pub gcode: Option<Arc<darkburn_gcodebots::DeviceProfile>>,
     /// The galvo board's settings.
     pub galvo: Option<Arc<crate::galvo_settings::GalvoDeviceSettings>>,
+    /// GRBL simulator only: which firmware the in-memory controller pretends to be.
+    pub sim_firmware: crate::connections::SimFirmware,
 }
 
 impl Default for ConnectConfig {
@@ -170,6 +188,7 @@ impl Default for ConnectConfig {
             net_timeout_ms: None,
             gcode: None,
             galvo: None,
+            sim_firmware: crate::connections::SimFirmware::default(),
         }
     }
 }
@@ -348,6 +367,8 @@ pub struct Snapshot {
     pub air_on: bool,
     /// The galvo board's state.
     pub galvo: Option<crate::galvo_machine::GalvoStatus>,
+    /// A known diode laser recognised from what the controller printed [GRBL-12].
+    pub detected: Option<grbl::DetectedLaser>,
 }
 
 impl Snapshot {
@@ -919,7 +940,7 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
                     ruida::RdOp::Cut { to: Point::new(10.0, 10.0), power: None, speed: None },
                 ],
             };
-            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer] });
+            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer], ..Default::default() });
             j.bounds = Some(Rect::new(10.0, 10.0, 10.0 + s, 10.0 + s));
             j
         }
@@ -949,18 +970,7 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
 /// Build the adapter for `spec`. The only place a real link can be opened.
 pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Result<Box<dyn DriverAdapter>, MachineError> {
     match &spec.link {
-        Link::SimulatorGrbl => {
-            let mut cfg = grbl::EmulatorConfig::atomstack().with_time_scale(spec.config.sim_time_scale.max(0.1));
-            cfg.record_lines = true;
-            if spec.config.sim_homing {
-                cfg = cfg.with_setting(22, 1.0);
-            }
-            if let Some((w, h)) = spec.config.bed {
-                cfg = cfg.with_setting(130, w).with_setting(131, h);
-            }
-            let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(cfg));
-            Ok(Box::new(GrblAdapter::new(Box::new(emu.transport()), &spec.config, true, Some(emu))))
-        }
+        Link::SimulatorGrbl => Ok(Box::new(crate::connections::grbl_simulator(&spec.config).0)),
         Link::SimulatorRuida => {
             let mut cfg = ruida::EmulatorConfig { step_mode: true, ..Default::default() };
             if let Some((w, h)) = spec.config.bed {
@@ -974,7 +984,8 @@ pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Res
         Link::SimulatorGcode(kind) => crate::gcode_machines::open_simulator(*kind, &spec.config),
         Link::SimulatorGalvo => crate::galvo_machine::open_simulator(&spec.config),
         real => {
-            if cfg!(test) {
+            // Tests may only reach a listener they started themselves on this computer.
+            if cfg!(test) && !crate::connections::loopback_only(real) {
                 return Err(MachineError::Refused("Real connections are disabled in test builds.".into()));
             }
             if consent.is_none() {
@@ -1011,13 +1022,13 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
             let t = ruida::UdpTransport::connect(ip)?;
             Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
         }
-        #[cfg(feature = "usb")]
-        Link::Usb { serial } => {
-            let t = ruida::transport::UsbTransport::open(serial.as_deref())?;
-            Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
+        Link::Usb { serial, port } => open_ruida_usb(serial.as_deref(), port.as_deref(), config),
+        Link::Http { host, port, path } => crate::connections::open_http(host, *port, path, config),
+        Link::RawUsb { vid, pid, serial, interface, ep_out, ep_in } => {
+            let addr = grbl::RawUsbAddress { vid: *vid, pid: *pid, serial: serial.clone(), interface: *interface, ep_out: *ep_out, ep_in: *ep_in };
+            crate::connections::open_raw_usb(&addr, config)
         }
-        #[cfg(not(feature = "usb"))]
-        Link::Usb { .. } => Err(MachineError::Unsupported("this build has no raw USB support".into())),
+        Link::Bridge { host, port } => crate::connections::open_bridge(host, *port, config),
         Link::GalvoUsb => Err(MachineError::Unsupported(
             "the galvo USB link is not built into this version. Use the galvo simulator until the hardware checks in docs/hardware-checks-galvo.md are done."
                 .into(),
@@ -1027,6 +1038,31 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         }
     }
 }
+
+/// Ruida over USB. The controller's FTDI chip normally shows up as a serial port (a COM port on
+/// Windows), which is what gets opened; builds with the `usb` feature can also claim the chip
+/// directly. Reached only through [`open_real`].
+fn open_ruida_usb(serial: Option<&str>, port: Option<&str>, config: &ConnectConfig) -> Result<Box<dyn DriverAdapter>, MachineError> {
+    #[cfg(feature = "serial")]
+    if let Some(p) = port {
+        let t = ruida::transport::SerialTransport::open(p)?;
+        return Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)));
+    }
+    #[cfg(feature = "usb")]
+    {
+        let _ = port;
+        let t = ruida::transport::UsbTransport::open(serial)?;
+        Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
+    }
+    #[cfg(not(feature = "usb"))]
+    {
+        let _ = (serial, port, config);
+        Err(MachineError::Unsupported(NO_RUIDA_USB_PORT.into()))
+    }
+}
+
+/// Shown when no serial port of a Ruida controller's USB chip is found.
+pub const NO_RUIDA_USB_PORT: &str = "No USB serial port of a Ruida controller was found. Plug the controller in, install the FTDI driver if Windows does not show a COM port for it, then press Rescan. You can also type the port (like COM5) in Device Settings.";
 
 // ============================================================================================
 // GRBL
@@ -1135,6 +1171,7 @@ impl GrblAdapter {
         s.fire_on = g.fire_on;
         s.alarm = g.last_alarm.as_ref().filter(|_| g.alarm_locked || g.status.state.is_alarm()).map(|(_, m)| m.clone());
         s.grbl_settings = g.settings.clone();
+        s.detected = g.detected.clone();
         let job = g.job.as_ref().map(|p| self.progress(p));
         self.snap.job = job;
     }
@@ -1321,6 +1358,9 @@ enum Op {
 pub struct RuidaAdapter {
     h: ruida::RuidaHandle,
     simulator: bool,
+    /// The link has the jog port (Ethernet only): the Fire button and the controller's own
+    /// Frame need it.
+    jog_port: bool,
     sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     snap: Snapshot,
     pending: HashMap<u64, Op>,
@@ -1345,6 +1385,9 @@ impl RuidaAdapter {
         simulator: bool,
         sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     ) -> Self {
+        use ruida::Transport as _;
+        let jog_port = transport.framing() == ruida::Framing::Udp;
+        let described = transport.describe();
         let machine = ruida::RuidaMachine::new(
             transport,
             ruida::MachineConfig {
@@ -1364,13 +1407,14 @@ impl RuidaAdapter {
             simulator,
             link: LinkState::Connecting,
             state: LaserState::Connecting,
-            port: if simulator { "Simulator (Ruida)".into() } else { String::new() },
+            port: if simulator { "Simulator (Ruida)".into() } else { described },
             bed: cfg.bed,
             ..Default::default()
         };
         Self {
             h,
             simulator,
+            jog_port,
             sim,
             snap,
             pending,
@@ -1694,6 +1738,10 @@ impl DriverAdapter for RuidaAdapter {
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }
+            C::FrameOnController if !self.jog_port => Err(MachineError::Unsupported(
+                "the controller's own Frame needs the Ethernet connection. Over USB, use Frame in DarkBurn or the Frame key on the controller."
+                    .into(),
+            )),
             C::FrameOnController => self.req(R::FrameOnController, Op::Other("frame")),
             C::JogStep(j) => {
                 busy(working)?;
@@ -1748,6 +1796,9 @@ impl DriverAdapter for RuidaAdapter {
                 Err(MachineError::Unsupported("set the origin on the controller panel; this is not confirmed on real controllers yet".into()))
             }
             C::GetPosition => self.req(R::Status, Op::Other("status")),
+            C::Fire { .. } if !self.jog_port => {
+                Err(MachineError::Unsupported("the Fire button needs the Ethernet connection. Over USB, use the Pulse key on the controller.".into()))
+            }
             C::Fire { percent, secs } => {
                 let _ = percent;
                 busy(working)?;
@@ -1759,6 +1810,7 @@ impl DriverAdapter for RuidaAdapter {
                 self.snap.fire_on = true;
                 Ok(())
             }
+            C::FireOff if !self.jog_port => Ok(()),
             C::FireOff => {
                 self.fire = None;
                 self.snap.fire_on = false;

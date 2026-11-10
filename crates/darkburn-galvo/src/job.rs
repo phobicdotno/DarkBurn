@@ -96,10 +96,64 @@ pub struct SlicedImage {
     pub cleanup: Option<MarkParams>,
 }
 
+/// Drill mode: instead of tracing an outline, fire in place at points along it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrillSettings {
+    /// How long the laser fires at each point, in milliseconds.
+    pub dwell_ms: f64,
+    /// Distance between points along the outline in mm. 0 drills only the outline's own
+    /// points (the corners of a polygon, the ends of a line).
+    pub spacing_mm: f64,
+}
+
+impl Default for DrillSettings {
+    fn default() -> Self {
+        Self { dwell_ms: 1.0, spacing_mm: 0.5 }
+    }
+}
+
+/// The longest dwell one `LaserOnPoint` carries, in its 10 microsecond units; longer drills
+/// are sent as several in a row.
+pub const MAX_POINT_DWELL: u16 = 60_000;
+
+/// The points to drill along one polyline: its own points when `spacing` is 0, otherwise
+/// evenly spread about `spacing` apart (both ends of an open line are always drilled).
+pub fn drill_points(pts: &[Point], closed: bool, spacing: f64) -> Vec<Point> {
+    let mut line: Vec<Point> = pts.to_vec();
+    line.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+    if closed && line.len() > 1 && (line[0] - line[line.len() - 1]).hypot() < 1e-9 {
+        line.pop();
+    }
+    if line.len() < 2 || !(spacing.is_finite() && spacing > 0.0) {
+        return line;
+    }
+    if closed {
+        line.push(line[0]);
+    }
+    let length: f64 = line.windows(2).map(|w| (w[1] - w[0]).hypot()).sum();
+    let steps = ((length / spacing).round() as usize).max(1);
+    let count = if closed { steps } else { steps + 1 };
+    let mut out = Vec::with_capacity(count);
+    let (mut seg, mut walked) = (0usize, 0.0f64);
+    for i in 0..count {
+        let target = length * i as f64 / steps as f64;
+        while seg + 2 < line.len() && walked + (line[seg + 1] - line[seg]).hypot() < target {
+            walked += (line[seg + 1] - line[seg]).hypot();
+            seg += 1;
+        }
+        let d = (line[seg + 1] - line[seg]).hypot();
+        let t = if d > 0.0 { ((target - walked) / d).clamp(0.0, 1.0) } else { 0.0 };
+        out.push(line[seg].lerp(line[seg + 1], t));
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayerMode {
     /// Trace the outlines.
     Line,
+    /// Fire in place at points along the outlines.
+    Drill(DrillSettings),
     /// Hatch closed shapes.
     Fill(FillSettings),
     /// Hatch with continuous sweeps: gaps between segments of one scan line are crossed with
@@ -485,6 +539,24 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    /// Jump to `p` and fire in place for `dwell_ms`.
+    fn drill(&mut self, p: Point, dwell_ms: f64) -> Result<(), CompileError> {
+        let g = self.goto(p)?;
+        if self.last != Some(g) {
+            self.jump_to(p, None)?;
+        }
+        // 10 microsecond units, as the board's point command counts them.
+        let mut units = (dwell_ms * 100.0).round().max(1.0) as u64;
+        while units > 0 {
+            let part = units.min(MAX_POINT_DWELL as u64);
+            self.cmds.push(ListCmd::LaserOnPoint { dwell: part as u16 });
+            units -= part;
+        }
+        self.est.mark_s += dwell_ms.max(0.01) / 1000.0;
+        self.est.delay_s += (self.timings.laser_on_tc.max(0) + self.timings.laser_off_tc.max(0)) as f64 * 1e-6;
+        Ok(())
+    }
+
     /// One scan line of a flood fill: segments joined by delay-free jumps.
     fn flood_line(&mut self, segs: &[(Point, Point)]) -> Result<(), CompileError> {
         for (i, &(a, b)) in segs.iter().enumerate() {
@@ -605,6 +677,24 @@ fn layer_polys(job_layer: &Layer, li: usize, win: &Window, opt: &CompileOptions)
         .filter(|(gi, _)| win.shapes.as_ref().is_none_or(|s| s.contains(&(li, *gi))))
         .map(|(_, g)| flatten_path(g, opt.tolerance_mm))
         .collect()
+}
+
+/// Drill mode: the outlines become rows of points, each fired at in place. Wobble does not
+/// apply. With a rotary, each window drills the points inside its band.
+fn emit_drill_layer(w: &mut Writer, shapes: &[Vec<Poly>], d: &DrillSettings, win: &Window, last_window: bool) -> Result<(), CompileError> {
+    let dy = win.center_y.unwrap_or(0.0);
+    for poly in shapes.iter().flatten() {
+        for p in drill_points(&poly.pts, poly.closed, d.spacing_mm) {
+            // A point on the line between two bands belongs to the upper one, so it is drilled once.
+            if let Some((a, b)) = win.band
+                && !(p.y >= a && (p.y < b || (last_window && p.y <= b + 1e-9)))
+            {
+                continue;
+            }
+            w.drill(shift(p, dy), d.dwell_ms)?;
+        }
+    }
+    Ok(())
 }
 
 fn emit_line_layer(w: &mut Writer, layer: &Layer, shapes: &[Vec<Poly>], win: &Window, job: &Job, opt: &CompileOptions) -> Result<(), CompileError> {
@@ -768,6 +858,12 @@ fn validate(job: &Job) -> Result<(), CompileError> {
             return Err(CompileError::Invalid(format!("Layer '{}' has invalid power, frequency or speed.", l.name)));
         }
         match &l.mode {
+            LayerMode::Drill(d) if !(d.dwell_ms > 0.0 && d.dwell_ms <= 60_000.0 && d.spacing_mm >= 0.0) => {
+                return Err(CompileError::Invalid(format!(
+                    "Layer '{}' needs a drill time above zero (at most 60 s) and a point spacing of zero or more.",
+                    l.name
+                )));
+            }
             LayerMode::Fill(f) | LayerMode::Flood(f) if f.interval_mm <= 0.0 => {
                 return Err(CompileError::Invalid(format!("Layer '{}' needs a line interval above zero.", l.name)));
             }
@@ -811,7 +907,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
     // one repeat body
     let mut body: Vec<Step> = Vec::new();
     let mut est = Estimate::default();
-    for win in &windows {
+    for (wi, win) in windows.iter().enumerate() {
         if let (Some(rc), Some(cy)) = (&job.rotary, win.center_y) {
             body.push(Step::MoveAxis { axis: rc.axis, mm: cy });
             est.motion_s += MOTION_STEP_S;
@@ -835,6 +931,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
                 w.set_params(&layer.params);
                 match &layer.mode {
                     LayerMode::Line => emit_line_layer(&mut w, layer, &shapes, win, job, opt)?,
+                    LayerMode::Drill(d) => emit_drill_layer(&mut w, &shapes, d, win, wi + 1 == windows.len())?,
                     LayerMode::Fill(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, false, pass, win)?,
                     LayerMode::Flood(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, true, pass, win)?,
                     LayerMode::Sliced(_) => unreachable!("handled above"),
@@ -1247,6 +1344,124 @@ mod tests {
         plain.door_protect = false;
         let p = compile(&plain, &dev(), &CompileOptions::default()).unwrap();
         assert_eq!(p.steps.len(), 1);
+    }
+
+    fn drill_layer(g: Vec<BezPath>, dwell_ms: f64, spacing_mm: f64) -> Layer {
+        Layer::new("D", LayerMode::Drill(DrillSettings { dwell_ms, spacing_mm }), MarkParams::default(), g)
+    }
+
+    /// Where each shot lands (mm) and its total dwell in 10 microsecond units.
+    fn shots(c: &CompiledJob) -> Vec<(Point, u32)> {
+        let field = Field::new(dev().field);
+        let mut at = Point::ORIGIN;
+        let mut out: Vec<(Point, u32)> = Vec::new();
+        let mut fresh = true;
+        for cmd in c.list_commands() {
+            match cmd {
+                ListCmd::JumpTo { x, y, .. } => {
+                    at = field.galvo_to_mm(x as f64, y as f64);
+                    fresh = true;
+                }
+                ListCmd::LaserOnPoint { dwell } => {
+                    if fresh {
+                        out.push((at, dwell as u32));
+                        fresh = false;
+                    } else {
+                        out.last_mut().unwrap().1 += dwell as u32;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn drill_points_are_the_corners_or_evenly_spread() {
+        let sq = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0), Point::new(0.0, 10.0)];
+        assert_eq!(drill_points(&sq, true, 0.0), sq, "spacing 0: the corners");
+        // A closed square with a repeated first point is still four corners.
+        let mut again = sq.to_vec();
+        again.push(sq[0]);
+        assert_eq!(drill_points(&again, true, 0.0).len(), 4);
+        // 40 mm round, every 5 mm: eight points, none twice.
+        let eight = drill_points(&sq, true, 5.0);
+        assert_eq!(eight.len(), 8);
+        assert_eq!(eight[0], Point::new(0.0, 0.0));
+        assert!((eight[1] - Point::new(5.0, 0.0)).hypot() < 1e-9 && (eight[3] - Point::new(10.0, 5.0)).hypot() < 1e-9);
+        assert!((eight[7] - Point::new(0.0, 5.0)).hypot() < 1e-9);
+        // An open 10 mm line every 3 mm: both ends and two between, evenly.
+        let line = [Point::new(0.0, 0.0), Point::new(10.0, 0.0)];
+        let four = drill_points(&line, false, 3.0);
+        assert_eq!(four.len(), 4);
+        assert!((four[3] - line[1]).hypot() < 1e-9 && (four[1].x - 10.0 / 3.0).abs() < 1e-9);
+        // A spacing longer than the line: just its ends. A single point stays one point.
+        assert_eq!(drill_points(&line, false, 50.0), line);
+        assert_eq!(drill_points(&line[..1], false, 1.0), line[..1]);
+        assert!(drill_points(&[], true, 1.0).is_empty());
+    }
+
+    #[test]
+    fn drill_layer_fires_in_place_and_never_marks_a_line() {
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, -10.0, 20.0, 20.0)], 2.5, 0.0));
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(marks(&c), 0, "no line is drawn");
+        let s = shots(&c);
+        assert_eq!(s.len(), 4, "one shot per corner: {s:?}");
+        for (p, dwell) in &s {
+            assert!((p.x.abs() - 10.0).abs() < 0.05 && (p.y.abs() - 10.0).abs() < 0.05, "{p:?}");
+            assert_eq!(*dwell, 250, "2.5 ms in 10 microsecond units");
+        }
+        // The power and frequency are set as for any layer.
+        assert!(c.list_commands().iter().any(|c| matches!(c, ListCmd::QSwitchPeriod(667))));
+        assert!(c.estimate.mark_s > 0.0099 && c.estimate.mark_s < 0.0101, "four shots of 2.5 ms: {}", c.estimate.mark_s);
+        assert!((c.bounds_mm.width() - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn drill_spacing_passes_and_long_dwells() {
+        let mut job = Job::new();
+        let mut l = drill_layer(vec![rect_path(0.0, 0.0, 10.0, 10.0)], 1.0, 2.0);
+        l.passes = 3;
+        job.layers.push(l);
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(shots(&c).len(), 20 * 3, "40 mm round every 2 mm, three passes");
+        // A dwell longer than one command carries is sent as several, adding up.
+        let mut long = Job::new();
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((5.0, 0.0));
+        long.layers.push(drill_layer(vec![line], 1500.0, 0.0));
+        let c = compile(&long, &dev(), &CompileOptions::default()).unwrap();
+        let s = shots(&c);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].1, 150_000);
+        assert!(c.list_commands().iter().all(|c| !matches!(c, ListCmd::LaserOnPoint { dwell } if *dwell > MAX_POINT_DWELL)));
+        assert_eq!(c.list_commands().iter().filter(|c| matches!(c, ListCmd::LaserOnPoint { .. })).count(), 6);
+    }
+
+    #[test]
+    fn drill_settings_are_checked() {
+        for (dwell, spacing) in [(0.0, 1.0), (-1.0, 1.0), (f64::NAN, 1.0), (70_000.0, 1.0), (1.0, -0.5)] {
+            let mut job = Job::new();
+            job.layers.push(drill_layer(vec![rect_path(0.0, 0.0, 5.0, 5.0)], dwell, spacing));
+            assert!(matches!(compile(&job, &dev(), &CompileOptions::default()), Err(CompileError::Invalid(_))), "{dwell} {spacing}");
+        }
+    }
+
+    #[test]
+    fn drill_with_a_rotary_drills_each_point_once_in_its_window() {
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, 0.0, 20.0, 90.0)], 1.0, 10.0));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(c.steps.iter().filter(|s| matches!(s, Step::MoveAxis { .. })).count(), 3);
+        let s = shots(&c);
+        assert_eq!(s.len(), 22, "220 mm round every 10 mm, none lost or doubled at the band edges");
+        for (p, _) in &s {
+            assert!(p.y.abs() <= 15.0 + 0.05, "inside the band: {p:?}");
+        }
     }
 
     #[test]

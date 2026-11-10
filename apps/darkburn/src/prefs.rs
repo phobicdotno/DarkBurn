@@ -40,6 +40,8 @@ pub struct Prefs {
     pub backdrop: Backdrop,
     /// How strong the grid lines are, 0 to 1.
     pub grid_contrast: f32,
+    /// The distance between grid lines in mm; 0 follows the zoom.
+    pub grid_spacing: f32,
     pub show_grid: bool,
     /// Scrolling towards the user zooms in instead of out.
     pub invert_wheel: bool,
@@ -50,6 +52,8 @@ pub struct Prefs {
     pub panels: BTreeMap<String, PanelState>,
     /// The tab in front in each panel area.
     pub active_tab: BTreeMap<Area, String>,
+    /// The size the user dragged each dock to ("left", "right", "bottom"); none: the default.
+    pub dock_sizes: BTreeMap<String, f32>,
     pub toolbars: BTreeMap<String, bool>,
     /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
     pub toolbar_order: Vec<String>,
@@ -108,6 +112,7 @@ impl Default for Prefs {
             theme: "warning-label".into(),
             backdrop: Backdrop::Theme,
             grid_contrast: 0.5,
+            grid_spacing: 10.0,
             show_grid: true,
             invert_wheel: false,
             page_width: 400.0,
@@ -115,6 +120,7 @@ impl Default for Prefs {
             origin: Origin::FrontLeft,
             panels,
             active_tab,
+            dock_sizes: BTreeMap::new(),
             toolbars,
             toolbar_order: Vec::new(),
             ribbon_tab: "home".into(),
@@ -170,6 +176,10 @@ impl Prefs {
             self.grid_contrast = d.grid_contrast;
         }
         self.grid_contrast = self.grid_contrast.clamp(0.0, 1.0);
+        if !(self.grid_spacing.is_finite()) {
+            self.grid_spacing = d.grid_spacing;
+        }
+        self.grid_spacing = self.grid_spacing.clamp(0.0, 1000.0);
         for size in [&mut self.page_width, &mut self.page_height] {
             if !(size.is_finite() && *size >= 1.0 && *size <= 10_000.0) {
                 *size = 400.0;
@@ -192,6 +202,7 @@ impl Prefs {
             self.panels.entry(id).or_insert(state);
         }
         self.panels.retain(|id, _| PANELS.iter().any(|p| p.id == id));
+        self.dock_sizes.retain(|_, size| size.is_finite() && *size > 0.0);
         for (id, on) in d.toolbars {
             self.toolbars.entry(id).or_insert(on);
         }
@@ -208,6 +219,7 @@ impl Prefs {
         let d = Prefs::default();
         self.panels = d.panels;
         self.active_tab = d.active_tab;
+        self.dock_sizes = d.dock_sizes;
         self.toolbars = d.toolbars;
         self.toolbar_order = Vec::new();
         self.ribbon_tab = d.ribbon_tab;

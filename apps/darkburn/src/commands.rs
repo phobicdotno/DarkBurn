@@ -478,7 +478,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "setting.set",
         "Change a Setting",
-        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
+        r#"{"type":"object","properties":{"key":{"type":"string","description":"filled, smooth, show_grid, grid_spacing (mm, 0 follows the zoom), grid_contrast (0 to 1), backdrop (theme, light or dark), theme, page_width, page_height, autosave_minutes, svg_dpi, import_group, import_select, import_tool_layers, or the name of any option such as speed_per_min, nudge, snap_grid"},"value":{}},"required":["key","value"]}"#,
     ),
 ];
 
@@ -581,6 +581,7 @@ pub fn works(id: &str) -> bool {
         || crate::laser_position::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
+        || crate::misc_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -658,7 +659,7 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).find(|c| c.id == id)
+    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).chain(crate::connections::COMMANDS).find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
@@ -775,6 +776,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_out" => &["WIN-05"],
         "view.zoom_page" => &["WIN-03"],
         _ if crate::machine_ui::handles(id) => crate::machine_ui::checklist(id),
+        _ if crate::misc_cmds::works(id) => crate::misc_cmds::checklist(id),
         "help.about" => &["HELP-01"],
         "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
         "help.docs" => &["HELP-03"],
@@ -822,8 +824,10 @@ pub fn registry() -> &'static [Cmd] {
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::machine_ext::COMMANDS);
+        v.extend_from_slice(crate::connections::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
+        v.extend_from_slice(crate::misc_cmds::COMMANDS);
         v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
@@ -1353,7 +1357,7 @@ mod tests {
         for id in ["file.exit", "view.zoom_in", "help.about", "window.reset_layout", "file.save_gcode", "window.preview"] {
             assert!(works(id));
         }
-        assert!(!works("laser.material_test_galvo"), "the galvo material test arrives in a later phase");
+        assert!(works("laser.material_test_galvo") && !hardware("laser.material_test_galvo"), "it only adds shapes to the project");
         assert!(works("laser.repeat_marking") && works("laser.lens_test"));
     }
 

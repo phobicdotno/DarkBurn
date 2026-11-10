@@ -1,6 +1,7 @@
 //! DarkBurn: laser cutter and engraver. The desktop host: window, settings and startup.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod a11y;
 mod actions;
 mod api;
 mod art_library;
@@ -11,11 +12,16 @@ mod canvas_tests;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;
+mod connections;
+#[cfg(test)]
+mod connections_tests;
 mod cut_settings;
 mod cuts_panel;
 mod devices;
 mod devices_ui;
 mod dock_geom;
+mod dock_layout;
+mod escape;
 mod extras;
 mod file_io;
 mod files;
@@ -41,6 +47,8 @@ mod job_cmds;
 mod job_device_tests;
 #[cfg(test)]
 mod job_field_tests;
+#[cfg(test)]
+mod job_plan_tests;
 mod job_ui;
 mod key_cmds;
 mod keymap;
@@ -69,6 +77,7 @@ mod mcp_inspect;
 #[cfg(test)]
 mod mcp_tests;
 mod mcp_ui;
+mod misc_cmds;
 mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;
@@ -78,6 +87,8 @@ mod numeric_edits;
 mod options;
 mod palette;
 mod panels;
+#[cfg(test)]
+mod polish_tests;
 mod prefs;
 mod prefs_files;
 mod preview;
@@ -85,6 +96,8 @@ mod rd_import;
 mod render;
 mod ribbon;
 mod rotary_read;
+#[cfg(test)]
+mod ruida_tests;
 mod scan_offsets;
 mod settings;
 mod settings_wiring;
@@ -103,6 +116,8 @@ mod text_tests;
 mod text_ui;
 mod thumbnail;
 mod tools;
+#[cfg(test)]
+mod ui_bug_tests;
 #[cfg(test)]
 mod ui_harness;
 #[cfg(test)]

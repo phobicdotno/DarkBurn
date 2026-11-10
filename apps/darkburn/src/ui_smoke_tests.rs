@@ -80,9 +80,9 @@ fn no_file_dialog_opens_for_real_and_the_scripted_ones_are_logged() {
     assert!(g.app().project_path.is_none(), "a cancelled dialog saves nothing");
 }
 
-/// Known gap (docs/BUGHUNT-NOTES.md): controls with no accessible name. Run with `--ignored`.
+/// Every control in every panel has a name a screen reader can say (a value alone is not a name).
+/// The dialogs are covered by `ui_bug_tests::every_control_in_every_window_has_an_accessible_name`.
 #[test]
-#[ignore = "known gap: some controls have no accessible name; see docs/BUGHUNT-NOTES.md"]
 fn every_interactive_control_has_an_accessible_name() {
     let mut g = Gui::standard();
     g.sample_design();
@@ -96,7 +96,7 @@ fn every_interactive_control_has_an_accessible_name() {
         show_tab(&mut g, p.id);
         for n in g.a11y() {
             let interactive = ["SpinButton", "Button", "CheckBox", "TextInput", "ComboBox", "Slider", "Link"].contains(&n.role.as_str());
-            if interactive && n.label.as_deref().is_none_or(str::is_empty) && n.value.as_deref().is_none_or(str::is_empty) {
+            if interactive && n.label.as_deref().is_none_or(|l| l.trim().is_empty()) {
                 bad.insert(format!("{} in panel {} at {:?}", n.role, p.id, n.rect));
             }
         }
@@ -414,11 +414,12 @@ fn sweep_commands(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>)
 }
 
 /// The windows nothing in a menu opens by itself: set the state that shows each one.
-fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) {
+pub(crate) type OpenDialog = (&'static str, Box<dyn Fn(&mut crate::shell::DarkBurn)>);
+
+/// Each window that opens from state alone, with the state that shows it.
+pub(crate) fn state_dialog_cases() -> Vec<OpenDialog> {
     use crate::devices::{Candidate, DeviceType, Wizard, WizardStep};
-    let mut g = Gui::new(w, h, 1.0);
-    type Open = (&'static str, Box<dyn Fn(&mut crate::shell::DarkBurn)>);
-    let mut cases: Vec<Open> = vec![
+    let mut cases: Vec<OpenDialog> = vec![
         ("about", Box::new(|a| a.about_open = true)),
         ("settings", Box::new(|a| a.settings_open = true)),
         ("notes", Box::new(|a| a.notes_open = true)),
@@ -450,7 +451,12 @@ fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) 
             }),
         ));
     }
-    for (what, open) in cases {
+    cases
+}
+
+fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) {
+    let mut g = Gui::new(w, h, 1.0);
+    for (what, open) in state_dialog_cases() {
         fresh_design(&mut g);
         open(&mut g.app());
         g.frames(3);

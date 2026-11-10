@@ -32,13 +32,13 @@ pub mod transport;
 
 pub use codec::{Command, ListCmd, ListPacket, Reply, SingleCmd, packetize, unpacketize};
 pub use cor::{CorError, CorTable};
-pub use emulator::{EmulatorConfig, EmulatorLog, GalvoEmulator, Motion};
+pub use emulator::{EmulatorConfig, EmulatorLog, GalvoEmulator, Motion, PointShot};
 pub use ezcad::{EzcadImport, ImportError};
 pub use field::{Field, FieldConfig, FieldOrigin, GalvoCal, LensTestPattern, OutOfField};
 pub use geom::Wobble;
 pub use job::{
-    AngleMode, CompileError, CompileOptions, CompiledFrame, CompiledJob, Estimate, FillGrouping, FillSettings, FrameSpec, Job, Layer, LayerMode,
-    RepeatMarking, RotaryConfig, RotaryMode, SlicedImage, Step, bounds_key, compile, compile_frame,
+    AngleMode, CompileError, CompileOptions, CompiledFrame, CompiledJob, DrillSettings, Estimate, FillGrouping, FillSettings, FrameSpec, Job, Layer,
+    LayerMode, RepeatMarking, RotaryConfig, RotaryMode, SlicedImage, Step, bounds_key, compile, compile_frame, drill_points,
 };
 pub use machine::{Activity, ConnectOptions, ConnectionState, Event, GalvoError, GalvoMachine, Inputs, JobProgress, Snapshot, StartOptions};
 pub use settings::{DeviceSettings, LaserSource, LightSettings, MarkParams, PortConfig, Timings};

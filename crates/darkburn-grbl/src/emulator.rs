@@ -30,6 +30,9 @@ pub enum EmulatorFlavor {
     GrblHal,
     /// FluidNC on an ESP32.
     FluidNc,
+    /// grbl-LPC on an LPC1769 board such as a Smoothieboard: the GRBL 1.1 protocol over native
+    /// USB, so opening the port does not reset the board, and a much larger RX buffer.
+    GrblLpc,
 }
 
 /// Emulator set-up.
@@ -56,6 +59,10 @@ pub struct EmulatorConfig {
     pub record_lines: bool,
     /// Settings that differ from the built-in defaults.
     pub settings: Vec<(u16, f64)>,
+    /// Extra lines printed after the start-up banner (vendor welcome text).
+    pub welcome: Vec<String>,
+    /// Extra lines printed with the `$I` build info (vendor tags such as `[MODEL: ...]`).
+    pub build_info: Vec<String>,
 }
 
 impl Default for EmulatorConfig {
@@ -80,6 +87,8 @@ impl EmulatorConfig {
             homing_fails: false,
             record_lines: true,
             settings: Vec::new(),
+            welcome: Vec::new(),
+            build_info: Vec::new(),
         }
     }
     /// Another firmware family with matching buffer sizes.
@@ -90,7 +99,19 @@ impl EmulatorConfig {
             c.rx_buffer_size = 1024;
             c.planner_blocks = 35;
         }
+        if flavor == EmulatorFlavor::GrblLpc {
+            // Native USB: no DTR reset. The buffer size is what users of the port report; the
+            // driver takes the real value from `[OPT:...]` either way.
+            c.rx_buffer_size = 8192;
+            c.reset_on_open = false;
+        }
         c
+    }
+    /// Vendor text: lines after the banner and lines in the `$I` reply.
+    pub fn with_vendor_text(mut self, welcome: &[&str], build_info: &[&str]) -> Self {
+        self.welcome = welcome.iter().map(|s| (*s).to_owned()).collect();
+        self.build_info = build_info.iter().map(|s| (*s).to_owned()).collect();
+        self
     }
     pub fn with_time_scale(mut self, scale: f64) -> Self {
         self.time_scale = scale;
@@ -261,6 +282,10 @@ fn default_settings(flavor: EmulatorFlavor) -> BTreeMap<u16, f64> {
     if flavor == EmulatorFlavor::GrblHal {
         m.extend([(33, 1000.0), (34, 0.0), (35, 0.0), (36, 100.0)]);
     }
+    if flavor == EmulatorFlavor::GrblLpc {
+        // grbl-LPC's README: $33 PWM frequency (Hz), $34 PWM off, $35 PWM min, $36 PWM max (%).
+        m.extend([(33, 5000.0), (34, 0.0), (35, 0.0), (36, 100.0)]);
+    }
     if flavor == EmulatorFlavor::Grbl09 {
         m.remove(&30);
         m.remove(&31);
@@ -362,6 +387,10 @@ impl GrblEmulator {
     }
     pub fn spindle_enabled(&self) -> bool {
         self.spindle != Spindle::Off
+    }
+    /// The DTR level the host last set.
+    pub fn dtr(&self) -> bool {
+        self.dtr
     }
     pub fn is_unplugged(&self) -> bool {
         self.unplugged
@@ -691,6 +720,7 @@ impl GrblEmulator {
             EmulatorFlavor::Grbl09 => "Grbl 0.9j ['$' for help]",
             EmulatorFlavor::GrblHal => "GrblHAL 1.1f ['$' or '$HELP' for help]",
             EmulatorFlavor::FluidNc => "Grbl 3.9 [FluidNC v3.9.7 (noradio) '$' for help]",
+            EmulatorFlavor::GrblLpc => "Grbl 1.1f ['$' for help]",
         }
     }
 
@@ -698,6 +728,9 @@ impl GrblEmulator {
         self.print("");
         let b = self.banner();
         self.print(b);
+        for l in self.cfg.welcome.clone() {
+            self.print(&l);
+        }
         if self.state == State::Alarm {
             self.print("[MSG:'$H'|'$X' to unlock]");
         }
@@ -1166,6 +1199,13 @@ impl GrblEmulator {
                         self.print("[VER:3.9 FluidNC v3.9.7:]");
                         self.print("[OPT:PHS]");
                     }
+                    EmulatorFlavor::GrblLpc => {
+                        self.print("[VER:1.1f.20170801:]");
+                        self.print(&format!("[OPT:V,{},{}]", self.cfg.planner_blocks, self.cfg.rx_buffer_size));
+                    }
+                }
+                for l in self.cfg.build_info.clone() {
+                    self.print(&l);
                 }
                 self.reply_ok();
             }

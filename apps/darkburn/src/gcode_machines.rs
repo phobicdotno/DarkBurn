@@ -142,7 +142,7 @@ fn profile_kind(t: DeviceType) -> gp::DeviceKind {
     t.lib_kind().unwrap_or(match t {
         DeviceType::GrblHal => gp::DeviceKind::GrblHal,
         DeviceType::FluidNc => gp::DeviceKind::FluidNc,
-        DeviceType::Grbl | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl => gp::DeviceKind::Grbl,
+        DeviceType::Grbl | DeviceType::GrblM3 | DeviceType::GrblLpc | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl => gp::DeviceKind::Grbl,
         _ => gp::DeviceKind::DesignOnly,
     })
 }
@@ -408,8 +408,18 @@ pub fn guess_type(banner: &str) -> Option<DeviceType> {
 
 /// Whether a device of type `t` is a sensible home for firmware that looks like `guess`.
 fn compatible(t: DeviceType, guess: DeviceType) -> bool {
-    let grbl =
-        |x: DeviceType| matches!(x, DeviceType::Grbl | DeviceType::GrblHal | DeviceType::FluidNc | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl);
+    let grbl = |x: DeviceType| {
+        matches!(
+            x,
+            DeviceType::Grbl
+                | DeviceType::GrblM3
+                | DeviceType::GrblLpc
+                | DeviceType::GrblHal
+                | DeviceType::FluidNc
+                | DeviceType::Emblaser1
+                | DeviceType::SimulatorGrbl
+        )
+    };
     let smoothie = |x: DeviceType| matches!(x, DeviceType::Smoothie | DeviceType::Emblaser2 | DeviceType::SimulatorSmoothie);
     match t {
         DeviceType::CustomGcode | DeviceType::SimulatorCustom => true,
@@ -428,6 +438,10 @@ pub fn mismatch_hint(firmware: &str, chosen: DeviceType) -> String {
     match guess_type(firmware) {
         Some(g) if !compatible(chosen, g) => {
             format!(". This looks like {}, but the device is set to {}. Change the type in Device Settings.", g.label(), chosen.label())
+        }
+        // GRBL before 1.1f has no dynamic power (M4): the GRBL-M3 type writes M3 only [GRBL-02].
+        _ if matches!(chosen, DeviceType::Grbl | DeviceType::Emblaser1) && crate::connections::grbl_is_m3_only(firmware) => {
+            ". This GRBL is older than 1.1f and has constant power only. Change the type to GRBL-M3 in Device Settings.".into()
         }
         _ => String::new(),
     }

@@ -192,8 +192,8 @@ fn paint_backdrop(ui: &Ui, prefs: &Prefs, view: &View, canvas: Rect) {
     let page_fill = ct.field;
     painter.rect_filled(page_rect, 0.0, page_fill);
 
-    // Grid: major lines, plus a finer grid when zoomed in far enough.
-    let (major, minor) = view::grid_steps(view.zoom);
+    // Grid: lines at the chosen spacing (or following the zoom), every fifth one stronger.
+    let (major, minor) = view::grid_steps_for(view.zoom, prefs.grid_spacing);
     if prefs.show_grid {
         let k = 0.25 + 0.75 * prefs.grid_contrast;
         let major_ink = mix(page_fill, ct.grid_major, k * 1.4);

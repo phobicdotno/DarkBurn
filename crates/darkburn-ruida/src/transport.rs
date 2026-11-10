@@ -1,8 +1,12 @@
 //! Transports. Every driver call goes through [`Transport`], so tests run against
 //! [`MemoryTransport`] + [`crate::emulator::RuidaEmulator`] and never touch the network or USB.
 //!
-//! * [`UdpTransport`]: Ruida Ethernet (UDP 50200 data, 50207 jog). Never used in tests.
-//! * `UsbTransport` (feature `usb`): FTDI FT245R packet USB. Never used in tests.
+//! * [`UdpTransport`]: Ruida Ethernet (UDP 50200 data, 50207 jog). Tests only ever point it at
+//!   [`crate::loopback::UdpEmulatorServer`] on 127.0.0.1.
+//! * [`StreamTransport`]: Ruida over a byte stream (USB). `SerialTransport` (feature `serial`)
+//!   is the FTDI chip's serial port; tests use an in-memory [`ByteStream`].
+//! * `UsbTransport` (feature `usb`): FTDI FT245R packet USB without a serial driver. Never used
+//!   in tests.
 //! * [`MemoryTransport`]: in-process link to an emulator, with fault injection.
 
 use std::collections::VecDeque;
@@ -193,7 +197,8 @@ impl Transport for MemoryTransport {
 }
 
 /// Ruida Ethernet over UDP. Binds local ports 40200/40207 and talks to the controller's
-/// 50200/50207. **Never constructed in tests**: it opens real sockets.
+/// 50200/50207. It opens real sockets: the app builds one only after the user clicks Connect,
+/// and tests only through [`crate::loopback::UdpEmulatorServer::transport`] (127.0.0.1).
 pub struct UdpTransport {
     data: std::net::UdpSocket,
     jog: Option<std::net::UdpSocket>,
@@ -205,10 +210,24 @@ impl UdpTransport {
     /// is taken the data channel still works and jog falls back to the data channel.
     pub fn connect(addr: std::net::IpAddr) -> Result<Self> {
         use crate::packet::*;
-        let any: std::net::IpAddr = if addr.is_ipv4() { std::net::Ipv4Addr::UNSPECIFIED.into() } else { std::net::Ipv6Addr::UNSPECIFIED.into() };
-        let data = std::net::UdpSocket::bind((any, HOST_DATA_PORT))?;
-        data.connect((addr, DATA_PORT))?;
-        let jog = std::net::UdpSocket::bind((any, HOST_JOG_PORT)).and_then(|s| s.connect((addr, JOG_PORT)).map(|_| s)).ok();
+        Self::connect_ports(addr, UdpPorts { data: DATA_PORT, jog: JOG_PORT, host_data: HOST_DATA_PORT, host_jog: HOST_JOG_PORT })
+    }
+
+    /// As [`connect`](Self::connect) with other port numbers. A host port of 0 lets the system
+    /// pick one. A real controller answers to 40200/40207 whatever the source port was (as far
+    /// as the public descriptions say), so only an emulator is reached this way.
+    pub fn connect_ports(addr: std::net::IpAddr, ports: UdpPorts) -> Result<Self> {
+        let any: std::net::IpAddr = if addr.is_loopback() {
+            addr
+        } else if addr.is_ipv4() {
+            std::net::Ipv4Addr::UNSPECIFIED.into()
+        } else {
+            std::net::Ipv6Addr::UNSPECIFIED.into()
+        };
+        let data = std::net::UdpSocket::bind((any, ports.host_data))
+            .map_err(|e| RuidaError::Transport(format!("could not open UDP port {}: {e} (is another laser program running?)", ports.host_data)))?;
+        data.connect((addr, ports.data))?;
+        let jog = std::net::UdpSocket::bind((any, ports.host_jog)).and_then(|s| s.connect((addr, ports.jog)).map(|_| s)).ok();
         Ok(UdpTransport { data, jog, peer: addr })
     }
 
@@ -246,6 +265,134 @@ impl Transport for UdpTransport {
     }
 }
 
+/// The four UDP port numbers of a Ruida link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UdpPorts {
+    /// Controller data port (50200).
+    pub data: u16,
+    /// Controller jog port (50207).
+    pub jog: u16,
+    /// Host data port (40200); 0 = any free port.
+    pub host_data: u16,
+    /// Host jog port (40207); 0 = any free port.
+    pub host_jog: u16,
+}
+
+/// A byte stream to a controller: what the FTDI chip's serial port gives.
+pub trait ByteStream: Send {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()>;
+    /// Read what arrives within `timeout` into `buf`; 0 on timeout.
+    fn read_some(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize>;
+    /// Short name for messages ("COM5").
+    fn name(&self) -> String;
+}
+
+/// Ruida over a byte stream (USB): the swizzled command stream with no checksum and no ACK,
+/// and no jog port.
+pub struct StreamTransport<S: ByteStream> {
+    stream: S,
+}
+
+impl<S: ByteStream> StreamTransport<S> {
+    pub fn new(stream: S) -> Self {
+        StreamTransport { stream }
+    }
+    pub fn stream(&self) -> &S {
+        &self.stream
+    }
+}
+
+impl<S: ByteStream> Transport for StreamTransport<S> {
+    fn framing(&self) -> Framing {
+        Framing::Stream
+    }
+
+    fn send(&mut self, channel: Channel, data: &[u8]) -> Result<()> {
+        if channel == Channel::Jog {
+            return Err(RuidaError::Unsupported("jog port is UDP only".into()));
+        }
+        self.stream.write_all(data)?;
+        Ok(())
+    }
+
+    fn recv(&mut self, channel: Channel, timeout: Duration) -> Result<Option<Vec<u8>>> {
+        if channel == Channel::Jog {
+            return Err(RuidaError::Unsupported("jog port is UDP only".into()));
+        }
+        let mut buf = [0u8; 1024];
+        let n = self.stream.read_some(&mut buf, timeout)?;
+        Ok((n > 0).then(|| buf[..n].to_vec()))
+    }
+
+    fn describe(&self) -> String {
+        format!("USB {}", self.stream.name())
+    }
+}
+
+/// USB IDs of the FTDI chip on Ruida controllers (FT245R / FT232R).
+pub const FTDI_VID: u16 = 0x0403;
+pub const FTDI_PID: u16 = 0x6001;
+
+#[cfg(feature = "serial")]
+pub use serial::{SerialStream, SerialTransport};
+
+#[cfg(feature = "serial")]
+mod serial {
+    //! The FTDI chip through the operating system's serial driver (a COM port on Windows,
+    //! `/dev/ttyUSB*` on Linux). **Never opened in tests.**
+
+    use super::*;
+
+    /// Baud rate asked for. The FT245R is a parallel FIFO and ignores it (MeerK40t notes the
+    /// same); a serial FT232R board would need the right value, which no source gives.
+    pub const BAUD: u32 = 115_200;
+
+    pub struct SerialStream {
+        port: Box<dyn serialport::SerialPort>,
+        name: String,
+    }
+
+    pub type SerialTransport = StreamTransport<SerialStream>;
+
+    impl StreamTransport<SerialStream> {
+        /// Open the serial port `path`. Only the app calls this, after the user clicks Connect.
+        pub fn open(path: &str) -> Result<Self> {
+            let mut port = serialport::new(path, BAUD)
+                .data_bits(serialport::DataBits::Eight)
+                .parity(serialport::Parity::None)
+                .stop_bits(serialport::StopBits::One)
+                .flow_control(serialport::FlowControl::None)
+                .timeout(Duration::from_millis(10))
+                .open()
+                .map_err(|e| RuidaError::Transport(format!("could not open {path}: {e}")))?;
+            // DTR and RTS on, as the public USB notes describe. Failure is not fatal.
+            let _ = port.write_data_terminal_ready(true);
+            let _ = port.write_request_to_send(true);
+            Ok(StreamTransport::new(SerialStream { port, name: path.to_owned() }))
+        }
+    }
+
+    impl ByteStream for SerialStream {
+        fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+            std::io::Write::write_all(&mut self.port, data)?;
+            std::io::Write::flush(&mut self.port)
+        }
+
+        fn read_some(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+            self.port.set_timeout(timeout.max(Duration::from_millis(1))).map_err(std::io::Error::other)?;
+            match std::io::Read::read(&mut self.port, buf) {
+                Ok(n) => Ok(n),
+                Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => Ok(0),
+                Err(e) => Err(e),
+            }
+        }
+
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+    }
+}
+
 #[cfg(feature = "usb")]
 pub use usb::UsbTransport;
 
@@ -259,8 +406,7 @@ mod usb {
     use futures_lite::future::block_on;
     use nusb::transfer::{Control, ControlType, Recipient, RequestBuffer};
 
-    pub const FTDI_VID: u16 = 0x0403;
-    pub const FT245R_PID: u16 = 0x6001;
+    pub const FT245R_PID: u16 = FTDI_PID;
     const EP_OUT: u8 = 0x02;
     const EP_IN: u8 = 0x81;
 

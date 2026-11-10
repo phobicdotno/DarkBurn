@@ -9,15 +9,19 @@
 //!   values round-trip.
 //!
 //! Units on the wire: coordinates in µm, speed in µm/s, time in µs, frequency in Hz,
-//! power as 0..=16383 (0x3FFF = 100 %), colour as 0x00BBGGRR.
+//! power as a 14-bit value on a scale where 0x4000 is 100 % (percent = raw / 163.84, so the
+//! largest value that fits, 0x3FFF, reads 99.994 %), colour as 0x00BBGGRR. The power scale
+//! follows ruida-pa and MeerK40t (both MIT, see ATTRIBUTION.md); no controller has confirmed it.
 
 use crate::error::{Result, RuidaError};
 
 /// Largest relative move that fits int14.
 pub const REL_MIN: i32 = -8192;
 pub const REL_MAX: i32 = 8191;
-/// Full-scale power value.
+/// Largest power value that fits 14 bits (sent for 100 %).
 pub const POWER_FULL: u16 = 0x3FFF;
+/// Raw power units per percent: 0x4000 / 100.
+pub const POWER_PER_PERCENT: f64 = 163.84;
 
 pub fn encode_u14(v: u16) -> [u8; 2] {
     [((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8]
@@ -107,11 +111,12 @@ impl Power {
 
     /// From a percentage, clamped to 0..=100.
     pub fn from_percent(pct: f64) -> Power {
-        Power((pct.clamp(0.0, 100.0) * POWER_FULL as f64 / 100.0).round() as u16)
+        Power(((pct.clamp(0.0, 100.0) * POWER_PER_PERCENT).round() as u16).min(POWER_FULL))
     }
 
+    /// Percent as the controller counts it: raw / 163.84. Full power reads 99.994.
     pub fn percent(self) -> f64 {
-        self.0 as f64 * 100.0 / POWER_FULL as f64
+        self.0.min(POWER_FULL) as f64 / POWER_PER_PERCENT
     }
 
     pub fn encode(self) -> [u8; 2] {
@@ -195,6 +200,13 @@ mod tests {
         assert_eq!(Power::from_percent(0.0), Power(0));
         assert_eq!(Power::from_percent(150.0), Power::FULL);
         assert!((Power::from_percent(50.0).percent() - 50.0).abs() < 0.01);
+        // 14 bits on a scale where 0x4000 is 100 %: raw / 163.84, about 0.006 % per step.
+        assert_eq!(Power::from_percent(50.0), Power(8192));
+        assert_eq!(Power::from_percent(25.0), Power(4096));
+        assert_eq!(Power::from_percent(0.1), Power(16));
+        assert_eq!(Power(8192).percent(), 50.0);
+        assert!((Power::FULL.percent() - 99.994).abs() < 0.001);
+        assert!((Power(1).percent() - 0.0061).abs() < 0.0001);
         assert_eq!(Power::decode(&Power(1234).encode()).unwrap(), Power(1234));
     }
 

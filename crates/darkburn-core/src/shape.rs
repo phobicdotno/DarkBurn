@@ -67,11 +67,16 @@ pub struct Shape {
     /// Power scale in percent applied to this shape's layer power.
     pub power_scale: f64,
     /// Manually placed tabs (the cut skips them), as points on the outline in local coordinates.
+    /// Each belongs to the sub-path nearest to it. A shape with manual tabs gets no automatic ones.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<[f64; 2]>,
-    /// Forced start point of the cut, a point near the outline in local coordinates.
+    /// Forced start point of the cut, a point near the outline in local coordinates. The closed
+    /// sub-path nearest to it starts cutting at its point nearest to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_point: Option<[f64; 2]>,
+    /// Forced start points of further sub-paths of a compound shape (same rule as `start_point`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_start_points: Vec<[f64; 2]>,
     /// Forced cut direction.
     #[serde(skip_serializing_if = "is_auto_direction")]
     pub direction: CutDirection,
@@ -93,6 +98,7 @@ impl Default for Shape {
             power_scale: 100.0,
             tabs: Vec::new(),
             start_point: None,
+            extra_start_points: Vec::new(),
             direction: CutDirection::Auto,
             array: None,
         }
@@ -438,6 +444,17 @@ impl Shape {
                 .collect(),
             _ => vec![self.clone()],
         }
+    }
+
+    /// Every forced start point of this shape, in local coordinates.
+    pub fn start_points(&self) -> impl Iterator<Item = [f64; 2]> + '_ {
+        self.start_point.iter().chain(&self.extra_start_points).copied()
+    }
+
+    /// Replace every forced start point (the first one becomes `start_point`).
+    pub fn set_start_points(&mut self, points: &[[f64; 2]]) {
+        self.start_point = points.first().copied();
+        self.extra_start_points = points.iter().skip(1).copied().collect();
     }
 
     /// Set the layer of this shape and every child.

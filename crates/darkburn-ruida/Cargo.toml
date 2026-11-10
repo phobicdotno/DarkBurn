@@ -13,12 +13,16 @@ workspace = true
 default = []
 # Real FTDI packet USB (FT245R, 0403:6001). Off by default; never used by tests.
 usb = ["dep:nusb", "dep:futures-lite"]
+# The FTDI chip through the system's serial driver (a COM port). Never opened by tests.
+# `serialport` is MPL-2.0 and used unmodified.
+serial = ["dep:serialport"]
 
 [dependencies]
 serde = { workspace = true }
 kurbo = "0.13"
 nusb = { version = "0.1", optional = true }
 futures-lite = { version = "2", optional = true }
+serialport = { version = "4.10.1", optional = true, default-features = false }
 
 [dev-dependencies]
 serde_json = { workspace = true }

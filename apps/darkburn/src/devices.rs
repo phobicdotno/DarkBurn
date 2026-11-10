@@ -24,6 +24,10 @@ use crate::machine_api::{ConnectConfig, ConnectSpec, Family, Link};
 pub enum DeviceType {
     #[default]
     Grbl,
+    /// GRBL before 1.1f: constant power only (M3), no dynamic M4 [GRBL-02].
+    GrblM3,
+    /// grbl-LPC on a Smoothieboard-class board [GRBL-03].
+    GrblLpc,
     GrblHal,
     FluidNc,
     Ruida,
@@ -57,8 +61,10 @@ pub enum DeviceType {
 }
 
 impl DeviceType {
-    pub const ALL: [DeviceType; 26] = [
+    pub const ALL: [DeviceType; 28] = [
         DeviceType::Grbl,
+        DeviceType::GrblM3,
+        DeviceType::GrblLpc,
         DeviceType::GrblHal,
         DeviceType::FluidNc,
         DeviceType::Smoothie,
@@ -88,6 +94,8 @@ impl DeviceType {
     pub fn label(self) -> &'static str {
         match self {
             Self::Grbl => "GRBL",
+            Self::GrblM3 => "GRBL-M3 (1.1e or older)",
+            Self::GrblLpc => "GRBL-LPC (Smoothieboard)",
             Self::GrblHal => "grblHAL",
             Self::FluidNc => "FluidNC",
             Self::Ruida => "Ruida (DSP)",
@@ -118,6 +126,8 @@ impl DeviceType {
     pub fn family(self) -> Family {
         match self {
             Self::Grbl
+            | Self::GrblM3
+            | Self::GrblLpc
             | Self::GrblHal
             | Self::FluidNc
             | Self::SimulatorGrbl
@@ -165,10 +175,10 @@ impl DeviceType {
                 "Needs hardware capture. The Cubiio only takes G-code files over Wi-Fi through an undocumented web interface. Export G-code and load it with Cubiio's own app."
             }
             Self::Trocen => {
-                "Needs hardware capture. There is no public description of the Trocen / AWC USB or Ethernet protocol or of the .ud5 file. A capture from a real controller is needed first."
+                "Not supported yet. Needs hardware capture. There is no public description of the Trocen / AWC USB or Ethernet protocol or of the .ud5 file. A capture from a real controller is needed first."
             }
             Self::TopWisdom => {
-                "Needs hardware capture. There is no public description of the TopWisdom protocol or of the .out file. A capture from a real controller is needed first."
+                "Not supported yet. Needs hardware capture. There is no public description of the TopWisdom protocol or of the .out file. A capture from a real controller is needed first."
             }
             _ => return None,
         })
@@ -211,11 +221,14 @@ impl DeviceType {
     /// The connections the wizard offers for this type.
     pub fn connections(self) -> &'static [ConnectionKind] {
         match self {
-            Self::Grbl | Self::GrblHal => &[ConnectionKind::Serial, ConnectionKind::Tcp],
-            Self::FluidNc => &[ConnectionKind::Serial, ConnectionKind::Tcp],
+            Self::Grbl | Self::GrblHal | Self::FluidNc => {
+                &[ConnectionKind::Serial, ConnectionKind::Bluetooth, ConnectionKind::Tcp, ConnectionKind::Http, ConnectionKind::RawUsb]
+            }
+            Self::GrblM3 => &[ConnectionKind::Serial, ConnectionKind::Bluetooth, ConnectionKind::Tcp],
+            Self::GrblLpc => &[ConnectionKind::Serial, ConnectionKind::RawUsb],
             Self::Smoothie | Self::CustomGcode => &[ConnectionKind::Serial, ConnectionKind::Tcp],
             Self::Marlin | Self::Snapmaker | Self::Emblaser1 | Self::Emblaser2 => &[ConnectionKind::Serial],
-            Self::Ruida => &[ConnectionKind::Udp, ConnectionKind::Usb],
+            Self::Ruida => &[ConnectionKind::Udp, ConnectionKind::Usb, ConnectionKind::Bridge],
             Self::Galvo => &[ConnectionKind::BoardUsb],
             _ => &[ConnectionKind::None],
         }
@@ -242,6 +255,14 @@ pub enum ConnectionKind {
     Usb,
     /// A galvo board over USB (not built in yet).
     BoardUsb,
+    /// A serial port the operating system makes from a paired Bluetooth device [CONN-08].
+    Bluetooth,
+    /// One HTTP request per line [CONN-07].
+    Http,
+    /// Two bulk endpoints of a USB device, with no serial driver [CONN-05].
+    RawUsb,
+    /// TCP to a network bridge that relays to the controller [CONN-03].
+    Bridge,
 }
 
 impl ConnectionKind {
@@ -253,6 +274,10 @@ impl ConnectionKind {
             Self::Udp => "Ethernet (UDP)",
             Self::Usb => "USB (FTDI)",
             Self::BoardUsb => "USB (galvo board)",
+            Self::Bluetooth => "Bluetooth serial",
+            Self::Http => "HTTP",
+            Self::RawUsb => "Raw USB",
+            Self::Bridge => "Network bridge (TCP relay)",
         }
     }
 }
@@ -272,6 +297,8 @@ pub struct DspSettings {
     pub disable_start: bool,
     pub check_bounds_when_framing: bool,
     pub network_timeout_ms: u32,
+    /// The controller adds overscan to scan lines itself (RUIDA-12).
+    pub hardware_overscan: bool,
 }
 
 impl Default for DspSettings {
@@ -283,6 +310,7 @@ impl Default for DspSettings {
             disable_start: false,
             check_bounds_when_framing: true,
             network_timeout_ms: 3000,
+            hardware_overscan: false,
         }
     }
 }
@@ -319,6 +347,8 @@ pub struct DeviceSettings {
     pub galvo: crate::galvo_settings::GalvoDeviceSettings,
     /// Gweike material and craft mapping [MCC-04].
     pub gweike: crate::gweike_workflow::GweikeSettings,
+    /// What the newer connection kinds and the simulator's firmware choice need [CONN-01..09].
+    pub conn: crate::connections::ConnSettings,
 }
 
 impl Default for DeviceSettings {
@@ -343,6 +373,7 @@ impl Default for DeviceSettings {
             dsp: DspSettings::default(),
             additional: AdditionalSettings::default(),
             gcode_ext: crate::gcode_machines::GcodeExt::default(),
+            conn: crate::connections::ConnSettings::default(),
             galvo: crate::galvo_settings::GalvoDeviceSettings::default(),
             gweike: crate::gweike_workflow::GweikeSettings::default(),
         }
@@ -489,11 +520,17 @@ impl Device {
             z_enabled: self.settings.z_enabled,
             z_reverse: self.settings.z_reverse,
             pointer_offset: [self.settings.red_dot_x, self.settings.red_dot_y],
+            tab_pulse_width: self.settings.tab_pulse_width,
+            m3_only: self.m3_only(),
             ..JobDevice::default()
         }
     }
     pub fn is_simulator(&self) -> bool {
         self.kind.is_simulator()
+    }
+    /// The controller has constant power only: every layer is written with M3 [GRBL-02].
+    pub fn m3_only(&self) -> bool {
+        self.kind == DeviceType::GrblM3 || (self.kind == DeviceType::SimulatorGrbl && self.settings.conn.sim_firmware.m3_only())
     }
     pub fn is_design_only(&self) -> bool {
         self.kind == DeviceType::DesignOnly
@@ -523,11 +560,14 @@ impl Device {
             }
         }
         match self.connection {
-            ConnectionKind::Tcp if self.host.trim().is_empty() => v.push("Enter the host name or IP address.".into()),
+            ConnectionKind::Tcp | ConnectionKind::Http | ConnectionKind::Bridge if self.host.trim().is_empty() => {
+                v.push("Enter the host name or IP address.".into())
+            }
+            ConnectionKind::RawUsb => v.extend(self.settings.conn.usb_address(&self.usb_serial).problem()),
             ConnectionKind::Udp if self.host.trim().parse::<std::net::IpAddr>().is_err() => {
                 v.push("Enter the controller's IP address, like 192.168.1.100.".into())
             }
-            ConnectionKind::Serial if self.settings.gcode.baud_rate == 0 => v.push("Pick a baud rate.".into()),
+            ConnectionKind::Serial | ConnectionKind::Bluetooth if self.settings.gcode.baud_rate == 0 => v.push("Pick a baud rate.".into()),
             _ => {}
         }
         if self.family() == Family::Galvo {
@@ -565,9 +605,32 @@ impl Device {
                     .ok_or_else(|| "No serial port found. Plug the laser in and press Rescan.".to_string())?;
                 Ok(Link::Serial { port, baud: self.settings.gcode.baud_rate })
             }
+            (_, ConnectionKind::Bluetooth) => {
+                let port = pick_bluetooth_port(ports, &self.state.port, &self.state.excluded_ports).ok_or_else(|| {
+                    "No Bluetooth serial port found. Pair the laser in the system's Bluetooth settings, then press Rescan.".to_string()
+                })?;
+                Ok(Link::Serial { port, baud: self.settings.gcode.baud_rate })
+            }
             (_, ConnectionKind::Tcp) => Ok(Link::Tcp { host: self.host.trim().to_owned(), port: self.tcp_port }),
+            (_, ConnectionKind::Http) => {
+                let c = &self.settings.conn;
+                Ok(Link::Http { host: self.host.trim().to_owned(), port: c.http_port, path: c.http_path.trim().to_owned() })
+            }
+            (_, ConnectionKind::RawUsb) => {
+                let a = self.settings.conn.usb_address(&self.usb_serial);
+                Ok(Link::RawUsb { vid: a.vid, pid: a.pid, serial: a.serial, interface: a.interface, ep_out: a.ep_out, ep_in: a.ep_in })
+            }
+            (_, ConnectionKind::Bridge) => Ok(Link::Bridge { host: self.host.trim().to_owned(), port: self.settings.conn.bridge_port }),
             (_, ConnectionKind::Udp) => Ok(Link::Udp { ip: self.host.trim().to_owned() }),
-            (_, ConnectionKind::Usb) => Ok(Link::Usb { serial: (!self.usb_serial.is_empty()).then(|| self.usb_serial.clone()) }),
+            (_, ConnectionKind::Usb) => {
+                // The controller's FTDI chip shows up as a serial port: that port is the link.
+                let wanted = self.usb_serial.trim();
+                let port = pick_ftdi_port(ports, wanted, &self.state.excluded_ports);
+                if port.is_none() && !cfg!(feature = "usb") {
+                    return Err(crate::machine_api::NO_RUIDA_USB_PORT.to_owned());
+                }
+                Ok(Link::Usb { serial: (!wanted.is_empty()).then(|| wanted.to_owned()), port })
+            }
             (_, ConnectionKind::BoardUsb) => Ok(Link::GalvoUsb),
             (_, ConnectionKind::None) => Err("Choose how this device connects.".into()),
         }
@@ -579,7 +642,8 @@ impl Device {
         let g = &self.settings.gcode;
         let config = ConnectConfig {
             toggle_dtr: g.dtr,
-            dtr: true,
+            dtr: self.settings.conn.dtr_enabled,
+            sim_firmware: self.settings.conn.sim_firmware,
             synchronous: g.transfer == Transfer::Synchronous,
             s_max: (self.family() == Family::Grbl && !self.is_simulator()).then_some(g.s_max),
             bed: Some(self.bed()),
@@ -604,6 +668,35 @@ pub fn pick_port(ports: &[PortInfo], remembered: &str, excluded: &[String]) -> O
         return Some(p.name.clone());
     }
     allowed.iter().find(|p| p.vid.is_some()).or_else(|| allowed.first()).map(|p| p.name.clone())
+}
+
+/// The serial port of a Ruida controller's USB chip (FTDI, 0403:6001) [RUIDA-02]. `wanted` is
+/// what the user typed in Device Settings: a port name (COM5) or the adapter's serial number;
+/// empty picks the first FTDI port that is not excluded. A typed port name is used even when the
+/// port list does not show it as FTDI (USB hubs and drivers do not always report the IDs).
+pub fn pick_ftdi_port(ports: &[PortInfo], wanted: &str, excluded: &[String]) -> Option<String> {
+    let allowed = |p: &&PortInfo| !excluded.iter().any(|e| e.eq_ignore_ascii_case(&p.name));
+    let is_ftdi = |p: &&PortInfo| p.vid == Some(darkburn_ruida::transport::FTDI_VID) && p.pid == Some(darkburn_ruida::transport::FTDI_PID);
+    if wanted.is_empty() {
+        return ports.iter().filter(allowed).find(is_ftdi).map(|p| p.name.clone());
+    }
+    ports
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(wanted))
+        .or_else(|| ports.iter().filter(is_ftdi).find(|p| p.serial_number.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(wanted))))
+        .map(|p| p.name.clone())
+}
+
+/// The Bluetooth serial port to use: the remembered one if it is still there, else the first port
+/// the operating system marks as Bluetooth [CONN-08].
+pub fn pick_bluetooth_port(ports: &[PortInfo], remembered: &str, excluded: &[String]) -> Option<String> {
+    let allowed: Vec<&PortInfo> = ports.iter().filter(|p| !excluded.iter().any(|e| e.eq_ignore_ascii_case(&p.name))).collect();
+    if !remembered.is_empty()
+        && let Some(p) = allowed.iter().find(|p| p.name.eq_ignore_ascii_case(remembered))
+    {
+        return Some(p.name.clone());
+    }
+    allowed.iter().find(|p| p.bluetooth).map(|p| p.name.clone())
 }
 
 /// A laser Find My Laser thinks it can see. It is only a guess from the port list: nothing is
@@ -658,6 +751,15 @@ pub fn find_my_laser(ports: &[PortInfo]) -> Vec<Candidate> {
         .collect()
 }
 
+/// The Ruida boards DarkBurn lists, for the DSP page of Device Settings [RUIDA-14].
+pub fn known_boards_note() -> String {
+    let names: Vec<&str> = darkburn_ruida::settings::KNOWN_BOARDS.iter().map(|b| b.model).collect();
+    format!(
+        "Known boards: {}. Only some of them can be told apart by their card ID; any other Ruida board is used as a generic Ruida controller and Controller info shows its card ID.",
+        names.join(", ")
+    )
+}
+
 /// A Ruida controller on the network cannot be found without sending packets, so DarkBurn asks
 /// for its IP instead [DEV-02].
 pub const RUIDA_DISCOVERY_NOTE: &str = "Ruida controllers on the network are not searched for (that would send packets). Choose Ruida in the wizard and type the controller's IP address.";
@@ -680,11 +782,13 @@ pub struct DeviceStore {
     pub devices: Vec<Device>,
     pub active: Option<u64>,
     next_id: u64,
+    /// The automation socket (off unless the user turns it on) [CONN-09].
+    pub automation: crate::connections::AutomationSettings,
 }
 
 impl Default for DeviceStore {
     fn default() -> Self {
-        let mut s = DeviceStore { devices: Vec::new(), active: None, next_id: 1 };
+        let mut s = DeviceStore { devices: Vec::new(), active: None, next_id: 1, automation: Default::default() };
         let a = s.add(Device::new(DeviceType::SimulatorGrbl));
         s.add(Device::new(DeviceType::SimulatorRuida));
         s.add(Device::new(DeviceType::DesignOnly));
@@ -946,7 +1050,11 @@ impl Wizard {
         let d = &self.draft;
         match self.step {
             WizardStep::Type => Vec::new(),
-            WizardStep::Connection => d.validate().into_iter().filter(|m| m.contains("host") || m.contains("IP") || m.contains("baud")).collect(),
+            WizardStep::Connection => d
+                .validate()
+                .into_iter()
+                .filter(|m| m.contains("host") || m.contains("IP") || m.contains("baud") || m.contains("USB") || m.contains("endpoint"))
+                .collect(),
             WizardStep::NameAndSize => {
                 d.validate().into_iter().filter(|m| m.contains("name") || m.contains("Width") || m.contains("Height")).collect()
             }
@@ -998,6 +1106,14 @@ impl Wizard {
                     ConnectionKind::Serial => {
                         format!("{} @ {} baud", if d.state.port.is_empty() { "automatic port" } else { &d.state.port }, d.settings.gcode.baud_rate)
                     }
+                    ConnectionKind::Bluetooth => format!(
+                        "Bluetooth, {} @ {} baud",
+                        if d.state.port.is_empty() { "automatic port" } else { &d.state.port },
+                        d.settings.gcode.baud_rate
+                    ),
+                    ConnectionKind::Http => format!("http://{}:{}{}", d.host, d.settings.conn.http_port, d.settings.conn.http_path),
+                    ConnectionKind::RawUsb => d.settings.conn.usb_address(&d.usb_serial).label(),
+                    ConnectionKind::Bridge => format!("Network bridge at {}:{}", d.host, d.settings.conn.bridge_port),
                     ConnectionKind::Tcp => format!("{}:{}", d.host, d.tcp_port),
                     ConnectionKind::Udp => format!("UDP {}", d.host),
                     ConnectionKind::Usb => "FTDI USB".into(),
@@ -1070,7 +1186,7 @@ mod tests {
         assert!(s.remove(id));
         assert_ne!(s.active, Some(id));
         assert!(s.active().is_some());
-        let mut tiny = DeviceStore { devices: vec![Device::new(DeviceType::Grbl)], active: None, next_id: 5 };
+        let mut tiny = DeviceStore { devices: vec![Device::new(DeviceType::Grbl)], active: None, next_id: 5, automation: Default::default() };
         tiny.devices[0].id = 4;
         assert!(!tiny.remove(4), "the last device stays");
     }

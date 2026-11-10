@@ -735,6 +735,7 @@ pub fn font_picker(
             ui.set_min_width(width.max(280.0));
             let mut query: String = ui.data_mut(|d| d.get_temp(id.with("q"))).unwrap_or_default();
             let edit = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search fonts").desired_width(f32::INFINITY));
+            crate::a11y::text(ui, &edit, "Search fonts");
             if edit.changed() {
                 ui.data_mut(|d| d.insert_temp(id.with("q"), query.clone()));
             }
@@ -854,6 +855,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                     let ed = ui
                         .push_id("text_height", |ui| numeric::field_sized(ui, &mut h, &Num::new(0.1..=10_000.0, 2, " mm").speed(0.1), Some(90.0)))
                         .inner;
+                    crate::a11y::number(ui, &ed.response, "Text height");
                     if ed.changed {
                         if live {
                             next = Some(json!({ "height": h.max(0.1) }));
@@ -913,6 +915,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                                     numeric::field_sized(ui, &mut x, &Num::new(-100.0..=1000.0, 2, " mm").speed(0.05), Some(90.0))
                                 })
                                 .inner;
+                            crate::a11y::number(ui, &ed.response, &format!("{name} spacing"));
                             if ed.changed {
                                 next = Some(json!({ key: x }));
                             }
@@ -981,6 +984,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                         let ed = ui
                             .push_id("text_var_offset", |ui| numeric::field_sized(ui, &mut o, &Num::new(-100_000.0..=100_000.0, 0, ""), Some(90.0)))
                             .inner;
+                        crate::a11y::number(ui, &ed.response, "Index offset");
                         if ed.changed {
                             next = Some(json!({ "offset": numeric::whole(o) }));
                         }

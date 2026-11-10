@@ -34,6 +34,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::layer_defaults::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::misc_cmds::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }
@@ -235,10 +238,11 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                         s.direction = dir;
                     }
                     if let Some(sp) = start {
-                        s.start_point = sp.map(|p| {
+                        let local = sp.map(|p| {
                             let l = s.transform.inverse() * p;
                             [l.x, l.y]
                         });
+                        s.set_start_points(local.as_slice());
                     }
                     any = true;
                 }
@@ -361,6 +365,16 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "filled" => p.filled = flag()?,
         "smooth" => p.smooth = flag()?,
         "show_grid" => p.show_grid = flag()?,
+        "grid_spacing" => p.grid_spacing = number()?.clamp(0.0, 1000.0) as f32,
+        "grid_contrast" => p.grid_contrast = number()?.clamp(0.0, 1.0) as f32,
+        "backdrop" => {
+            p.backdrop = match value.as_str().map(str::to_ascii_lowercase).as_deref() {
+                Some("theme") => crate::canvas::Backdrop::Theme,
+                Some("light") => crate::canvas::Backdrop::Light,
+                Some("dark") => crate::canvas::Backdrop::Dark,
+                _ => return Err("backdrop needs \"theme\", \"light\" or \"dark\"".into()),
+            }
+        }
         "import_group" => p.import_group = flag()?,
         "import_select" => p.import_select = flag()?,
         "import_tool_layers" => p.import_tool_layers = flag()?,

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// What a dialog was asked for.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Request {
-    /// "pick_file", "pick_files" or "save_file".
+    /// "pick_file", "pick_files", "pick_folder" or "save_file".
     pub kind: &'static str,
     pub filters: Vec<(String, Vec<String>)>,
     pub file_name: Option<String>,
@@ -117,6 +117,14 @@ impl FileDialog {
         }
     }
 
+    pub fn pick_folder(self) -> Option<PathBuf> {
+        let req = Request { kind: "pick_folder", ..self.req.clone() };
+        match scripted(&req) {
+            Some(answer) => answer.into_iter().next(),
+            None => self.real().pick_folder(),
+        }
+    }
+
     pub fn save_file(self) -> Option<PathBuf> {
         let req = Request { kind: "save_file", ..self.req.clone() };
         match scripted(&req) {
@@ -140,6 +148,9 @@ mod tests {
         let log = script_take_log();
         assert_eq!(log.len(), 2);
         assert_eq!((log[0].kind, log[0].file_name.as_deref()), ("save_file", Some("x")));
+        script_answer(vec![PathBuf::from("logs")]);
+        assert_eq!(FileDialog::new().pick_folder(), Some(PathBuf::from("logs")));
+        assert_eq!(script_take_log()[0].kind, "pick_folder");
         script_end();
     }
 }

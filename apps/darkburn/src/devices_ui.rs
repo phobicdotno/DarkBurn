@@ -43,6 +43,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     macro_dialog(ctx, app);
     crate::galvo_ui::dialogs(ctx, app);
     crate::gweike_ui::dialogs(ctx, app);
+    crate::connections::dialogs(ctx, app);
 }
 
 // ----- Devices [DEV-01, DEV-04, DEV-05] ---------------------------------------------------------
@@ -58,10 +59,12 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if small(ui, "New", "Add a device with the wizard", true) {
                     app.machine.dlg.wizard = Some(Wizard::new());
                 }
-                if small(ui, "Find my laser", "List the serial ports that look like a laser. Nothing is opened.", true) {
+                if small(ui, "Find my laser", "List the serial ports and USB devices that look like a laser. Nothing is opened.", true) {
                     app.machine.rescan_ports();
+                    crate::connections::rescan_usb(app);
                     app.machine.dlg.find = Some(find_my_laser(&app.machine.ports));
                 }
+                crate::connections::devices_toolbar(ui, app);
                 if small(ui, "Import", "Add a device from a .dbdev file", true)
                     && let Some(p) = rfd::FileDialog::new().add_filter("DarkBurn device", &["dbdev"]).pick_file()
                 {
@@ -303,10 +306,13 @@ fn connection_fields(ui: &mut Ui, d: &mut Device) {
             note(ui, RUIDA_DISCOVERY_NOTE);
         }
         ConnectionKind::Usb => {
-            ui_kit::row(ui, "Adapter serial", |ui| {
+            ui_kit::row(ui, "Port or adapter serial", |ui| {
                 ui_kit::hint_field(ui, &mut d.usb_serial, "first one found");
             });
-            note(ui, "Raw USB needs a build with USB support.");
+            note(
+                ui,
+                "The controller's USB chip (FTDI) shows up as a serial port, like COM5. Leave the field empty to use the first one found. The Fire button and continuous panel keys need the Ethernet connection.",
+            );
         }
         ConnectionKind::BoardUsb => {
             note(
@@ -315,6 +321,9 @@ fn connection_fields(ui: &mut Ui, d: &mut Device) {
             );
         }
         ConnectionKind::None => {}
+        ConnectionKind::Bluetooth | ConnectionKind::Http | ConnectionKind::RawUsb | ConnectionKind::Bridge => {
+            crate::connections::connection_fields(ui, d)
+        }
     }
 }
 
@@ -348,8 +357,10 @@ fn find_dialog(ctx: &Context, app: &mut DarkBurn) {
                 note(ui, &c.note);
             }
             note(ui, RUIDA_DISCOVERY_NOTE);
-            if small(ui, "Rescan", "List the ports again", true) {
+            crate::connections::find_rows(ui, app);
+            if small(ui, "Rescan", "List the ports and USB devices again", true) {
                 app.machine.rescan_ports();
+                crate::connections::rescan_usb(app);
                 app.machine.dlg.find = Some(find_my_laser(&app.machine.ports));
             }
         });
@@ -423,6 +434,7 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         d.connection = kinds[idx];
         connection_fields(ui, d);
     }
+    crate::connections::simulator_fields(ui, d);
     ui_kit::section_heading(ui, "Work area");
     if d.family() == Family::Galvo {
         note(ui, "The work area of a galvo is its square lens field. Set the size on the Galvo page.");
@@ -498,7 +510,7 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::checkbox(ui, "Inches", &mut d.state.inches);
     ui_kit::checkbox(ui, "Show the grid", &mut d.state.show_grid);
     ui_kit::row(ui, "Grid spacing", |ui| {
-        ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.1..=1000.0, 0.5, " mm");
+        ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.0..=1000.0, 0.5, " mm");
     });
     ui.horizontal(|ui| {
         if small(ui, "Use current layers as defaults", "", true) {
@@ -566,6 +578,7 @@ fn gcode_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::text_area(ui, "Start script", Id::unique("ds_start_script"), &mut g.start_script, 3, 10_000);
     ui_kit::text_area(ui, "End script", Id::unique("ds_end_script"), &mut g.end_script, 3, 10_000);
     d.settings.gcode.s_max = d.settings.gcode.s_max.max(1.0);
+    crate::connections::dtr_fields(ui, d);
     if d.kind.is_translated() {
         gcode_firmware_fields(ui, d);
     }
@@ -651,11 +664,22 @@ fn dsp_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::checkbox(ui, "Add a number to the file name on every send", &mut s.filename_increment);
     ui_kit::checkbox(ui, "Hide Start (run from the controller)", &mut s.disable_start);
     ui_kit::checkbox(ui, "Check the bounds when framing", &mut s.check_bounds_when_framing);
+    ui_kit::checkbox(ui, "Hardware overscan (the controller adds it)", &mut s.hardware_overscan);
+    if s.hardware_overscan {
+        note(
+            ui,
+            "Fill and image layers that scan along X or Y are sent without overscan moves; the controller runs past the line ends by the distance set in its own settings. Scans at other angles keep DarkBurn's overscan.",
+        );
+    }
     ui_kit::row(ui, "Network timeout", |ui| {
         ui_kit::number_field(ui, &mut s.network_timeout_ms, 100..=60_000, 100.0, " ms");
     });
     connection_fields(ui, d);
-    note(ui, "Job start and end delays are set on the controller (Machine Settings).");
+    note(
+        ui,
+        "Job start and end delays are set on the controller's own panel. No public source says where the controller keeps them, so DarkBurn cannot read or change them yet.",
+    );
+    note(ui, &crate::devices::known_boards_note());
 }
 
 fn additional_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
@@ -824,11 +848,18 @@ fn grbl_settings_body(ui: &mut Ui, app: &mut DarkBurn) {
                     if ui_kit::checkbox(ui, "", &mut on).changed() {
                         v = if on { "1".into() } else { "0".into() };
                     }
+                } else if let Some(i) = info.filter(|i| !i.unit.is_empty()) {
+                    // The field leaves room for its unit: a field as wide as the row pushed the unit
+                    // past the edge, and the window grew wider with every row.
+                    let unit = egui::WidgetText::from(i.unit).into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body);
+                    let room = unit.size().x + ui.spacing().item_spacing.x;
+                    ui.scope(|ui| {
+                        ui.set_max_width((ui.available_width() - room).max(40.0));
+                        ui_kit::field(ui, &mut v);
+                    });
+                    ui.label(unit);
                 } else {
                     ui_kit::field(ui, &mut v);
-                    if let Some(i) = info.filter(|i| !i.unit.is_empty()) {
-                        ui.label(i.unit);
-                    }
                 }
             });
             if let Some(i) = info {
@@ -1019,7 +1050,7 @@ fn backups_body(ui: &mut Ui, app: &mut DarkBurn, family: Family) {
     ui.horizontal_wrapped(|ui| {
         ui.scope(|ui| {
             ui.set_max_width(ui.available_width().min(220.0));
-            ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name");
+            ui_kit::named_control(ui, "Backup name", |ui| ui_kit::hint_field(ui, &mut app.machine.dlg.backup_name, "Backup name"));
         });
         if small(ui, "Back up now", "Keep the settings read from the laser with this device", have)
             && let Some(b) = app.machine.handle.backup_settings()
@@ -1118,7 +1149,7 @@ fn controller_info_dialog(ctx: &Context, app: &mut DarkBurn) {
             row(ui, "Port", snap.port.clone());
             row(ui, "Firmware", if snap.firmware.is_empty() { "unknown".into() } else { snap.firmware.clone() });
             if let Some(i) = &snap.ruida.info {
-                row(ui, "Board", i.board.clone().unwrap_or_else(|| format!("unknown (card id 0x{:08X})", i.card_id)));
+                row(ui, "Board", darkburn_ruida::settings::board_label(i.card_id));
                 row(ui, "Total on time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_on_time_s))));
                 row(ui, "Total job time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_job_time_s))));
                 row(ui, "Laser on time", machine_ui::format_duration(std::time::Duration::from_secs(u64::from(i.total_laser_on_time_s))));

@@ -76,21 +76,103 @@ pub fn work_points(app: &DarkBurn, tp: &Toolpath) -> Vec<Point> {
 
 // ----- Building the machine's job -----------------------------------------------------------------
 
+/// How a toolpath becomes a Ruida job.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RdOptions {
+    /// Let the controller run past the ends of scan lines itself (RUIDA-12): scanning layers
+    /// along X or Y get their hardware overscan mode and the job's own overscan moves are left
+    /// out. Scans at other angles keep their overscan moves.
+    pub hardware_overscan: bool,
+    /// What the coordinates are measured from.
+    pub reference: ruida::RefPoint,
+}
+
+impl RdOptions {
+    /// The options the active device asks for.
+    pub fn of(dev: &crate::devices::Device) -> Self {
+        RdOptions { hardware_overscan: dev.settings.dsp.hardware_overscan, reference: ruida::RefPoint::MachineZero }
+    }
+}
+
+/// The hardware overscan mode of each layer block of `tp`, in the order the blocks start.
+/// A block gets a mode when it is a scanning layer whose lines all run along X or all along Y.
+pub fn hardware_overscan_modes(tp: &Toolpath) -> Vec<ruida::OverscanMode> {
+    fn mode_of(raster: bool, leads: &[Vec2]) -> ruida::OverscanMode {
+        if !raster || leads.is_empty() {
+            return ruida::OverscanMode::Off;
+        }
+        let horizontal = leads.iter().all(|d| d.y.abs() < 1e-6 && d.x.abs() > 1e-6);
+        let vertical = leads.iter().all(|d| d.x.abs() < 1e-6 && d.y.abs() > 1e-6);
+        if !horizontal && !vertical {
+            return ruida::OverscanMode::Off;
+        }
+        let forward = |d: &Vec2| if horizontal { d.x > 0.0 } else { d.y > 0.0 };
+        let both_ways = leads.iter().any(forward) && leads.iter().any(|d| !forward(d));
+        ruida::OverscanMode::for_scan(horizontal, both_ways)
+    }
+    let mut out = Vec::new();
+    let mut block: Option<(bool, Vec<Vec2>)> = None;
+    let mut rapid: Option<Point> = None;
+    for op in &tp.ops {
+        match op {
+            Op::LayerStart { layer } => {
+                if let Some((raster, leads)) = block.take() {
+                    out.push(mode_of(raster, &leads));
+                }
+                block = Some((tp.layers.get(*layer).is_some_and(|l| l.raster), Vec::new()));
+                rapid = None;
+            }
+            Op::Rapid { to } => rapid = Some(*to),
+            // The run-up to a scan line: from the end of a rapid to the start of the line.
+            Op::Overscan { to, .. } => {
+                if let (Some(from), Some((_, leads))) = (rapid.take(), block.as_mut()) {
+                    leads.push(*to - from);
+                }
+            }
+            _ => rapid = None,
+        }
+    }
+    if let Some((raster, leads)) = block.take() {
+        out.push(mode_of(raster, &leads));
+    }
+    out
+}
+
 /// Layer settings and cuts of `tp` as a Ruida job. `shift` moves head-relative toolpaths to
 /// absolute controller coordinates. Arcs are cut as their chord (the planner flattens curves
 /// before this, so arcs only appear when a flavor asks for them).
 pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String> {
-    let mut job = ruida::RdJob::default();
+    toolpath_to_rd_with(tp, shift, RdOptions::default())
+}
+
+/// As [`toolpath_to_rd`] with the device's options.
+pub fn toolpath_to_rd_with(tp: &Toolpath, shift: Vec2, options: RdOptions) -> Result<ruida::RdJob, String> {
+    let mut job = ruida::RdJob { reference: options.reference, ..Default::default() };
     let mut cur: Option<usize> = None;
     let mut speed = 100.0;
     let mut laser2_only = false;
     let mut dot_layer = false;
     let mut pos = tp.start;
     let at = |p: Point| p + shift;
+    let modes = if options.hardware_overscan { hardware_overscan_modes(tp) } else { Vec::new() };
+    let mut block = 0usize;
+    let mut hardware = false;
+    // With hardware overscan the rapid to the run-up point is dropped: the head goes straight
+    // to the start of the line and the controller adds the run-up and the run-out.
+    let mut held: Option<Point> = None;
     for op in &tp.ops {
+        if !matches!(op, Op::Rapid { .. } | Op::Overscan { .. })
+            && let (Some(p), Some(i)) = (held.take(), cur)
+        {
+            job.layers[i].ops.push(ruida::RdOp::Move(at(p)));
+        }
         match op {
             Op::LayerStart { layer } => {
                 let l = tp.layers.get(*layer).ok_or("the job refers to a layer it does not have")?;
+                let overscan = modes.get(block).copied().unwrap_or_default();
+                block += 1;
+                hardware = overscan != ruida::OverscanMode::Off;
+                let [r, g, b] = darkburn_core::layer::layer_colour(l.layer_index);
                 let index = job.layers.len().min(127) as u8;
                 speed = l.speed;
                 // Laser 1 / laser 2 / both tubes: a tube that is not used gets no power.
@@ -105,10 +187,11 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                         speed_mm_s: l.speed.max(0.1),
                         min_power,
                         max_power,
-                        color: 0,
+                        color: (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
                         frequency_hz: l.dsp.pwm_hz,
                         air_assist: l.air,
                         dot_mode: l.dot.map(|(ms, spacing)| ruida::DotMode { dot_time_ms: ms, spacing_mm: spacing }),
+                        overscan,
                     },
                     ops: Vec::new(),
                 });
@@ -121,6 +204,17 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
                 laser2_only = l.laser == 2;
                 dot_layer = l.dot.is_some();
                 cur = Some(job.layers.len() - 1);
+            }
+            Op::Rapid { to } if hardware => {
+                cur.ok_or("the job moves before it starts a layer")?;
+                held = Some(*to);
+            }
+            Op::Overscan { to, .. } if hardware => {
+                let i = cur.ok_or("the job moves before it starts a layer")?;
+                // A run-up ends at the start of a line: go there. A run-out is the controller's.
+                if held.take().is_some() {
+                    job.layers[i].ops.push(ruida::RdOp::Move(at(*to)));
+                }
             }
             Op::Rapid { to } | Op::Overscan { to, .. } => {
                 let i = cur.ok_or("the job moves before it starts a layer")?;
@@ -155,11 +249,64 @@ pub fn toolpath_to_rd(tp: &Toolpath, shift: Vec2) -> Result<ruida::RdJob, String
         }
     }
     let _ = speed;
+    if let (Some(p), Some(i)) = (held.take(), cur) {
+        job.layers[i].ops.push(ruida::RdOp::Move(at(p)));
+    }
     job.layers.retain(|l| !l.ops.is_empty());
     if job.layers.is_empty() {
         return Err("the job has nothing to send".into());
     }
     Ok(job)
+}
+
+/// Why `dev` has no machine file DarkBurn can write, if so (FILE-09).
+pub fn machine_file_unsupported(dev: &crate::devices::Device) -> Option<String> {
+    use crate::devices::DeviceType as T;
+    match dev.kind {
+        T::Trocen => Some(
+            "Trocen / AWC controllers are not supported yet: the .ud5 file format is not public, so DarkBurn cannot write one. Use the controller's own software for now."
+                .into(),
+        ),
+        T::TopWisdom => Some(
+            "TopWisdom controllers are not supported yet: the .out file format is not public, so DarkBurn cannot write one. Use the controller's own software for now."
+                .into(),
+        ),
+        _ => None,
+    }
+}
+
+/// The kind of machine file the active device takes: its name, file extensions and the label of
+/// the save command (FILE-09, LASER-06).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MachineFileKind {
+    pub label: &'static str,
+    pub filter: &'static str,
+    pub extensions: &'static [&'static str],
+    pub rd: bool,
+}
+
+pub fn machine_file_kind(dev: &crate::devices::Device) -> MachineFileKind {
+    if dev.family() == Family::Ruida {
+        MachineFileKind { label: "Save RD file", filter: "Ruida job", extensions: &[crate::rd_import::EXTENSION], rd: true }
+    } else {
+        MachineFileKind { label: "Save G-code", filter: "G-code", extensions: job_build::GCODE_EXTENSIONS, rd: false }
+    }
+}
+
+/// The bytes of an `.rd` file for `job`: the command stream the controller would be sent, with
+/// the file scrambling (RUIDA-13). A job that starts from the current position is written to be
+/// measured from where the head is; every other job in bed coordinates.
+pub fn rd_file_bytes(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>) -> Result<Vec<u8>, String> {
+    let tp = match from_op {
+        Some(op) => job.toolpath_from(op),
+        None => job.toolpath.clone(),
+    };
+    let mut options = RdOptions::of(app.machine.active());
+    if tp.space == CoordSpace::RelativeToStart {
+        options.reference = ruida::RefPoint::CurrentPosition;
+    }
+    let rd = toolpath_to_rd_with(&tp, Vec2::ZERO, options)?;
+    rd.to_rd_file(ruida::Magic::DEFAULT).map_err(|e| e.to_string())
 }
 
 /// The request for the connected machine's family.
@@ -187,7 +334,7 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             } else {
                 Vec2::ZERO
             };
-            let rd = toolpath_to_rd(&tp, shift)?;
+            let rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
             if send_only {
                 let data = rd.to_rd_file(ruida::Magic::DEFAULT).map_err(|e| e.to_string())?;
                 JobRequest::new(JobData::RdFile { name: name.clone(), data })
@@ -200,6 +347,10 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
         Family::Galvo => {
             if send_only {
                 return Err("A galvo marks as it is sent. Use Start.".into());
+            }
+            if from_op.is_some_and(|op| op > 0) {
+                // The galvo job is made from the shapes, not from the preview's moves.
+                return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
             }
             crate::galvo_job::request(&app.editor.doc, app.machine.active(), false, false)?.0
         }
@@ -243,13 +394,26 @@ fn need_connection(app: &DarkBurn) -> Result<(), String> {
     if app.machine.handle.is_connected() { Ok(()) } else { Err("The laser is not connected. Press Connect in the Laser panel first.".into()) }
 }
 
+/// A galvo job is compiled from the shapes, not from the preview's moves, so it can only be
+/// marked whole: "from here" is refused instead of quietly marking everything [PREV-09].
+fn galvo_start(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
+    let (from_op, send) = match action {
+        Action::Start { from_op } => (from_op, false),
+        Action::Send { from_op } => (from_op, true),
+    };
+    if !send && from_op.is_some_and(|op| op > 0) {
+        return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
+    }
+    crate::machine_ext::galvo_start(app, send)
+}
+
 /// Window flow: build in the background, then act (progress and cancel come with the build).
 pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
     if !app.machine.handle.is_connected() {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
     if app.machine.handle.snapshot().family == Family::Galvo {
-        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+        return galvo_start(app, action);
     }
     job_cmds::start_build(app, After::Machine(action));
     Ok(json!({ "ok": true, "building": true }))
@@ -259,7 +423,7 @@ pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> 
 pub fn start_now(app: &mut DarkBurn, action: Action, allow_out_of_bounds: bool) -> Result<Value, String> {
     need_connection(app)?;
     if app.machine.handle.snapshot().family == Family::Galvo {
-        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+        return galvo_start(app, action);
     }
     let job = job_cmds::build_now(app)?;
     if job.out_of_bounds() && !allow_out_of_bounds {

@@ -57,6 +57,11 @@ pub struct JobDevice {
     pub pointer_offset: [f64; 2],
     /// Curve flattening tolerance for the job, mm (SET-36).
     pub tolerance: f64,
+    /// Partly cut tabs are made of full-power pulses of this length, mm (DS-05). 0: the tab
+    /// is cut at the tab power instead.
+    pub tab_pulse_width: f64,
+    /// The controller has no dynamic power: every layer is written with M3 (GRBL-02).
+    pub m3_only: bool,
 }
 
 impl Default for JobDevice {
@@ -71,6 +76,8 @@ impl Default for JobDevice {
             z_reverse: false,
             pointer_offset: [0.0, 0.0],
             tolerance: TOLERANCE,
+            tab_pulse_width: 0.0,
+            m3_only: false,
         }
     }
 }
@@ -496,6 +503,8 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
             size: s.tabs.size.max(0.0),
             tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
             skip_inner: s.tabs.skip_inner,
+            // The device's tab pulse width is filled in by the job builder.
+            pulse_width: 0.0,
         },
         start_pause_ms: s.start_pause_ms.max(0.0),
         end_pause_ms: s.end_pause_ms.max(0.0),
@@ -722,7 +731,18 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let entry = layers[li].get_or_insert_with(|| {
-                let settings = l.settings.iter().map(|s| map_settings_with(s, l, input.device.z_enabled, &tuning)).collect();
+                let mut settings: Vec<job::CutSettings> = l
+                    .settings
+                    .iter()
+                    .map(|s| {
+                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                        c.constant_power |= input.device.m3_only;
+                        c
+                    })
+                    .collect();
+                for s in &mut settings {
+                    s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
+                }
                 LayerInput {
                     index: li,
                     name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
@@ -752,15 +772,22 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             frame_paths.push(path.clone());
             let mut si = ShapeInput::new(path);
-            // Tabs placed with the Add tabs tool are stored in the shape's local coordinates.
-            si.start_point = leaf.start_point.map(|p| leaf.transform * Point::new(p[0], p[1]));
+            // Tabs and forced start points are stored in the shape's local coordinates; they
+            // go through the same mapping as the outline (the kerf offset keeps them: each
+            // snaps to the nearest point of the path that is cut).
+            let place = |p: &[f64; 2]| {
+                let q = leaf.transform * Point::new(p[0], p[1]);
+                vision_map.as_ref().map_or(q, |m| m.apply_point(q))
+            };
+            si.start_point = leaf.start_point.as_ref().map(place);
+            si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
             si.direction = match leaf.direction {
                 darkburn_core::CutDirection::Auto => None,
                 darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
                 darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
                 darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
             };
-            si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
+            si.tabs = leaf.tabs.iter().map(place).collect();
             si.group = group;
             si.priority = leaf.priority;
             si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);

@@ -1161,6 +1161,7 @@ version = "0.0.24"
 dependencies = [
  "kurbo 0.13.1",
  "log",
+ "nusb",
  "serialport",
 ]
 
@@ -1229,6 +1230,7 @@ dependencies = [
  "nusb",
  "serde",
  "serde_json",
+ "serialport",
 ]
 
 [[package]]

@@ -252,6 +252,13 @@ pub struct Galvo {
     pub laser_off_tc_us: f64,
     pub end_tc_us: f64,
     pub polygon_tc_us: f64,
+    /// Drill mode (line layers) [GALVO-19]: fire in place at points along the outline
+    /// instead of tracing it.
+    pub drill: bool,
+    /// How long the laser fires at each drill point, ms.
+    pub drill_dwell_ms: f64,
+    /// Distance between drill points along the outline, mm; 0 drills only the outline's own points.
+    pub drill_spacing_mm: f64,
 }
 
 impl Default for Galvo {
@@ -275,6 +282,9 @@ impl Default for Galvo {
             laser_off_tc_us: 100.0,
             end_tc_us: 300.0,
             polygon_tc_us: 100.0,
+            drill: false,
+            drill_dwell_ms: 1.0,
+            drill_spacing_mm: 0.5,
         }
     }
 }

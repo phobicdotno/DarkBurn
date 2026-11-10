@@ -43,7 +43,7 @@ fn golden_mixed_magic_11() {
 fn golden_file_starts_with_header() {
     let bytes = std::fs::read(golden("square.rd")).unwrap();
     let logical = darkburn_ruida::swizzle::unswizzle(&bytes, Magic::DEFAULT);
-    // D8 12 (reference point mode), E6 01 (absolute), F0 (reference point), ... ends with D7.
-    assert_eq!(&logical[..5], &[0xD8, 0x12, 0xE6, 0x01, 0xF0]);
+    // D8 10 (measured from machine zero), E6 01 (absolute), F0 (reference point), ... ends with D7.
+    assert_eq!(&logical[..5], &[0xD8, 0x10, 0xE6, 0x01, 0xF0]);
     assert_eq!(logical.last(), Some(&0xD7));
 }

@@ -89,7 +89,8 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
             ctx.request_repaint();
         }
     }
-    let mut window = egui::Window::new("Preview").id(Id::unique("db_preview_window")).collapsible(false).resizable(true);
+    let id = Id::unique("db_preview_window");
+    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true);
     let screen = ctx.content_rect();
     window = if app.job.preview.maximised {
         window.fixed_pos(screen.min + vec2(8.0, 8.0)).fixed_size(screen.size() - vec2(16.0, 16.0))
@@ -99,6 +100,10 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     let mut open = true;
     let mut command: Option<(&'static str, serde_json::Value)> = None;
     window.open(&mut open).show(ctx, |ui| preview_body(ui, app, &mut command));
+    // Escape closes the Preview, unless a dialog on top of it wants the key.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
     if !open {
         app.job.preview.open = false;
         app.job.preview.playing = false;
@@ -121,6 +126,17 @@ fn run_command(ctx: &egui::Context, app: &mut DarkBurn, id: &str, args: &serde_j
     }
 }
 
+/// What the Preview's "from here" buttons can do on a machine family [PREV-09]: (run, send).
+/// A G-code machine runs a job as it streams it, a DSP controller can also store it, and a
+/// galvo job is made whole from the shapes. Save from here always works.
+pub fn from_here_actions(family: crate::machine_api::Family) -> (bool, bool) {
+    use crate::machine_api::Family;
+    match family {
+        Family::Grbl => (true, false),
+        Family::Ruida => (true, true),
+        Family::Galvo | Family::DesignOnly | Family::FileOnly => (false, false),
+    }
+}
 fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) {
     let t = Tokens::get();
     let pending = app.job.pending.as_ref().map(|(task, _)| task.progress());
@@ -147,7 +163,9 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             }
             ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(80.0);
             let mut tt = p.t;
-            if ui.add(egui::Slider::new(&mut tt, 0.0..=total.max(0.001)).show_value(false)).changed() {
+            let slider = ui.add(egui::Slider::new(&mut tt, 0.0..=total.max(0.001)).show_value(false));
+            crate::a11y::slider(ui, &slider, "Time in the job");
+            if slider.changed() {
                 p.t = tt;
                 p.playing = false;
             }
@@ -202,18 +220,24 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
     ui.horizontal_wrapped(|ui| {
         let have = app.job.preview.data.is_some();
         let op = app.job.preview.data.as_ref().and_then(|d| d.sim.state_at(app.job.preview.t)).map_or(0, |s| s.op_index);
+        let file_kind = crate::machine_job::machine_file_kind(app.machine.active());
         let b = |ui: &mut Ui, label: &str, on: bool| ui.add_enabled_ui(on, |ui| ui_kit::button(ui, label, ui_kit::Button::Small)).inner.clicked();
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Run from here", have) {
+        let family = app.machine.active().kind.family();
+        let (can_run, can_send) = from_here_actions(family);
+        if b(ui, "Run from here", have && can_run) {
             *command = Some(("job.preview_run_from_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Send from here", have) {
+        if b(ui, "Send from here", have && can_send) {
             *command = Some(("job.preview_send_from_here", serde_json::json!({ "op_index": op })));
         }
         if b(ui, "Save from here", have)
-            && let Some(path) = rfd::FileDialog::new().add_filter("G-code", crate::job_build::GCODE_EXTENSIONS).set_file_name("job.gc").save_file()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter(file_kind.filter, file_kind.extensions)
+                .set_file_name(format!("job.{}", file_kind.extensions.first().copied().unwrap_or("gc")))
+                .save_file()
         {
             *command = Some(("job.preview_save_from_here", serde_json::json!({ "path": path.to_string_lossy(), "op_index": op })));
         }
@@ -553,7 +577,9 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         return;
     }
     let mut p = app.job.material.clone();
-    let problem = crate::material_test::validate(&p).err();
+    let problem = crate::material_test::validate(&p).err().or_else(|| crate::material_test::check_for_device(&p, app.machine.active(), None).err());
+    let device_notes = crate::material_test::check_for_device(&p, app.machine.active(), None).unwrap_or_default();
+    let field = app.machine.active().bed();
     let mut preset_action: Option<&'static str> = None;
     let mut preset_pick: Option<usize> = None;
     let names: Vec<String> = app.job.presets.iter().map(|q| q.name.clone()).collect();
@@ -613,6 +639,22 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
             ui_kit::row(ui, "Base interval", |ui| {
                 ui_kit::number_field(ui, &mut p.base_interval, 0.001..=10.0, 0.005, " mm");
             });
+            let mut galvo = p.galvo;
+            if ui_kit::checkbox(ui, "Galvo test (frequency and Q-pulse)", &mut galvo).changed() {
+                // Switching variant starts from that variant's own values.
+                p = if galvo { crate::material_test::MaterialTestParams::galvo_defaults(field) } else { Default::default() };
+            }
+            if p.galvo {
+                ui_kit::row(ui, "Base frequency", |ui| {
+                    ui_kit::number_field(ui, &mut p.base_frequency, 0.0..=10_000.0, 1.0, " kHz");
+                });
+                ui_kit::row(ui, "Base Q-pulse", |ui| {
+                    ui_kit::number_field(ui, &mut p.base_q_pulse, 0.0..=100_000.0, 1.0, " ns");
+                });
+            }
+            for note in &device_notes {
+                ui_kit::status_line(ui, note, ui_kit::StatusTone::Warning);
+            }
             ui.separator();
             ui_kit::checkbox(ui, "Label the rows and columns", &mut p.labels);
             if p.labels {
@@ -797,9 +839,11 @@ pub fn laser_panel(ui: &mut Ui, app: &mut DarkBurn) {
         &[("Frame", "job.frame"), ("Frame outline", "job.frame_rubber"), ("Home", "job.home"), ("Go to origin", "job.go_origin")],
         &mut clicked,
     );
+    // The save button is named after the file the device takes: G-code or an RD file.
+    let save_label = crate::machine_job::machine_file_kind(app.machine.active()).label;
     buttons(
         ui,
-        &[("Save G-code", "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send"), ("Preview", "window.preview")],
+        &[(save_label, "file.save_gcode"), ("Run G-code", "job.run_gcode"), ("Send", "job.send"), ("Preview", "window.preview")],
         &mut clicked,
     );
     if let Some(op) = app.job.start_op {

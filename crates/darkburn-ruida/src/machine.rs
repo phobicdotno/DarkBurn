@@ -165,27 +165,84 @@ impl<T: Transport> RuidaMachine<T> {
         self.info = None;
     }
 
-    /// Find the controller's magic by asking for the card ID with every candidate.
-    /// The common values (0x88, 0x11, 0x38) are tried first.
+    /// Find the controller's magic by asking for the card ID with candidate values, the common
+    /// ones (0x88, 0x11, 0x38) first and twice.
+    ///
+    /// Answers are judged by what they hold, never by when they arrive: on a busy network (and
+    /// on Windows loopback) a datagram can be hundreds of milliseconds late, later than the
+    /// answers to the probes sent after it. So:
+    /// * the one-byte acknowledge a controller sends for every datagram comes back scrambled
+    ///   with the controller's own magic, whichever magic the probe used, and so names it;
+    /// * a card ID reply names its magic through its first byte;
+    /// * a magic found this way is then checked with a fresh question at the normal timeout
+    ///   and with the normal resends, and whatever is still queued is thrown away afterwards.
     pub fn detect_magic(&mut self) -> Result<Magic> {
         let mut order: Vec<Magic> = Magic::COMMON.to_vec();
+        order.extend(Magic::COMMON);
         order.extend((0..=255u8).map(Magic).filter(|m| !Magic::COMMON.contains(m)));
-        let (timeout, retries) = (self.cfg.timeout, self.cfg.retries);
-        self.cfg.timeout = self.cfg.probe_timeout;
-        self.cfg.retries = 0;
-        let mut found = None;
+        let udp = self.t.framing() == Framing::Udp;
+        let probe = Command::GetSetting { addr: addr::CARD_ID }.encode()?;
+        let mut refuted = [false; 256];
         for m in order {
             self.swz = Swizzler::new(m);
             self.inbox.clear();
             self.stream_buf.clear();
-            if let Ok(Command::SettingReply { .. }) = self.query_once(&Command::GetSetting { addr: addr::CARD_ID }, addr::CARD_ID) {
-                found = Some(m);
+            let wire = self.swz.swizzle(&probe);
+            if self.t.send(Channel::Data, &if udp { frame(&wire) } else { wire }).is_err() {
+                continue;
+            }
+            let deadline = Instant::now() + self.cfg.probe_timeout;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let Ok(Some(d)) = self.t.recv(Channel::Data, left) else { break };
+                let candidate = if !udp {
+                    // A stream has no acknowledge: only the right magic gets an answer.
+                    self.stream_buf.extend(self.swz.unswizzle(&d));
+                    self.drain_stream();
+                    self.inbox.iter().any(|c| matches!(c, Command::SettingReply { addr: a, .. } if *a == addr::CARD_ID)).then_some(m)
+                } else if let [ack] = d.as_slice() {
+                    Some(crate::swizzle::magic_from_wire(*ack, 0xCC))
+                } else {
+                    // A reply: it starts with DA under the magic it was scrambled with.
+                    d.first().map(|b| crate::swizzle::magic_from_wire(*b, 0xDA)).filter(
+                        |k| matches!(Command::decode(&Swizzler::new(*k).unswizzle(&d)), Command::SettingReply { addr: a, .. } if a == addr::CARD_ID),
+                    )
+                };
+                if let Some(k) = candidate.filter(|k| !refuted[k.0 as usize]) {
+                    if self.confirm_magic(k) {
+                        return Ok(k);
+                    }
+                    refuted[k.0 as usize] = true;
+                    self.swz = Swizzler::new(m);
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+            }
+        }
+        Err(RuidaError::Timeout("no answer to a card ID probe with any magic value".into()))
+    }
+
+    /// Ask for the card ID with magic `m` at the normal timeout and resends. On success the
+    /// driver keeps `m` and nothing stale is left queued.
+    fn confirm_magic(&mut self, m: Magic) -> bool {
+        self.swz = Swizzler::new(m);
+        self.inbox.clear();
+        self.stream_buf.clear();
+        let ok = matches!(self.read_setting_raw(addr::CARD_ID), Ok(Command::SettingReply { .. }));
+        self.discard_queued();
+        self.inbox.clear();
+        self.stream_buf.clear();
+        ok
+    }
+
+    /// Throw away whatever is waiting on the data channel (answers that came too late).
+    fn discard_queued(&mut self) {
+        for _ in 0..64 {
+            if !matches!(self.t.recv(Channel::Data, Duration::from_millis(1)), Ok(Some(_))) {
                 break;
             }
         }
-        self.cfg.timeout = timeout;
-        self.cfg.retries = retries;
-        found.ok_or_else(|| RuidaError::Timeout("no answer to a card ID probe with any magic value".into()))
     }
 
     // ---- packet layer ---------------------------------------------------------------------
@@ -294,9 +351,22 @@ impl<T: Transport> RuidaMachine<T> {
         let n = slices.len();
         for (i, s) in slices.into_iter().enumerate() {
             let c = Command::decode(s);
-            let complete = match &c {
-                Command::Raw(_) => false,
-                Command::FileName { .. } | Command::SettingReplyRaw { .. } => s.last() == Some(&0),
+            // A USB serial port hands a reply over in pieces. The last slice may be a reply
+            // that is still arriving, and some partial replies decode as something shorter.
+            let complete = match (s, &c) {
+                // A setting reply is DA 01 and two address bytes, then five value bytes, or for
+                // the firmware version a NUL-terminated string of any length (so its first 9 or
+                // 14 bytes must not be taken for a number or a settings write).
+                ([0xDA, 0x01, hi, lo, rest @ ..], _) => {
+                    let a = (u16::from(*hi & 0x7F) << 7) | u16::from(*lo & 0x7F);
+                    if a == addr::FIRMWARE { rest.last() == Some(&0) } else { rest.len() >= 5 }
+                }
+                ([0xDA, 0x01, ..], _) => false,
+                (_, Command::Raw(_)) => false,
+                // E8 01, two index bytes, the name, NUL. The first four bytes alone read as the
+                // request for a name, which a controller never sends.
+                (_, Command::GetFileName(_)) => false,
+                (_, Command::FileName { .. }) => s.len() >= 5 && s.last() == Some(&0),
                 _ => true,
             };
             if i + 1 == n && !complete {
@@ -305,12 +375,6 @@ impl<T: Transport> RuidaMachine<T> {
                 self.inbox.push_back(c);
             }
         }
-    }
-
-    fn query_once(&mut self, cmd: &Command, a: u16) -> Result<Command> {
-        let pred = move |c: &Command| matches!(c, Command::SettingReply { addr, .. } | Command::SettingReplyRaw { addr, .. } if *addr == a);
-        self.send_commands(std::slice::from_ref(cmd))?;
-        self.wait_reply(&pred)?.ok_or_else(|| RuidaError::Timeout(format!("no reply to setting 0x{a:03X}")))
     }
 
     /// Send `cmd` and wait for a reply matching `pred`, resending on timeout.

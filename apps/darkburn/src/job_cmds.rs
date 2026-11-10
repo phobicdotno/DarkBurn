@@ -69,7 +69,7 @@ pub const COMMANDS: &[Cmd] = &[
         "job.material_test",
         "Generate a Material Test",
         "",
-        r#"{"type":"object","properties":{"x_axis":{"enum":["speed","power","interval","frequency","q_pulse"]},"x_min":{"type":"number"},"x_max":{"type":"number"},"columns":{"type":"integer"},"y_axis":{"enum":["speed","power","interval","frequency","q_pulse"]},"y_min":{"type":"number"},"y_max":{"type":"number"},"rows":{"type":"integer"},"cell_width":{"type":"number"},"cell_height":{"type":"number"},"gap":{"type":"number"},"x":{"type":"number"},"y":{"type":"number"},"fill":{"type":"boolean"},"passes":{"type":"integer"},"base_speed":{"type":"number"},"base_power":{"type":"number"},"base_interval":{"type":"number"},"labels":{"type":"boolean"},"label_height":{"type":"number"},"label_layer":{"type":"integer"},"label_speed":{"type":"number"},"label_power":{"type":"number"},"first_layer":{"type":"integer"}}}"#,
+        r#"{"type":"object","properties":{"x_axis":{"enum":["speed","power","interval","frequency","q_pulse"]},"x_min":{"type":"number"},"x_max":{"type":"number"},"columns":{"type":"integer"},"y_axis":{"enum":["speed","power","interval","frequency","q_pulse"]},"y_min":{"type":"number"},"y_max":{"type":"number"},"rows":{"type":"integer"},"cell_width":{"type":"number"},"cell_height":{"type":"number"},"gap":{"type":"number"},"x":{"type":"number"},"y":{"type":"number"},"fill":{"type":"boolean"},"passes":{"type":"integer"},"base_speed":{"type":"number"},"base_power":{"type":"number"},"base_interval":{"type":"number"},"labels":{"type":"boolean"},"label_height":{"type":"number"},"label_layer":{"type":"integer"},"label_speed":{"type":"number"},"label_power":{"type":"number"},"first_layer":{"type":"integer"},"galvo":{"type":"boolean","description":"the galvo variant: small filled cells, speed against pulse frequency, sized for the lens field"},"base_frequency":{"type":"number","description":"kHz, galvo variant"},"base_q_pulse":{"type":"number","description":"ns, galvo variant with a MOPA source"}}}"#,
     ),
     cmd(
         "job.material_test_presets",
@@ -147,24 +147,26 @@ pub fn hardware(id: &str) -> bool {
 
 /// Commands the generic `laser.` prefix rule would flag but that only edit the document.
 pub fn not_hardware(id: &str) -> bool {
-    matches!(id, "file.save_gcode" | "laser.material_test")
+    matches!(id, "file.save_gcode" | "laser.material_test" | "laser.material_test_galvo")
 }
 
 /// Commands of this area that run in this build.
 pub fn works(id: &str) -> bool {
-    matches!(id, "window.preview" | "file.save_gcode" | "laser.material_test") || (id.starts_with("job.") && !hardware(id))
+    matches!(id, "window.preview" | "file.save_gcode" | "laser.material_test" | "laser.material_test_galvo")
+        || (id.starts_with("job.") && !hardware(id))
 }
 
 /// The checklist items a command implements.
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "window.preview" => &["WIN-02", "PREV-01", "PREV-02", "PREV-03", "PREV-04", "PREV-05", "PREV-06", "PREV-07", "PREV-10"],
-        "file.save_gcode" | "job.save_gcode" => &["FILE-09", "EXP-06", "LASER-06"],
+        "file.save_gcode" | "job.save_gcode" => &["FILE-09", "EXP-06", "EXP-07", "LASER-06", "RUIDA-13"],
         "job.optimization_settings" | "job.set_optimization" | "job.optimization_defaults" => &["LASER-16", "PLAN-01"],
         "job.set_origin" => &["LASER-11", "LASER-12", "LASER-13", "LASER-14", "LASER-15", "ORIG-01", "ORIG-02", "ORIG-04", "ORIG-05"],
         "job.set_user_origin" | "job.clear_user_origin" => &["ORIG-03"],
         "job.gcode_settings" | "job.set_gcode_settings" => &["DS-09", "DS-10", "DS-11", "DS-12", "DS-13", "DS-14", "DS-15", "DS-19"],
         "laser.material_test" | "job.material_test" | "job.material_test_presets" => &["LT-12", "MT-01", "MT-02", "MT-04", "MT-05", "MT-07"],
+        "laser.material_test_galvo" => &["LT-19"],
         "job.preview_start_here" | "job.preview_save_from_here" => &["PREV-09"],
         "job.preview_save_image" => &["PREV-08"],
         "job.frame_path" => &["LASER-04", "LASER-05"],
@@ -423,6 +425,37 @@ pub fn write_gcode(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op
     Ok(text.lines().count())
 }
 
+/// What Save machine file wrote.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedFile {
+    /// "G-code" or "RD file".
+    pub what: &'static str,
+    /// Lines of G-code; 0 for a binary file.
+    pub lines: usize,
+    pub bytes: usize,
+}
+
+/// Save the machine file the active device takes (FILE-09, LASER-06): G-code for G-code
+/// machines, an `.rd` job for Ruida controllers. Trocen and TopWisdom files are refused with
+/// the reason.
+pub fn write_machine_file(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) -> Result<SavedFile, String> {
+    if let Some(why) = crate::machine_job::machine_file_unsupported(app.machine.active()) {
+        return Err(why);
+    }
+    if !crate::machine_job::machine_file_kind(app.machine.active()).rd {
+        let lines = write_gcode(app, job, path, from_op)?;
+        let bytes = std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0);
+        return Ok(SavedFile { what: "G-code", lines, bytes });
+    }
+    let data = crate::machine_job::rd_file_bytes(app, job, from_op)?;
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, &data).map_err(|e| format!("{}: {e}", path.display()))?;
+    record_last_job(app, job);
+    Ok(SavedFile { what: "RD file", lines: 0, bytes: data.len() })
+}
+
 /// Handle a finished build in the window flow.
 pub fn finish(app: &mut DarkBurn, job: Arc<BuiltJob>, then: After) {
     app.job.last_job = Some(job.clone());
@@ -459,15 +492,19 @@ fn run_on_machine(app: &mut DarkBurn, job: Arc<BuiltJob>, action: crate::machine
 }
 
 fn save_and_report(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) {
-    match write_gcode(app, job, path, from_op) {
-        Ok(lines) => {
-            let mut text = format!("Wrote {lines} lines to {}.", path.display());
+    match write_machine_file(app, job, path, from_op) {
+        Ok(saved) => {
+            let mut text = if saved.lines > 0 {
+                format!("Wrote {} lines to {}.", saved.lines, path.display())
+            } else {
+                format!("Wrote {} bytes to {}.", saved.bytes, path.display())
+            };
             for w in &job.warnings {
                 text.push_str(&format!("\n{w}"));
             }
-            app.job.message = Some(Message { title: "G-code saved".into(), text });
+            app.job.message = Some(Message { title: format!("{} saved", saved.what), text });
         }
-        Err(e) => app.job.message = Some(Message { title: "Could not save G-code".into(), text: e }),
+        Err(e) => app.job.message = Some(Message { title: "Could not save the machine file".into(), text: e }),
     }
 }
 
@@ -491,19 +528,33 @@ pub fn run(app: &mut DarkBurn, _ctx: &egui::Context, id: &str) -> bool {
     match id {
         "window.preview" => open_preview(app),
         "file.save_gcode" => {
+            // The file follows the device: G-code, or an .rd job for a Ruida controller.
+            if let Some(why) = crate::machine_job::machine_file_unsupported(app.machine.active()) {
+                app.job.message = Some(Message { title: "Could not save the machine file".into(), text: why });
+                return true;
+            }
+            let kind = crate::machine_job::machine_file_kind(app.machine.active());
+            let ext = kind.extensions.first().copied().unwrap_or("gc");
             let name = app
                 .project_path
                 .as_deref()
                 .and_then(Path::file_stem)
-                .map(|n| format!("{}.gc", n.to_string_lossy()))
-                .unwrap_or_else(|| "job.gc".into());
-            let Some(path) = rfd::FileDialog::new().add_filter("G-code", job_build::GCODE_EXTENSIONS).set_file_name(name).save_file() else {
+                .map(|n| format!("{}.{ext}", n.to_string_lossy()))
+                .unwrap_or_else(|| format!("job.{ext}"));
+            let Some(path) = rfd::FileDialog::new().add_filter(kind.filter, kind.extensions).set_file_name(name).save_file() else {
                 return true;
             };
             let from_op = app.job.start_op;
             start_build(app, After::SaveGcode { path, from_op });
         }
         "laser.material_test" => app.job.material_open = true,
+        "laser.material_test_galvo" => {
+            // The same window, started on the galvo variant's values.
+            if !app.job.material.galvo {
+                app.job.material = MaterialTestParams::galvo_defaults(app.machine.active().bed());
+            }
+            app.job.material_open = true;
+        }
         "job.optimization_settings" => {
             app.job.optimization_open = true;
             app.job.optimization_draft = None;
@@ -636,8 +687,13 @@ fn flavor_of(name: &str) -> Result<usize, String> {
     })
 }
 
-fn params_from(a: &Value, base: &MaterialTestParams) -> Result<MaterialTestParams, String> {
-    let mut p = base.clone();
+fn params_from(a: &Value, base: &MaterialTestParams, field: (f64, f64)) -> Result<MaterialTestParams, String> {
+    let mut p = match flag(a, "galvo")? {
+        // The galvo variant starts from its own values unless the dialog is already on it.
+        Some(true) if !base.galvo => MaterialTestParams::galvo_defaults(field),
+        Some(false) if base.galvo => MaterialTestParams::default(),
+        _ => base.clone(),
+    };
     let axis = |key: &str, field: &mut material_test::Axis| -> Result<(), String> {
         if let Some(n) = a.get(key).and_then(Value::as_str) {
             *field = material_test::Axis::from_name(n).ok_or_else(|| format!("unknown axis {n}"))?;
@@ -663,6 +719,8 @@ fn params_from(a: &Value, base: &MaterialTestParams) -> Result<MaterialTestParam
     f("base_speed", &mut p.base_speed);
     f("base_power", &mut p.base_power);
     f("base_interval", &mut p.base_interval);
+    f("base_frequency", &mut p.base_frequency);
+    f("base_q_pulse", &mut p.base_q_pulse);
     f("label_height", &mut p.label_height);
     f("label_speed", &mut p.label_speed);
     f("label_power", &mut p.label_power);
@@ -756,8 +814,15 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
             {
                 return Err(format!("op_index {op} is past the end of the job ({} operations)", job.toolpath.ops.len()));
             }
-            let lines = write_gcode(app, &job, &path, from_op)?;
-            Ok(json!({ "path": path.display().to_string(), "lines": lines, "from_op": from_op, "warnings": job.warnings }))
+            let saved = write_machine_file(app, &job, &path, from_op)?;
+            Ok(json!({
+                "path": path.display().to_string(),
+                "format": if saved.lines > 0 { "gcode" } else { "rd" },
+                "lines": saved.lines,
+                "bytes": saved.bytes,
+                "from_op": from_op,
+                "warnings": job.warnings,
+            }))
         })(),
         "job.optimization_settings" | "job.gcode_settings" => {
             app.job.optimization_open |= id == "job.optimization_settings";
@@ -874,13 +939,17 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
             Ok(json!({ "ok": true }))
         })(),
         "job.material_test" => (|| {
-            let p = params_from(a, &app.job.material)?;
+            let p = params_from(a, &app.job.material, app.machine.active().bed())?;
+            material_test::check_for_device(&p, app.machine.active(), None)?;
             let r = add_material_test(app, &p)?;
+            let warnings = material_test::check_for_device(&p, app.machine.active(), Some(r.bounds))?;
             app.job.material = p;
             Ok(json!({
                 "shapes": r.shapes.iter().map(|i| i.0).collect::<Vec<_>>(),
                 "layers": r.layers,
                 "bounds": [r.bounds.x0, r.bounds.y0, r.bounds.x1, r.bounds.y1],
+                "galvo": app.job.material.galvo,
+                "warnings": warnings,
             }))
         })(),
         "job.material_test_presets" => (|| match text(a, "action")? {

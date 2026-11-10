@@ -938,8 +938,27 @@ impl Worker {
     }
 
     fn shutdown(&mut self, _why: Option<&str>) {
+        // Motion the controller has buffered would go on, laser and all, after the link is
+        // closed: a `laser off` line only runs when the moves ahead of it are done.
+        let moving = self.job.is_some() || self.stop.is_some() || self.inflight.iter().any(|s| !matches!(s.tag, Tag::Poll | Tag::Ident));
         self.abort_job("Disconnected");
         if self.snap.connection == ConnectionState::Connected {
+            if moving {
+                match self.cfg.quick_stop.clone() {
+                    QuickStop::None => {}
+                    QuickStop::Realtime(b) => {
+                        let _ = self.t.write_all(&[b]);
+                        // Give the reset a moment, as Stop does, then clear the halt it leaves.
+                        std::thread::sleep(Duration::from_millis(30));
+                        for l in render_lines(&self.cfg.commands.after_stop, &[]) {
+                            let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                        }
+                    }
+                    QuickStop::Line(l) => {
+                        let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                    }
+                }
+            }
             // Make sure the laser is off before letting go.
             for l in render_lines(&self.cfg.commands.laser_off, &[]) {
                 let _ = self.t.write_all(format!("{l}\n").as_bytes());

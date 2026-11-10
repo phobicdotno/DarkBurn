@@ -38,6 +38,8 @@ pub struct PortInfo {
     pub manufacturer: Option<String>,
     pub product: Option<String>,
     pub serial_number: Option<String>,
+    /// The operating system says this is a Bluetooth serial port.
+    pub bluetooth: bool,
 }
 
 impl PortInfo {
@@ -49,6 +51,9 @@ impl PortInfo {
         }
         if let (Some(v), Some(p)) = (self.vid, self.pid) {
             extra.push(format!("{v:04X}:{p:04X}"));
+        }
+        if self.bluetooth {
+            extra.push("Bluetooth".to_owned());
         }
         if extra.is_empty() { self.name.clone() } else { format!("{} ({})", self.name, extra.join(", ")) }
     }
@@ -88,7 +93,9 @@ mod serial {
                     manufacturer: u.manufacturer,
                     product: u.product,
                     serial_number: u.serial_number,
+                    bluetooth: false,
                 },
+                serialport::SerialPortType::BluetoothPort => PortInfo { name: p.port_name, bluetooth: true, ..Default::default() },
                 _ => PortInfo { name: p.port_name, ..Default::default() },
             })
             .collect()

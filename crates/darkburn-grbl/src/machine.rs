@@ -297,6 +297,8 @@ pub struct Snapshot {
     pub rx_in_flight_peak: usize,
     pub rx_capacity: usize,
     pub show_all: bool,
+    /// A known diode laser recognised from the welcome text or the `$I` reply.
+    pub detected: Option<crate::detect::DetectedLaser>,
 }
 
 impl Snapshot {
@@ -1242,6 +1244,7 @@ struct Worker {
     alarm_count: u64,
     home_alarm_count: u64,
     outbox: RefCell<Vec<Event>>,
+    detector: crate::detect::LaserDetector,
 }
 
 impl Worker {
@@ -1278,6 +1281,7 @@ impl Worker {
             alarm_count: 0,
             home_alarm_count: 0,
             outbox: RefCell::new(Vec::new()),
+            detector: crate::detect::LaserDetector::default(),
         }
     }
 
@@ -1821,6 +1825,11 @@ impl Worker {
     }
 
     fn on_line(&mut self, line: &str) -> Result<(), String> {
+        // Vendor tags and welcome lines name the machine; plain replies are skipped cheaply.
+        if line.starts_with('[') || line.ends_with('!') {
+            self.detector.feed(line);
+            self.snap.detected = self.detector.result();
+        }
         let resp = parse_response(line);
         match resp {
             Response::Ok => self.on_answer(line, None),

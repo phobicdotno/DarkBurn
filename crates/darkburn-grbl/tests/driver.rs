@@ -114,6 +114,8 @@ fn handshake_flavors() {
         (EmulatorFlavor::FluidNc, FirmwareKind::FluidNc, 128, false),
         (EmulatorFlavor::Grbl11e, FirmwareKind::Grbl, 128, true),
         (EmulatorFlavor::Grbl09, FirmwareKind::Grbl, 128, true),
+        // No reset when the port opens: the driver's soft reset brings the banner.
+        (EmulatorFlavor::GrblLpc, FirmwareKind::Grbl, 8192, false),
     ];
     for (flavor, kind, rx, m3) in cases {
         let emu = emulator(EmulatorConfig::flavor(flavor).with_time_scale(50.0));

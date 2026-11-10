@@ -252,11 +252,11 @@ pub fn validate(p: &MaterialTestParams) -> Result<(), String> {
         return Err("The label layer must be a colour layer.".into());
     }
     let free = cell_layers(p).len();
-    if p.columns * p.rows > free {
+    if p.columns.saturating_mul(p.rows) > free {
         return Err(format!(
             "{} cells need {} layers but only {free} colour layers are free; use fewer rows or columns.",
-            p.columns * p.rows,
-            p.columns * p.rows
+            p.columns.saturating_mul(p.rows),
+            p.columns.saturating_mul(p.rows)
         ));
     }
     Ok(())
@@ -271,11 +271,11 @@ pub fn generate(doc: &mut Document, p: &MaterialTestParams) -> Result<MaterialTe
     // Layers that already hold shapes keep their settings: the cells go on the free ones.
     let taken: std::collections::HashSet<usize> = doc.iter().flat_map(Shape::leaves).map(|s| s.layer).collect();
     let layers: Vec<usize> = cell_layers(p).into_iter().filter(|l| !taken.contains(l)).collect();
-    if p.columns * p.rows > layers.len() {
+    if p.columns.saturating_mul(p.rows) > layers.len() {
         return Err(format!(
             "{} cells need {} layers but only {} colour layers are free (the others hold shapes); use fewer rows or columns.",
-            p.columns * p.rows,
-            p.columns * p.rows,
+            p.columns.saturating_mul(p.rows),
+            p.columns.saturating_mul(p.rows),
             layers.len()
         ));
     }
@@ -530,6 +530,15 @@ mod tests {
         let e = generate(&mut d, &MaterialTestParams { columns: 5, rows: 5, ..Default::default() }).unwrap_err();
         assert!(e.contains("free"), "{e}");
         assert!(d == before);
+    }
+
+    #[test]
+    fn an_absurd_grid_size_is_refused_not_a_crash() {
+        let mut d = Document::new();
+        let p = MaterialTestParams { columns: 1 << 63, rows: 2, ..Default::default() };
+        assert!(validate(&p).unwrap_err().contains("layers"));
+        assert!(generate(&mut d, &p).is_err());
+        assert!(d.is_empty());
     }
 
     #[test]

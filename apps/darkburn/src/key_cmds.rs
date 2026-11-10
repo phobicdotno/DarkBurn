@@ -31,8 +31,7 @@ fn direction(id: &str) -> Option<(i8, i8)> {
 /// Run a jog key. Returns false for ids that are not ours.
 pub fn run(app: &mut DarkBurn, _ctx: &egui::Context, id: &str) -> bool {
     let Some((dx, dy)) = direction(id) else { return false };
-    let origin = app.machine.active().origin;
-    let (ax, ay) = crate::machine_ui::arrow_to_axes(dx, dy, origin, app.machine.jog.invert_keypad);
+    let (ax, ay) = crate::machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let d = app.machine.jog.distance;
     let feed = app.machine.jog.speed * 60.0;
     crate::machine_ui::run_with(app, "machine.jog", &json!({ "dx": f64::from(ax) * d, "dy": f64::from(ay) * d, "feed": feed }));

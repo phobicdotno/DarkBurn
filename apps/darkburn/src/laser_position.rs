@@ -50,18 +50,15 @@ fn anchor_arg(a: &Value) -> Result<Anchor, String> {
     })
 }
 
-/// Machine coordinates of design point `p` (the origin corner decides the axis directions).
+/// Machine coordinates of design point `p`: the mapping the job is built with, so the head goes
+/// where the job would cut that point (origin corner, negative coordinates, swapped axes).
 pub fn to_machine(app: &DarkBurn, p: Point) -> Point {
-    let o = app.prefs.origin;
-    Point::new(
-        if o.flips_x() { f64::from(app.prefs.page_width) - p.x } else { p.x },
-        if o.flips_y() { p.y } else { f64::from(app.prefs.page_height) - p.y },
-    )
+    app.machine.active().job_device().geometry().affine() * p
 }
 
-/// The design point of machine coordinates `m` (the mapping is its own inverse).
+/// The design point of machine coordinates `m`.
 pub fn from_machine(app: &DarkBurn, m: Point) -> Point {
-    to_machine(app, m)
+    app.machine.active().job_device().geometry().affine().inverse() * m
 }
 
 fn absolute(app: &DarkBurn) -> bool {
@@ -218,7 +215,9 @@ mod tests {
         let bb = a.editor.doc.get(id).unwrap().bbox();
         assert!((bb.x0 - 100.0).abs() < 0.05 && (bb.y0 - 80.0).abs() < 0.05, "{bb:?}");
         // And the origin corner flips the axes.
+        // (Changed the way Settings changes it: the corner is the active device's.)
         a.prefs.origin = crate::view::Origin::FrontRight;
+        crate::machine_ui::work_area_changed(&mut a);
         let m = to_machine(&a, Point::new(10.0, 20.0));
         assert_eq!(m, Point::new(f64::from(a.prefs.page_width) - 10.0, 20.0));
     }

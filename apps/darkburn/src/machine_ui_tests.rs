@@ -343,6 +343,17 @@ fn jog_arrows_follow_the_origin_corner() {
     assert_eq!(machine_ui::arrow_to_axes(1, 1, BottomRight, false), (-1, 1));
     assert_eq!(machine_ui::arrow_to_axes(-1, 1, TopRight, false), (1, -1));
     assert_eq!(machine_ui::arrow_to_axes(0, 1, BottomLeft, true), (0, -1), "inverted keypad flips the vertical arrows");
+    // The device form agrees with it for every corner, and follows negative coordinates too.
+    for corner in [BottomLeft, TopLeft, BottomRight, TopRight] {
+        let mut d = Device::new(DeviceType::Grbl);
+        d.origin = corner;
+        for (dx, dy, inv) in [(1, 1, false), (-1, 1, false), (0, 1, true), (1, 0, true)] {
+            assert_eq!(machine_ui::arrow_to_machine(dx, dy, &d, inv), machine_ui::arrow_to_axes(dx, dy, corner, inv), "{corner:?}");
+        }
+        d.settings.negative_coords = true;
+        let (x, y) = machine_ui::arrow_to_axes(1, 1, corner, false);
+        assert_eq!(machine_ui::arrow_to_machine(1, 1, &d, false), (-x, -y), "{corner:?} with negative coordinates");
+    }
     assert_eq!(machine_ui::jog_multiplier(false, false), 1.0);
     assert_eq!(machine_ui::jog_multiplier(true, false), 10.0);
     assert_eq!(machine_ui::jog_multiplier(false, true), 0.1);
@@ -734,4 +745,35 @@ fn the_rotary_and_cylinder_boxes_of_the_laser_panel_switch_the_projects_setup() 
     }
     // What the job builder reads is the project's setup.
     assert!(crate::vision_state::JobMap::from_doc(&g.app().editor.doc).is_some(), "cylinder correction is on for the job");
+}
+
+#[test]
+fn jog_arrows_and_position_laser_use_the_axes_the_job_uses() {
+    use darkburn_core::kurbo::Point;
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    let at = |a: &DarkBurn, x: f64, y: f64| {
+        let s = a.machine.handle.snapshot();
+        state(a) == LaserState::Ready && (s.machine_pos[0] - x).abs() < 1e-3 && (s.machine_pos[1] - y).abs() < 1e-3
+    };
+    run(&mut a, "machine.move_to", json!({ "x": 50, "y": 50 })).unwrap();
+    wait(&mut a, "the move", |a| at(a, 50.0, 50.0));
+    // Swapped axes (Device Settings): what is right on the screen is the machine's Y.
+    a.machine.devices.active_mut().unwrap().settings.gcode.swap_xy = true;
+    let job_axes = a.machine.active().job_device().geometry().affine();
+    assert_eq!(job_axes * Point::new(10.0, 0.0), Point::new(0.0, 10.0), "the job sends a move to the right as Y");
+    a.machine.jog.distance = 10.0;
+    assert!(crate::key_cmds::run(&mut a, &egui::Context::default(), "laser.jog_right"));
+    wait(&mut a, "the jog along the machine's Y", |a| at(a, 50.0, 60.0));
+    // Position Laser and the arrange-to-laser commands send a design point where the job cuts it.
+    for (negative, swap) in [(false, true), (true, false), (true, true), (false, false)] {
+        let d = a.machine.devices.active_mut().unwrap();
+        d.settings.negative_coords = negative;
+        d.settings.gcode.swap_xy = swap;
+        let job_axes = a.machine.active().job_device().geometry().affine();
+        let p = Point::new(12.0, 34.0);
+        let m = crate::laser_position::to_machine(&a, p);
+        assert!(m.distance(job_axes * p) < 1e-9, "negative {negative}, swapped {swap}: {m:?} against the job's {:?}", job_axes * p);
+        assert!(crate::laser_position::from_machine(&a, m).distance(p) < 1e-9, "and back");
+    }
 }

@@ -569,6 +569,23 @@ pub fn arrow_to_axes(dir_x: i8, dir_y: i8, origin: Corner, invert_keypad: bool) 
     (dir_x * sx, dir_y * sy)
 }
 
+/// [`arrow_to_axes`] for a device: the axes are the ones its jobs are built with, so a machine
+/// with negative coordinates or swapped X and Y also jogs the way the arrow points.
+pub fn arrow_to_machine(dir_x: i8, dir_y: i8, dev: &Device, invert_keypad: bool) -> (i8, i8) {
+    let c = dev.job_device().geometry().affine().as_coeffs();
+    let (dx, dy) = (f64::from(dir_x), f64::from(if invert_keypad { -dir_y } else { dir_y }));
+    let sign = |v: f64| {
+        if v > 0.5 {
+            1
+        } else if v < -0.5 {
+            -1
+        } else {
+            0
+        }
+    };
+    (sign(c[0] * dx + c[2] * dy), sign(c[1] * dx + c[3] * dy))
+}
+
 // ----- Commands ------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

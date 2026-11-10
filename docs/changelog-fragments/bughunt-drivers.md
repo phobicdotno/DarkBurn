@@ -8,3 +8,4 @@ Fix: galvo jobs now follow a shape's power scale, cut order priority, kerf offse
 Fix: the Rotary and Cylinder correction boxes in the Laser panel now really switch them for the job
 Fix: Set finish position works: the job ends there
 Fix: saved positions in the Move panel are remembered, one list per device
+Fix: jog arrows, Position Laser and move-to-selection follow negative coordinates and swapped axes like the job does

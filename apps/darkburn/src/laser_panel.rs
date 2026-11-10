@@ -566,8 +566,7 @@ pub fn set_finish_here(app: &mut DarkBurn) {
 
 /// Click on an arrow: a step, or the start of a continuous jog.
 fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
-    let origin = app.machine.active().origin;
-    let (ax, ay) = machine_ui::arrow_to_axes(dx, dy, origin, app.machine.jog.invert_keypad);
+    let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let feed = app.machine.jog.speed * 60.0;
     if app.machine.jog.continuous {
         go(app, "machine.jog_start", json!({ "x": ax, "y": ay, "feed": feed }));

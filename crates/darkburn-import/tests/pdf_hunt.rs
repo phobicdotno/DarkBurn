@@ -169,3 +169,17 @@ fn a_soft_mask_that_names_itself_is_not_followed_forever() {
     let n = doc.items.iter().filter(|i| matches!(i.kind, ItemKind::Image(_))).count();
     assert_eq!(n, 1, "{:?}", doc.warnings);
 }
+
+#[test]
+fn a_fax_image_with_an_absurd_column_count_is_refused() {
+    // 4 000 000 000 columns by 1000 rows would need four terabytes.
+    let img = stream(
+        "/Type /XObject /Subtype /Image /Width 1 /Height 1000 /ColorSpace /DeviceGray /BitsPerComponent 1 \
+         /Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 4000000000 >>",
+        &[0x00, 0x10, 0x01, 0x00, 0x10, 0x01],
+    );
+    let doc = read(&pdf("/MediaBox [0 0 300 300] /Resources << /XObject << /I 5 0 R >> >>", "0 0 10 10 re S 72 0 0 72 0 0 cm /I Do", &[img]));
+    assert_eq!(paths(&doc).len(), 1);
+    assert!(doc.items.iter().all(|i| !matches!(i.kind, ItemKind::Image(_))));
+    assert!(doc.warnings.iter().any(|w| w.contains("image")), "{:?}", doc.warnings);
+}

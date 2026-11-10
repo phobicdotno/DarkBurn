@@ -754,6 +754,10 @@ fn decode_image(
             let pd = parms.and_then(|o| o.as_dict().ok());
             let k = pd.and_then(|d| dict_get(doc, d, b"K")).and_then(num).unwrap_or(0.0);
             let cols = pd.and_then(|d| dict_get(doc, d, b"Columns")).and_then(num).unwrap_or(1728.0) as u32;
+            // The column count comes from the file and sizes the pixel buffer.
+            if u64::from(cols.max(1)) * u64::from(h) > MAX_PIXELS {
+                return Err("bad image size".into());
+            }
             let black_is_1 = pd.and_then(|d| dict_get(doc, d, b"BlackIs1")).and_then(|o| o.as_bool().ok()).unwrap_or(false);
             let samples = decode_ccitt(&bytes, k, cols.max(1), h, black_is_1)?;
             samples_to_image(&samples, cols.max(1), h, 1, &Cs::Gray, is_mask, fill, decode_array(doc, dict), true)?

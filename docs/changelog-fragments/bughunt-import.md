@@ -4,3 +4,4 @@ Fix: PDF outlines that continue after a closed part keep their parts apart
 Fix: PDF pages with a user unit come in at their real size
 Fix: a damaged PDF layer entry that points at itself no longer closes DarkBurn
 Fix: a PDF image whose mask points at itself no longer closes DarkBurn
+Fix: a PDF fax image with an absurd width is skipped instead of closing DarkBurn

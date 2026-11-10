@@ -507,6 +507,15 @@ fn galvo_red_light_frame_never_fires_and_satisfies_require_framing() {
         assert!(!g.log().singles.contains(&galvo::SingleCmd::EnableLaser), "framing never enables the laser");
         assert!(!g.log().motions.iter().any(|m| m.mark || m.emitting), "framing never marks");
     }
+    // That frame was shifted and scaled, so it showed another place than the job marks: the job
+    // is still refused. A frame of the job as it lies lets it start.
+    assert!(matches!(a.machine.handle.start_job(req.clone()), Err(MachineError::Refused(m)) if m.contains("Frame")));
+    let shifted = a.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key);
+    run(&mut a, "machine.galvo_frame", json!({ "repeat": false, "nudge_x": 0.0, "nudge_y": 0.0, "scale_pct": 100.0 })).unwrap();
+    wait(&mut a, "framed as it lies", |a| {
+        a.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.framed_key.is_some() && g.framed_key != shifted)
+    });
+    wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
     a.machine.handle.start_job(req).unwrap();
     wait(&mut a, "job done", |a| a.machine.handle.snapshot().state == LaserState::Busy || a.machine.handle.snapshot().state == LaserState::Ready);
     wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready && emu.lock().unwrap().log().motions.iter().any(|m| m.mark));
@@ -829,6 +838,67 @@ fn real_galvo_usb_is_not_built_in() {
 
 // ----- Gweike -------------------------------------------------------------------------------------------------
 
+/// A craft with a value outside the machine's limits (gas pressure, speed, frequency, a missing
+/// pierce stage) is not stored when a command or an agent sets it, and a table that holds one
+/// some other way (the editor, a device file) is not written out for the operator to enter.
+#[test]
+fn a_craft_outside_the_machine_limits_is_refused_and_never_exported() {
+    let dir = std::env::temp_dir().join(format!("darkburn_chf_bad_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = gweike_app();
+    let good = serde_json::to_value(darkburn_mcc::FibreCraft::default()).unwrap();
+    for (field, value) in [("gas_pressure_bar", json!(40.0)), ("speed_mm_s", json!(0.0)), ("freq_hz", json!(1.0e9)), ("power_pct", json!(250.0))] {
+        let mut bad = good.clone();
+        bad["cut"][field] = value;
+        let r = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 2, "craft": bad }));
+        assert!(r.is_err(), "{field} out of range was stored: {r:?}");
+    }
+    let mut no_pierce = good.clone();
+    no_pierce["process"] = json!("pierce3");
+    no_pierce["pierce"] = json!([]);
+    assert!(
+        run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 2, "craft": no_pierce })).is_err(),
+        "a pierce process without its stages"
+    );
+    let mut co2 = serde_json::to_value(darkburn_mcc::Co2Craft::default()).unwrap();
+    co2["gas_pressure_bar"] = json!(11.0);
+    assert!(run(&mut a, "gweike.set_craft", json!({ "head": "co2", "slot": 2, "craft": co2 })).is_err());
+    assert_eq!(a.machine.active().settings.gweike.crafts, darkburn_mcc::CraftTable::default(), "nothing was stored");
+    // The export of a sound table still works...
+    let path = dir.join("job.chf");
+    let side = dir.join("job.chf.crafts.json");
+    run(&mut a, "gweike.export_chf", json!({ "path": path.display().to_string() })).unwrap();
+    assert!(path.exists() && side.exists());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&side).unwrap();
+    // ...and one with a bad value in it writes nothing.
+    let id = a.machine.active().id;
+    a.machine.devices.get_mut(id).unwrap().settings.gweike.crafts.fibre[5].cut.gas_pressure_bar = 40.0;
+    let e = run(&mut a, "gweike.export_chf", json!({ "path": path.display().to_string() })).unwrap_err();
+    assert!(e.contains("gas pressure"), "{e}");
+    assert!(!path.exists() && !side.exists(), "no file for the operator to enter 40 bar from");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A device file whose craft table is short (cut by hand, or from another program) must not
+/// crash the craft editor or `gweike.set_craft`: the table is filled up to the eleven slots.
+#[test]
+fn a_short_craft_table_in_a_device_file_is_filled_up() {
+    let mut a = gweike_app();
+    let id = a.machine.active().id;
+    let text = a.machine.devices.export_profile(id).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let crafts = v.pointer_mut("/device/settings/gweike/crafts").expect("the crafts of the profile");
+    crafts["fibre"] = json!([]);
+    crafts["co2"].as_array_mut().unwrap().truncate(2);
+    let id2 = a.machine.devices.import_profile(&v.to_string()).unwrap();
+    run(&mut a, "device.select", json!({ "id": id2 })).unwrap();
+    let t = &a.machine.active().settings.gweike.crafts;
+    assert_eq!((t.fibre.len(), t.co2.len()), (11, 11));
+    let good = serde_json::to_value(darkburn_mcc::FibreCraft::default()).unwrap();
+    run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 10, "craft": good })).unwrap();
+}
+
 fn gweike_app() -> DarkBurn {
     let mut a = app();
     let id = run(&mut a, "device.add", json!({ "type": "GweikeCardSimulator" })).unwrap()["id"].as_u64().unwrap();
@@ -890,11 +960,12 @@ fn craft_editor_values_validate_and_survive_the_profile() {
     let c = run(&mut a, "gweike.crafts", Value::Null).unwrap();
     assert_eq!(c["crafts"]["fibre"][3]["nozzle"], "1.5S");
     assert_eq!(c["crafts"]["fibre"][3]["pierce"].as_array().unwrap().len(), 2);
-    // A speed past the machine's limit is reported as a problem, not sent anywhere.
+    // A speed past the machine's limit is refused: the slot keeps what it had.
     let mut bad = craft.clone();
     bad["cut"]["speed_mm_s"] = json!(9000.0);
-    let r = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 4, "craft": bad })).unwrap();
-    assert!(!r["problems"].as_array().unwrap().is_empty());
+    let e = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 4, "craft": bad })).unwrap_err();
+    assert!(e.contains("speed"), "{e}");
+    assert_eq!(a.machine.active().settings.gweike.crafts.fibre[4], darkburn_mcc::FibreCraft::default());
     assert!(run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 3, "craft": { "process": "bogus" } })).is_err());
     // It is kept with the device.
     let id = a.machine.active().id;

@@ -796,6 +796,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
     if let Some(r) = run_job_command(app, id, a, src) {
         return r;
     }
+    let from_head = id == "machine.frame" && crate::job_cmds::current_settings(app).start_from == crate::job_build::StartMode::CurrentPosition;
     let m = &mut app.machine;
     match id {
         // ----- dialogs
@@ -856,7 +857,15 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "machine.stop" => mach(m.handle.stop()),
         "machine.frame" => {
             let r = Rect::new(need(a, "x")?, need(a, "y")?, need(a, "x")? + need(a, "width")?, need(a, "y")? + need(a, "height")?);
-            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to: None };
+            // A job from the current position starts where the head is: the frame must leave
+            // the head there, or the job burns from a corner of this rectangle.
+            let s = m.handle.snapshot();
+            let return_to = match s.family {
+                Family::Grbl if from_head => Some(Point::new(s.work_pos[0], s.work_pos[1])),
+                Family::Ruida if from_head => Some(Point::new(s.machine_pos[0], s.machine_pos[1])),
+                _ => None,
+            };
+            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to };
             mach(m.handle.frame_rect(r, spec))
         }
         "machine.home" => mach(m.handle.home()),

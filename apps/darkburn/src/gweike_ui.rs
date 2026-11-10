@@ -38,7 +38,7 @@ fn gas_row(ui: &mut Ui, id: &str, gas: &mut GasType, bar: &mut f64) {
     });
     *gas = GASES[gi];
     ui_kit::row(ui, "Gas pressure", |ui| {
-        ui_kit::number_field(ui, bar, 0.0..=50.0, 0.1, " bar");
+        ui_kit::number_field(ui, bar, 0.0..=darkburn_mcc::craft::MAX_PRESSURE_BAR, 0.1, " bar");
     });
 }
 

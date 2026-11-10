@@ -61,3 +61,18 @@ fn a_galvo_marks_a_picture_the_way_it_lies_in_the_design() {
     let got = marked_box(&d);
     assert!(near(got, Rect::new(5.0, 5.0, 10.0, 10.0)), "cropped: {got:?}");
 }
+
+/// A square drawn on a layer whose only setting is Image is not marked by a galvo; the job says
+/// so, as it does for a picture on a layer that is not in Image mode.
+#[test]
+fn a_shape_on_an_image_layer_is_left_out_with_a_warning() {
+    let dev = Device::new(DeviceType::SimulatorGalvo);
+    let b = crate::galvo_job::build_job(&half_black(), &dev).unwrap();
+    assert!(b.warnings.is_empty(), "a picture alone: {:?}", b.warnings);
+
+    let mut d = half_black();
+    d.add(darkburn_core::Shape::rect(Rect::new(20.0, 20.0, 30.0, 30.0), 0.0, 3));
+    let b = crate::galvo_job::build_job(&d, &dev).unwrap();
+    assert_eq!(b.job.layers.len(), 1, "only the picture is marked");
+    assert!(b.warnings.iter().any(|w| w.contains("Image mode") && w.contains("left out") && w.contains("shapes")), "{:?}", b.warnings);
+}

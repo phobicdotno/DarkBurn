@@ -267,8 +267,10 @@ impl GalvoMachine {
     pub fn start_job(&self, job: CompiledJob, opts: StartOptions) -> Result<(), GalvoError> {
         // An axis move the board cannot make would otherwise stop the job half marked.
         for step in &job.steps {
-            if let Step::MoveAxis { axis, mm } = step {
-                axis_words(&self.settings, *axis, *mm).map_err(GalvoError::Invalid)?;
+            match step {
+                Step::MoveAxis { axis, mm } => drop(axis_words(&self.settings, *axis, *mm).map_err(GalvoError::Invalid)?),
+                Step::MoveZ { mm } => drop(z_word(&self.settings, *mm).map_err(GalvoError::Invalid)?),
+                _ => {}
             }
         }
         let mut s = self.snapshot.lock().expect("snapshot");
@@ -391,6 +393,15 @@ pub fn axis_words(s: &DeviceSettings, axis: u8, mm: f64) -> Result<(u16, u16), S
         return Err(format!("An axis move of {mm} mm needs {steps} steps, more than the board's 16-bit position word holds."));
     }
     Ok((steps.abs() as u16, (steps < 0.0) as u16))
+}
+
+/// The Z word of a Z move; errors when the 16-bit word cannot hold it (it used to be cut short).
+pub fn z_word(s: &DeviceSettings, mm: f64) -> Result<u16, String> {
+    let steps = (mm * s.z_steps_per_mm).round().abs();
+    if !steps.is_finite() || steps > 65535.0 {
+        return Err(format!("A Z move of {mm} mm needs {steps} steps, more than the board's 16-bit Z word holds."));
+    }
+    Ok(steps as u16)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -793,28 +804,59 @@ impl Worker {
             self.reject("The door is open.");
             return Ok(());
         }
-        let (marking, activity) = match &mut self.state {
+        let activity = match &mut self.state {
             State::Idle => return Ok(()),
             State::Job(j) => {
-                if j.pause.take().is_none() {
+                if j.pause.is_none() {
                     return Ok(());
                 }
-                (j.marking && matches!(j.phase, Phase::Send(_)), Activity::Job)
+                let marking = j.marking && matches!(j.phase, Phase::Send(_));
+                if marking && !self.open_source_and_wait()? {
+                    // A stop or a pause came in while the source settled: still paused.
+                    self.link.mo(false)?;
+                    return Ok(());
+                }
+                if let State::Job(j) = &mut self.state {
+                    j.pause = None;
+                }
+                Activity::Job
             }
             State::Frame(f) => {
                 if f.pause.take().is_none() {
                     return Ok(());
                 }
-                (false, Activity::Framing)
+                Activity::Framing
             }
         };
-        if marking {
-            self.link.mo(true)?;
-        }
         self.link.single(SingleCmd::RestartList)?;
         self.sh.update(|s| s.activity = activity);
         self.sh.emit(Event::Resumed);
         Ok(())
+    }
+
+    /// Open the fibre source for a resume and give it the wait a job start gives it inside its
+    /// list (`open_mo_delay_units`): a restarted list has no such delay in front of it. The list
+    /// stays held meanwhile. Returns false when a stop, pause or shutdown came in during the
+    /// wait; the caller then leaves the job paused.
+    fn open_source_and_wait(&mut self) -> io::Result<bool> {
+        self.link.mo(true)?;
+        if !self.link.settings.source.is_fiber() {
+            return Ok(true);
+        }
+        let end = Instant::now() + Duration::from_micros(u64::from(self.link.settings.open_mo_delay_units) * 10);
+        loop {
+            while let Ok(c) = self.cmds.try_recv() {
+                self.pending.push_back(c);
+            }
+            if self.pending.iter().any(|c| matches!(c, Cmd::Stop | Cmd::Pause | Cmd::Shutdown)) {
+                return Ok(false);
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Ok(true);
+            }
+            std::thread::sleep(left.min(Duration::from_millis(1)));
+        }
     }
 
     fn start_utility(&mut self, steps: Vec<Step>) {
@@ -1058,7 +1100,7 @@ impl Worker {
                         j.phase = Phase::AxisWait;
                     }
                     Step::MoveZ { mm } => {
-                        let steps = (mm * self.link.settings.z_steps_per_mm).round().abs().min(65535.0) as u16;
+                        let steps = z_word(&self.link.settings, mm).map_err(io::Error::other)?;
                         self.link.single(SingleCmd::EnableZ)?;
                         self.link.single(SingleCmd::SetZData(steps))?;
                         self.next_step(j);

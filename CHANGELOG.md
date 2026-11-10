@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.458 (build 6)
+## v0.0.466 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -42,6 +42,14 @@
 - Fix: Saving a cut or art library under a name with a dot in it ("Birch 3.5") keeps the whole name
 - Fix: Editing a cut library entry so it gets the same name as another one no longer mixes the two up
 - Fix: An art library opened from a file not ending in .dbart is saved back to that same file
+- Fix: A Gweike craft with a value the machine does not allow (gas pressure, speed, frequency, missing pierce stage) is no longer stored or written to the craft table file
+- Fix: A device file with a short Gweike craft table no longer crashes the craft editor
+- Fix: Framing the material test, or a rectangle by numbers, with the job set to start from the current position now brings the head back to where it was
+- Fix: A galvo job with a Z move too long for the board is refused instead of being marked at the wrong height
+- Fix: Resuming a paused galvo job gives the fibre source its warm-up wait before marking goes on
+- Fix: A galvo job now says so when shapes on an Image layer are left out
+- Fix: A red-light frame that was nudged or scaled no longer counts as framing the job when framing is required
+- Fix: The saved preview image shows crossing burns the same way the preview window does
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

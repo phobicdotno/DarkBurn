@@ -442,6 +442,39 @@ fn sliced_image_moves_z_and_returns() {
     });
 }
 
+/// A Z move longer than the board's 16-bit word holds was cut short to 65535 steps without a
+/// word, so the slices after it were marked at the wrong height. The job is refused instead.
+#[test]
+fn a_job_with_a_z_move_the_board_cannot_make_is_refused_before_it_marks() {
+    let mut r = rig(dev());
+    let img = SlicedImage {
+        width_px: 2,
+        height_px: 2,
+        depth: vec![255, 120, 255, 120],
+        origin: kurbo::Point::new(-1.0, -1.0),
+        size_mm: (2.0, 2.0),
+        slices: 2,
+        // 700 mm at 100 steps per mm: 70000 steps.
+        z_step_mm: 700.0,
+        interval_mm: 1.0,
+        bidirectional: true,
+        cleanup: None,
+    };
+    let mut job = Job::new();
+    job.layers.push(Layer::new("3D", LayerMode::Sliced(img), MarkParams::default(), vec![]));
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    r.m.arm().unwrap();
+    let started = r.m.start_job(c, StartOptions::default());
+    assert!(matches!(started, Err(GalvoError::Invalid(_))), "{started:?}");
+    std::thread::sleep(Duration::from_millis(50));
+    r.wait(|_| true);
+    r.emu(|e| {
+        assert!(!e.ever_emitted());
+        assert!(!e.log().singles.iter().any(|c| matches!(c, SingleCmd::SetZData(_))), "no Z word was sent");
+    });
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+}
+
 #[test]
 fn pause_and_resume_by_the_user() {
     let mut r = rig_with(dev(), EmulatorConfig { cmds_per_poll: 2, ..Default::default() }, opts());

@@ -267,8 +267,10 @@ impl GalvoMachine {
     pub fn start_job(&self, job: CompiledJob, opts: StartOptions) -> Result<(), GalvoError> {
         // An axis move the board cannot make would otherwise stop the job half marked.
         for step in &job.steps {
-            if let Step::MoveAxis { axis, mm } = step {
-                axis_words(&self.settings, *axis, *mm).map_err(GalvoError::Invalid)?;
+            match step {
+                Step::MoveAxis { axis, mm } => drop(axis_words(&self.settings, *axis, *mm).map_err(GalvoError::Invalid)?),
+                Step::MoveZ { mm } => drop(z_word(&self.settings, *mm).map_err(GalvoError::Invalid)?),
+                _ => {}
             }
         }
         let mut s = self.snapshot.lock().expect("snapshot");
@@ -391,6 +393,15 @@ pub fn axis_words(s: &DeviceSettings, axis: u8, mm: f64) -> Result<(u16, u16), S
         return Err(format!("An axis move of {mm} mm needs {steps} steps, more than the board's 16-bit position word holds."));
     }
     Ok((steps.abs() as u16, (steps < 0.0) as u16))
+}
+
+/// The Z word of a Z move; errors when the 16-bit word cannot hold it (it used to be cut short).
+pub fn z_word(s: &DeviceSettings, mm: f64) -> Result<u16, String> {
+    let steps = (mm * s.z_steps_per_mm).round().abs();
+    if !steps.is_finite() || steps > 65535.0 {
+        return Err(format!("A Z move of {mm} mm needs {steps} steps, more than the board's 16-bit Z word holds."));
+    }
+    Ok(steps as u16)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1058,7 +1069,7 @@ impl Worker {
                         j.phase = Phase::AxisWait;
                     }
                     Step::MoveZ { mm } => {
-                        let steps = (mm * self.link.settings.z_steps_per_mm).round().abs().min(65535.0) as u16;
+                        let steps = z_word(&self.link.settings, mm).map_err(io::Error::other)?;
                         self.link.single(SingleCmd::EnableZ)?;
                         self.link.single(SingleCmd::SetZData(steps))?;
                         self.next_step(j);

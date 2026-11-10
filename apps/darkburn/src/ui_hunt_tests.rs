@@ -232,3 +232,31 @@ fn the_wheel_over_a_window_does_not_zoom_the_canvas_behind_it() {
     g.scroll(empty, egui::vec2(0.0, 120.0));
     assert!(g.app().prefs.view.zoom > view.zoom);
 }
+
+/// Tab and Shift+Tab step through the shapes, and the other keys go on working afterwards: the
+/// keyboard focus does not wander off to a button of the application bar.
+#[test]
+fn tab_steps_through_the_shapes_and_leaves_the_keys_working() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    let all = g.app().editor.selected();
+    assert_eq!(all.len(), 2);
+    let selected = |g: &Gui| g.app().editor.selected();
+    g.key(Key::Tab, Modifiers::NONE);
+    let first = selected(&g);
+    assert_eq!(first.len(), 1, "Tab picks one shape");
+    assert_eq!(g.ctx().memory(|m| m.focused()), None, "Tab gave the keyboard to a control");
+    g.key(Key::Tab, Modifiers::NONE);
+    let second = selected(&g);
+    assert!(second.len() == 1 && second != first, "the next Tab picks the other shape: {first:?} then {second:?}");
+    g.key(Key::Tab, Modifiers::SHIFT);
+    assert_eq!(selected(&g), first, "Shift+Tab goes back");
+    g.key(Key::Delete, Modifiers::NONE);
+    assert_eq!(g.app().editor.doc.len(), 1, "Delete still works after Tab");
+    // In a window Tab still walks through its fields.
+    g.run_command("arrange.move_selection");
+    assert!(g.dialog_open());
+    let before = selected(&g);
+    g.key(Key::Tab, Modifiers::NONE);
+    assert_eq!(selected(&g), before, "Tab over a window does not change the selection");
+}

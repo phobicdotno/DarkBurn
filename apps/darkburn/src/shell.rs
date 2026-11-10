@@ -325,6 +325,7 @@ impl DarkBurn {
         let mut clicked: Option<String> = None;
         // Forget last frame's published widget rectangles (else the registry grows every frame).
         solidcraft_ui_registry::clear_handles();
+        keep_tab_for_the_canvas(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
@@ -912,6 +913,18 @@ fn plain_key(shortcut: &egui::KeyboardShortcut) -> bool {
     let name = shortcut.logical_key.name();
     let function = name.len() > 1 && name.starts_with('F') && name[1..].chars().all(|c| c.is_ascii_digit());
     !shortcut.modifiers.command && !shortcut.modifiers.alt && !function && name != "Pause"
+}
+
+/// Tab steps through the shapes on the canvas. With no field holding the keyboard and no window
+/// open, egui would also take the key to start its own walk through the controls: the focus
+/// lands on the first button of the application bar, the canvas never sees the key, and every
+/// shortcut is dead until the next click (shortcuts are off while a control has the keyboard).
+/// Called before anything is drawn, so no control takes the focus this frame.
+fn keep_tab_for_the_canvas(ctx: &egui::Context) {
+    let tab = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { key: egui::Key::Tab, pressed: true, .. })));
+    if tab && ctx.memory(|m| m.focused().is_none()) && !crate::escape::window_open(ctx) {
+        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+    }
 }
 
 fn separator(ui: &Ui, bar: Rect, x: f32) {

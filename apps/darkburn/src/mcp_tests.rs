@@ -896,3 +896,69 @@ fn an_agent_cannot_ask_for_a_real_connection_through_reset_connection() {
         assert!(app.borrow().machine.dlg.confirm_connect.is_none(), "{id} put the Connect question for a real machine on the user's screen");
     }
 }
+
+#[test]
+fn device_setup_is_closed_to_an_agent_until_machines_are_allowed() {
+    // Machines are off for agents. What a job sends (start and end script, S range), where a
+    // device connects, which device is the active one and the galvo timings are the machine's
+    // setup, not the design: none of it may change.
+    let (mut gate, seen, app) = spy_gate(McpPolicy::default());
+    let sim = app.borrow().machine.devices.devices.iter().find(|d| d.is_simulator()).unwrap().id;
+    let before = (app.borrow().job.gcode.clone(), app.borrow().machine.devices.devices.len(), app.borrow().machine.devices.active);
+    let tries: &[(&str, Value)] = &[
+        ("job.set_gcode_settings", json!({"start_script": "M3 S1000", "s_max": 1000000})),
+        ("device.set_connection", json!({"host": "192.168.1.50", "port": 23})),
+        ("device.import", json!({"text": "{}"})),
+        ("device.add", json!({"type": "GRBL"})),
+        ("device.duplicate", json!({"id": sim})),
+        ("device.remove", json!({"id": sim})),
+        ("device.select", json!({"id": sim})),
+        ("device.adopt_detected", json!({})),
+        ("device.bridge_setup", json!({"host": "192.168.1.50"})),
+        ("device.read_motion", json!({})),
+        ("galvo.settings_set", json!({"values": {}})),
+        ("galvo.import_ezcad", json!({"path": "x.cfg"})),
+        ("galvo.repeat_marking", json!({"count": 100})),
+    ];
+    for (id, args) in tries {
+        let c = gate.describe_command(id).unwrap().unwrap_or_else(|| panic!("{id} is registered"));
+        assert_eq!(c.hardware_class, Some(HardwareClass::Config), "{id}");
+        let e = gate.execute(id, args.clone()).expect_err(&format!("{id} must not run by default"));
+        assert_eq!(e.code, ErrorCode::Denied, "{id}: {}", e.message);
+    }
+    assert!(seen.borrow().is_empty(), "nothing reached the backend: {:?}", seen.borrow());
+    let after = (app.borrow().job.gcode.clone(), app.borrow().machine.devices.devices.len(), app.borrow().machine.devices.active);
+    assert!(before == after, "the device setup changed");
+    // Reading it stays open.
+    for id in ["device.list", "device.detected", "gcode.scripts", "device.automation_status"] {
+        gate.execute(id, json!({})).unwrap_or_else(|e| panic!("{id}: {}", e.message));
+    }
+}
+
+#[test]
+fn an_agent_cannot_cut_the_users_connection_by_selecting_another_device() {
+    use crate::machine_api::LaserState;
+    let (mut gate, _seen, app) = spy_gate(McpPolicy::default());
+    slow_job_on_the_simulator(&app);
+    let other = app.borrow().machine.devices.devices.iter().find(|d| Some(d.id) != app.borrow().machine.devices.active).unwrap().id;
+    let _ = gate.execute("device.select", json!({ "id": other }));
+    for _ in 0..40 {
+        assert_eq!(machine_state(&app), LaserState::Busy, "the running job lost its machine");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    gate.execute("job.stop", json!({})).unwrap();
+    wait_state(&app, "stopped", |s| matches!(s, LaserState::Ready | LaserState::Alarm));
+}
+
+#[test]
+fn showing_the_job_log_folder_counts_as_writing_files() {
+    // The folder is a setting an agent may change; showing it creates it.
+    let dir = std::env::temp_dir().join(format!("darkburn-hunt3-log-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (mut gate, _seen, _app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
+    gate.execute("settings.set", json!({"key": "opts.job_log_dir", "value": dir.join("made/by/agent").to_string_lossy()})).unwrap();
+    let e = gate.execute("job.log_show", json!({})).expect_err("file writes are off");
+    assert_eq!(e.code, ErrorCode::Denied, "{}", e.message);
+    assert!(!dir.exists(), "a folder was made with file writes off");
+    let _ = crate::misc_cmds::take_revealed();
+}

@@ -669,7 +669,7 @@ impl McpBackend {
         let app_rc = self.app.clone();
         let mut app = app_rc.try_borrow_mut().map_err(|_| CommandError::failed("the app is busy: try again"))?;
         if self.headless
-            && mcp_catalog::is_hardware(id)
+            && mcp_catalog::acts_on_machine(id)
             && mcp_catalog::hardware_class(id) != Some(darkburn_mcp::HardwareClass::Stop)
             && !simulator_only(&app, &args)
         {

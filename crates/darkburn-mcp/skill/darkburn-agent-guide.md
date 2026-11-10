@@ -134,7 +134,9 @@ call.
   files, or connects to a device is a **hardware command** (`hardware: true`): `machine.*`,
   `job.start`, `job.send`, `job.frame`, `job.home`, `job.run_gcode`, `tools.position_laser`,
   `arrange.laser_*`, `edit.device_settings`, `edit.machine_settings`, `laser.devices` and more.
-  `describe_command` tells for any id.
+  `describe_command` tells for any id. Changing the machine's setup counts too: selecting, adding,
+  removing or importing a device, its connection, the start and end scripts and limits
+  (`job.set_gcode_settings`) and the galvo settings.
 - By default hardware commands are **denied**: only emergency stop, pause and stop work. The error
   says "ask the user". Do not try to work around it: ask the user to turn on "Allow AI agents to
   control machines" in DarkBurn (Settings > AI agents). `inspect_ui`/`machine_status` still show the
@@ -143,7 +145,9 @@ call.
   `machine.start`, `machine.fire`, `machine.file_run`, raw console lines) still needs the user's click
   on Confirm in a dialog: the call returns `confirmation_required` and a pending id. Tell the user,
   wait with `pending {"id": ...}`, which returns a `confirmation_token`, then repeat the call with
-  `confirmation_token`. The token works once and only for the same command and arguments. A
+  `confirmation_token`. The token works once and only for the same command and arguments, and
+  only while the design, the selection and the device are as they were when the user was asked:
+  finish your edits first, then ask. `job.pause` only pauses; going on is `machine.resume`. A
   Cancel click answers `confirmation_denied`: do not retry unless the user asks.
 - Gweike machines (1200 W fibre cutter) need a separate user opt-in ("Allow Gweike commands"). No
   command can bypass its height follower, piercing or gas logic.

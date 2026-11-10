@@ -82,10 +82,38 @@ const MOTION: &[&str] = &[
     "arrange.to_laser",
 ];
 
-/// Whether the command moves axes, fires the laser, sends a job, writes controller settings or
-/// talks to a device. The registry's rule plus the `machine.*` family, which is all hardware.
-pub fn is_hardware(id: &str) -> bool {
+/// Change the machine's setup without talking to it: which device is the active one (selecting
+/// another also drops the open connection), where a device connects, the device list, and what
+/// every job sends (start and end script, S range, motion limits, galvo timings). That is the
+/// machine owner's, not the design's, so it needs the same permission as writing settings to a
+/// controller.
+const DEVICE_SETUP: &[&str] = &[
+    "device.select",
+    "device.add",
+    "device.duplicate",
+    "device.remove",
+    "device.import",
+    "device.set_connection",
+    "device.bridge_setup",
+    "device.adopt_detected",
+    "device.read_motion",
+    "job.set_gcode_settings",
+    "galvo.settings_set",
+    "galvo.import_ezcad",
+    "galvo.repeat_marking",
+];
+
+/// Whether the command acts on a connected machine: moves axes, fires the laser, sends a job,
+/// writes controller settings or talks to a device. The registry's rule plus the `machine.*`
+/// family, which is all hardware.
+pub fn acts_on_machine(id: &str) -> bool {
     commands::hardware(id) || id.starts_with("machine.") || id.starts_with("gweike.") || id.starts_with("mcc.")
+}
+
+/// Whether the safety gate treats the command as hardware: it acts on a machine, or it changes
+/// the machine's setup.
+pub fn is_hardware(id: &str) -> bool {
+    acts_on_machine(id) || DEVICE_SETUP.contains(&id)
 }
 
 /// The hardware class of a hardware command; `None` for an ordinary command.
@@ -99,7 +127,7 @@ pub fn hardware_class(id: &str) -> Option<HardwareClass> {
         HardwareClass::FireOrJob
     } else if CONNECT.contains(&id) {
         HardwareClass::Connect
-    } else if CONFIG.contains(&id) {
+    } else if CONFIG.contains(&id) || DEVICE_SETUP.contains(&id) {
         HardwareClass::Config
     } else if MOTION.contains(&id) || id.starts_with("arrange.laser_") {
         HardwareClass::Motion
@@ -130,6 +158,7 @@ const WRITES_FILES: &[&str] = &[
     "project.print_pdf",
     "project.prefs_export",
     "job.save_gcode",
+    "job.log_show", // makes the job log's folder, which is a setting
     "job.preview_save_image",
     "job.preview_save_from_here",
     "job.material_test_presets",

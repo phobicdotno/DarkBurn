@@ -92,6 +92,8 @@ mod mcp_inspect;
 mod mcp_tests;
 mod mcp_ui;
 mod misc_cmds;
+#[cfg(test)]
+mod monkey_tests;
 mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;

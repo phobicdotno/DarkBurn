@@ -522,6 +522,23 @@ impl MachineUi {
         self.applied_device = None;
     }
 
+    /// The device list changed (a device was added and made the active one, or the active one was
+    /// removed): when the active device is no longer `was`, an open connection belongs to another
+    /// device than the one the panels and the job builder now work for, so it is ended.
+    pub fn end_link_if_device_changed(&mut self, was: Option<u64>) {
+        if self.devices.active != was && (self.handle.is_connected() || self.handle.is_real_machine()) {
+            self.handle.disconnect();
+        }
+    }
+
+    /// Remove a device from the list [DEV-04]; a connection to it is ended.
+    pub fn remove_device(&mut self, id: u64) -> bool {
+        let was = self.devices.active;
+        let removed = self.devices.remove(id);
+        self.end_link_if_device_changed(was);
+        removed
+    }
+
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
@@ -943,7 +960,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "device.remove" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
-            if m.devices.remove(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
+            if m.remove_device(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
         }
         "device.export" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
@@ -1116,6 +1133,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     app.extras.library.switch_device(&dev.name, &app.prefs);
     // Its own saved positions (before the capture below, which would hand it the last device's).
     app.machine.jog.saved = dev.state.saved_positions;
+    app.machine.jog.finish = dev.state.finish_position;
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
@@ -1126,9 +1144,10 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
-    let saved = app.machine.jog.saved.clone();
+    let (saved, finish) = (app.machine.jog.saved.clone(), app.machine.jog.finish);
     if let Some(d) = app.machine.devices.get_mut(id) {
         d.state.saved_positions = saved;
+        d.state.finish_position = finish;
         d.state.inches = inches;
         d.state.show_grid = grid;
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.
@@ -1152,7 +1171,12 @@ pub fn save_default_layers(app: &mut DarkBurn) -> bool {
 
 pub fn apply_default_layers(app: &mut DarkBurn) -> bool {
     let Some(text) = app.machine.active().state.default_layers.clone() else { return false };
-    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(&text) else { return false };
+    apply_layers(app, &text)
+}
+
+/// Put stored default layers (a device's `default_layers` text) on the open project, as one undo step.
+pub fn apply_layers(app: &mut DarkBurn, text: &str) -> bool {
+    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(text) else { return false };
     if layers.len() != app.editor.doc.layers.len() {
         return false;
     }

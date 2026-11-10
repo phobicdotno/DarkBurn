@@ -57,6 +57,10 @@ impl Extras {
 /// (renderer, canvas input, menus) and apply the ones egui itself owns.
 pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     app.prefs.opts.sanitise();
+    if ui_kit::number_parser(ctx).is_none() {
+        // Sums and units in every number field of the dialogs and panels [CUT-10].
+        ui_kit::install_number_parser(ctx, std::sync::Arc::new(|text: &str, unit_mm: f64| darkburn_core::expr::eval_in(text, unit_mm)));
+    }
     options::publish(&app.prefs.opts);
     keymap::publish(&app.prefs.hotkeys);
     i18n::set_language(&app.prefs.language);

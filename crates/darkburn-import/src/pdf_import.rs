@@ -312,6 +312,7 @@ impl<'a> Interp<'a> {
         let doc = self.doc;
         let mut gs = gs0;
         let mut stack: Vec<GState> = Vec::new();
+        let mut unsaved = 0usize;
         let mut pb = PathBuilder { path: BezPath::new(), current: None, start: None, reopen: false };
         let mut clip_pending = false;
         // Marked-content stack: Some((layer name, hidden)) for optional content.
@@ -329,10 +330,15 @@ impl<'a> Interp<'a> {
                 "q" => {
                     if stack.len() < 256 {
                         stack.push(gs.clone());
+                    } else {
+                        // Too deep to keep: its `Q` must not restore an outer level instead.
+                        unsaved += 1;
                     }
                 }
                 "Q" => {
-                    if let Some(s) = stack.pop() {
+                    if unsaved > 0 {
+                        unsaved -= 1;
+                    } else if let Some(s) = stack.pop() {
                         gs = s;
                     }
                 }

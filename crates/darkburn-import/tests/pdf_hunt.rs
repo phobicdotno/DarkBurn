@@ -183,3 +183,14 @@ fn a_fax_image_with_an_absurd_column_count_is_refused() {
     assert!(doc.items.iter().all(|i| !matches!(i.kind, ItemKind::Image(_))));
     assert!(doc.warnings.iter().any(|w| w.contains("image")), "{:?}", doc.warnings);
 }
+
+#[test]
+fn a_restore_after_too_many_saves_goes_back_one_level_only() {
+    // 258 nested saves, each moving 1 pt right; only 256 are kept. The two restores that follow
+    // belong to the two saves that were not kept, so the line is still drawn 258 pt to the right
+    // (it was drawn at 256: each restore dropped a level that was still open).
+    let content = format!("{}Q Q 0 0 m 0 10 l S", "q 1 0 0 1 1 0 cm ".repeat(258));
+    let doc = read(&pdf("/MediaBox [0 0 600 300]", &content, &[]));
+    let b = paths(&doc)[0].path.bounding_box();
+    assert!(box_pt(b, 258.0, 0.0, 258.0, 10.0), "{b:?}");
+}

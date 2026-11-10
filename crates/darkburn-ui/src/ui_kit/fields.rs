@@ -60,6 +60,44 @@ pub fn expressions(ctx: &egui::Context) -> Option<Arc<dyn Expressions>> {
     ctx.data(|data| data.get_temp::<Arc<dyn Expressions>>(expressions_id()))
 }
 
+/// What a number field does with typed text that is not a plain number: the host's sums and
+/// units. It gets the text and the length of the field's unit in millimetres (25.4 for a field
+/// shown in inches, 1 for every other field) and gives the value in the field's unit.
+pub type NumberParser = Arc<dyn Fn(&str, f64) -> Option<f64> + Send + Sync>;
+
+fn number_parser_id() -> egui::Id {
+    egui::Id::unique("db_kit_number_parser")
+}
+
+/// Let every [`number_field`] in `ctx` take sums and units ("20 + 22", "10in/4") through the
+/// host's parser. Without one a number field reads plain numbers only.
+pub fn install_number_parser(ctx: &egui::Context, parser: NumberParser) {
+    ctx.data_mut(|data| data.insert_temp(number_parser_id(), parser));
+}
+
+/// The parser installed with [`install_number_parser`], if any.
+pub fn number_parser(ctx: &egui::Context) -> Option<NumberParser> {
+    ctx.data(|data| data.get_temp::<NumberParser>(number_parser_id()))
+}
+
+/// The parser of a number field that shows `suffix` after its value: a plain number first;
+/// anything else (a sum, a unit) goes to the host's parser when it has installed one. The suffix
+/// may be typed after the value or left off. For a `DragValue` built outside the kit:
+/// `.custom_parser(typed_number(ui.ctx(), " mm"))`.
+pub fn typed_number(ctx: &egui::Context, suffix: &str) -> impl Fn(&str) -> Option<f64> + use<> {
+    let host = number_parser(ctx);
+    let unit = suffix.trim().to_owned();
+    let unit_mm = if unit == "in" { 25.4 } else { 1.0 };
+    move |text: &str| {
+        parse_number(text).or_else(|| {
+            let host = host.as_ref()?;
+            let typed = text.trim();
+            let bare = typed.strip_suffix(unit.as_str()).filter(|_| !unit.is_empty()).map(str::trim_end);
+            bare.and_then(|b| parse_number(b).or_else(|| host(b, unit_mm))).or_else(|| host(typed, unit_mm)).filter(|v| v.is_finite())
+        })
+    }
+}
+
 /// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
 /// and "2,5" are both 2.5, as a numeric keypad types either depending on the locale. Spaces are
 /// ignored and "−" is a minus, as in egui's own parser. A comma beside a point ("1.234,5") or a
@@ -1759,9 +1797,9 @@ fn bounded_number_field<T: egui::emath::Numeric>(
     suffix: &str,
     clamp_existing: bool,
 ) -> Response {
-    let response = ui.add(
-        egui::DragValue::new(value).range(range).clamp_existing_to_range(clamp_existing).speed(speed).suffix(suffix).custom_parser(parse_number),
-    );
+    let parse = typed_number(ui.ctx(), suffix);
+    let response =
+        ui.add(egui::DragValue::new(value).range(range).clamp_existing_to_range(clamp_existing).speed(speed).suffix(suffix).custom_parser(parse));
     if response.has_focus() {
         super::settings_search::note_key_sink(ui.ctx());
     }

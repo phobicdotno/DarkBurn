@@ -262,6 +262,8 @@ pub struct ArtState {
     pub renaming: Option<(usize, usize, usize, String)>,
     /// A drop or add that met an item of the same name: (library, folder, item, how to ask).
     pub pending: Option<(usize, usize, Item)>,
+    /// Close was pressed on this library while it had unsaved changes: the panel asks what to do.
+    pub ask_close: Option<usize>,
     pub status: String,
     pub thumbs: HashMap<u64, Thumb>,
     /// The panel's screen rectangle from the last frame, so dropped files can be told apart.
@@ -285,6 +287,19 @@ impl ArtState {
         }
         self.libs.push(Open::load(path)?);
         Ok(self.libs.len() - 1)
+    }
+
+    /// Close library `i`. What pointed at it (a question about one of its items, a name being
+    /// typed) goes with it; what pointed at a later library follows that library.
+    pub fn close(&mut self, i: usize) {
+        if i >= self.libs.len() {
+            return;
+        }
+        self.libs.remove(i);
+        self.target = (0, 0);
+        self.ask_close = None;
+        self.pending = self.pending.take().filter(|p| p.0 != i).map(|(l, f, item)| (if l > i { l - 1 } else { l }, f, item));
+        self.renaming = self.renaming.take().filter(|r| r.0 != i).map(|(l, f, n, text)| (if l > i { l - 1 } else { l }, f, n, text));
     }
 
     pub fn new_library(&mut self) -> usize {
@@ -626,11 +641,47 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     if !art.status.is_empty() {
         ui_kit::status_line(ui, &art.status, ui_kit::StatusTone::Dim);
     }
+    if let Some(i) = art.ask_close.filter(|i| art.libs.get(*i).is_some_and(|l| l.dirty)) {
+        ui.add_space(t.space_6);
+        let name = art.libs[i].lib.name.clone();
+        ui_kit::status_line(ui, &format!("\"{name}\" {}", tr("art.unsaved", "has unsaved changes")), ui_kit::StatusTone::Dim);
+        ui.horizontal_wrapped(|ui| {
+            if btn(ui, &tr("art.save_close", "Save and close"), "", true) {
+                let r = if art.libs[i].path.is_some() {
+                    art.libs[i].save()
+                } else if let Some(p) =
+                    rfd::FileDialog::new().add_filter("Art library", &[FILE_EXTENSION]).set_file_name(format!("{name}.{FILE_EXTENSION}")).save_file()
+                {
+                    art.libs[i].save_as(&p)
+                } else {
+                    // No file was picked: the library stays open, with its changes.
+                    Err(String::new())
+                };
+                match r {
+                    Ok(()) => close = Some(i),
+                    Err(e) => art.status = e,
+                }
+            }
+            if btn(ui, &tr("art.discard", "Close without saving"), "", true) {
+                art.libs[i].dirty = false;
+                close = Some(i);
+            }
+            if btn(ui, &tr("art.keep_open", "Keep open"), "", true) {
+                art.ask_close = None;
+            }
+        });
+    } else {
+        art.ask_close = None;
+    }
     if let Some(i) = close
-        && i < art.libs.len()
+        && let Some(lib) = art.libs.get(i)
     {
-        art.libs.remove(i);
-        art.target = (0, 0);
+        if lib.dirty {
+            // Unsaved changes: ask before they are lost.
+            art.ask_close = Some(i);
+        } else {
+            art.close(i);
+        }
     }
     app.extras.art = art;
 

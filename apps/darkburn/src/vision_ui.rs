@@ -390,14 +390,15 @@ fn note(ui: &mut Ui, text: &str) {
 
 fn field(ui: &mut Ui, label: &str, v: &mut f64, unit: &str) {
     ui_kit::row(ui, label, |ui| {
-        let r = ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit));
+        let r = ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit).custom_parser(ui_kit::typed_number(ui.ctx(), unit)));
         crate::a11y::number(ui, &r, label);
     });
 }
 
 /// One axis of a position: a number field named for what it places ("Head at X").
 fn coord(ui: &mut Ui, what: &str, axis: &str, v: &mut f64, speed: f64) {
-    let r = ui.add(egui::DragValue::new(v).speed(speed).prefix(format!("{axis} ")).suffix(" mm"));
+    let r =
+        ui.add(egui::DragValue::new(v).speed(speed).prefix(format!("{axis} ")).suffix(" mm").custom_parser(ui_kit::typed_number(ui.ctx(), " mm")));
     crate::a11y::number(ui, &r, &format!("{what} {axis}"));
 }
 
@@ -498,7 +499,8 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
         field(ui, "Turns", &mut d.revs, "");
         ui.horizontal(|ui| {
             if button(ui, "Plan test", "Shows what the test would do; nothing is sent from here") {
-                d.plan = msg(vc::rotary_set(app, &rotary_args(&d)).and_then(|_| execute_plan(app, d.revs)), plan_text);
+                // From what the window shows; only Apply keeps the settings.
+                d.plan = msg(vc::rotary_plan_for(app, &rotary_args(&d), d.revs), plan_text);
             }
         });
         result_line(ui, &d.plan);
@@ -517,10 +519,6 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
     if !open || closing {
         close(app);
     }
-}
-
-fn execute_plan(app: &mut DarkBurn, revs: f64) -> Result<Value, String> {
-    crate::api::execute_headless(app, "rotary.test_plan", &json!({ "revolutions": revs }))
 }
 
 fn plan_text(v: &Value) -> String {
@@ -1349,12 +1347,19 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     });
     let mut wp = c.overlay.width_mm.map_or(100.0, |w| w / covers.width * 100.0);
     let mut hp = c.overlay.height_mm.map_or(100.0, |h| h / covers.height * 100.0);
+    let (wp0, hp0) = (wp, hp);
     field(ui, "Width", &mut wp, " %");
     field(ui, "Height", &mut hp, " %");
     field(ui, "X shift", &mut c.overlay.x_shift_mm, " mm");
     field(ui, "Y shift", &mut c.overlay.y_shift_mm, " mm");
-    c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
-    c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    // Only a value that was changed here is written back: millimetres to percent and back does
+    // not always give the same number, and that alone must not count as a change to the project.
+    if wp != wp0 {
+        c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
+    }
+    if hp != hp0 {
+        c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    }
     // Camera controls
     let mut ex = c.exposure.unwrap_or(0.0);
     let mut br = c.brightness.unwrap_or(0.0);

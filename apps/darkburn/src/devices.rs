@@ -388,17 +388,15 @@ pub struct BackupEntry {
     pub text: String,
 }
 
-/// What a device remembers for itself (DEV-07).
+/// What a device remembers for itself (DEV-07). The job origin and the start mode are the
+/// project's, and the material library follows the device by its name (`library.rs`), so neither
+/// is kept here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeviceState {
     pub inches: bool,
     pub grid_spacing: f64,
     pub show_grid: bool,
-    /// Job origin 9-point anchor, 0 to 8 reading order from the top left.
-    pub job_origin: u8,
-    /// Start from: 0 absolute, 1 current position, 2 user origin.
-    pub start_from: u8,
     /// Dock layout of this device as the app's own JSON (`Prefs::panels`); `None` keeps the current one.
     pub panel_layout: Option<String>,
     /// Default layers (cut settings) as the app's own JSON; `None` keeps the project's.
@@ -406,12 +404,12 @@ pub struct DeviceState {
     /// Remembered serial port ("" = choose automatically).
     pub port: String,
     pub excluded_ports: Vec<String>,
-    /// Material library files used with this device.
-    pub libraries: Vec<String>,
     pub backups: Vec<BackupEntry>,
     pub macros: [String; 6],
     /// The saved positions of the Move panel (MOVE-10).
     pub saved_positions: Vec<crate::machine_ui::SavedPos>,
+    /// Where jobs end ("Set finish position"), in machine coordinates (MOVE-14).
+    pub finish_position: Option<(f64, f64)>,
 }
 
 impl Default for DeviceState {
@@ -420,16 +418,14 @@ impl Default for DeviceState {
             inches: false,
             grid_spacing: 10.0,
             show_grid: true,
-            job_origin: 6,
-            start_from: 0,
             panel_layout: None,
             default_layers: None,
             port: AUTO_PORT.into(),
             excluded_ports: Vec::new(),
-            libraries: Vec::new(),
             backups: Vec::new(),
             macros: Default::default(),
             saved_positions: Vec::new(),
+            finish_position: None,
         }
     }
 }
@@ -1232,6 +1228,20 @@ mod tests {
         assert!(other.import_profile(r#"{"format":"darkburn-device","version":9,"device":{}}"#).is_err());
         let bad = text.replace("410.0", "-5.0");
         assert!(other.import_profile(&bad).is_err());
+    }
+
+    #[test]
+    fn a_device_file_holds_only_what_a_device_uses() {
+        // A job origin, a start mode and a library list were written with every device and read by
+        // nothing. They are no longer written; a file that still has them opens as before.
+        let s = DeviceStore::default();
+        let text = s.to_json();
+        for dead in ["\"job_origin\"", "\"start_from\"", "\"libraries\""] {
+            assert!(!text.contains(dead), "{dead} is saved but nothing reads it");
+        }
+        let old = text.replace("\"inches\": false,", "\"inches\": false, \"job_origin\": 6, \"start_from\": 0, \"libraries\": [],");
+        assert_ne!(old, text);
+        assert_eq!(DeviceStore::from_json(&old), s);
     }
 
     #[test]

@@ -585,7 +585,10 @@ pub fn write_lbrn2(doc: &Imported, opts: &LbrnWriteOptions) -> String {
     // Layer assignment.
     let mut settings = doc.layer_settings.clone();
     let mut colour_layers: Vec<(Rgb, u32)> = Vec::new();
-    let mut next = settings.iter().map(|l| l.index + 1).max().unwrap_or(0);
+    // The first free index after the layers in use; past the last possible index it starts again
+    // at 0 and skips the ones taken.
+    let mut used: std::collections::HashSet<u32> = settings.iter().map(|l| l.index).chain(doc.items.iter().filter_map(|i| i.layer_index)).collect();
+    let mut next = settings.iter().map(|l| l.index).max().map_or(0, |m| m.wrapping_add(1));
     let mut item_layer = Vec::with_capacity(doc.items.len());
     for item in &doc.items {
         let idx = match item.layer_index {
@@ -595,8 +598,12 @@ pub fn write_lbrn2(doc: &Imported, opts: &LbrnWriteOptions) -> String {
                 match colour_layers.iter().find(|(k, _)| *k == c) {
                     Some((_, i)) => *i,
                     None => {
+                        while used.contains(&next) {
+                            next = next.wrapping_add(1);
+                        }
                         let i = next;
-                        next += 1;
+                        used.insert(i);
+                        next = next.wrapping_add(1);
                         colour_layers.push((c, i));
                         i
                     }

@@ -2,8 +2,8 @@
 //! the preferences as overrides (command id to key text, empty for "no key"). Conflicts are
 //! detected when a key is assigned. A keymap travels as a `.dbhk` file.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::RwLock;
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use serde::{Deserialize, Serialize};
@@ -17,20 +17,24 @@ pub type Overrides = BTreeMap<String, String>;
 pub const FILE_FORMAT: &str = "darkburn-hotkeys";
 pub const FILE_EXTENSION: &str = "dbhk";
 
-static CURRENT: RwLock<Overrides> = RwLock::new(Overrides::new());
+thread_local! {
+    // One snapshot per thread that draws an app (see `options::get`).
+    static CURRENT: RefCell<Overrides> = const { RefCell::new(Overrides::new()) };
+}
 
 /// Refresh the snapshot the menus and the ribbon tooltips read.
 pub fn publish(o: &Overrides) {
-    if let Ok(mut c) = CURRENT.write()
-        && *c != *o
-    {
-        *c = o.clone();
-    }
+    CURRENT.with(|c| {
+        let mut c = c.borrow_mut();
+        if *c != *o {
+            *c = o.clone();
+        }
+    });
 }
 
 /// The key text now bound to command `c` (its default unless changed).
 pub fn key_for(c: &Cmd) -> String {
-    key_in(&CURRENT.read().map(|o| o.clone()).unwrap_or_default(), c.id, default_key(c))
+    CURRENT.with(|o| key_in(&o.borrow(), c.id, default_key(c)))
 }
 
 /// Keys of commands whose registry entry (in another module) has none: the laser keys that
@@ -198,6 +202,14 @@ pub fn from_file(text: &str) -> Result<Overrides, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_snapshot_is_not_shared_with_an_app_on_another_thread() {
+        let copy = commands::lookup("edit.copy").unwrap();
+        publish(&Overrides::from([("edit.copy".to_string(), "Ctrl+Alt+C".to_string())]));
+        std::thread::spawn(|| publish(&Overrides::new())).join().unwrap();
+        assert_eq!(key_for(copy), "Ctrl+Alt+C", "another app's keys replaced this one's");
+    }
 
     #[test]
     fn defaults_have_no_conflicts_and_all_parse() {

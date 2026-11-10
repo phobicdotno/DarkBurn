@@ -931,7 +931,9 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<Resul
             }
             w.width = a.get("width").and_then(Value::as_f64).unwrap_or(w.width);
             w.height = a.get("height").and_then(Value::as_f64).unwrap_or(w.height);
+            let was = app.machine.devices.active;
             let id = w.finish(&mut app.machine.devices)?;
+            app.machine.end_link_if_device_changed(was);
             Ok(json!({ "ok": true, "id": id }))
         })(),
         "device.bridge_wizard" => {
@@ -1181,16 +1183,21 @@ fn bridge_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
     }
     match action {
-        Action::Ok if last => match w.finish(&mut app.machine.devices) {
-            Ok(id) => {
-                app.machine.dlg.devices_sel = Some(id);
-                app.machine.say("Added the laser behind the bridge. Press Connect in the Laser panel when you are ready.");
+        Action::Ok if last => {
+            let was = app.machine.devices.active;
+            let added = w.finish(&mut app.machine.devices);
+            app.machine.end_link_if_device_changed(was);
+            match added {
+                Ok(id) => {
+                    app.machine.dlg.devices_sel = Some(id);
+                    app.machine.say("Added the laser behind the bridge. Press Connect in the Laser panel when you are ready.");
+                }
+                Err(e) => {
+                    app.machine.dlg.message = Some(e);
+                    app.machine.conn.bridge = Some(w);
+                }
             }
-            Err(e) => {
-                app.machine.dlg.message = Some(e);
-                app.machine.conn.bridge = Some(w);
-            }
-        },
+        }
         Action::Ok => {
             w.step += 1;
             app.machine.conn.bridge = Some(w);

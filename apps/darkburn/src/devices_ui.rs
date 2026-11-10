@@ -147,7 +147,7 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if small(ui, "Remove", "Remove it from the list (the last device stays)", has && n > 1)
                     && let Some(id) = sel
                 {
-                    app.machine.devices.remove(id);
+                    app.machine.remove_device(id);
                     app.machine.dlg.devices_sel = None;
                 }
                 if small(ui, "Export", "Save it as a .dbdev file", has)
@@ -263,7 +263,11 @@ fn wizard_dialog(ctx: &Context, app: &mut DarkBurn) {
     match action {
         Action::Ok => {
             if last {
-                match w.finish(&mut app.machine.devices) {
+                let was = app.machine.devices.active;
+                let added = w.finish(&mut app.machine.devices);
+                // The new device is the one in use now: a connection to the old one ends.
+                app.machine.end_link_if_device_changed(was);
+                match added {
                     Ok(id) => {
                         app.machine.dlg.devices_sel = Some(id);
                         app.machine.dlg.devices = true;
@@ -513,14 +517,17 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.0..=1000.0, 0.5, " mm");
     });
     ui.horizontal(|ui| {
-        if small(ui, "Use current layers as defaults", "", true) {
-            machine_ui::save_default_layers(app);
-            if let Some(saved) = app.machine.devices.get(d.id) {
-                d.state.default_layers = saved.state.default_layers.clone();
-            }
+        // Both work on the device this window is editing (not on the one in use), and the new
+        // defaults are part of the draft: Cancel leaves the device as it was.
+        if small(ui, "Use current layers as defaults", "", true)
+            && let Ok(layers) = serde_json::to_string(&app.editor.doc.layers)
+        {
+            d.state.default_layers = Some(layers);
         }
-        if small(ui, "Apply default layers", "", d.state.default_layers.is_some()) {
-            machine_ui::apply_default_layers(app);
+        if small(ui, "Apply default layers", "", d.state.default_layers.is_some())
+            && let Some(text) = d.state.default_layers.clone()
+        {
+            machine_ui::apply_layers(app, &text);
         }
     });
 }

@@ -183,17 +183,21 @@ impl Document {
         self.layer_order.iter().copied().filter(|l| used[*l]).collect()
     }
 
-    /// Move layer `layer` one place earlier (`delta` -1) or later (+1) among the used layers.
+    /// Move layer `layer` earlier (`delta` below zero) or later by that many places among the used
+    /// layers, as far as the list goes. False when it is already at that end.
     pub fn move_layer(&mut self, layer: usize, delta: isize) -> bool {
-        let used = self.used_layers();
-        let Some(pos) = used.iter().position(|l| *l == layer) else { return false };
-        let to = pos as isize + delta;
-        if to < 0 || to as usize >= used.len() {
-            return false;
+        let mut moved = false;
+        for _ in 0..delta.unsigned_abs().min(LAYER_COUNT) {
+            let used = self.used_layers();
+            let Some(pos) = used.iter().position(|l| *l == layer) else { return false };
+            let to = pos as isize + delta.signum();
+            if to < 0 || to as usize >= used.len() {
+                break;
+            }
+            self.swap_order(layer, used[to as usize]);
+            moved = true;
         }
-        let other = used[to as usize];
-        self.swap_order(layer, other);
-        true
+        moved
     }
 
     /// Put `layer` just before `before` in the output order (drag and drop in the list).
@@ -347,6 +351,11 @@ mod tests {
         assert!(d.move_layer(9, -1));
         assert_eq!(d.used_layers(), vec![1, 9, 4]);
         assert!(!d.move_layer(1, -1));
+        // Two places is two steps, not a swap with the layer two places on: 1 9 4 -> 9 4 1.
+        assert!(d.move_layer(1, 2));
+        assert_eq!(d.used_layers(), vec![9, 4, 1]);
+        assert!(d.move_layer(1, -5), "further than the list goes: to the front");
+        assert_eq!(d.used_layers(), vec![1, 9, 4]);
         d.place_layer_before(4, Some(1));
         assert_eq!(d.used_layers(), vec![4, 1, 9]);
         d.layer_mut(9).main_mut().mode = Mode::Fill;

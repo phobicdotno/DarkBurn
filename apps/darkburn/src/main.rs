@@ -4,6 +4,8 @@
 mod a11y;
 mod actions;
 mod api;
+#[cfg(test)]
+mod arrange_hunt_tests;
 mod art_library;
 mod canvas;
 mod canvas_input;

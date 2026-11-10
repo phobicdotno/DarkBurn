@@ -650,3 +650,25 @@ fn eta_hook_is_used() {
     let Event::JobFinished(p) = wait_event(&m, |e| matches!(e, Event::JobFinished(_))) else { unreachable!() };
     assert_eq!(p.eta, Some(Duration::ZERO));
 }
+
+#[test]
+fn homing_turns_the_fire_button_off_first() {
+    let emu = emulator(EmulatorConfig::atomstack().with_setting(22, 1.0).with_time_scale(50.0));
+    let opts = ConnectOptions { max_fire_duration: Duration::from_secs(60), ..Default::default() };
+    let m = connect(&emu, opts);
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.fire(1.0, Duration::from_secs(30)).unwrap();
+    wait_emu(&emu, "laser on", |e| e.laser_on());
+    wait_snap(&m, "fire flag", |s| s.fire_on);
+    m.home().unwrap();
+    wait_event(&m, |e| matches!(e, Event::Homed));
+    emu.with(|e| {
+        let lines = &e.stats().lines;
+        let home = lines.iter().rposition(|l| l == "$H").expect("homing was sent");
+        let fire = lines.iter().rposition(|l| l.contains("M3")).expect("fire was sent");
+        assert!(lines[fire..home].iter().any(|l| l.starts_with("M5")), "the laser must be switched off before homing starts: {:?}", &lines[fire..]);
+    });
+    wait_snap(&m, "fire flag cleared", |s| !s.fire_on);
+    emu.with(|e| assert!(!e.laser_on()));
+}

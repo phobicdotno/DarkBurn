@@ -1473,6 +1473,7 @@ impl Worker {
                     if origin == Origin::Console {
                         self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
                     }
+                    self.fire_off_before_command();
                     self.queue.push_back(Outgoing::new(text, origin));
                 }
             }
@@ -1480,6 +1481,7 @@ impl Worker {
                 if busy {
                     self.reject("Busy, macro not run.");
                 } else {
+                    self.fire_off_before_command();
                     for text in lines {
                         if origin == Origin::Macro {
                             self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
@@ -1551,6 +1553,14 @@ impl Worker {
         }
         if timed_out {
             self.emit(Event::FireOff);
+        }
+    }
+
+    /// The fire button never stays on while something else runs: a homing cycle or another
+    /// command that waits for the machine would hold back the timed `M5` until it is done.
+    fn fire_off_before_command(&mut self) {
+        if self.fire_until.is_some() {
+            self.fire_off(false);
         }
     }
 

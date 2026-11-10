@@ -962,3 +962,52 @@ fn showing_the_job_log_folder_counts_as_writing_files() {
     assert!(!dir.exists(), "a folder was made with file writes off");
     let _ = crate::misc_cmds::take_revealed();
 }
+
+#[test]
+fn huge_numbers_from_an_agent_never_leave_a_design_that_cannot_be_saved() {
+    let big = 1e308;
+    let tries: Vec<(&str, Value)> = vec![
+        ("shape.add_rect", json!({"x": big, "y": 0, "width": big, "height": 10})),
+        ("shape.add_rect", json!({"x": -big, "y": -big, "width": big, "height": big})),
+        ("shape.add_ellipse", json!({"x": big, "y": big, "width": big, "height": big})),
+        ("shape.add_polygon", json!({"cx": big, "cy": -big, "sides": 5, "radius": big})),
+        ("shape.add_path", json!({"svg_path": "M0 0 L1e308 1e308 L-1e308 5 Z"})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.translate", json!({"dx": big, "dy": big})),
+        ("shape.translate", json!({"dx": big, "dy": big})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.place", json!({"x": big, "y": -big})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.resize", json!({"width": big, "height": big})),
+        ("shape.resize", json!({"width": 1e-300, "height": 1e-300})),
+        ("shape.add_rect", json!({"x": 10, "y": 10, "width": 20, "height": 20})),
+        ("shape.rotate", json!({"degrees": big})),
+        ("shape.set_props", json!({"power_scale": big, "priority": 9007199254740991i64, "start_point": [big, big]})),
+        ("shape.set_corner_radius", json!({"radius": big})),
+        ("layer.set_param", json!({"layer": 0, "field": "speed", "value": big})),
+        ("layer.set_param", json!({"layer": 0, "field": "interval", "value": 1e-300})),
+        ("layer.set_cut_settings", json!({"layer": 0, "settings": {"speed": big, "interval": 1e-300, "passes": 4000000000u64}})),
+    ];
+    let mut b = backend();
+    let app = b.app_for_test();
+    for (id, args) in &tries {
+        let r = b.execute(id, args.clone());
+        let a = app.borrow();
+        for s in a.editor.doc.iter() {
+            let bb = s.bbox();
+            assert!(
+                bb.x0.is_finite() && bb.y0.is_finite() && bb.x1.is_finite() && bb.y1.is_finite(),
+                "{id} {args} (answered {r:?}) left a shape with no real size or place: {bb:?}"
+            );
+        }
+    }
+    // What is left saves and opens again as the same design.
+    let dir = std::env::temp_dir().join(format!("darkburn-hunt3-huge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("huge.dbrn");
+    b.execute("file.save_as", json!({"path": file.to_string_lossy()})).unwrap();
+    let saved = app.borrow().editor.doc.clone();
+    b.execute("file.open", json!({"path": file.to_string_lossy()})).unwrap_or_else(|e| panic!("the saved design does not open: {}", e.message));
+    assert_eq!(app.borrow().editor.doc.len(), saved.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}

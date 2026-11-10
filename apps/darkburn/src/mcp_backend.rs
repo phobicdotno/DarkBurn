@@ -36,6 +36,20 @@ const MAX_CHECKPOINTS: usize = 8;
 const MAX_EVENTS: usize = 2000;
 const SHOT_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_SCOPES: usize = 16;
+/// The largest number a command takes from an agent. Sizes and places are millimetres, so this
+/// is a million kilometres; past it sums of two arguments stop being numbers at all (1e308 +
+/// 1e308 is infinity) and a shape made from them has no size or place and cannot be saved.
+const MAX_NUMBER: f64 = 1e12;
+
+/// The first number in `v` that is beyond [`MAX_NUMBER`].
+fn number_out_of_range(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64().filter(|x| !(x.abs() <= MAX_NUMBER)),
+        Value::Array(items) => items.iter().find_map(number_out_of_range),
+        Value::Object(fields) => fields.values().find_map(number_out_of_range),
+        _ => None,
+    }
+}
 
 enum Work {
     /// `job.generate`: the summary of the built job.
@@ -662,6 +676,9 @@ impl McpBackend {
     fn execute_inner(&mut self, id: &str, args: Value) -> Result<Value, CommandError> {
         if let Some(why) = mcp_catalog::refused(id) {
             return Err(CommandError::new(ErrorCode::NotSupported, format!("`{id}`: {why}")));
+        }
+        if let Some(n) = number_out_of_range(&args) {
+            return Err(CommandError::invalid(format!("`{id}`: {n:e} is out of range: numbers go from -{MAX_NUMBER:e} to {MAX_NUMBER:e}")));
         }
         if id == "job.generate" {
             return self.start_build("generating the job", Work::Generate, None);

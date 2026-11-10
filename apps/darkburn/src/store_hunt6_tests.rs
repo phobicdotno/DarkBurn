@@ -124,3 +124,28 @@ fn a_library_saved_under_a_name_with_a_dot_keeps_the_whole_name() {
     assert!(dir.path("Signs v2.1.dbart").is_file());
     assert_eq!(a.extras.art.libs[l as usize].path.as_deref(), Some(dir.path("Signs v2.1.dbart").as_path()));
 }
+
+/// Two entries of a cut library never have the same name (layers are linked by it). Editing an
+/// entry so that it would get another entry's name gives it a number, as adding one does;
+/// before, deleting the renamed entry unlinked the layers of the other one.
+#[test]
+fn editing_a_library_entry_onto_another_entrys_name_keeps_the_names_apart() {
+    use crate::library::{self, Entry};
+    let mut a = app();
+    let entry = |d: &str| Entry { material: "Ply".into(), thickness_mm: Some(3.0), description: d.into(), ..Default::default() };
+    let cut = a.extras.library.lib.add(entry("Cut"));
+    let score = a.extras.library.lib.add(entry("Score"));
+    library::link_layer(&mut a, cut, 4).unwrap();
+    assert_eq!(a.editor.doc.layer(4).library_link.as_deref(), Some("Ply - 3 mm - Cut"));
+    // "Score" is edited and called "Cut" too.
+    library::replace_entry(&mut a, score, entry("Cut")).unwrap();
+    let names: Vec<String> = a.extras.library.lib.entries.iter().map(Entry::link_name).collect();
+    assert_ne!(names[cut], names[score], "the two entries still have names of their own");
+    assert_eq!(names[cut], "Ply - 3 mm - Cut");
+    // Deleting the edited one leaves the layer linked to the first.
+    library::delete_entry(&mut a, score).unwrap();
+    assert_eq!(a.editor.doc.layer(4).library_link.as_deref(), Some("Ply - 3 mm - Cut"));
+    // Saving an entry without changing its name is not a clash with itself.
+    library::replace_entry(&mut a, cut, entry("Cut")).unwrap();
+    assert_eq!(a.extras.library.lib.entries[cut].link_name(), "Ply - 3 mm - Cut");
+}

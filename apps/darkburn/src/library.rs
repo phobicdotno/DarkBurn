@@ -500,6 +500,15 @@ pub fn duplicate_entry(app: &mut DarkBurn, index: usize) -> Result<usize, String
 /// Replace entry `index` by `entry`; layers linked to the old name follow the new one.
 pub fn replace_entry(app: &mut DarkBurn, index: usize, entry: Entry) -> Result<(), String> {
     let old = app.extras.library.lib.entries.get(index).map(Entry::link_name).ok_or_else(|| tr("library.no_entry", "No such entry"))?;
+    // The name stays the entry's own (layers are linked by it): a number is put after it if
+    // another entry is called the same, as when an entry is added.
+    let base = entry.description.clone();
+    let mut entry = entry;
+    let mut n = 1;
+    while app.extras.library.lib.entries.iter().enumerate().any(|(i, e)| i != index && e.link_name() == entry.link_name()) {
+        n += 1;
+        entry.description = if base.is_empty() { format!("{n}") } else { format!("{base} {n}") };
+    }
     let new = entry.link_name();
     app.extras.library.lib.entries[index] = entry;
     app.extras.library.touch();

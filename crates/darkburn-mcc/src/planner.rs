@@ -263,7 +263,7 @@ pub fn dry_run(path: &[PathSegment], cfg: &PlanConfig) -> Result<DryRunPlan, Pla
         let (ux, uy) = (dx / len, dy / len);
         let prof = Profile::new(len, speed, cfg.accel_mm_s2);
         let n = (prof.total / tick_s).ceil().max(1.0) as u64;
-        if plan.tick_count + n > cfg.max_ticks {
+        if plan.tick_count.saturating_add(n) > cfg.max_ticks {
             return Err(PlanError::TooLong);
         }
         let mut prev_s = 0.0;
@@ -313,6 +313,14 @@ mod tests {
 
     fn cfg() -> PlanConfig {
         PlanConfig { start: Point::new(10.0, 10.0), accel_mm_s2: 1000.0, ..PlanConfig::default() }
+    }
+
+    /// A crawl so slow that its tick count does not fit a `u64` is refused as too long, also
+    /// when it is not the first segment (the count used to be added without a check).
+    #[test]
+    fn an_endless_segment_after_a_normal_one_is_too_long_not_a_crash() {
+        let path = [PathSegment::cut(11.0, 10.0, 50.0), PathSegment::cut(500.0, 10.0, 1e-300)];
+        assert_eq!(dry_run(&path, &cfg()), Err(PlanError::TooLong));
     }
 
     #[test]

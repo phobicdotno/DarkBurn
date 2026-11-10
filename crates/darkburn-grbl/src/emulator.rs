@@ -241,6 +241,9 @@ pub struct GrblEmulator {
     dtr: bool,
     unplugged: bool,
     laser_was_on: bool,
+    /// Highest laser power of a move made during the clock step in progress. A block that
+    /// starts and ends inside one step is seen nowhere else.
+    step_power: f64,
     stats: EmulatorStats,
 }
 
@@ -345,6 +348,7 @@ impl GrblEmulator {
             dtr: true,
             unplugged: false,
             laser_was_on: false,
+            step_power: 0.0,
             stats: EmulatorStats::default(),
         };
         e.power_on_reset();
@@ -508,9 +512,21 @@ impl GrblEmulator {
 
     fn step(&mut self, max: f64) -> f64 {
         let power_before = self.laser_power();
+        self.step_power = 0.0;
         let used = self.step_inner(max);
-        if used > 0.0 && power_before > 0.0 {
+        // The laser is looked at between steps. When the clock jumps far (a busy computer), a
+        // whole powered move fits in one step and is over before the next look, so the move
+        // itself reports its power.
+        let burned = self.step_power;
+        if used > 0.0 && (power_before > 0.0 || burned > 0.0) {
             self.stats.laser_on_seconds += used;
+        }
+        if burned > 0.0 {
+            self.stats.max_laser_s = self.stats.max_laser_s.max(burned);
+            if !self.laser_was_on {
+                self.stats.laser_switch_ons += 1;
+            }
+            self.laser_was_on = true;
         }
         self.track_laser();
         used
@@ -647,6 +663,9 @@ impl GrblEmulator {
         } else {
             let rate = self.effective_rate(&cur.block) / 60.0;
             let left = cur.length - cur.done;
+            if left > 0.0 {
+                self.step_power = self.step_power.max(cur.block.power * f64::from(self.ov.2) / 100.0);
+            }
             let t_left = left / rate;
             if t_left <= max {
                 used = t_left;
@@ -684,7 +703,9 @@ impl GrblEmulator {
                 if let Some(c) = &self.current {
                     if c.dwell_left > 0.0 { self.static_power() } else { c.block.power * scale }
                 } else {
-                    0.0
+                    // Between two blocks: the next one starts at once, so the laser does not
+                    // go off and on again between two powered moves.
+                    self.planner.front().map_or(0.0, |b| if b.dwell > 0.0 { self.static_power() } else { b.power * scale })
                 }
             }
             State::Idle | State::Check => self.static_power(),
@@ -1749,6 +1770,20 @@ mod tests {
         assert_eq!(send(&mut e, "G0 X1\n"), "error:9\r\n");
         assert!(send(&mut e, "$X\n").contains("Unlocked"));
         assert_eq!(e.state_name(), "Idle");
+    }
+
+    #[test]
+    fn a_powered_move_that_fits_in_one_clock_step_still_counts_as_laser_on() {
+        // A busy computer advances the clock in big jumps. The whole program then runs inside
+        // one call, and the laser is off again by the time anyone looks.
+        let mut e = emu();
+        e.receive(b"G21 G90\nG0 X5\nM3 S10\nG1 X20 F6000\nG1 Y20\nM5 S0\n");
+        e.advance(Duration::from_secs(600));
+        assert_eq!(e.machine_position()[..2], [20.0, 20.0]);
+        assert!(!e.laser_on());
+        assert_eq!(e.stats().laser_switch_ons, 1);
+        assert_eq!(e.stats().max_laser_s, 10.0);
+        assert!(e.stats().laser_on_seconds > 0.2, "{}", e.stats().laser_on_seconds);
     }
 
     #[test]

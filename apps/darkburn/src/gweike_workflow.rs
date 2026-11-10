@@ -67,10 +67,25 @@ impl Default for LayerMap {
 pub struct GweikeSettings {
     /// By DarkBurn layer index.
     pub layers: BTreeMap<usize, LayerMap>,
+    /// Always the eleven slots per head: a shorter table in a file is filled up when read.
+    #[serde(deserialize_with = "full_craft_table")]
     pub crafts: mcc::CraftTable,
     /// Planner values for the card simulator.
     pub accel_mm_s2: f64,
     pub rapid_mm_s: f64,
+}
+
+/// Read a craft table and fill it up to the eleven slots per head, so that a slot number that
+/// passed its range check always has a craft behind it.
+fn full_craft_table<'de, D: serde::Deserializer<'de>>(d: D) -> Result<mcc::CraftTable, D::Error> {
+    let mut t = mcc::CraftTable::deserialize(d)?;
+    if t.fibre.len() < mcc::craft::LAYERS_PER_HEAD {
+        t.fibre.resize(mcc::craft::LAYERS_PER_HEAD, mcc::FibreCraft::default());
+    }
+    if t.co2.len() < mcc::craft::LAYERS_PER_HEAD {
+        t.co2.resize(mcc::craft::LAYERS_PER_HEAD, mcc::Co2Craft::default());
+    }
+    Ok(t)
 }
 
 impl Default for GweikeSettings {

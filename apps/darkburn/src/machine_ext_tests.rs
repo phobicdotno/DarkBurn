@@ -871,6 +871,25 @@ fn a_craft_outside_the_machine_limits_is_refused_and_never_exported() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// A device file whose craft table is short (cut by hand, or from another program) must not
+/// crash the craft editor or `gweike.set_craft`: the table is filled up to the eleven slots.
+#[test]
+fn a_short_craft_table_in_a_device_file_is_filled_up() {
+    let mut a = gweike_app();
+    let id = a.machine.active().id;
+    let text = a.machine.devices.export_profile(id).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let crafts = v.pointer_mut("/device/settings/gweike/crafts").expect("the crafts of the profile");
+    crafts["fibre"] = json!([]);
+    crafts["co2"].as_array_mut().unwrap().truncate(2);
+    let id2 = a.machine.devices.import_profile(&v.to_string()).unwrap();
+    run(&mut a, "device.select", json!({ "id": id2 })).unwrap();
+    let t = &a.machine.active().settings.gweike.crafts;
+    assert_eq!((t.fibre.len(), t.co2.len()), (11, 11));
+    let good = serde_json::to_value(darkburn_mcc::FibreCraft::default()).unwrap();
+    run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 10, "craft": good })).unwrap();
+}
+
 fn gweike_app() -> DarkBurn {
     let mut a = app();
     let id = run(&mut a, "device.add", json!({ "type": "GweikeCardSimulator" })).unwrap()["id"].as_u64().unwrap();

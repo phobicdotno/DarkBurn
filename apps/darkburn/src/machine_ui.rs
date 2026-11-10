@@ -644,15 +644,21 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     Some(run_command(app, id, a, src))
 }
 
-/// What an agent may do on a real machine too: stop it. Nothing here ever starts, moves or
-/// resumes anything.
-const AGENT_STOPS: &[&str] = &["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop"];
+/// What an agent may do on a real machine too: stop it, switch the laser off and end a jog.
+/// Nothing here ever starts, moves, fires or resumes anything.
+const AGENT_STOPS: &[&str] =
+    &["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop", "machine.fire_off", "machine.jog_stop"];
 
 /// One of [`AGENT_STOPS`] on a real machine. Pause only ever pauses: a job that is already paused
 /// is left alone, since on some controllers a second pause sets it going again.
 fn agent_stop(app: &mut DarkBurn, id: &str) -> Result<Value, String> {
+    if id == "machine.jog_stop" {
+        app.machine.jog.holding = false;
+    }
     let h = &mut app.machine.handle;
     match id {
+        "machine.fire_off" => mach(h.fire_off()),
+        "machine.jog_stop" => mach(h.jog_stop()),
         "machine.pause" | "job.pause" if h.snapshot().state == LaserState::Paused => Ok(json!({ "ok": true, "paused": true })),
         "machine.pause" | "job.pause" => mach(h.pause()),
         "machine.emergency_stop" => mach(h.command(MachineCommand::EmergencyStop)),

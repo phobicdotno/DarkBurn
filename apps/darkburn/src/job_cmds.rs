@@ -1101,6 +1101,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The job builder ends its own G-code with M2. A translated device writes its own end
+    /// (script, laser off, program end), so that M2 must not sit in front of it.
+    #[test]
+    fn a_translated_file_ends_once_and_after_the_end_script() {
+        let mut a = app();
+        with_square(&mut a);
+        let dir = temp("ends");
+        let file = dir.join("job.gc");
+        let saved = |a: &mut DarkBurn, ty: &str, end_script: Option<&str>| -> Vec<String> {
+            let id = run(a, "device.add", json!({ "type": ty })).unwrap()["id"].as_u64().unwrap();
+            if let Some(e) = end_script {
+                a.machine.devices.get_mut(id).unwrap().settings.gcode.end_script = e.into();
+            }
+            run(a, "device.select", json!({ "id": id })).unwrap();
+            run(a, "job.save_gcode", json!({ "path": file.to_string_lossy() })).unwrap();
+            std::fs::read_to_string(&file).unwrap().lines().map(str::to_owned).collect()
+        };
+        // LinuxCNC stops reading at the first M2: an end script after it would never run.
+        let lines = saved(&mut a, "LinuxCnc", Some("G0 X0 Y0"));
+        let ends: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| *l == "M2").map(|(i, _)| i).collect();
+        assert_eq!(ends, [lines.len() - 1], "one program end, as the last line: {lines:?}");
+        let park = lines.iter().position(|l| l == "G0 X0 Y0").unwrap_or_else(|| panic!("no end script: {lines:?}"));
+        assert!(park > lines.iter().rposition(|l| l.starts_with("G1")).unwrap(), "{lines:?}");
+        // The device as it is made: still one program end.
+        let lines = saved(&mut a, "LinuxCnc", None);
+        assert_eq!(lines.iter().filter(|l| *l == "M2").count(), 1, "{lines:?}");
+        assert_eq!(lines.last().map(String::as_str), Some("M2"), "{lines:?}");
+        // Marlin and Smoothieware have no M2.
+        for ty in ["Marlin", "Smoothie"] {
+            let lines = saved(&mut a, ty, None);
+            assert!(!lines.iter().any(|l| l == "M2"), "{ty}: {lines:?}");
+            assert!(lines.iter().any(|l| l.starts_with("G1")), "{ty}: {lines:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Inches on the screen is how sizes are shown, not what the machine is sent. The translated
+    /// devices used to get a job in inches (G20), which a Marlin as it is usually built does not
+    /// know: it would read the numbers as millimetres.
+    #[test]
+    fn the_unit_on_the_screen_does_not_change_the_g_code() {
+        let mut a = app();
+        with_square(&mut a);
+        run(&mut a, "job.generate", Value::Null).unwrap();
+        let job = a.job.last_job.clone().expect("a job");
+        use crate::devices::DeviceType;
+        for ty in [DeviceType::Grbl, DeviceType::Marlin, DeviceType::Smoothie, DeviceType::CustomGcode, DeviceType::LinuxCnc, DeviceType::Snapmaker] {
+            let mut dev = crate::devices::Device::new(ty);
+            let mm = crate::gcode_machines::job_text(&dev, &job, None, &dev.settings.gcode);
+            dev.state.inches = true;
+            let inches = crate::gcode_machines::job_text(&dev, &job, None, &dev.settings.gcode);
+            assert!(mm.contains("X50"), "{ty:?}: {mm}");
+            assert_eq!(inches, mm, "{ty:?}: the job changed with the unit shown on the screen");
+            assert!(!inches.lines().any(|l| l.split_whitespace().any(|w| w == "G20")), "{ty:?}: {inches}");
+        }
+    }
+
     #[test]
     fn the_finish_position_of_the_move_panel_reaches_a_saved_file() {
         let mut a = app();

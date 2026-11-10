@@ -389,6 +389,26 @@ fn device_settings_default_layers_go_to_the_edited_device_on_ok_only() {
     assert_eq!(g.app().editor.history.len(), steps + 1);
 }
 
+/// "Home when a job starts" on the first page of Device Settings was kept with the device and
+/// read by nothing: only the box of the same name on the G-code page did anything.
+#[test]
+fn device_settings_home_when_a_job_starts_on_the_first_page_reaches_the_job() {
+    const BOX: &str = "Home when a job starts";
+    let mut g = Gui::standard();
+    let id = g.app().machine.devices.active.unwrap();
+    let dev = g.app().machine.active().clone();
+    assert!(!dev.settings.gcode.to_gcode().start_script.contains("$H"));
+    g.app().machine.dlg.settings = Some((dev, 0));
+    g.settle();
+    scroll_window_to(&mut g, BOX);
+    g.click_label(BOX);
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(g.app().machine.dlg.settings.is_none());
+    let dev = g.app().machine.devices.get(id).unwrap().clone();
+    assert!(dev.settings.gcode.to_gcode().start_script.starts_with("$H"), "the job does not home: {:?}", dev.settings.gcode.to_gcode().start_script);
+}
+
 /// Starting to type a text and leaving again with nothing typed (or nothing changed) is not a
 /// change to the project.
 #[test]

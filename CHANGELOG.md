@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.424 (build 6)
+## v0.0.434 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -8,6 +8,16 @@
 - Fix: text made by a command is held to the same height, spacing and offset ranges as the text fields
 - Fix: tooltips show the shortcut you set, not the default one, and no empty brackets when a shortcut is removed
 - Fix: tool tooltips, the Settings and About windows and their Close buttons follow the chosen language
+- Fix: an AI agent can now switch the laser off and stop a jog on a real machine too
+- Fix: importing preferences or shared defaults never switches AI agent access on
+- Fix: a GRBL controller with laser mode switched off no longer burns along the travel moves of a job
+- Fix: a LinuxCNC file runs its end script again (the program used to end before it), and Marlin and Smoothieware files no longer end with a command they do not know
+- Fix: the G-code an AI agent is shown for a job is now the G-code of the selected laser
+- Fix: recent projects on a drive that is not plugged in are no longer forgotten
+- Fix: Check for Updates no longer follows a server that sends it on to an address without https
+- Fix: "Home when a job starts" on the first page of Device Settings now does what it says
+- Fix: showing inches on the screen no longer changes the G-code sent to Marlin, Smoothieware, Snapmaker, LinuxCNC and custom machines
+- Fix: a device list that cannot be read is kept as a copy instead of being lost
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

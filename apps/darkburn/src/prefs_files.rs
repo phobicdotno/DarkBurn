@@ -83,7 +83,8 @@ pub fn export(prefs: &Prefs, path: &Path) -> Result<(), String> {
     std::fs::write(path, to_file_text(prefs)).map_err(|e| e.to_string())
 }
 
-/// Replaces `current` with the preferences in `path`, keeping this machine's recent projects.
+/// Replaces `current` with the preferences in `path`, keeping this machine's recent projects
+/// and its AI agent settings.
 /// The old settings are backed up first when a settings folder is given.
 pub fn import(current: &mut Prefs, path: &Path, settings_dir: Option<&Path>) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -92,6 +93,8 @@ pub fn import(current: &mut Prefs, path: &Path, settings_dir: Option<&Path>) -> 
         write_backup(dir, current, true);
     }
     new.recent = std::mem::take(&mut current.recent);
+    // What AI agents may do is decided on this computer, in Settings: a file never changes it.
+    new.mcp = current.mcp.clone();
     *current = new;
     Ok(())
 }
@@ -229,6 +232,32 @@ mod tests {
         assert_eq!(merge_stored(&base.to_json(), &ours.to_json(), &base.to_json()), ours.to_json());
         assert_eq!(merge_stored("a", "b", "c"), "b");
         assert_eq!(merge_stored(&base.to_json(), &ours.to_json(), "{ damaged"), ours.to_json());
+    }
+
+    #[test]
+    fn importing_never_changes_what_ai_agents_may_do() {
+        let d = temp("mcp");
+        let mut theirs = Prefs { theme: "nord".into(), ..Default::default() };
+        theirs.mcp.enabled = true;
+        theirs.mcp.port = 4242;
+        theirs.mcp.allow_hardware = true;
+        theirs.mcp.allow_gweike = true;
+        theirs.mcp.require_confirmation = false;
+        let file = d.join("prefs.json");
+        export(&theirs, &file).unwrap();
+        // A computer where agents are off stays that way.
+        let mut mine = Prefs::default();
+        import(&mut mine, &file, None).unwrap();
+        assert_eq!(mine.theme, "nord", "the rest of the file is taken");
+        assert_eq!(mine.mcp, crate::mcp_ui::McpPrefs::default(), "a file from elsewhere switched agent access on");
+        // And the owner's own choices are kept, whatever the file says.
+        let mut mine = Prefs::default();
+        mine.mcp.enabled = true;
+        mine.mcp.allow_file_write = false;
+        let chosen = mine.mcp.clone();
+        import(&mut mine, &file, None).unwrap();
+        assert_eq!(mine.mcp, chosen);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

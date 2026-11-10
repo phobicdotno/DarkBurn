@@ -510,7 +510,13 @@ fn every_preference_survives_a_restart_and_is_in_force() {
     let mut imported = Prefs { recent: vec!["mine.dbrn".into()], ..Default::default() };
     crate::prefs_files::import(&mut imported, &file, None).unwrap();
     let _ = std::fs::remove_file(&file);
-    assert_eq!(Prefs { recent: p.recent.clone(), ..imported }, p, "import does not bring every setting (the recent projects aside)");
+    // Import keeps what AI agents may do as it was here; a file never changes that.
+    assert_eq!(imported.mcp, crate::mcp_ui::McpPrefs::default(), "import changed what AI agents may do");
+    assert_eq!(
+        Prefs { recent: p.recent.clone(), mcp: p.mcp.clone(), ..imported },
+        p,
+        "import does not bring every setting (the recent projects and the AI agent access aside)"
+    );
 
     // A restart with them.
     let mut g = Gui::with_prefs(1600.0, 1000.0, 1.0, Prefs::from_json(&p.to_json()));

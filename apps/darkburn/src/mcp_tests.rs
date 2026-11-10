@@ -523,6 +523,27 @@ fn a_job_preview_is_built_off_the_ui_thread_and_never_sent() {
     assert!(m["job"]["seconds"].as_f64().unwrap() > 0.0 && m["shapes"] == 1, "{m}");
 }
 
+/// The G-code an agent is shown is what the selected device would be sent, not GRBL's.
+#[test]
+fn a_job_preview_shows_the_g_code_of_the_selected_device() {
+    let app = shared();
+    let mut b = McpBackend::new(app.clone(), egui::Context::default(), true);
+    {
+        let mut a = app.borrow_mut();
+        let id = crate::api::execute_headless(&mut a, "device.add", &json!({ "type": "Marlin" })).unwrap()["id"].as_u64().unwrap();
+        crate::api::execute_headless(&mut a, "device.select", &json!({ "id": id })).unwrap();
+    }
+    exec(&mut b, "shape.add_rect", json!({"x": 10, "y": 10, "width": 40, "height": 20, "layer": 0})).unwrap();
+    let r = b.preview_job(json!({"format": "gcode"}));
+    let v = finish(&mut b, r).unwrap();
+    let shown = v["gcode"].as_str().unwrap().to_owned();
+    let a = app.borrow();
+    let job = a.job.last_job.clone().expect("the job that was built");
+    let sent = crate::gcode_machines::job_text(a.machine.active(), &job, None, &a.job.gcode);
+    assert_eq!(shown, sent, "the preview is not the device's G-code");
+    assert!(!shown.lines().any(|l| l == "M2" || l.starts_with("M4")), "GRBL words in a Marlin job: {shown}");
+}
+
 #[test]
 fn a_batch_that_fails_is_rolled_back_with_the_editors_state() {
     let mut b = backend();

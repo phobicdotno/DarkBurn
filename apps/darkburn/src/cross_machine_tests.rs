@@ -181,11 +181,18 @@ fn spec_of(a: &DarkBurn) -> ConnectSpec {
 
 /// A GRBL firmware on the GRBL emulator.
 fn burn_on_grbl(fw: SimFirmware, corner: Corner) -> Vec<Burn> {
+    burn_on_grbl_after(fw, corner, |_| {})
+}
+
+/// [`burn_on_grbl`], with `before` run on the connected machine before the job starts.
+fn burn_on_grbl_after(fw: SimFirmware, corner: Corner, before: impl FnOnce(&mut DarkBurn)) -> Vec<Burn> {
     let what = format!("{fw:?} {corner:?}");
     let mut a = app_with_design(DeviceType::SimulatorGrbl, corner, Some(fw));
     let (w, h) = a.machine.active().bed();
     let (adapter, emu) = crate::connections::grbl_simulator(&spec_of(&a).config);
     a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorGrbl);
+    wait(&mut a, &format!("{what}: ready"), |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    before(&mut a);
     start_and_finish(&mut a, &what);
     emu.with(|e| {
         assert_eq!(e.stats().errors, 0, "{what}: the controller refused a line");
@@ -321,6 +328,20 @@ fn every_grbl_firmware_burns_the_same_job() {
         check_against_the_design(&format!("{fw:?}"), &p);
         check_power(&format!("{fw:?}"), &p);
     }
+}
+
+/// A GRBL 1.1 controller whose laser mode is switched off (`$32=0`) keeps its output on at the
+/// last S through rapid moves, and reads M4 as "spindle counter-clockwise".
+#[test]
+fn a_grbl_controller_with_laser_mode_off_burns_the_same_job() {
+    let burns = burn_on_grbl_after(SimFirmware::Grbl11h, Corner::BottomLeft, |a| {
+        a.machine.handle.write_setting(32, "0").unwrap();
+        a.machine.handle.read_settings().unwrap();
+        wait(a, "laser mode off", |a| a.machine.handle.snapshot().grbl_settings.get(&32).is_some_and(|v| v.trim() == "0"));
+    });
+    let p = parts(&burns);
+    check_against_the_design("GRBL 1.1h with $32=0", &p);
+    check_power("GRBL 1.1h with $32=0", &p);
 }
 
 #[test]

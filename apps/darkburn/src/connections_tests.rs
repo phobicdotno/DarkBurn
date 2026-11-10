@@ -1073,7 +1073,8 @@ fn start_slow_job(a: &mut DarkBurn) {
 #[test]
 fn an_agent_can_stop_and_pause_a_real_machine_and_nothing_else() {
     let mut a = app_on_a_real_link();
-    const STOPS: [&str; 5] = ["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop"];
+    const STOPS: [&str; 7] =
+        ["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop", "machine.fire_off", "machine.jog_stop"];
     // Every other hardware command stays refused.
     let mut refused = 0;
     for c in crate::commands::registry() {
@@ -1122,6 +1123,36 @@ fn an_agent_can_stop_and_pause_a_real_machine_and_nothing_else() {
     run(&mut a, "job.stop", json!({})).unwrap();
     wait(&mut a, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
     assert!(a.machine.handle.is_connected() && a.machine.handle.is_real_machine(), "the link is still the user's");
+}
+
+#[test]
+fn an_agent_can_switch_the_laser_off_and_stop_a_jog_on_a_real_machine() {
+    let mut a = app_on_a_real_link();
+    // The user holds the fire button; the agent may let go of it, and may not press it.
+    a.machine.handle.fire(5.0, 8.0).unwrap();
+    wait(&mut a, "firing", |a| a.machine.handle.snapshot().fire_on);
+    let e = run(&mut a, "machine.fire", json!({ "percent": 5.0, "secs": 1.0 })).expect_err("machine.fire");
+    assert!(e.contains("a real machine is connected"), "{e}");
+    run(&mut a, "machine.fire_off", json!({})).unwrap_or_else(|e| panic!("machine.fire_off was refused on a real machine: {e}"));
+    wait(&mut a, "laser off", |a| !a.machine.handle.snapshot().fire_on);
+
+    // The user starts a continuous jog; the agent may end it, and may not start one.
+    wait(&mut a, "ready", |a| state(a) == LaserState::Ready);
+    let x0 = a.machine.handle.snapshot().machine_pos[0];
+    a.machine.handle.jog_start([1, 0, 0, 0], 600.0).unwrap();
+    wait(&mut a, "moving", |a| (a.machine.handle.snapshot().machine_pos[0] - x0).abs() > 0.5);
+    let e = run(&mut a, "machine.jog_start", json!({ "x": 1 })).expect_err("machine.jog_start");
+    assert!(e.contains("a real machine is connected"), "{e}");
+    run(&mut a, "machine.jog_stop", json!({})).unwrap_or_else(|e| panic!("machine.jog_stop was refused on a real machine: {e}"));
+    wait(&mut a, "jog ended", |a| state(a) == LaserState::Ready);
+    let x1 = a.machine.handle.snapshot().machine_pos[0];
+    assert!((x1 - x0).abs() < 100.0, "the jog ran on to {x1}");
+    for _ in 0..40 {
+        a.machine.tick();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!((a.machine.handle.snapshot().machine_pos[0] - x1).abs() < 1e-6, "the head still moves");
+    assert!(a.machine.handle.is_connected() && a.machine.handle.is_real_machine());
 }
 
 #[test]

@@ -105,7 +105,10 @@ pub fn shared_defaults(settings_dir: Option<&Path>) -> Option<crate::prefs::Pref
     if let Some(dir) = settings_dir {
         candidates.push(dir.join(DEFAULTS_FILE));
     }
-    candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())
+    let mut prefs = candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())?;
+    // AI agent access is switched on by the person at this computer, never by a file.
+    prefs.mcp = Default::default();
+    Some(prefs)
 }
 
 /// Preferences from a `.dbprefs` file; an error when it is not a preferences object.
@@ -524,6 +527,22 @@ mod tests {
         assert_eq!(got.page_width, 600.0);
         std::fs::write(dir.join(DEFAULTS_FILE), "[1,2]").unwrap();
         assert!(read_prefs_file(&dir.join(DEFAULTS_FILE)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_defaults_never_switch_ai_agent_access_on() {
+        let dir = std::env::temp_dir().join(format!("darkburn-defaults-mcp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = Prefs { page_width: 600.0, ..Default::default() };
+        p.mcp.enabled = true;
+        p.mcp.allow_hardware = true;
+        p.mcp.allow_gweike = true;
+        p.mcp.require_confirmation = false;
+        std::fs::write(dir.join(DEFAULTS_FILE), p.to_json()).unwrap();
+        let got = shared_defaults(Some(&dir)).expect("found in the settings folder");
+        assert_eq!(got.page_width, 600.0);
+        assert_eq!(got.mcp, crate::mcp_ui::McpPrefs::default(), "a defaults file switched agent access on");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

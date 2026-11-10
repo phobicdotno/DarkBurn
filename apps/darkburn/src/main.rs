@@ -6,6 +6,8 @@ mod actions;
 mod api;
 #[cfg(test)]
 mod arrange_hunt_tests;
+#[cfg(test)]
+mod arrange_origin_tests;
 mod art_library;
 mod canvas;
 mod canvas_input;
@@ -21,6 +23,8 @@ mod connections_tests;
 mod cross_machine_tests;
 mod cut_settings;
 mod cuts_panel;
+#[cfg(test)]
+mod device_file_tests;
 mod devices;
 mod devices_ui;
 mod dock_geom;

@@ -231,7 +231,9 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
         g0_for_overscan: g.overscan_as_g0,
         s_with_every_g1: g.s_every_g1,
         constant_power: e.constant_power,
-        units: if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres },
+        // The job is always written in millimetres. Inches on the screen (`state.inches`) is how
+        // sizes are shown, and goes to `state.units` below.
+        units: gp::Units::Millimetres,
         marlin_power: e.marlin_power,
         tool_index: e.tool_index,
         reduce_smoothie_pause_delay: e.reduce_smoothie_pause_delay,
@@ -243,7 +245,7 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
     let a = &s.additional;
     p.simulation =
         gp::SimulationSettings { accel_x: a.accel, accel_y: a.accel, max_speed_x: a.max_speed, max_speed_y: a.max_speed, rapid_speed: a.rapid_speed };
-    p.state.units = p.gcode.units;
+    p.state.units = if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres };
     p.state.grid_spacing_mm = d.state.grid_spacing;
     p.state.last_port = (!d.state.port.is_empty()).then(|| d.state.port.clone());
     p
@@ -306,7 +308,7 @@ pub fn from_profile(p: &gc::DeviceProfile) -> Device {
     s.additional.accel = p.simulation.accel_x;
     s.additional.max_speed = p.simulation.max_speed_x;
     s.additional.rapid_speed = p.simulation.rapid_speed;
-    d.state.inches = pg.units == gp::Units::Inches;
+    d.state.inches = p.state.units == gp::Units::Inches;
     d.state.grid_spacing = p.state.grid_spacing_mm;
     d
 }
@@ -346,6 +348,15 @@ pub fn neutral_gcode(base: &DeviceGcodeSettings) -> DeviceGcodeSettings {
 /// Translate GRBL-style lines for `dev`. LinuxCNC gets a complete `.ngc` program.
 pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     let p = to_profile(dev);
+    // The job builder ends its GRBL-style text with `M2`. The device writes its own end after
+    // it (end script, laser off, and for LinuxCNC the program end), and a controller that knows
+    // `M2` stops reading there: the job's own program end is left out.
+    let is_end = |l: &String| l.trim().eq_ignore_ascii_case("M2") || l.trim().eq_ignore_ascii_case("M30");
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+    let lines = match last {
+        Some(i) if is_end(&lines[i]) => &lines[..i],
+        _ => lines,
+    };
     if p.kind == gp::DeviceKind::LinuxCnc {
         let o = gc::linuxcnc::LinuxCncOptions::for_profile(&p);
         return gc::linuxcnc::write_program(lines, &p, &o).lines().map(str::to_owned).collect();
@@ -353,10 +364,12 @@ pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     gc::translate::translate(lines, &gc::translate::TranslateOptions::for_profile(&p))
 }
 
-/// The lines to stream to `dev` for `tp`.
-pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec<String> {
+/// The lines to stream to `dev` for `tp`. `laser_mode_off`: the connected GRBL controller says
+/// its laser mode is off (`$32=0`), so it keeps the laser on through rapid moves like an old
+/// one does, and the travel moves switch it off themselves.
+pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings, laser_mode_off: bool) -> Vec<String> {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only());
+        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only() || laser_mode_off);
     }
     let neutral = crate::job_build::gcode_lines(tp, &neutral_gcode(base));
     translate_for(dev, &neutral)

@@ -92,6 +92,8 @@ mod options;
 mod palette;
 mod panels;
 #[cfg(test)]
+mod paths_hunt4_tests;
+#[cfg(test)]
 mod polish_tests;
 mod prefs;
 mod prefs_files;

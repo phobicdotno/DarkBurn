@@ -25,6 +25,10 @@ fn locate(c: &Contour, lens: &[f64], d: f64) -> Option<(SegParam, Point)> {
         return None;
     }
     let total: f64 = lens.iter().sum();
+    // A contour whose length is not a number (coordinates too large) has no place at a distance.
+    if total.is_nan() {
+        return None;
+    }
     let mut d = if c.closed && total > 0.0 { d.rem_euclid(total) } else { d.clamp(0.0, total) };
     for (i, s) in c.segs.iter().enumerate() {
         if d <= lens[i] || i + 1 == c.segs.len() {

@@ -172,7 +172,8 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         if h <= 0.0 {
             return Err("height must be above zero".into());
         }
-        t.height = h;
+        // The ranges of the text fields (`text_ui.rs`).
+        t.height = h.clamp(0.1, 10_000.0);
     }
     if let Some(v) = flag(a, "bold") {
         t.bold = v;
@@ -190,10 +191,10 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         t.distort = v;
     }
     if let Some(v) = num(a, "letter_spacing") {
-        t.letter_spacing = v;
+        t.letter_spacing = v.clamp(-100.0, 1000.0);
     }
     if let Some(v) = num(a, "line_spacing") {
-        t.line_spacing = v;
+        t.line_spacing = v.clamp(-100.0, 1000.0);
     }
     if let Some(s) = word(a, "align_x") {
         t.align_x = match s {
@@ -216,7 +217,7 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         t.variable = variable_kind(s)?;
     }
     if let Some(v) = int(a, "offset") {
-        t.offset = v;
+        t.offset = v.clamp(-100_000, 100_000);
     }
     Ok(())
 }

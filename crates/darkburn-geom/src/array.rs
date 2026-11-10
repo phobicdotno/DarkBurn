@@ -209,6 +209,10 @@ pub fn copy_along_path(anchor: Point, path: &BezPath, o: &AlongOptions) -> Vec<A
         cum.push(l);
     }
     let total = cum[cum.len() - 1];
+    // A path so large that its length is not a number has no places along it.
+    if !total.is_finite() {
+        return Vec::new();
+    }
     let closed = c.is_closed_within(1e-9);
     let mut s0 = 0.0;
     if o.start_at_nearest

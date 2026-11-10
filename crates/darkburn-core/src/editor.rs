@@ -203,16 +203,25 @@ impl Editor {
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
     pub fn drop_checkpoint(&mut self) {
         if let Some(s) = self.history.undo.pop() {
-            self.doc = s.doc;
+            self.restore_doc(s.doc);
             self.selection = s.selection;
             self.revision += 1;
         }
     }
 
+    /// Put the document of an undo step back. The notes are typed outside the undo history (they
+    /// are not undo steps), so the ones in the open document stay.
+    fn restore_doc(&mut self, mut doc: Document) -> Document {
+        doc.notes = std::mem::take(&mut self.doc.notes);
+        doc.show_notes_on_load = self.doc.show_notes_on_load;
+        let mut old = std::mem::replace(&mut self.doc, doc);
+        old.notes = self.doc.notes.clone();
+        old
+    }
+
     pub fn undo(&mut self) -> bool {
         let Some(s) = self.history.undo.pop() else { return false };
-        let now =
-            Snapshot { doc: std::mem::replace(&mut self.doc, s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let now = Snapshot { doc: self.restore_doc(s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
         self.history.redo.push(now);
         self.revision += 1;
         true
@@ -220,8 +229,7 @@ impl Editor {
 
     pub fn redo(&mut self) -> bool {
         let Some(s) = self.history.redo.pop() else { return false };
-        let now =
-            Snapshot { doc: std::mem::replace(&mut self.doc, s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let now = Snapshot { doc: self.restore_doc(s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
         self.history.undo.push(now);
         self.revision += 1;
         true
@@ -321,5 +329,36 @@ mod tests {
         assert_eq!(e.history.len(), 2000);
         while e.undo() {}
         assert!(e.doc.is_empty());
+    }
+
+    /// Notes are typed outside the undo history, so stepping through it must not touch them.
+    #[test]
+    fn undo_and_redo_leave_the_project_notes_alone() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.doc.notes = "3 mm birch, two passes".into();
+        e.doc.show_notes_on_load = true;
+        e.touch();
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        assert!(e.undo() && e.undo());
+        assert!(e.doc.is_empty());
+        assert_eq!(e.doc.notes, "3 mm birch, two passes", "undoing shapes does not wipe the notes");
+        assert!(e.doc.show_notes_on_load);
+        e.doc.notes.push_str(" (checked)");
+        e.touch();
+        assert!(e.redo() && e.redo());
+        assert_eq!(e.doc.len(), 2);
+        assert_eq!(e.doc.notes, "3 mm birch, two passes (checked)", "redo does not bring old notes back");
+        // A dropped checkpoint (a click that moved nothing) does not either.
+        e.checkpoint("Drag");
+        e.doc.notes = "new".into();
+        e.drop_checkpoint();
+        assert_eq!(e.doc.notes, "new");
     }
 }

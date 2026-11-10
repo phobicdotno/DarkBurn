@@ -145,3 +145,25 @@ fn the_test_windows_keep_their_numbers_to_themselves_until_create() {
     g.frames(3);
     assert_eq!(g.app().vision.state.interval.gap, 9.0);
 }
+
+/// `shape.set_props` and `layer.delete` say `changed: false` and make no undo step when there
+/// was nothing to change.
+#[test]
+fn commands_that_change_nothing_say_so() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    let steps = g.app().editor.history.len();
+    let r = g.exec("shape.set_props", json!({}));
+    assert_eq!(r["changed"], false, "{r}");
+    let r = g.exec("shape.set_props", json!({ "locked": false }));
+    assert_eq!(r["changed"], false, "what the shapes already had: {r}");
+    let r = g.exec("layer.delete", json!({ "layer": 17 }));
+    assert_eq!(r["changed"], false, "an unused layer: {r}");
+    assert_eq!(g.app().editor.history.len(), steps, "undo steps for no change");
+    let r = g.exec("shape.set_props", json!({ "name": "Lid" }));
+    assert_eq!(r["changed"], true);
+    let layer = g.app().editor.doc.iter().next().unwrap().layer;
+    let r = g.exec("layer.delete", json!({ "layer": layer, "with_shapes": true }));
+    assert_eq!(r["changed"], true);
+    assert_eq!(g.app().editor.history.len(), steps + 2);
+}

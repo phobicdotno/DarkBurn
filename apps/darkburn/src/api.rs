@@ -222,6 +222,7 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                 let mut any = false;
                 for id in &ids {
                     let Some(s) = d.get_mut(*id) else { continue };
+                    let before = s.clone();
                     if let Some(n) = &name {
                         s.name = n.clone();
                     }
@@ -244,7 +245,8 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                         });
                         s.set_start_points(local.as_slice());
                     }
-                    any = true;
+                    // Nothing asked for, or what the shape already had, is not a change.
+                    any |= *s != before;
                 }
                 any
             }))
@@ -278,11 +280,12 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         "layer.delete" => (|| {
             let layer = layer_of(a)?;
             let with = a.get("with_shapes").and_then(Value::as_bool).unwrap_or(false);
-            app.editor.edit("Delete layer", |d, _| {
+            // A layer nobody used or set up has nothing to delete.
+            changed(app.editor.edit("Delete layer", |d, _| {
+                let before = d.clone();
                 d.delete_layer(layer, with);
-                true
-            });
-            changed(true)
+                *d != before
+            }))
         })(),
         "project.info" => Ok(info(app)),
         "project.open" => text(a, "path").and_then(|p| crate::files::open_path(app, Path::new(p))).map(|_| info(app)),

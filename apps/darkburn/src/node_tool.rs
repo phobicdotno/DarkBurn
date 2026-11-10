@@ -292,8 +292,18 @@ pub fn apply_op(
             if desc.is_empty() {
                 return Err("select nodes first".into());
             }
+            // A subpath that runs out of nodes is gone as a whole: its other selected nodes went
+            // with it, and its index now belongs to the subpath after it.
+            let mut gone = None;
             for n in &desc {
+                if gone == Some(n.subpath) {
+                    continue;
+                }
+                let before = contours(&p).len();
                 p = gnode::delete_node(&p, *n).map_err(err_text)?;
+                if contours(&p).len() < before {
+                    gone = Some(n.subpath);
+                }
             }
         }
         NodeOp::DeleteSegment => {
@@ -1780,6 +1790,30 @@ mod tests {
         assert!(apply_op(&sq, NodeOp::Delete, &[], None, Point::ZERO, &[]).is_err());
         let moved = move_nodes(&sq, &[NodeRef::new(0, 2)], Vec2::new(5.0, 5.0));
         assert_eq!(contours(&moved)[0].node(2), Some(Point::new(15.0, 15.0)));
+    }
+
+    fn line_and_square() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((-20.0, 0.0));
+        p.line_to((-10.0, 0.0));
+        p.extend(square());
+        p
+    }
+
+    #[test]
+    fn deleting_every_node_of_a_subpath_removes_only_that_subpath() {
+        // Both nodes of the line: the line goes, the square after it keeps its four nodes.
+        let both = [NodeRef::new(0, 0), NodeRef::new(0, 1)];
+        let out = apply_op(&line_and_square(), NodeOp::Delete, &both, None, Point::ZERO, &[]).unwrap();
+        assert_eq!(contours(&out).len(), 1);
+        assert_eq!(out, square());
+        // Every node of the only subpath: nothing is left, and that is not an error.
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((10.0, 0.0));
+        assert!(apply_op(&line, NodeOp::Delete, &both, None, Point::ZERO, &[]).unwrap().elements().is_empty());
+        let all: Vec<NodeRef> = (0..4).map(|i| NodeRef::new(0, i)).collect();
+        assert!(apply_op(&square(), NodeOp::Delete, &all, None, Point::ZERO, &[]).unwrap().elements().is_empty());
     }
 
     #[test]

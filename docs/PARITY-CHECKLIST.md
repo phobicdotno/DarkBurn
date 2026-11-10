@@ -922,7 +922,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DS-02 Negative-coordinate machine mode
 - [x] DS-03 Red-dot pointer offset
 - [x] DS-04 Z: enable, reverse, relative moves only, optimize moves
-- [~] DS-05 Tab pulse width
+- [x] DS-05 Tab pulse width
 - [x] DS-06 Job checklist on and editor
 - [x] DS-07 Overwrite files by default
 - [x] DS-08 Scanning offset table

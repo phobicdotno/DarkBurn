@@ -112,8 +112,8 @@ impl Grid<'_> {
             }
         });
         if clear {
-            let ids = self.ids.clone();
-            self.app.editor.edit("Clear start point", |d, _| set_each(d, &ids, |s| Some(s.start_point.is_some()), |s| s.start_point = None));
+            // The registered command does the edit (it works on the selection, which is what this panel shows).
+            let _ = crate::api::execute(self.app, &ui.ctx().clone(), "shape.clear_start_point", &serde_json::json!({}));
         }
     }
 

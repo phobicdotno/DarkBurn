@@ -63,16 +63,29 @@ pub struct ShapeInput {
     pub priority: i32,
     /// Power scale, 0..=1 (1 = full layer power).
     pub power_scale: f64,
-    /// Forced start point: the cut starts at the path point nearest to this.
+    /// Forced start point: the cut of the closed sub-path nearest to it starts at the path point
+    /// nearest to it.
     pub start_point: Option<Point>,
+    /// Forced start points of further sub-paths of a compound shape (same rule as `start_point`).
+    pub extra_start_points: Vec<Point>,
     pub direction: Option<ForcedDirection>,
-    /// Manually placed tabs (line mode). Each point snaps to the nearest point on the path.
+    /// Manually placed tabs (line mode). Each point snaps to the nearest point on the nearest
+    /// sub-path, open or closed. A shape with manual tabs gets no automatic ones.
     pub tabs: Vec<Point>,
 }
 
 impl ShapeInput {
     pub fn new(path: BezPath) -> Self {
-        Self { path, group: None, priority: 0, power_scale: 1.0, start_point: None, direction: None, tabs: Vec::new() }
+        Self {
+            path,
+            group: None,
+            priority: 0,
+            power_scale: 1.0,
+            start_point: None,
+            extra_start_points: Vec::new(),
+            direction: None,
+            tabs: Vec::new(),
+        }
     }
 }
 
@@ -230,7 +243,7 @@ pub struct DotMode {
     pub spacing: f64,
 }
 
-/// Tabs (bridges) on closed shapes.
+/// Tabs (bridges): automatic ones on closed shapes, manual ones wherever they were placed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TabSettings {
     pub enabled: bool,
@@ -242,11 +255,15 @@ pub struct TabSettings {
     pub size: f64,
     /// Power for partly cut tabs (percent). `None` = laser off over tabs.
     pub tab_power: Option<f64>,
-    /// No tabs on shapes inside other shapes.
+    /// No automatic tabs on shapes inside other shapes (manual tabs stay).
     pub skip_inner: bool,
     /// Space tabs evenly on shapes without manual tabs. Off: only manually placed tabs count.
     #[serde(default = "yes")]
     pub auto: bool,
+    /// Partly cut tabs are made of full-power pulses of this length (mm) with pauses between
+    /// them, so that the average is `tab_power`. 0: cut the tab at `tab_power` instead.
+    #[serde(default)]
+    pub pulse_width: f64,
 }
 
 fn yes() -> bool {
@@ -255,7 +272,17 @@ fn yes() -> bool {
 
 impl Default for TabSettings {
     fn default() -> Self {
-        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false, auto: true }
+        Self {
+            enabled: false,
+            spacing: 50.0,
+            min_count: 2,
+            max_count: 10,
+            size: 0.5,
+            tab_power: None,
+            skip_inner: false,
+            auto: true,
+            pulse_width: 0.0,
+        }
     }
 }
 

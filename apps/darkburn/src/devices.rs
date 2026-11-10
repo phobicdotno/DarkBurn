@@ -489,6 +489,7 @@ impl Device {
             z_enabled: self.settings.z_enabled,
             z_reverse: self.settings.z_reverse,
             pointer_offset: [self.settings.red_dot_x, self.settings.red_dot_y],
+            tab_pulse_width: self.settings.tab_pulse_width,
             ..JobDevice::default()
         }
     }

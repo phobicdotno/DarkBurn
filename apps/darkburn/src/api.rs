@@ -235,10 +235,11 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                         s.direction = dir;
                     }
                     if let Some(sp) = start {
-                        s.start_point = sp.map(|p| {
+                        let local = sp.map(|p| {
                             let l = s.transform.inverse() * p;
                             [l.x, l.y]
                         });
+                        s.set_start_points(local.as_slice());
                     }
                     any = true;
                 }

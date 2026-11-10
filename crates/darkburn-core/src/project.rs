@@ -251,20 +251,71 @@ mod tests {
         let mut r = Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1);
         r.start_point = Some([5.0, 0.0]);
         r.direction = CutDirection::Clockwise;
+        r.extra_start_points = vec![[7.0, 10.0], [0.0, 3.0]];
         r.tabs = vec![[1.0, 2.0]];
         let id = d.add(r);
+        // Inside a group too.
+        let mut child = Shape::rect(Rect::new(0.0, 0.0, 4.0, 4.0), 0.0, 2);
+        child.start_point = Some([2.0, 0.0]);
+        child.direction = CutDirection::Reversed;
+        child.tabs = vec![[-2.0, 0.0], [2.0, 1.0]];
+        let gid = d.add(Shape::new(ShapeKind::Group { children: vec![child.clone()] }, Affine::translate((30.0, 0.0)), 2));
         let bytes = save(&d, "t", None).unwrap();
         let back = load(&bytes).unwrap().doc;
         let s = back.get(id).unwrap();
         assert_eq!(s.start_point, Some([5.0, 0.0]));
+        assert_eq!(s.extra_start_points, vec![[7.0, 10.0], [0.0, 3.0]]);
+        assert_eq!(s.start_points().collect::<Vec<_>>(), vec![[5.0, 0.0], [7.0, 10.0], [0.0, 3.0]]);
         assert_eq!(s.direction, CutDirection::Clockwise);
         assert_eq!(s.tabs, vec![[1.0, 2.0]]);
+        assert_eq!(back.get(id), d.get(id));
+        let ShapeKind::Group { children } = &back.get(gid).unwrap().kind else { panic!("a group") };
+        assert_eq!(children[0], Shape { id: children[0].id, ..child });
         // A version 2 file has neither field and opens with defaults.
         let mut d2 = Document::new();
         let id2 = d2.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 1));
         let b2 = save(&d2, "t", None).unwrap();
         let s2 = load(&b2).unwrap().doc;
         assert!(s2.get(id2).unwrap().start_point.is_none() && s2.get(id2).unwrap().direction == CutDirection::Auto);
+    }
+
+    /// A project written before shapes had tabs, start points or a cut direction (format
+    /// version 2) still opens, and a shape without them is written exactly as it was then.
+    #[test]
+    fn a_project_from_before_start_points_and_tabs_opens() {
+        let old = r#"{
+          "format": "darkburn-project", "version": 2, "app_version": "0.1.0", "next_id": 3,
+          "shapes": [
+            { "id": 1, "name": "", "kind": { "type": "rect", "width": 20.0, "height": 10.0, "radius": 0.0 },
+              "transform": [1.0, 0.0, 0.0, 1.0, 15.0, 25.0], "layer": 1, "locked": false, "priority": 0, "power_scale": 100.0 },
+            { "id": 2, "kind": { "type": "group", "children": [
+                { "id": 3, "kind": { "type": "ellipse", "rx": 4.0, "ry": 4.0 }, "transform": [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "layer": 2 } ] },
+              "transform": [1.0, 0.0, 0.0, 1.0, 50.0, 50.0], "layer": 2 }
+          ]
+        }"#;
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file("project.json", zip::write::SimpleFileOptions::default()).unwrap();
+        w.write_all(old.as_bytes()).unwrap();
+        let loaded = load(&w.finish().unwrap().into_inner()).unwrap();
+        assert!(!loaded.newer_version);
+        let doc = loaded.doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter().flat_map(|s| s.leaves()) {
+            assert!(s.tabs.is_empty() && s.start_point.is_none() && s.extra_start_points.is_empty());
+            assert_eq!(s.direction, crate::shape::CutDirection::Auto);
+        }
+        let r = doc.get(crate::ShapeId(1)).unwrap();
+        assert_eq!(r.bbox(), Rect::new(5.0, 20.0, 25.0, 30.0));
+        // Saving it again writes none of the new fields.
+        let again = save(&doc, "t", None).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&again[..])).unwrap();
+        let mut text = String::new();
+        zip.by_name("project.json").unwrap().read_to_string(&mut text).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let rect = json["shapes"][0].as_object().unwrap();
+        for key in ["tabs", "start_point", "extra_start_points", "direction"] {
+            assert!(!rect.contains_key(key), "{key} is only written when set");
+        }
     }
 
     #[test]

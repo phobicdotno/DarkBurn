@@ -1731,7 +1731,7 @@ impl Worker {
                 for (l, v) in &words {
                     match (l, v.parse::<f64>().ok()) {
                         ('M', Some(m)) if m == 3.0 || m == 4.0 => job.held.0 = Some(m as u32),
-                        ('M', Some(m)) if m == 5.0 => job.held = (None, String::new()),
+                        ('M', Some(5.0)) => job.held = (None, String::new()),
                         ('S', Some(_)) => job.held.1 = v.clone(),
                         _ => {}
                     }

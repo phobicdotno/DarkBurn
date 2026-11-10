@@ -17,6 +17,7 @@ Each line needs a check on real hardware before the matching checklist item is t
 - [ ] Jog direction for each origin corner
 - [ ] Card IDs for boards other than RDC6442S
 - [ ] USB end to end: the controller's FTDI chip (0403:6001) opened as a serial port (a COM port) at 115200 baud with DTR and RTS on; replies that arrive in pieces; whether a board with a serial FT232R needs another baud rate. The raw FTDI path (build feature `usb`) has never run against anything
+- [ ] Magic detection: a controller acknowledges a datagram scrambled with the wrong magic too, with one byte scrambled with its own magic (the emulator does, after MeerK40t). DarkBurn reads the magic from that byte and from the card ID reply, then confirms it. If a real controller stays silent on a wrong magic, detection still walks through all values
 - [ ] Ethernet end to end: DarkBurn sends from UDP 40200 (data) and 40207 (jog) to 50200 and 50207 and expects the answers on 40200 and 40207; the tests use a loopback emulator that answers to whatever port asked
 - [ ] RD file saved by DarkBurn: runs from the controller's file list and from a USB stick, and opens in the controller maker's own software
 - [ ] RD file reference point: `D8 10` for bed coordinates, `D8 12` for a job that starts from the current position (the app never writes `D8 11`)

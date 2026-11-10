@@ -10,7 +10,6 @@ use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use crate::emulator::RuidaEmulator;
 use crate::error::Result;
@@ -38,12 +37,21 @@ impl UdpEmulatorServer {
         let datagrams = Arc::new(AtomicUsize::new(0));
         let mut threads = Vec::new();
         for (socket, is_jog) in [(data, false), (jog, true)] {
-            socket.set_read_timeout(Some(Duration::from_millis(20)))?;
             let (emu, stop, drops, count) = (emu.clone(), stop.clone(), drop_replies.clone(), datagrams.clone());
             threads.push(std::thread::spawn(move || {
                 let mut buf = [0u8; 2048];
-                while !stop.load(Ordering::Relaxed) {
-                    let Ok((n, from)) = socket.recv_from(&mut buf) else { continue };
+                loop {
+                    // A plain blocking read, woken by a datagram from `Drop`: no polling, so a
+                    // datagram is answered as soon as the system hands it over.
+                    let Ok((n, from)) = socket.recv_from(&mut buf) else {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        continue;
+                    };
+                    if stop.load(Ordering::Relaxed) {
+                        break;
+                    }
                     // Loopback only: anything else is not ours to answer.
                     if !from.ip().is_loopback() {
                         continue;
@@ -105,8 +113,17 @@ fn take_one(n: &AtomicUsize) -> bool {
 impl Drop for UdpEmulatorServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        // Wake both threads out of their blocking reads with a datagram each.
+        let woke = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).and_then(|s| {
+            s.send_to(&[0], self.data)?;
+            s.send_to(&[0], self.jog)?;
+            Ok(())
+        });
         for t in self.threads.drain(..) {
-            let _ = t.join();
+            // If the wake-up could not be sent the threads stay asleep; do not wait for them.
+            if woke.is_ok() {
+                let _ = t.join();
+            }
         }
     }
 }

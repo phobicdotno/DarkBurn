@@ -37,6 +37,12 @@ pub fn swizzle_byte(b: u8, magic: Magic) -> u8 {
     (swap_bit0_bit7(b) ^ magic.0).wrapping_add(1)
 }
 
+/// The magic under which the logical byte `logical` is sent as `wire`. A controller
+/// acknowledges every datagram with one byte (logical 0xCC), so a single answer names its magic.
+pub fn magic_from_wire(wire: u8, logical: u8) -> Magic {
+    Magic(swap_bit0_bit7(logical) ^ wire.wrapping_sub(1))
+}
+
 /// Unswizzle one wire byte.
 #[inline]
 pub fn unswizzle_byte(b: u8, magic: Magic) -> u8 {

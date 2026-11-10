@@ -15,8 +15,22 @@ use darkburn_ruida::*;
 
 fn loopback(ecfg: EmulatorConfig, mcfg: MachineConfig) -> (RuidaMachine<UdpTransport>, UdpEmulatorServer) {
     let server = UdpEmulatorServer::start(emulator(ecfg)).expect("loopback sockets");
-    let m = RuidaMachine::new(server.transport().expect("loopback transport"), mcfg);
+    let m = RuidaMachine::new(warm(&server), mcfg);
     (m, server)
+}
+
+/// A transport to `server` whose first datagram has already made the trip. On Windows the first
+/// datagram between two new loopback sockets can take from 20 ms to more than a second when
+/// many sockets open at once (measured here; later datagrams take microseconds). Tests that use
+/// short timeouts to keep the suite quick start from a link that is past that. The driver's own
+/// answer to late datagrams is tested without sockets in `tests/driver.rs`.
+fn warm(server: &UdpEmulatorServer) -> UdpTransport {
+    let mut t = server.transport().expect("loopback transport");
+    // A lone ENQ, scrambled with the server's own magic: it is acknowledged and changes nothing.
+    let magic = server.emulator().lock().unwrap().magic();
+    t.send(Channel::Data, &emulator::udp_datagram(&[0xCE], magic)).unwrap();
+    assert!(t.recv(Channel::Data, Duration::from_secs(20)).unwrap().is_some(), "the loopback server answers");
+    t
 }
 
 #[test]
@@ -100,18 +114,38 @@ fn udp_wrong_magic_times_out_and_probing_finds_it() {
     let mcfg = MachineConfig { timeout: Duration::from_millis(60), retries: 0, ..Default::default() };
     let (mut m, _server) = loopback(ecfg.clone(), mcfg);
     assert!(matches!(m.connect(), Err(RuidaError::Timeout(_))));
-    // A generous wait: on a busy computer a reply can take longer than a short probe allows.
-    let mcfg = MachineConfig { magic: None, probe_timeout: Duration::from_secs(2), ..Default::default() };
-    let (mut m, _server) = loopback(ecfg, mcfg);
+    // Probing, on sockets that have not carried a datagram yet and with a short wait per value:
+    // the first answers may come long after their probe, and the magic is still found.
+    let mcfg = MachineConfig { magic: None, probe_timeout: Duration::from_millis(60), ..Default::default() };
+    let server = UdpEmulatorServer::start(emulator(ecfg)).unwrap();
+    let mut m = RuidaMachine::new(server.transport().unwrap(), mcfg);
     m.connect().unwrap();
     assert_eq!(m.magic(), Magic(0x11));
+    assert_eq!(m.read_setting(addr::BED_X).unwrap(), 600_000);
+}
+
+#[test]
+fn the_loopback_server_answers_every_datagram_whenever_it_arrives() {
+    // Datagrams at uneven gaps around 20 ms: none is lost and none waits for a poll.
+    let server = UdpEmulatorServer::start(emulator(EmulatorConfig::default())).unwrap();
+    let mut t = warm(&server);
+    let enq = emulator::udp_datagram(&[0xCE], Magic::DEFAULT);
+    let mut answered = 0;
+    for i in 0..120u64 {
+        std::thread::sleep(Duration::from_millis(15 + i % 11));
+        t.send(Channel::Data, &enq).unwrap();
+        if t.recv(Channel::Data, Duration::from_millis(500)).unwrap().is_some() {
+            answered += 1;
+        }
+    }
+    assert_eq!((answered, server.datagrams()), (120, 121), "120 and the warm-up");
 }
 
 #[test]
 fn udp_silence_is_a_timeout_not_a_hang() {
     // A server that has stopped: the port is closed, nothing answers.
     let server = UdpEmulatorServer::start(emulator(EmulatorConfig::default())).unwrap();
-    let t = server.transport().unwrap();
+    let t = warm(&server);
     drop(server);
     let mut m = RuidaMachine::new(t, MachineConfig { timeout: Duration::from_millis(50), retries: 1, ..Default::default() });
     let started = std::time::Instant::now();

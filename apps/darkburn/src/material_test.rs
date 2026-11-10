@@ -262,13 +262,23 @@ pub fn validate(p: &MaterialTestParams) -> Result<(), String> {
     Ok(())
 }
 
-/// Add the test to `doc`: layers get the cell settings, shapes are added on top. Call inside an
-/// editor edit so it is one undo step.
+/// Add the test to `doc`: free layers (ones without shapes) get the cell settings, shapes are
+/// added on top. Call inside an editor edit so it is one undo step.
 pub fn generate(doc: &mut Document, p: &MaterialTestParams) -> Result<MaterialTestResult, String> {
     validate(p)?;
     let xs = steps(p.x_min, p.x_max, p.columns);
     let ys = steps(p.y_min, p.y_max, p.rows);
-    let layers = cell_layers(p);
+    // Layers that already hold shapes keep their settings: the cells go on the free ones.
+    let taken: std::collections::HashSet<usize> = doc.iter().flat_map(Shape::leaves).map(|s| s.layer).collect();
+    let layers: Vec<usize> = cell_layers(p).into_iter().filter(|l| !taken.contains(l)).collect();
+    if p.columns * p.rows > layers.len() {
+        return Err(format!(
+            "{} cells need {} layers but only {} colour layers are free (the others hold shapes); use fewer rows or columns.",
+            p.columns * p.rows,
+            p.columns * p.rows,
+            layers.len()
+        ));
+    }
     let label_h = if p.labels { p.label_height } else { 0.0 };
     // Room for the row labels on the left and the column labels on top.
     let label_w = if p.labels {
@@ -503,6 +513,23 @@ mod tests {
         assert!((d.layer(0).main().interval - 0.05).abs() < 1e-9);
         assert_eq!(d.layer(0).main().galvo.frequency_khz, 20.0);
         assert_eq!(d.layer(7).main().galvo.frequency_khz, 60.0);
+    }
+
+    #[test]
+    fn layers_that_already_hold_shapes_are_left_alone() {
+        let mut d = Document::new();
+        d.layer_mut(0).main_mut().speed = 7.0;
+        d.layer_mut(2).main_mut().speed = 9.0;
+        d.add(Shape::rect(Rect::new(200.0, 200.0, 210.0, 210.0), 0.0, 0));
+        d.add(Shape::rect(Rect::new(220.0, 200.0, 230.0, 210.0), 0.0, 2));
+        let r = generate(&mut d, &MaterialTestParams { columns: 2, rows: 2, ..Default::default() }).unwrap();
+        assert_eq!((d.layer(0).main().speed, d.layer(2).main().speed), (7.0, 9.0), "the design keeps its settings");
+        assert_eq!(&r.layers[..4], &[1, 3, 4, 5], "the cells take the free layers");
+        // Not enough free layers left: refused, and nothing is changed.
+        let before = d.clone();
+        let e = generate(&mut d, &MaterialTestParams { columns: 5, rows: 5, ..Default::default() }).unwrap_err();
+        assert!(e.contains("free"), "{e}");
+        assert!(d == before);
     }
 
     #[test]

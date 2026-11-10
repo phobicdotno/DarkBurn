@@ -6,3 +6,4 @@ Fix: kerf offset now shrinks a hole that is drawn as its own shape inside anothe
 Fix: a cropped image now burns only inside its crop
 Fix: an image set far too fine to scan is left out with a warning instead of running out of memory
 Fix: Cut selected graphics now also holds on a galvo laser
+Fix: the material test no longer changes the settings of layers your design already uses

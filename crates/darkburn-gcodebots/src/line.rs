@@ -742,6 +742,9 @@ struct ActiveJob {
     sync_acked: bool,
     /// The power command the controller is holding (a job line set it, none switched it off).
     power_on: Option<String>,
+    /// The `M3`/`M4` word and the `S` value of the job so far, for a controller that holds the
+    /// laser at the last `S` ([`TranslateOptions::travel_s0`]).
+    held: (Option<u32>, String),
 }
 
 impl ActiveJob {
@@ -1076,6 +1079,7 @@ impl Worker {
             stop_on_error,
             sync_acked: false,
             power_on: None,
+            held: (None, String::new()),
         });
         self.snap.activity = if kind == JobKind::Frame { Activity::Framing } else { Activity::Job };
         self.snap.paused = false;
@@ -1093,8 +1097,12 @@ impl Worker {
         }
         // A controller that keeps the laser at the last power command (Marlin outside inline
         // mode, a fan output) would burn one spot while the head stands still: off first.
-        if let (PowerStyle::Command { off, .. }, true) = (&self.cfg.power.style, self.job.as_ref().is_some_and(|j| j.power_on.is_some())) {
-            self.enqueue_front(off.clone());
+        if self.job.as_ref().is_some_and(|j| j.power_on.is_some()) {
+            match &self.cfg.power.style {
+                PowerStyle::Command { off, .. } => self.enqueue_front(off.clone()),
+                // A controller that holds the last `S` of its `M3`/`M4` (see `pump_send`).
+                _ => self.enqueue_front("M5".to_owned()),
+            }
         }
     }
 
@@ -1670,6 +1678,11 @@ impl Worker {
                 job.tail_built = true;
                 let mut tail = VecDeque::new();
                 let fin = job.finish;
+                // Laser off before the move to the finish position: a controller that holds
+                // the last power would burn a line all the way there.
+                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
+                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
+                }
                 match fin {
                     FinishPosition::Stay => {}
                     FinishPosition::Origin => {
@@ -1680,9 +1693,6 @@ impl Worker {
                         tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail, urgent: false });
                         tail.push_back(Out { text: format!("G0 X{} Y{}", num(p.x), num(p.y)), tag: Tag::JobTail, urgent: false });
                     }
-                }
-                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
-                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
                 }
                 let sync = self.cfg.finish_sync.trim();
                 if !sync.is_empty() {
@@ -1711,6 +1721,23 @@ impl Worker {
                 } else if !head.is_empty() && o.text.starts_with(head) {
                     job.power_on = Some(o.text.clone());
                 }
+            } else if self.cfg.power.travel_s0
+                && self.cfg.power.style == PowerStyle::Passthrough
+                && let Some(words) = parse_words(&o.text)
+            {
+                // A controller that is not known to switch the laser off when the head stands
+                // still (a custom device) holds the last `S` of its `M3`/`M4`: remember both
+                // for a pause.
+                for (l, v) in &words {
+                    match (l, v.parse::<f64>().ok()) {
+                        ('M', Some(m)) if m == 3.0 || m == 4.0 => job.held.0 = Some(m as u32),
+                        ('M', Some(5.0)) => job.held = (None, String::new()),
+                        ('S', Some(_)) => job.held.1 = v.clone(),
+                        _ => {}
+                    }
+                }
+                let burning = job.held.1.parse::<f64>().is_ok_and(|s| s > 0.0);
+                job.power_on = job.held.0.filter(|_| burning).map(|m| format!("M{m} S{}", job.held.1));
             }
             self.write_line(&o.text, o.tag)?;
         }

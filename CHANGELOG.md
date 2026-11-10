@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.446 (build 6)
+## v0.0.454 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -30,6 +30,14 @@
 - Fix: Bold, spaced or bent text from a LightBurn file lost its look when the job was made
 - Fix: A damaged cut library file could put impossible power or speed on a layer
 - Fix: A failed auto-save was not tried again until the next change
+- Fix: pausing a custom G-code machine in the middle of a cut switches the laser off, and resume switches it back on
+- Fix: a G-code file that ends without switching the laser off no longer burns a line on the way to the finish position
+- Fix: Rotary on a galvo no longer marks a line twice when it sits right where two bands meet
+- Fix: Drilling on a galvo rotary no longer skips the top points of a tall shape
+- Fix: Door protection on a galvo now also waits for the door before every slice of a 3D sliced image
+- Fix: A galvo job that needs an axis move the board cannot make is refused at start instead of stopping half way with a link error
+- Fix: a turned, mirrored or cropped picture on a galvo is now engraved the way it looks on screen
+- Fix: pausing a GRBL machine that runs without laser mode now switches the laser off while it waits
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

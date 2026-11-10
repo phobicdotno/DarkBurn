@@ -36,6 +36,8 @@ mod files;
 #[cfg(test)]
 mod files_hunt5_tests;
 mod formats;
+#[cfg(test)]
+mod galvo_hunt6_tests;
 mod galvo_job;
 mod galvo_machine;
 mod galvo_settings;

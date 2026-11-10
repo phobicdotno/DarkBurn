@@ -223,6 +223,8 @@ pub struct GrblEmulator {
     timer_until: Option<f64>,
     state: State,
     resume_after_hold: bool,
+    /// The spindle stop override (0x9E) is in force: the spindle output is off in this hold.
+    spindle_stopped: bool,
     /// Critical alarm: ignore everything except real-time bytes until a reset.
     wait_reset: bool,
     alarm_code: Option<u16>,
@@ -331,6 +333,7 @@ impl GrblEmulator {
             timer_until: None,
             state: State::Idle,
             resume_after_hold: false,
+            spindle_stopped: false,
             wait_reset: false,
             alarm_code: None,
             mpos: [0.0; 3],
@@ -722,6 +725,9 @@ impl GrblEmulator {
                 }
             }
             State::Idle | State::Check => self.static_power(),
+            // Without laser mode a feed hold stops the motion, not the spindle output: it
+            // stays on until the spindle stop override switches it off.
+            State::Hold { .. } if !self.laser_mode() && !self.spindle_stopped => self.static_power(),
             _ => 0.0,
         }
     }
@@ -834,6 +840,7 @@ impl GrblEmulator {
     }
 
     fn soft_reset(&mut self) {
+        self.spindle_stopped = false;
         self.stats.soft_resets += 1;
         let moving = matches!(self.state, State::Run | State::Jog | State::Home | State::Hold { complete: false })
             || matches!(self.state, State::Door(2) | State::Door(3));
@@ -931,6 +938,12 @@ impl GrblEmulator {
                 };
                 self.ov_dirty = true;
             }
+            rt::SPINDLE_STOP => {
+                // A toggle, and only taken while a hold is complete.
+                if self.cfg.flavor != EmulatorFlavor::Grbl09 && self.state == (State::Hold { complete: true }) {
+                    self.spindle_stopped = !self.spindle_stopped;
+                }
+            }
             rt::FLOOD_TOGGLE => self.flood = !self.flood,
             rt::MIST_TOGGLE => self.mist = !self.mist,
             _ => {}
@@ -970,6 +983,7 @@ impl GrblEmulator {
     }
 
     fn resume(&mut self) {
+        self.spindle_stopped = false;
         self.state = if self.cycle_pending() { State::Run } else { State::Idle };
     }
 

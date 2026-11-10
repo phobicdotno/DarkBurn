@@ -1310,6 +1310,8 @@ struct Worker {
     queue: VecDeque<Outgoing>,
     job: Option<ActiveJob>,
     motion_pending: bool,
+    /// The spindle stop byte was sent in this pause (it is a toggle: once per hold).
+    hold_laser_stopped: bool,
     poll_sent: Option<Instant>,
     last_poll: Instant,
     echo_status: bool,
@@ -1348,6 +1350,7 @@ impl Worker {
             queue: VecDeque::new(),
             job: None,
             motion_pending: false,
+            hold_laser_stopped: false,
             poll_sent: None,
             last_poll: now,
             echo_status: false,
@@ -1594,6 +1597,7 @@ impl Worker {
                     }
                     if bytes == [rt::CYCLE_START] {
                         self.snap.paused = false;
+                        self.hold_laser_stopped = false;
                     }
                 }
             }
@@ -2237,6 +2241,22 @@ impl Worker {
         }
         if changed {
             self.emit(Event::StateChanged(r.state.clone()));
+        }
+        // A feed hold stops the motion; without laser mode ($32) the laser output stays on.
+        // GRBL 1.1 switches it off with the spindle stop byte, taken only once the hold is
+        // complete, and puts it back on the cycle start.
+        if !matches!(r.state, MachineState::Hold(_)) {
+            self.hold_laser_stopped = false;
+        } else if r.state == MachineState::Hold(0)
+            && self.snap.paused
+            && self.job.is_some()
+            && self.stop.is_none()
+            && !self.hold_laser_stopped
+            && self.snap.firmware.as_ref().is_some_and(FirmwareInfo::is_v11)
+            && !self.snap.settings.get(&32).is_some_and(|v| v.trim() == "1")
+        {
+            self.write(&[rt::SPINDLE_STOP])?;
+            self.hold_laser_stopped = true;
         }
         let v11 = self.snap.is_v11();
         let mpos = self.snap.status.mpos;

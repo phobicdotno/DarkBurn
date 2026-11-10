@@ -60,12 +60,40 @@ fn fill_settings(s: &CutSetting) -> FillSettings {
     }
 }
 
-/// The depth image of a picture: dark is deep, row 0 at the top.
-fn depth_of(doc: &Document, img: &darkburn_core::ImageShape) -> Option<(u32, u32, Vec<u8>)> {
-    let data = doc.images.get(&img.image)?;
-    let decoded = image::load_from_memory(&data.bytes).ok()?.to_luma8();
-    let (w, h) = decoded.dimensions();
-    Some((w, h, decoded.into_raw().into_iter().map(|v| 255 - v).collect()))
+/// The depth image of a picture as it lies in the design, over its bounding box `bbox`
+/// (document millimetres): dark is deep, row 0 at the top. The picture's turn, mirror and crop
+/// are followed; outside the picture, outside its crop and where it is transparent the depth
+/// is zero.
+fn depth_of(doc: &Document, leaf: &darkburn_core::Shape, img: &darkburn_core::ImageShape, bbox: Rect) -> Option<(u32, u32, Vec<u8>)> {
+    /// The most pixels along one side of a depth image.
+    const MAX_SIDE: f64 = 16384.0;
+    let gray = crate::images::source_gray(doc, img).ok()?;
+    let to_mm = crate::images::pixel_to_doc(leaf, img, (gray.width, gray.height));
+    let px_mm = to_mm.determinant().abs().sqrt();
+    if !(px_mm.is_finite() && px_mm > 0.0 && bbox.width() > 0.0 && bbox.height() > 0.0) {
+        return None;
+    }
+    let to_px = to_mm.inverse();
+    let w = (bbox.width() / px_mm).round().clamp(1.0, MAX_SIDE) as u32;
+    let h = (bbox.height() / px_mm).round().clamp(1.0, MAX_SIDE) as u32;
+    let (pw, ph) = (bbox.width() / f64::from(w), bbox.height() / f64::from(h));
+    let mut depth = vec![0u8; w as usize * h as usize];
+    for row in 0..h {
+        for col in 0..w {
+            let at = to_px * darkburn_core::kurbo::Point::new(bbox.x0 + (f64::from(col) + 0.5) * pw, bbox.y1 - (f64::from(row) + 0.5) * ph);
+            let (sx, sy) = (at.x.floor(), at.y.floor());
+            if sx < 0.0 || sy < 0.0 || sx >= f64::from(gray.width) || sy >= f64::from(gray.height) {
+                continue;
+            }
+            let i = sy as usize * gray.width as usize + sx as usize;
+            if gray.clear.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let v = (f64::from(gray.data[i]).clamp(0.0, 1.0) * 255.0).round() as u8;
+            depth[row as usize * w as usize + col as usize] = 255 - v;
+        }
+    }
+    Some((w, h, depth))
 }
 
 /// The document a galvo job is made from: the whole project, or only the selected shapes when
@@ -375,7 +403,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                     continue;
                 }
                 if let ShapeKind::Image(img) = &leaf.kind {
-                    images.push((leaf.bbox(), img.clone()));
+                    images.push((leaf.bbox(), leaf.clone(), img.clone()));
                     continue;
                 }
                 if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
@@ -504,8 +532,8 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
             match s.mode {
                 Mode::Line | Mode::Fill | Mode::OffsetFill | Mode::FillLine => {}
                 Mode::Image => {
-                    for (bbox, img) in &images {
-                        let Some((w, h, depth)) = depth_of(doc, img) else {
+                    for (bbox, leaf, img) in &images {
+                        let Some((w, h, depth)) = depth_of(doc, leaf, img, *bbox) else {
                             warnings.push(format!("Layer {name}: a picture could not be read."));
                             continue;
                         };

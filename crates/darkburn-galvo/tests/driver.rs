@@ -390,6 +390,32 @@ fn manual_axis_move_and_out_of_range() {
 }
 
 #[test]
+fn a_job_with_an_axis_move_the_board_cannot_make_is_refused_before_it_marks() {
+    let mut r = rig(dev());
+    // Windows up to 690 mm along the rotary: 69000 steps, more than the 16-bit position word.
+    let mut job = Job::new();
+    job.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, 0.0, 20.0, 700.0)]));
+    job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 20.0, axis: 0 });
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    r.m.arm().unwrap();
+    let started = r.m.start_job(c, StartOptions::default());
+    assert!(matches!(started, Err(GalvoError::Invalid(_))), "{started:?}");
+    // Nothing was marked, and the link is still fine.
+    std::thread::sleep(Duration::from_millis(50));
+    r.wait(|_| true);
+    assert!(!r.emu(|e| e.ever_emitted()));
+    assert_eq!(r.m.snapshot().connection, ConnectionState::Connected, "{:?}", r.events);
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+    // A repeat step on an axis the board does not have is refused the same way.
+    let mut job = Job::new();
+    job.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, -10.0, 20.0, 20.0)]));
+    job.repeat = RepeatMarking { count: 2, axis_step: Some((4, 1.0)), wait_foot_each: false };
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    assert!(matches!(r.m.start_job(c, StartOptions::default()), Err(GalvoError::Invalid(_))));
+    assert!(!r.emu(|e| e.ever_emitted()));
+}
+
+#[test]
 fn sliced_image_moves_z_and_returns() {
     let mut r = rig(dev());
     let img = SlicedImage {

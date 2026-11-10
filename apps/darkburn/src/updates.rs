@@ -97,8 +97,17 @@ fn allowed_address(url: &str) -> bool {
     if url.starts_with("https://") {
         return true;
     }
-    // Plain http only to this machine (the tests' loopback server).
-    ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| url.strip_prefix(p).is_some_and(|rest| rest.starts_with([':', '/'])))
+    // Plain http only to this machine (the tests' loopback server). The host is everything up
+    // to the path: "http://localhost:80@example.com/" names example.com, with "localhost:80"
+    // as a user name, so anything but a port number after the host is refused.
+    let Some(rest) = url.strip_prefix("http://") else { return false };
+    let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or("");
+    ["127.0.0.1", "localhost", "[::1]"].iter().any(|host| {
+        authority.strip_prefix(host).is_some_and(|port| match port.strip_prefix(':') {
+            Some(digits) => !digits.is_empty() && digits.len() <= 5 && digits.bytes().all(|b| b.is_ascii_digit()),
+            None => port.is_empty(),
+        })
+    })
 }
 
 /// Read a releases document.
@@ -106,7 +115,8 @@ pub fn parse_release(body: &str, current: &str) -> Outcome {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
         return Outcome::Unreadable("not JSON".into());
     };
-    let text = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_str())).map(str::trim).filter(|s| !s.is_empty());
+    // The first of `keys` that holds some text: an empty "tag_name" does not hide a "version".
+    let text = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()));
     let Some(latest) = text(&["tag_name", "version"]) else {
         return Outcome::Unreadable("no version in it".into());
     };
@@ -345,6 +355,33 @@ mod tests {
         assert!(!is_newer("0.0.24", "0.0.24"));
         assert!(!is_newer("0.0.23", "0.0.24"));
         assert!(!is_newer("garbage", "0.0.24"));
+    }
+
+    /// Plain http is for this computer only. An address that only starts like a local one
+    /// ("localhost:80@" is a user name) goes somewhere else and is refused.
+    #[test]
+    fn plain_http_is_only_allowed_to_this_computer() {
+        for ok in ["http://127.0.0.1:8080/releases", "http://localhost/x", "http://localhost:80", "http://[::1]:9/", "https://example.com/x"] {
+            assert!(allowed_address(ok), "{ok}");
+        }
+        for bad in [
+            "http://localhost:80@example.com/latest",
+            "http://127.0.0.1:80@example.com/",
+            "http://localhost:@example.com/",
+            "http://127.0.0.1.example.com/",
+            "http://localhost:80a/",
+            "http://example.com/",
+            "ftp://localhost/",
+        ] {
+            assert!(!allowed_address(bad), "{bad} is not this computer");
+            assert!(matches!(check(bad, "0.0.24"), Outcome::Failed(_)), "{bad} was asked");
+        }
+    }
+
+    #[test]
+    fn a_release_with_an_empty_tag_is_read_from_its_version() {
+        let o = parse_release(r#"{"tag_name":"","version":"9.0.0","html_url":" ","url":"https://example.com/get"}"#, "0.0.24");
+        assert!(matches!(&o, Outcome::Available { latest, url, .. } if latest == "9.0.0" && url == "https://example.com/get"), "{o:?}");
     }
 
     #[test]

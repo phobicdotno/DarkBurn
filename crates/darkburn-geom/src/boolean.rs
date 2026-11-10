@@ -36,12 +36,22 @@ fn ifill(rule: FillRule) -> IFill {
     }
 }
 
-/// Flattens a path to rings (every subpath closed).
+/// Largest coordinate (mm) the overlay and offset engines are given. Far beyond any machine,
+/// and well inside the range where they still work.
+pub(crate) const MAX_COORD: f64 = 1e12;
+
+/// True when `p` is a usable coordinate: a number no further out than [`MAX_COORD`].
+pub(crate) fn usable_point(p: Point) -> bool {
+    p.x.abs() <= MAX_COORD && p.y.abs() <= MAX_COORD
+}
+
+/// Flattens a path to rings (every subpath closed). A subpath with a coordinate that is not
+/// a number, infinite or absurdly large has no area that could be worked out and is left out.
 pub(crate) fn path_to_rings(path: &BezPath, tol: f64) -> Vec<Ring> {
     contours(path)
         .iter()
         .map(|c| flatten_contour(c, tol))
-        .filter(|pl| pl.points.len() >= 3)
+        .filter(|pl| pl.points.len() >= 3 && pl.points.iter().all(|p| usable_point(*p)))
         .map(|pl| pl.points.iter().map(|p| [p.x, p.y]).collect())
         .collect()
 }
@@ -234,6 +244,28 @@ mod tests {
         assert!((total_area(&d) - 1.0).abs() < 1e-9);
         assert!(difference(&[], &[rect(0.0, 0.0, 1.0, 1.0)], FillRule::EvenOdd, T).is_empty());
         assert!(weld(&[], FillRule::EvenOdd, T).is_empty());
+    }
+
+    #[test]
+    fn coordinates_that_are_not_numbers_are_left_out() {
+        let good = rect(0.0, 0.0, 5.0, 5.0);
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e300] {
+            let mut p = BezPath::new();
+            p.move_to((0.0, 0.0));
+            p.line_to((10.0, bad));
+            p.line_to((10.0, 10.0));
+            p.close_path();
+            for op in [BoolOp::Union, BoolOp::Difference, BoolOp::Intersection, BoolOp::Xor] {
+                let r = boolean(std::slice::from_ref(&good), std::slice::from_ref(&p), op, FillRule::EvenOdd, T);
+                let expected = if op == BoolOp::Intersection { 0.0 } else { 25.0 };
+                assert!((total_area(&r) - expected).abs() < 1e-9, "{op:?} with {bad}");
+            }
+            assert!((total_area(&union(&[p.clone(), good.clone()], FillRule::EvenOdd, T)) - 25.0).abs() < 1e-9);
+            assert!((signed_area(&weld(&[p.clone(), good.clone()], FillRule::EvenOdd, T)) - 25.0).abs() < 1e-9);
+            assert_eq!(cut_shapes(&[good.clone(), p.clone()], FillRule::EvenOdd, T).len(), 1);
+            assert!(resolve(std::slice::from_ref(&p), FillRule::EvenOdd, T).is_empty());
+            assert_eq!(crate::path::area(&p, FillRule::EvenOdd, T), 0.0);
+        }
     }
 
     #[test]

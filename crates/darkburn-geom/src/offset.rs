@@ -327,13 +327,20 @@ fn pline_to_contour(pl: &CPline<f64>) -> Option<Contour> {
 /// numbers: they are still cut where they were drawn. A subpath whose end lies on its start
 /// counts as closed. Circular arcs stay exact arcs; other curves are flattened within `tol`.
 pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
+    kerf_offset_counted(path, kerf, tol).0
+}
+
+/// [`kerf_offset`], and how many closed contours the offset left nothing of: a hole narrower
+/// than the kerf that closes up, or a part smaller than a kerf taken off it.
+pub fn kerf_offset_counted(path: &BezPath, kerf: f64, tol: f64) -> (BezPath, usize) {
     if kerf == 0.0 || !kerf.is_finite() {
-        return path.clone();
+        return (path.clone(), 0);
     }
     let cs: Vec<Contour> = contours(path).into_iter().map(close_if_ends_meet).collect();
     if cs.is_empty() {
-        return path.clone();
+        return (path.clone(), 0);
     }
+    let mut lost = 0;
     let offsettable = |c: &Contour| c.closed && usable_contour(c) && c.signed_area().abs() >= 1e-12;
     let closed_idx: Vec<usize> = (0..cs.len()).filter(|i| offsettable(&cs[*i])).collect();
     let closed_paths: Vec<BezPath> = closed_idx.iter().map(|i| cs[*i].to_bezpath()).collect();
@@ -350,6 +357,7 @@ pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
         }
         let results = pl.parallel_offset(d);
         let start = c.start().unwrap_or_default();
+        let before = out.len();
         for r in &results {
             let Some(mut rc) = pline_to_contour(r) else { continue };
             if rc.signed_area().signum() != s {
@@ -360,11 +368,14 @@ pub fn kerf_offset(path: &BezPath, kerf: f64, tol: f64) -> BezPath {
             }
             out.push(rc);
         }
+        if out.len() == before {
+            lost += 1;
+        }
     }
     for c in cs.iter().filter(|c| !offsettable(c)) {
         out.push(c.clone());
     }
-    from_contours(out.iter())
+    (from_contours(out.iter()), lost)
 }
 
 /// Builds a cavalier polyline from raw vertices; exposed for tests and callers that hold
@@ -530,6 +541,25 @@ mod tests {
         let a0 = signed_area(&subs[0]).abs();
         let a1 = signed_area(&subs[1]).abs();
         assert!(a0 > 400.0 && a1 < 100.0, "{a0} {a1}");
+    }
+
+    #[test]
+    fn kerf_counts_the_contours_it_swallows() {
+        // a plate with a hole of 0.4 mm across: a kerf of 0.5 closes the hole
+        let mut plate = rect(0.0, 0.0, 20.0, 20.0);
+        plate.extend(Circle::new((10.0, 10.0), 0.2).to_path(0.001));
+        let (k, lost) = kerf_offset_counted(&plate, 0.5, 0.001);
+        assert_eq!(lost, 1);
+        assert_eq!(subpaths(&k).len(), 1, "only the plate is left");
+        // nothing is lost when the hole is big enough
+        let mut plate = rect(0.0, 0.0, 20.0, 20.0);
+        plate.extend(Circle::new((10.0, 10.0), 2.0).to_path(0.001));
+        assert_eq!(kerf_offset_counted(&plate, 0.5, 0.001).1, 0);
+        // a part smaller than a kerf that is taken off it
+        let (k, lost) = kerf_offset_counted(&rect(0.0, 0.0, 0.3, 0.3), -0.5, 0.001);
+        assert_eq!(lost, 1);
+        assert!(k.elements().is_empty());
+        assert_eq!(kerf_offset_counted(&rect(0.0, 0.0, 0.3, 0.3), 0.0, 0.001).1, 0);
     }
 
     #[test]

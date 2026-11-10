@@ -6,3 +6,4 @@ Fix: The centre finder mark lands under the laser on machines whose origin is no
 Fix: Head camera alignment no longer applies the lens correction twice to the clicked marks
 Fix: Convert to Path leaves a text of only spaces alone instead of making an invisible shape
 Fix: "Weld text automatically" also applies to text made with the text tool
+Fix: A warning when a hole or part is smaller than the kerf offset and gets left out

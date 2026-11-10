@@ -265,7 +265,13 @@ impl DarkBurn {
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return None;
         }
+        let over_window = crate::escape::window_open(ctx);
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
+            // A plain key pressed over a dialog or a menu is the dialog's: Delete or a letter must
+            // not change the drawing behind it.
+            if over_window && plain_key(&shortcut) {
+                continue;
+            }
             // In the node tool the plain letter keys are node commands, not align commands.
             if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
@@ -300,7 +306,7 @@ impl DarkBurn {
         }
         let mut run = self.shortcut_command(ctx);
         let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
-        if run.is_none() {
+        if run.is_none() && !crate::escape::window_open(ctx) {
             if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) || pressed(Modifiers::NONE, Key::Equals) {
                 run = Some("view.zoom_in");
             } else if pressed(Modifiers::NONE, Key::Minus) {
@@ -885,6 +891,14 @@ impl DarkBurn {
             }
         }
     }
+}
+
+/// A shortcut without Ctrl or Alt that is not a function key or Pause: a key a dialog may want
+/// for itself. The others (Ctrl+Z, F1, Pause to hold a job) work whatever is open.
+fn plain_key(shortcut: &egui::KeyboardShortcut) -> bool {
+    let name = shortcut.logical_key.name();
+    let function = name.len() > 1 && name.starts_with('F') && name[1..].chars().all(|c| c.is_ascii_digit());
+    !shortcut.modifiers.command && !shortcut.modifiers.alt && !function && name != "Pause"
 }
 
 fn separator(ui: &Ui, bar: Rect, x: f32) {

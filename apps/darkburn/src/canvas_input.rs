@@ -522,6 +522,11 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
         }
         return;
     }
+    // So are the other keys: an arrow, Tab or a letter pressed over a dialog must not move, pick
+    // or flip the shapes behind it.
+    if window_open {
+        return;
+    }
     if !st.pen.is_empty() && pressed(Modifiers::NONE, Key::Enter) {
         finish_pen(app, st, false);
         return;

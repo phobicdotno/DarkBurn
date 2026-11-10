@@ -132,3 +132,39 @@ fn the_ribbon_number_fields_are_named_and_take_sums_and_units() {
     let bb = g.app().editor.doc.bbox_of(&ids).unwrap();
     assert!((bb.height() - 25.0).abs() < 1e-6, "{bb:?}");
 }
+
+/// A plain key pressed while a dialog is open belongs to the dialog: the arrows, Delete,
+/// Backspace, Tab and the letter keys leave the drawing behind it alone.
+#[test]
+fn plain_keys_over_an_open_dialog_do_not_edit_the_drawing() {
+    for window in ["help.about", "edit.settings", "tools.offset"] {
+        let mut g = Gui::standard();
+        g.sample_design();
+        let state = |g: &Gui| {
+            let app = g.app();
+            (app.editor.doc.clone(), app.editor.selected())
+        };
+        let before = state(&g);
+        g.run_command(window);
+        assert!(g.dialog_open(), "{window} opened a window");
+        for key in [Key::ArrowRight, Key::ArrowUp, Key::H, Key::V, Key::L, Key::Comma, Key::Tab, Key::PageUp, Key::Backspace, Key::Delete] {
+            g.key(key, Modifiers::NONE);
+            assert!(state(&g) == before, "{window}: {key:?} changed the drawing behind the window");
+        }
+        // With the window closed the keys are the canvas's again.
+        g.close_dialogs();
+        g.key(Key::ArrowRight, Modifiers::NONE);
+        assert!(g.app().editor.doc != before.0, "{window}: the arrow nudges again once the window is closed");
+        g.key(Key::Delete, Modifiers::NONE);
+        assert_eq!(g.app().editor.doc.len(), 0);
+    }
+    // Keys with Ctrl and the function keys still work over a window: undo, and help for it.
+    let mut g = Gui::standard();
+    g.sample_design();
+    let shapes = g.app().editor.doc.len();
+    g.run_command("edit.settings");
+    g.key(Key::Z, Modifiers::COMMAND);
+    assert!(g.app().editor.doc.len() < shapes, "Ctrl+Z still undoes");
+    g.key(Key::F1, Modifiers::NONE);
+    assert!(g.app().extras.help_open, "F1 still opens the help");
+}

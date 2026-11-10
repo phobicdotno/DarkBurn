@@ -105,3 +105,27 @@ fn a_lightburn_file_keeps_kerf_z_offset_and_air() {
     assert_eq!((l.main().kerf, l.main().z_offset), (0.15, 2.5));
     assert_eq!(l.air, air, "air assist");
 }
+
+/// A LightBurn file only says a text's words, font, height and side alignment. Its other
+/// settings are in the ready-made letters saved with it, so a text opened from the file keeps
+/// those letters until it is changed.
+#[test]
+fn styled_text_opened_from_a_lightburn_file_keeps_its_letters() {
+    let dir = TempDir::new("lbrnstyle");
+    let mut a = app();
+    let id = run(&mut a, "text.add", json!({ "text": "Wide", "x": 50, "y": 50, "height": 10, "font": "IBM Plex Sans", "layer": 0 })).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    if let ShapeKind::Text(t) = &mut a.editor.doc.get_mut(ShapeId(id)).unwrap().kind {
+        t.letter_spacing = 4.0;
+        t.bold = true;
+        t.align_y = darkburn_core::shape::AlignY::Top;
+    }
+    let before = crate::text_render::prepare_for_output(&a.editor.doc).bbox().unwrap();
+    let file = dir.file("style.lbrn2");
+    run(&mut a, "project.export", json!({ "path": file })).unwrap();
+    let mut b = app();
+    run(&mut b, "project.open", json!({ "path": file })).unwrap();
+    let built = crate::text_render::prepare_for_output(&b.editor.doc).bbox().unwrap();
+    assert!(near(built, before, 0.05), "as burned: {built:?} vs {before:?}");
+}

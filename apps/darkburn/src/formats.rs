@@ -424,6 +424,9 @@ impl Converter<'_> {
                 });
                 let transform = if let Some(l) = local {
                     text.backup = Some(l);
+                    // The file's letters hold what the file cannot say (bold, spacing, a path to
+                    // follow): they stay until the text is changed.
+                    crate::text_render::keep_letters(&mut text);
                     t.transform
                 } else if outline.is_some() {
                     text.backup = outline;

@@ -195,6 +195,12 @@ fn text_key(t: &TextShape, text: &str) -> u64 {
     ))
 }
 
+/// Take the letters a text shape came with (from a file) as its rendering: they are kept until
+/// one of its settings changes.
+pub fn keep_letters(t: &mut TextShape) {
+    t.render_key = text_key(t, &t.text);
+}
+
 /// Render a text shape now. Returns false when nothing changed.
 fn render_text(doc_vars: &Document, layer: usize, t: &mut TextShape, now: &EvalContext) -> bool {
     let text = evaluated_text(doc_vars, layer, t, now);

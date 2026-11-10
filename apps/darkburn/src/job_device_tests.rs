@@ -253,6 +253,48 @@ fn a_saved_absolute_job_is_not_run_shifted_on_a_machine_with_an_origin_set() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Every G-code file DarkBurn saves with absolute coordinates is known as one, whatever the
+/// device writes before the job: a header, a prelude, a start script.
+#[test]
+fn a_saved_absolute_job_is_recognised_for_every_g_code_device() {
+    use crate::devices::DeviceType as T;
+    use serde_json::json;
+    let run = |a: &mut crate::shell::DarkBurn, id: &str, args: serde_json::Value| crate::api::execute_headless(a, id, &args);
+    let dir = std::env::temp_dir().join(format!("darkburn-known-gcode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("job.gc");
+    let mut wrong = Vec::new();
+    for ty in [T::Grbl, T::GrblHal, T::FluidNc, T::Marlin, T::Smoothie, T::Snapmaker, T::LinuxCnc, T::CustomGcode] {
+        for script in ["", "G91\nG0 Z5\nG90"] {
+            let mut a = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+            let id = run(&mut a, "device.add", json!({ "type": format!("{ty:?}") })).unwrap()["id"].as_u64().unwrap();
+            run(&mut a, "device.select", json!({ "id": id })).unwrap();
+            a.machine.devices.active_mut().unwrap().settings.gcode.start_script = script.to_owned();
+            a.job.gcode.start_script = script.to_owned();
+            run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+            run(&mut a, "job.save_gcode", json!({ "path": file.to_str().unwrap() })).unwrap();
+            let abs = std::fs::read_to_string(&file).unwrap();
+            if !crate::machine_job::gcode_in_machine_coordinates(&abs) {
+                wrong.push(format!(
+                    "{ty:?} with start script {script:?}: not seen as bed coordinates:\n{}",
+                    abs.lines().take(24).collect::<Vec<_>>().join("\n")
+                ));
+            }
+            run(&mut a, "job.set_origin", json!({ "start_from": "current_position" })).unwrap();
+            run(&mut a, "job.save_gcode", json!({ "path": file.to_str().unwrap(), "allow_out_of_bounds": true })).unwrap();
+            let rel = std::fs::read_to_string(&file).unwrap();
+            if crate::machine_job::gcode_in_machine_coordinates(&rel) {
+                wrong.push(format!(
+                    "{ty:?} with start script {script:?}: a job from the current position seen as bed coordinates:\n{}",
+                    rel.lines().take(24).collect::<Vec<_>>().join("\n")
+                ));
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(wrong.is_empty(), "{}", wrong.join("\n\n"));
+}
+
 #[test]
 fn output_tolerance_changes_how_curves_are_flattened() {
     let mut d = Document::new();

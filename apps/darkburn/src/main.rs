@@ -17,6 +17,7 @@ mod cuts_panel;
 mod devices;
 mod devices_ui;
 mod dock_geom;
+mod dock_layout;
 mod escape;
 mod extras;
 mod file_io;

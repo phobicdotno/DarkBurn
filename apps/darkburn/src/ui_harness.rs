@@ -689,7 +689,8 @@ impl Gui {
     /// Things on screen that clip or overflow the window, one line each:
     /// - published controls (ribbon, tools, menus, panel tabs, status) not wholly inside the screen;
     /// - painted text that runs past the screen edge, or is cut off at the side by a clip
-    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted);
+    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted,
+    ///   nor is a ruler number cut off where the ruler ends);
     /// - ribbon buttons or panel tabs that overlap each other;
     /// - dialog windows not wholly inside the screen.
     pub fn layout_problems(&self) -> Vec<String> {
@@ -713,7 +714,14 @@ impl Gui {
                 }
             }
         }
+        // The rulers beside the canvas cut a number off where the ruler ends: that is how a ruler looks.
+        let canvas = self.rect_of("canvas");
+        let on_ruler =
+            |r: Rect| canvas.is_some_and(|c| (c.top() - 24.0..c.top()).contains(&r.top()) || (c.left() - 24.0..c.left()).contains(&r.left()));
         for p in self.painted() {
+            if on_ruler(p.full) && p.text.trim().parse::<f64>().is_ok() {
+                continue;
+            }
             if p.broken_word {
                 out.push(format!("text {:?} {:?} is broken in the middle of a word", p.text, p.full));
             } else if outside(screen, p.full) {

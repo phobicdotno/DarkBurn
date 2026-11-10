@@ -1,3 +1,5 @@
 - Escape closes the Preview, the notes and the camera and rotary windows
 - Escape closes an open window first, even with the node or measure tool picked
 - Screen readers now say what each field, slider and search box is for
+- Side and bottom panels keep the size you drag them to
+- Panels no longer shrink by themselves or get squeezed away in a small window

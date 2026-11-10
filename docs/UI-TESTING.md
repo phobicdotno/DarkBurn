@@ -80,7 +80,7 @@ windows). Three ways to find a control, from most to least stable:
 1. **By name from the UI registry** (`click_id`, `rect_of`). Widgets publish a rectangle under a
    name with `solidcraft_ui_registry::publish_target(name, rect)`. Names in use: `ribbon:<command id>`,
    `ribbon:tab:<tab>`, `tool:<command id>`, `appbar:menu:<name>`, `appbar:help`, `appbar:settings`,
-   `panel:tab:<panel id>`, `panel:overflow:<Area>`, `canvas`, `status:*`, and many
+   `panel:tab:<panel id>`, `panel:overflow:<Area>`, `panel:area:<Area>` (a dock's tab group), `canvas`, `status:*`, and many
    `dialog:button:<label>`, `dialog:control:<label>`, `dialog:cancel`, `dialog:window`. The registry
    is cleared at the start of every frame, so it holds what the last frame drew. When you add a
    control that tests should reach, publish it.
@@ -129,6 +129,7 @@ fn offset_shapes_dialog_opens_and_closes() {
 | `escape_*` (`ui_bug_tests.rs`) | One Escape closes every window a command or state opens, whatever tool is picked; menus and lists close before the window; windows close one at a time |
 | `every_interactive_control_has_an_accessible_name`, `every_control_in_every_window_has_an_accessible_name`, `fields_are_named_after_their_visible_labels` | Every field, slider, check box and button in every panel, ribbon tab and window has a name for screen readers, taken from its visible label. A bare `egui::TextEdit`, `DragValue` or `Slider` needs `a11y::text/number/slider` (or `ui_kit::named_control` round a kit field outside a row) |
 | `no_widget_id_is_used_twice_in_any_panel_arrangement` | No egui duplicate-ID warning in the default layout, with every panel shown, with all panels in each dock and dealt round the docks, with each tab's right-click menu and overflow list open, at 1600 x 1000 and 960 x 600 |
+| `docks_*`, `a_dragged_dock_*`, `every_dock_is_usable_at_every_window_size`, `a_tiny_window_*` | The docks open at their default sizes and keep them; a dragged dock keeps its size and it is saved; from 960 x 600 to 3840 x 2100 every dock and the drawing area are on screen and usable, also after the window shrinks with the docks at their widest; the sizes come back when the window grows; a window far below the minimum draws without a panic |
 | `the_harness_*`, `the_widget_registry_*`, `no_file_dialog_*`, `the_default_layout_matches_its_golden_picture` | The harness itself |
 
 Every test fails on a duplicate widget ID.

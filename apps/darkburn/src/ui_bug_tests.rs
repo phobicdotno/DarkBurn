@@ -308,3 +308,183 @@ fn no_widget_id_is_used_twice_in_any_panel_arrangement() {
     found.dedup();
     assert!(found.is_empty(), "{} widget id clashes:\n{}", found.len(), found.join("\n"));
 }
+
+// ----- dock panels at every window size -----
+
+fn dock(g: &Gui, area: &str) -> egui::Rect {
+    g.rect_of(&format!("panel:area:{area}")).unwrap_or_else(|| panic!("the {area} dock is on screen; docks: {:?}", g.rects("panel:area:")))
+}
+
+/// The published rectangle is the dock without its one-point edge line.
+fn near(a: f32, b: f32) -> bool {
+    (a - b).abs() <= 1.5
+}
+
+fn near3(a: (f32, f32, f32), b: (f32, f32, f32)) -> bool {
+    near(a.0, b.0) && near(a.1, b.1) && near(a.2, b.2)
+}
+
+fn show_every_panel(g: &mut Gui) {
+    for p in crate::panels::PANELS {
+        if !g.app().prefs.panel(p.id).visible {
+            g.run_command(&format!("panel.{}", p.id));
+        }
+    }
+    g.frames(3);
+}
+
+/// What must hold at any window the app allows (960 x 600 points and up): every dock with a panel
+/// in it is on screen and big enough to use, and the drawing area keeps its room.
+fn docks_are_usable(g: &Gui, what: &str) -> Vec<String> {
+    use crate::dock_layout::{CANVAS_MIN_WIDTH, GROUP_MIN_HEIGHT};
+    let screen = g.screen();
+    let mut bad = Vec::new();
+    let shown = |area| crate::panels::PANELS.iter().any(|p| g.app().prefs.panel(p.id).visible && g.app().prefs.panel(p.id).area == area);
+    for area in crate::panels::Area::ALL {
+        if !shown(area) {
+            continue;
+        }
+        let name = format!("{area:?}");
+        let Some(r) = g.rect_of(&format!("panel:area:{name}")) else {
+            bad.push(format!("{what}: the {name} dock is missing"));
+            continue;
+        };
+        let (min_w, min_h) = if name == "Bottom" { (screen.width() - 1.0, 99.0) } else { (179.0, GROUP_MIN_HEIGHT - 1.0) };
+        if r.width() < min_w || r.height() < min_h || crate::ui_harness::outside(screen, r) {
+            bad.push(format!("{what}: the {name} dock is {:.0} x {:.0} at {:?} (window {:?})", r.width(), r.height(), r.min, screen.size()));
+        }
+        if !g.rects("panel:tab:").iter().any(|(_, t)| r.contains(t.center())) {
+            bad.push(format!("{what}: the {name} dock shows no tab"));
+        }
+    }
+    match g.rect_of("canvas") {
+        Some(c) if c.width() >= CANVAS_MIN_WIDTH - 40.0 && c.height() >= 150.0 => {}
+        c => bad.push(format!("{what}: the drawing area is {:?} (window {:?})", c.map(|c| c.size()), screen.size())),
+    }
+    bad
+}
+
+/// The docks open at their default sizes and stay there: they do not creep down to their
+/// narrowest while the app runs (they did: 380 points wide became 334, then 299).
+#[test]
+fn docks_keep_their_default_size() {
+    let mut g = Gui::standard();
+    show_every_panel(&mut g);
+    g.frames(30);
+    assert!(near(dock(&g, "RightTop").width(), 380.0), "{}", dock(&g, "RightTop").width());
+    assert!(near(dock(&g, "RightBottom").width(), 380.0), "{}", dock(&g, "RightBottom").width());
+    assert!(near(dock(&g, "Left").width(), 260.0), "{}", dock(&g, "Left").width());
+    assert!(near(dock(&g, "Bottom").height(), 180.0), "{}", dock(&g, "Bottom").height());
+    // Whatever panel is in front: a narrow one does not shrink the dock, a wide one does not widen it.
+    for p in crate::panels::PANELS {
+        let area = g.app().prefs.panel(p.id).area;
+        g.app().prefs.active_tab.insert(area, p.id.to_string());
+        g.frames(8);
+        assert!(near(dock(&g, "RightTop").width(), 380.0), "with {} in front", p.id);
+        assert!(near(dock(&g, "Left").width(), 260.0), "with {} in front", p.id);
+        assert!(near(dock(&g, "Bottom").height(), 180.0), "with {} in front", p.id);
+    }
+}
+
+/// Dragging a dock's edge resizes it, the size stays when the pointer lets go (it sprang back
+/// ten points a frame), it is saved with the settings, and a layout reset puts the default back.
+#[test]
+fn a_dragged_dock_keeps_its_new_size() {
+    let mut g = Gui::standard();
+    show_every_panel(&mut g);
+    let r = dock(&g, "RightTop");
+    let edge = egui::pos2(r.left(), r.center().y);
+    g.drag(edge, edge - egui::vec2(120.0, 0.0));
+    let wide = dock(&g, "RightTop").width();
+    assert!((wide - 500.0).abs() < 4.0, "dragged 120 points wider than 380: {wide}");
+    g.frames(40);
+    assert_eq!(dock(&g, "RightTop").width(), wide, "the size stays");
+    assert_eq!(dock(&g, "RightBottom").width(), wide);
+    // The bottom dock, dragged taller; the left dock, dragged narrower than it may be.
+    let b = dock(&g, "Bottom");
+    let top = egui::pos2(b.center().x, b.top());
+    g.drag(top, top - egui::vec2(0.0, 100.0));
+    let tall = dock(&g, "Bottom").height();
+    assert!((tall - 280.0).abs() < 4.0, "{tall}");
+    let l = dock(&g, "Left");
+    let right = egui::pos2(l.right(), l.center().y);
+    g.drag(right, right - egui::vec2(200.0, 0.0));
+    g.frames(10);
+    assert!(near(dock(&g, "Left").width(), 180.0), "the left dock stops at its narrowest");
+    assert_eq!(dock(&g, "Bottom").height(), tall);
+    // Saved with the settings.
+    let saved = crate::prefs::Prefs::from_json(&g.app().prefs.to_json());
+    assert_eq!(saved.dock_sizes, g.app().prefs.dock_sizes);
+    assert!(near(saved.dock_sizes["right"], wide) && near(saved.dock_sizes["bottom"], tall), "{:?}", saved.dock_sizes);
+    // A click or a drag somewhere else changes no dock.
+    g.click_mm(100.0, 100.0);
+    g.drag_mm((50.0, 50.0), (90.0, 80.0));
+    assert_eq!(dock(&g, "RightTop").width(), wide);
+    g.run_command("window.reset_layout");
+    show_every_panel(&mut g);
+    assert!(near(dock(&g, "RightTop").width(), 380.0), "{}", dock(&g, "RightTop").width());
+    assert!(near(dock(&g, "Bottom").height(), 180.0), "{}", dock(&g, "Bottom").height());
+}
+
+/// Dock panels went missing at some window sizes: with docks at their real sizes, a small window
+/// left the side docks a strip under the tab row, or the drawing area nothing. At every size from
+/// the smallest window up, started at that size, every dock and the drawing area are usable.
+#[test]
+fn every_dock_is_usable_at_every_window_size() {
+    let mut bad = Vec::new();
+    for (w, h) in
+        [(960.0, 600.0), (1024.0, 600.0), (960.0, 1400.0), (1100.0, 700.0), (1280.0, 720.0), (1600.0, 1000.0), (2560.0, 700.0), (3840.0, 2100.0)]
+    {
+        let mut g = Gui::new(w, h, 1.0);
+        bad.extend(docks_are_usable(&g, &format!("default panels, {w} x {h}")));
+        show_every_panel(&mut g);
+        bad.extend(docks_are_usable(&g, &format!("every panel, {w} x {h}")));
+        bad.extend(g.layout_problems().into_iter().map(|p| format!("every panel, {w} x {h}: {p}")));
+        g.screenshot(&format!("uibugs-docks-{w}x{h}"));
+    }
+    assert!(bad.is_empty(), "{} problems:\n{}", bad.len(), bad.join("\n"));
+}
+
+/// The user's widest docks in a big window, then the window made small: the docks give way, the
+/// drawing area stays, and back at the big size the docks have the user's sizes again.
+#[test]
+fn docks_give_way_when_the_window_shrinks_and_come_back_when_it_grows() {
+    let mut g = Gui::new(2560.0, 1400.0, 1.0);
+    show_every_panel(&mut g);
+    for (key, size) in [("left", 520.0), ("right", 640.0), ("bottom", 480.0)] {
+        g.app().prefs.dock_sizes.insert(key.to_string(), size);
+    }
+    g.frames(3);
+    let big = |g: &Gui| (dock(g, "Left").width().round(), dock(g, "RightTop").width().round(), dock(g, "Bottom").height().round());
+    assert!(near3(big(&g), (520.0, 640.0, 480.0)), "{:?}", big(&g));
+    let mut bad = Vec::new();
+    for (w, h) in [(1600.0, 1000.0), (1280.0, 720.0), (960.0, 600.0), (1280.0, 720.0), (960.0, 1400.0), (2560.0, 600.0), (960.0, 600.0)] {
+        g.set_window_size(w, h);
+        bad.extend(docks_are_usable(&g, &format!("shrunk to {w} x {h}")));
+        bad.extend(g.layout_problems().into_iter().map(|p| format!("shrunk to {w} x {h}: {p}")));
+    }
+    assert!(bad.is_empty(), "{} problems:\n{}", bad.len(), bad.join("\n"));
+    g.screenshot("uibugs-docks-shrunk-960x600");
+    g.set_window_size(2560.0, 1400.0);
+    assert!(near3(big(&g), (520.0, 640.0, 480.0)), "the chosen sizes come back with the room: {:?}", big(&g));
+}
+
+/// A window far below the smallest the app allows (a forced size, or a frame drawn while the
+/// window is being minimised) draws without a panic, and the layout is whole again afterwards.
+#[test]
+fn a_tiny_window_draws_and_the_layout_recovers() {
+    let mut g = Gui::standard();
+    g.allow_id_clashes();
+    show_every_panel(&mut g);
+    for (w, h) in [(640.0, 400.0), (300.0, 200.0), (400.0, 1000.0), (1600.0, 120.0), (40.0, 30.0), (2.0, 2.0), (700.0, 500.0)] {
+        g.set_window_size(w, h);
+        g.frames(3);
+    }
+    g.set_window_size(1600.0, 1000.0);
+    let bad = docks_are_usable(&g, "back at 1600 x 1000");
+    assert!(bad.is_empty(), "{bad:?}");
+    assert!(near(dock(&g, "RightTop").width(), 380.0), "{}", dock(&g, "RightTop").width());
+    assert!(near(dock(&g, "Left").width(), 260.0), "{}", dock(&g, "Left").width());
+    assert!(near(dock(&g, "Bottom").height(), 180.0), "{}", dock(&g, "Bottom").height());
+    assert!(g.id_clashes_now().is_empty());
+}

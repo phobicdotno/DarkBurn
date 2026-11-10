@@ -278,6 +278,43 @@ fn kerf_shrinks_a_hole_drawn_as_its_own_shape() {
     assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "the hole shrinks by the kerf: {i0} {i1}");
 }
 
+/// Holes are often put on a layer of their own, to cut them before the plate.
+#[test]
+fn kerf_shrinks_a_hole_on_a_layer_of_its_own() {
+    let hole_span = |d: Document| {
+        let b = build(d);
+        let xs: Vec<f64> = segs(&b.toolpath)
+            .into_iter()
+            .filter(|s| s.kind == 'C' && s.power > 0.0 && s.from.x > 20.0 && s.from.x < 40.0 && s.from.y > 20.0 && s.from.y < 40.0)
+            .map(|s| s.from.x)
+            .collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    // A 40 mm plate on layer 0 and a 10 mm hole on layer 1, both cut with a kerf offset.
+    let mut d = line_doc(40.0);
+    sq(&mut d, 1, 25.0, 25.0, 10.0);
+    d.layer_mut(0).main_mut().kerf = 0.5;
+    d.layer_mut(1).main_mut().kerf = 0.5;
+    let (i0, i1) = hole_span(d.clone());
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "the hole shrinks by the kerf: {i0} {i1}");
+    // Only the hole's layer has a kerf: still a hole.
+    d.layer_mut(0).main_mut().kerf = 0.0;
+    let (i0, i1) = hole_span(d.clone());
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "{i0} {i1}");
+    // A plate that is only engraved (filled) cuts nothing free: the square is a part, and grows.
+    d.layer_mut(0).main_mut().mode = Mode::Fill;
+    let b = build(d.clone());
+    let xs: Vec<f64> =
+        segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0 && (s.from.y - s.to.y).abs() > 1.0).map(|s| s.from.x).collect();
+    let (i0, i1) = (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max));
+    assert!((i0 - 24.5).abs() < 0.05 && (i1 - 35.5).abs() < 0.05, "a part grows by the kerf: {i0} {i1}");
+    // A plate on a layer that is not output does not make it a hole either.
+    d.layer_mut(0).main_mut().mode = Mode::Line;
+    d.layer_mut(0).output = false;
+    let (i0, i1) = hole_span(d);
+    assert!((i0 - 24.5).abs() < 0.05 && (i1 - 35.5).abs() < 0.05, "{i0} {i1}");
+}
+
 #[test]
 fn a_cropped_image_burns_only_inside_its_crop() {
     use darkburn_core::kurbo::Shape as _;

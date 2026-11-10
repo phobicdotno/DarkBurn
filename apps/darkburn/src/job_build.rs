@@ -704,22 +704,26 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
-    // Kerf: a shape drawn inside another shape of its layer is a hole, and its kerf goes the
-    // other way. These are the closed outlines of the cut shapes on layers with a kerf offset,
-    // each with the number of its shape.
-    let mut kerf_outlines: Vec<Vec<(usize, Rect, Vec<Point>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+    // Kerf: a shape drawn inside another shape that is cut is a hole, and its kerf goes the
+    // other way. The shape around it may be on another layer (holes are often given a layer of
+    // their own to cut them first). These are the closed outlines of the shapes on the layers
+    // that cut lines, each with the number of its shape; they are only needed when some layer
+    // has a kerf offset.
+    let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
+    let any_kerf = (0..layer::LAYER_COUNT).any(|li| doc.layer(li).outputs() && !kerfs_of(doc.layer(li)).is_empty());
+    let mut kerf_outlines: Vec<(usize, Rect, Vec<Point>)> = Vec::new();
     let mut leaf_no = 0usize;
     for top in &tops {
         for leaf in top.leaves() {
             leaf_no += 1;
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
-            if !l.outputs() || leaf.is_image() || kerfs_of(l).is_empty() {
+            if !any_kerf || !l.outputs() || leaf.is_image() || !cuts_lines(l) {
                 continue;
             }
             for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
                 if poly.closed {
-                    kerf_outlines[li].push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                    kerf_outlines.push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
                 }
             }
         }
@@ -793,9 +797,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let kerfs = kerfs_of(l);
             let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
             if !kerfs.is_empty() {
-                // How many other shapes of the layer this one lies inside: odd means a hole.
+                // How many other cut shapes this one lies inside: odd means a hole.
                 let depth = match path.elements().first() {
-                    Some(PathEl::MoveTo(p0)) => kerf_outlines[li]
+                    Some(PathEl::MoveTo(p0)) => kerf_outlines
                         .iter()
                         .filter(|(no, r, pts)| {
                             *no != leaf_no

@@ -8,3 +8,4 @@ Fix: a saved Marlin, Smoothieware, Snapmaker, LinuxCNC or custom G-code file is 
 Fix: dot mode with overcut no longer fires the first dots twice
 Fix: the frame and the job origin no longer count shapes that are not burned
 Fix: fine pictures (300 DPI and up) keep the exact size of their dots in G-code
+Fix: a hole on its own layer is treated as a hole for kerf offset, lead-in side and tabs

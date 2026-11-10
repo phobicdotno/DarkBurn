@@ -142,6 +142,21 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         }
     }
 
+    // The closed outlines each layer cuts as lines. A shape that lies inside one of them is a
+    // hole (tabs, lead side), also when the outline around it is cut on another layer.
+    let cut_outlines: Vec<Vec<(Rect, Vec<Point>)>> = input
+        .layers
+        .iter()
+        .zip(&flat)
+        .map(|(l, shapes)| {
+            let cuts = l.output && l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, CutMode::Line | CutMode::FillLine));
+            if !cuts {
+                return Vec::new();
+            }
+            shapes.iter().flatten().filter(|p| p.closed).map(|p| (geom::bbox(&p.pts), p.pts.clone())).collect()
+        })
+        .collect();
+
     // Build plannable units.
     let mut units: Vec<Unit> = Vec::new();
     let mut items: Vec<PlanItem> = Vec::new();
@@ -158,7 +173,8 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
                 } else {
                     polys
                 };
-                line_units(bi, b, layer, polys, &opts.planner, &mut units, &mut items)
+                let around: Vec<&(Rect, Vec<Point>)> = cut_outlines.iter().enumerate().filter(|(i, _)| *i != b.layer).flat_map(|(_, v)| v).collect();
+                line_units(bi, b, layer, polys, &around, &opts.planner, &mut units, &mut items)
             }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
@@ -296,7 +312,18 @@ fn poly_distance(poly: &Poly, p: Point) -> f64 {
     geom::nearest_arclen(&pts, p).1
 }
 
-fn line_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], ps: &PlannerSettings, units: &mut Vec<Unit>, items: &mut Vec<PlanItem>) {
+/// `around`: the closed outlines the other layers cut (bounding box and points).
+#[allow(clippy::too_many_arguments)]
+fn line_units(
+    bi: usize,
+    b: &Block,
+    layer: &LayerInput,
+    polys: &[Vec<Poly>],
+    around: &[&(Rect, Vec<Point>)],
+    ps: &PlannerSettings,
+    units: &mut Vec<Unit>,
+    items: &mut Vec<PlanItem>,
+) {
     let mut list: Vec<(Poly, usize)> = Vec::new();
     for (si, shape) in polys.iter().enumerate() {
         for p in shape {
@@ -352,7 +379,16 @@ fn line_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], ps:
                     && geom::point_in_polygon(poly.pts[0], &q.pts)
                     && geom::point_in_polygon(poly.pts[poly.pts.len() / 2], &q.pts)
             })
-            .count();
+            .count()
+            + around
+                .iter()
+                .filter(|(r, q)| {
+                    geom::rect_inside(bb, *r)
+                        && (!poly.closed || geom::signed_area(q).abs() > area)
+                        && geom::point_in_polygon(poly.pts[0], q)
+                        && geom::point_in_polygon(poly.pts[poly.pts.len() / 2], q)
+                })
+                .count();
         let mut pts = poly.pts.clone();
         let mut forced_start = None;
         if poly.closed
@@ -1066,6 +1102,61 @@ mod tests {
 
     fn run(l: LayerInput, opts: &JobOptions) -> Toolpath {
         generate(&JobInput { layers: vec![l] }, opts, &mut Progress::none()).unwrap()
+    }
+
+    /// A hole cut on a layer of its own (inner shapes first, on another colour) is still a hole.
+    #[test]
+    fn a_hole_on_its_own_layer_is_a_hole_for_tabs_and_lead_in() {
+        let mut inner = tab_settings(true);
+        inner.line.tabs.skip_inner = true;
+        inner.line.lead_in = Some(crate::input::Lead { length: 2.0, angle_deg: 90.0, style: crate::input::LeadStyle::Line });
+        let outer = CutSettings::line(10.0, 50.0);
+        let hole = LayerInput::new(1, "Holes", inner.clone()).with_shape(ShapeInput::new(rect_path(10.0, 10.0, 20.0, 20.0)));
+        let plate = |s: CutSettings| LayerInput::new(0, "Plate", s).with_shape(ShapeInput::new(rect_path(0.0, 0.0, 40.0, 40.0)));
+        let cut = |layers: Vec<LayerInput>| {
+            let tp = generate(&JobInput { layers }, &JobOptions::default(), &mut Progress::none()).unwrap();
+            // The ops of the hole's layer only.
+            let li = tp.layers.iter().position(|l| l.name == "Holes").unwrap();
+            let mut on = false;
+            let mut ops = Vec::new();
+            let mut pos = tp.start;
+            let mut entry = None;
+            for op in &tp.ops {
+                if let Op::LayerStart { layer } = op {
+                    on = *layer == li;
+                }
+                if on {
+                    if let Op::Cut { .. } = op
+                        && entry.is_none()
+                    {
+                        entry = Some(pos);
+                    }
+                    ops.push(op.clone());
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            (gaps(&Toolpath { space: tp.space, layers: tp.layers.clone(), ops, start: tp.start }).len(), entry.unwrap())
+        };
+        // The lead-in starts at a corner, so it runs along a side: on the square counts as inside.
+        let inside = |p: Point| p.x > 10.0 - 1e-9 && p.x < 30.0 + 1e-9 && p.y > 10.0 - 1e-9 && p.y < 30.0 + 1e-9;
+        // Alone, the square is an outer shape: tabs, and the lead-in comes from outside it.
+        let (tabs, entry) = cut(vec![hole.clone()]);
+        assert_eq!(tabs, 4);
+        assert!(!inside(entry), "{entry:?}");
+        // Inside a plate that another layer cuts: no tabs (skip inner shapes), lead-in from inside.
+        let (tabs, entry) = cut(vec![plate(outer.clone()), hole.clone()]);
+        assert_eq!(tabs, 0, "a hole gets no automatic tabs with Skip inner shapes on");
+        assert!(inside(entry), "the lead-in of a hole starts in the waste, inside it: {entry:?}");
+        // A filled (engraved) shape around it cuts nothing free: the square stays an outer shape.
+        let (tabs, entry) = cut(vec![plate(CutSettings::fill(100.0, 20.0, 1.0)), hole.clone()]);
+        assert_eq!(tabs, 4);
+        assert!(!inside(entry), "{entry:?}");
+        // A layer that is not output does not count either.
+        let mut off = plate(outer);
+        off.output = false;
+        assert_eq!(cut(vec![off, hole]).0, 4);
     }
 
     #[test]

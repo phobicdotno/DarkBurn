@@ -539,6 +539,16 @@ fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
             }
         }
     }
+    let half = img.direction_offset / 2.0;
+    if is.bidirectional && half != 0.0 {
+        for (row, forward) in ordered.iter_mut() {
+            let d = if *forward { -half } else { half };
+            for r in row.runs.iter_mut() {
+                r.x0 += d;
+                r.x1 += d;
+            }
+        }
+    }
     let e = RowEmit {
         frame: img.transform,
         speed: s.speed,
@@ -663,6 +673,47 @@ mod tests {
             }
         }
         assert!((burnt - (100.0 - 16.0)).abs() < 1e-6, "{burnt}");
+    }
+
+    #[test]
+    fn an_image_scan_offset_follows_the_direction_of_each_line() {
+        // The burning moves of four 10 mm lines starting at `y0`, as (from, to).
+        let burns = |offset: f64, bidirectional: bool, y0: f64| {
+            let lines = (0..4).map(|k| crate::input::Scanline { y: y0 + k as f64, runs: vec![(0.0, 10.0, 1.0)] }).collect();
+            let mut img = ImageInput::new(lines);
+            img.direction_offset = offset;
+            let mut s = CutSettings::image(100.0, 50.0, 0.0);
+            s.image.bidirectional = bidirectional;
+            let mut l = LayerInput::new(0, "A", s);
+            l.images.push(img);
+            let tp = run(l, &JobOptions::default());
+            let mut pos = Point::ZERO;
+            let mut out = Vec::new();
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    out.push((pos, *to));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            out
+        };
+        // Above the start the image is scanned bottom up, below it top down (every line then
+        // runs the other way).
+        for y0 in [5.0, -10.0] {
+            let plain = burns(0.0, true, y0);
+            let shifted = burns(0.4, true, y0);
+            assert_eq!(plain.len(), 4);
+            assert_eq!(plain[0].0.y < plain[3].0.y, y0 > 0.0, "scan order at {y0}");
+            for (a, b) in plain.iter().zip(&shifted) {
+                let want = if a.1.x > a.0.x { -0.2 } else { 0.2 };
+                assert!((b.0.x - a.0.x - want).abs() < 1e-9 && (b.1.x - a.1.x - want).abs() < 1e-9, "at {y0}: {a:?} {b:?}");
+            }
+            assert_eq!(burns(0.4, false, y0), burns(0.0, false, y0), "a one-way scan is not shifted");
+        }
     }
 
     #[test]

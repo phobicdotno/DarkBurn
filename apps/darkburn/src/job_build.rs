@@ -623,9 +623,10 @@ fn image_inputs(
         processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
     }
     let mut out = Vec::new();
-    let build = |mut plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
-        // The device's scanning offset table moves forward and reverse lines apart (DS-08).
-        crate::scan_offsets::shift_plans(&mut plans, s.speed, &tuning.offsets);
+    // The device's scanning offset table moves forward and reverse lines apart (DS-08). The job
+    // engine applies it, because only it knows which way each line ends up being scanned.
+    let direction_offset = if s.bidirectional { tuning.offsets.offset_at(s.speed) } else { 0.0 };
+    let build = |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
         for plan in plans {
             let lines = plan
                 .lines
@@ -641,6 +642,7 @@ fn image_inputs(
             input.transform = plan.scan_to_mm();
             input.group = group;
             input.priority = priority;
+            input.direction_offset = direction_offset;
             out.push(input);
         }
     };

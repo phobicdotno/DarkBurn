@@ -90,6 +90,48 @@ fn scan_offset_table_shifts_forward_and_reverse_lines() {
     }
 }
 
+/// The burning moves of the image job without and with a 0.4 mm scanning offset at its speed.
+fn with_and_without_offset(setup: impl Fn(&mut BuildInput, &mut Document)) -> Vec<(crate::job_field_tests::Seg, crate::job_field_tests::Seg)> {
+    let mk = |tuning: crate::scan_offsets::ScanTuning| {
+        let mut d = image_doc(|s| s.image_mode = layer::ImageMode::Threshold, vec![0u8; 16]);
+        let mut i = input(Document::new());
+        setup(&mut i, &mut d);
+        i.doc = d;
+        i.tuning = Some(tuning);
+        let b = build_job_simple(&i).unwrap();
+        segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect::<Vec<_>>()
+    };
+    let base = mk(crate::scan_offsets::ScanTuning::default());
+    let mut t = crate::scan_offsets::ScanTuning::default();
+    t.offsets.set(200.0, 0.4);
+    let shifted = mk(t);
+    assert_eq!(base.len(), shifted.len());
+    assert!(base.len() > 4);
+    base.into_iter().zip(shifted).collect()
+}
+
+#[test]
+fn scan_offsets_follow_the_direction_each_line_is_really_scanned_in() {
+    // The machine's 0,0 is top left: the head starts above the image and scans it top down,
+    // so every line runs the other way than in a bottom-up scan.
+    let pairs = with_and_without_offset(|i, _| i.device.origin = darkburn_job::Corner::TopLeft);
+    assert!(pairs[0].0.from.y < pairs[pairs.len() - 1].0.from.y, "scanned from the top (machine Y grows downwards)");
+    for (a, b) in &pairs {
+        let forward = a.to.x > a.from.x;
+        let dx = b.from.x - a.from.x;
+        assert!((dx - if forward { -0.2 } else { 0.2 }).abs() < 1e-6, "forward lines move back, reverse lines forward: {dx} (forward: {forward})");
+    }
+}
+
+#[test]
+fn scan_offsets_leave_a_one_way_scan_alone() {
+    let pairs = with_and_without_offset(|_, d| d.layer_mut(3).main_mut().bidirectional = false);
+    for (a, b) in &pairs {
+        assert!(a.to.x > a.from.x && b.to.x > b.from.x, "every line runs forward");
+        assert!((b.from.x - a.from.x).abs() < 1e-9, "no line moves: {}", b.from.x - a.from.x);
+    }
+}
+
 #[test]
 fn output_tolerance_changes_how_curves_are_flattened() {
     let mut d = Document::new();

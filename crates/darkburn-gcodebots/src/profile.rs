@@ -421,8 +421,10 @@ pub struct DeviceProfile {
     pub negative_coordinates: bool,
     pub pointer_offset: PointerOffset,
     pub z: ZSettings,
-    /// DS-05: milliseconds.
-    pub tab_pulse_width_ms: f64,
+    /// DS-05: the length of one pulse of a partly cut tab, mm. Profiles written before the
+    /// field was renamed call it `tab_pulse_width_ms` (the value was always a length).
+    #[serde(alias = "tab_pulse_width_ms")]
+    pub tab_pulse_width_mm: f64,
     pub checklist: JobChecklist,
     pub overwrite_files: bool,
     pub scanning_offsets: ScanningOffsets,
@@ -443,7 +445,7 @@ impl Default for DeviceProfile {
             negative_coordinates: false,
             pointer_offset: PointerOffset::default(),
             z: ZSettings::default(),
-            tab_pulse_width_ms: 0.0,
+            tab_pulse_width_mm: 0.0,
             checklist: JobChecklist::default(),
             overwrite_files: false,
             scanning_offsets: ScanningOffsets::default(),
@@ -671,7 +673,7 @@ mod tests {
         p.negative_coordinates = true;
         p.pointer_offset = PointerOffset { x: 1.5, y: -2.0 };
         p.z = ZSettings { enabled: true, reverse: true, relative_moves_only: true, optimize_moves: true };
-        p.tab_pulse_width_ms = 0.4;
+        p.tab_pulse_width_mm = 0.4;
         p.checklist = JobChecklist { enabled: true, items: vec!["Lid closed".into(), "Air on".into()] };
         p.overwrite_files = true;
         p.scanning_offsets = ScanningOffsets { enabled: true, table: vec![ScanOffset { speed_mm_s: 100.0, offset_mm: 0.05 }] };
@@ -681,6 +683,15 @@ mod tests {
         p.state.settings_backups.push(SettingsBackupEntry { name: "before".into(), created: "now".into(), text: "M92 X80".into() });
         let json = p.export_json();
         assert_eq!(DeviceProfile::import_json(&json).unwrap(), p);
+    }
+
+    #[test]
+    fn the_tab_pulse_width_is_a_length_and_old_profiles_still_load() {
+        let old = DeviceProfile::import_json(r#"{"name":"Old","kind":"Grbl","tab_pulse_width_ms":0.3}"#).unwrap();
+        assert_eq!(old.tab_pulse_width_mm, 0.3);
+        let json = old.export_json();
+        assert!(json.contains("tab_pulse_width_mm") && !json.contains("tab_pulse_width_ms"), "{json}");
+        assert_eq!(DeviceProfile::import_json(&json).unwrap().tab_pulse_width_mm, 0.3);
     }
 
     #[test]

@@ -203,7 +203,7 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
         relative_moves_only: s.gcode.z_relative_only,
         optimize_moves: s.gcode.z_optimize,
     };
-    p.tab_pulse_width_ms = s.tab_pulse_width;
+    p.tab_pulse_width_mm = s.tab_pulse_width;
     p.checklist = gp::JobChecklist { enabled: s.checklist_on, items: s.checklist.clone() };
     p.overwrite_files = s.overwrite_files;
     p.scanning_offsets = gp::ScanningOffsets {
@@ -277,7 +277,7 @@ pub fn from_profile(p: &gc::DeviceProfile) -> Device {
     s.z_reverse = p.z.reverse;
     s.gcode.z_relative_only = p.z.relative_moves_only;
     s.gcode.z_optimize = p.z.optimize_moves;
-    s.tab_pulse_width = p.tab_pulse_width_ms;
+    s.tab_pulse_width = p.tab_pulse_width_mm;
     s.checklist_on = p.checklist.enabled;
     s.checklist = p.checklist.items.clone();
     s.overwrite_files = p.overwrite_files;

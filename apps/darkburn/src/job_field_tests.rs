@@ -260,6 +260,25 @@ fn kerf_offsets_closed_shapes_by_the_given_distance() {
 }
 
 #[test]
+fn kerf_shrinks_a_hole_drawn_as_its_own_shape() {
+    // A 40 mm plate with a 10 mm hole, drawn as two shapes on the same layer.
+    let mut d = line_doc(40.0);
+    sq(&mut d, 0, 25.0, 25.0, 10.0);
+    d.layer_mut(0).main_mut().kerf = 0.5;
+    let b = build(d);
+    let cuts: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+    let span = |inner: bool| {
+        let xs: Vec<f64> =
+            cuts.iter().filter(|s| (s.from.x > 20.0 && s.from.x < 40.0 && s.from.y > 20.0 && s.from.y < 40.0) == inner).map(|s| s.from.x).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let (o0, o1) = span(false);
+    assert!((o0 - 9.5).abs() < 0.05 && (o1 - 50.5).abs() < 0.05, "the plate grows by the kerf: {o0} {o1}");
+    let (i0, i1) = span(true);
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "the hole shrinks by the kerf: {i0} {i1}");
+}
+
+#[test]
 fn perforation_cuts_and_skips() {
     let mut d = line_doc(20.0);
     {

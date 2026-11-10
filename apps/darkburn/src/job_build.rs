@@ -701,6 +701,27 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
+    // Kerf: a shape drawn inside another shape of its layer is a hole, and its kerf goes the
+    // other way. These are the closed outlines of the cut shapes on layers with a kerf offset,
+    // each with the number of its shape.
+    let mut kerf_outlines: Vec<Vec<(usize, Rect, Vec<Point>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+    let mut leaf_no = 0usize;
+    for top in &tops {
+        for leaf in top.leaves() {
+            leaf_no += 1;
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if !l.outputs() || leaf.is_image() || kerf_of(l).0 == 0.0 {
+                continue;
+            }
+            for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
+                if poly.closed {
+                    kerf_outlines[li].push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                }
+            }
+        }
+    }
+    let mut leaf_no = 0usize;
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -708,6 +729,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         report(0.25 * n as f32 / total as f32);
         let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
         for leaf in top.leaves() {
+            leaf_no += 1;
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
@@ -766,6 +788,20 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             let (kerf, differ) = kerf_of(l);
             if kerf != 0.0 {
+                // How many other shapes of the layer this one lies inside: odd means a hole.
+                let depth = match path.elements().first() {
+                    Some(PathEl::MoveTo(p0)) => kerf_outlines[li]
+                        .iter()
+                        .filter(|(no, r, pts)| {
+                            *no != leaf_no
+                                && r.area() > bbox.area() + 1e-9
+                                && job::geom::rect_inside(bbox, *r)
+                                && job::geom::point_in_polygon(*p0, pts)
+                        })
+                        .count(),
+                    _ => 0,
+                };
+                let kerf = if depth % 2 == 1 { -kerf } else { kerf };
                 path = darkburn_geom::offset::kerf_offset(&path, kerf, input.device.tolerance);
                 kerf_note[li] |= differ;
             }

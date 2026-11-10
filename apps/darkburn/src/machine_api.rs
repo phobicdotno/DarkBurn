@@ -967,6 +967,17 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
 // Opening adapters
 // ============================================================================================
 
+/// The fire button's time as a duration. A time that is not a number, not above zero or longer
+/// than an hour is refused here: converting such a value would stop the program (the drivers
+/// have their own, much lower, limit).
+pub(crate) fn fire_time(secs: f64) -> Result<Duration, MachineError> {
+    if secs.is_finite() && secs > 0.0 && secs <= 3600.0 {
+        Ok(Duration::from_secs_f64(secs))
+    } else {
+        Err(MachineError::Invalid("Fire time must be a number of seconds above 0.".into()))
+    }
+}
+
 /// Build the adapter for `spec`. The only place a real link can be opened.
 pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Result<Box<dyn DriverAdapter>, MachineError> {
     match &spec.link {
@@ -1282,7 +1293,7 @@ impl DriverAdapter for GrblAdapter {
             C::SetUserOrigin => Ok(m.set_user_origin()?),
             C::ClearUserOrigin => Ok(m.clear_user_origin()?),
             C::GetPosition => Ok(m.request_status()?),
-            C::Fire { percent, secs } => Ok(m.fire(percent, Duration::from_secs_f64(secs.max(0.0)))?),
+            C::Fire { percent, secs } => Ok(m.fire(percent, fire_time(secs)?)?),
             C::FireOff => Ok(m.fire_off()?),
             C::SetOverrides { feed, power, rapid } => {
                 if let Some(f) = feed {

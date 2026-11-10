@@ -8,3 +8,4 @@ Fix: Stop on a Ruida laser no longer waits behind other commands or an unanswere
 Fix: Closing the program while it asks whether to overwrite a file on a Ruida controller no longer hangs
 Fix: A galvo device set up with a port bit above 15 is now refused with a clear message instead of never finishing its connect
 Fix: A galvo frequency too low for the board now gives the lowest frequency it can do, not a much higher one
+Fix: An absurd fire time typed into a command no longer crashes the program

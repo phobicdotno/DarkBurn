@@ -656,7 +656,7 @@ impl DriverAdapter for GcodeAdapter {
             C::SetUserOrigin => m.set_user_origin().map_err(map_err),
             C::ClearUserOrigin => m.clear_user_origin().map_err(map_err),
             C::GetPosition => m.request_status().map_err(map_err),
-            C::Fire { percent, secs } => m.fire(percent, Duration::from_secs_f64(secs.max(0.0))).map_err(map_err),
+            C::Fire { percent, secs } => m.fire(percent, crate::machine_api::fire_time(secs)?).map_err(map_err),
             C::FireOff => m.fire_off().map_err(map_err),
             C::Air(on) => m.set_air(on).map_err(map_err),
             C::SetOverrides { feed, power, rapid } => {

@@ -154,11 +154,30 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
     Ok(zip.finish().map_err(zerr)?.into_inner())
 }
 
+/// The most a project may unpack to (its description and every image together). A file's
+/// packed size says nothing about this: a few kilobytes can unpack to gigabytes.
+pub const MAX_UNPACKED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Read a project from its file bytes.
 pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
+    load_within(bytes, MAX_UNPACKED_BYTES)
+}
+
+/// Read one zip entry, taking its size off `budget`.
+fn read_entry(mut f: impl Read, budget: &mut u64) -> Result<Vec<u8>, ProjectError> {
+    let mut data = Vec::new();
+    let n = f.by_ref().take(*budget + 1).read_to_end(&mut data)? as u64;
+    if n > *budget {
+        return Err(ProjectError::Damaged("it unpacks to more than a project can hold".into()));
+    }
+    *budget -= n;
+    Ok(data)
+}
+
+fn load_within(bytes: &[u8], max_unpacked: u64) -> Result<Loaded, ProjectError> {
+    let mut budget = max_unpacked;
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| ProjectError::NotAProject(e.to_string()))?;
-    let mut text = Vec::new();
-    zip.by_name("project.json").map_err(|_| ProjectError::NotAProject("no project.json".into()))?.read_to_end(&mut text)?;
+    let text = read_entry(zip.by_name("project.json").map_err(|_| ProjectError::NotAProject("no project.json".into()))?, &mut budget)?;
     let json: ProjectJson = serde_json::from_slice(&text).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     if json.format != FORMAT_NAME {
         return Err(ProjectError::NotAProject(format!("format is {:?}", json.format)));
@@ -191,21 +210,51 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
     }
     doc.layer_order = order;
     for entry in json.images {
-        let mut data = Vec::new();
-        let Ok(mut f) = zip.by_name(&entry.file) else { continue };
-        f.read_to_end(&mut data)?;
+        let Ok(f) = zip.by_name(&entry.file) else { continue };
+        let data = read_entry(f, &mut budget)?;
         doc.images.insert(
             entry.key,
             Arc::new(ImageData { format: entry.format, bytes: Arc::from(data), px_width: entry.px_width, px_height: entry.px_height }),
         );
     }
-    doc.shapes = json.shapes.into_iter().map(Arc::new).collect();
-    doc.set_next_id(json.next_id);
-    let thumbnail = zip.by_name("thumbnail.png").ok().and_then(|mut f| {
-        let mut v = Vec::new();
-        f.read_to_end(&mut v).ok().map(|_| v)
-    });
+    let mut shapes = json.shapes;
+    // A damaged or hand-edited file: layers that do not exist, ids used twice or too large to count on from.
+    let mut ids = Vec::new();
+    for s in &mut shapes {
+        tidy(s, &mut ids);
+    }
+    let count = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    let renumber = ids.len() != count || ids.last().is_some_and(|id| *id >= MAX_ID);
+    if renumber {
+        for s in &mut shapes {
+            doc.renumber(s);
+        }
+    }
+    doc.shapes = shapes.into_iter().map(Arc::new).collect();
+    doc.set_next_id(if renumber { 0 } else { json.next_id.min(MAX_ID) });
+    let thumbnail = zip.by_name("thumbnail.png").ok().and_then(|f| read_entry(f, &mut budget).ok());
     Ok(Loaded { doc, newer_version: json.version > FORMAT_VERSION, app_version: json.app_version, thumbnail })
+}
+
+/// Ids at or above this are not trusted (JSON numbers stop being exact there).
+const MAX_ID: u64 = 1 << 53;
+
+/// Put `s` and its children on layers that exist, and collect their ids.
+fn tidy(s: &mut Shape, ids: &mut Vec<u64>) {
+    s.layer = s.layer.min(LAYER_COUNT - 1);
+    ids.push(s.id.0);
+    if let crate::shape::ShapeKind::Group { children } = &mut s.kind {
+        for c in children {
+            tidy(c, ids);
+        }
+    }
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            c.layer = c.layer.min(LAYER_COUNT - 1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -363,5 +412,44 @@ mod tests {
         assert!(loaded.newer_version);
         assert_eq!(loaded.doc.len(), d.len());
         assert!(matches!(load(b"not a zip"), Err(ProjectError::NotAProject(_))));
+    }
+
+    fn zipped(json: &str) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file("project.json", zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).unwrap();
+        w.write_all(json.as_bytes()).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    /// A hand-edited or damaged file with the largest possible shape id, a layer that does not
+    /// exist and duplicate ids opens (or is refused) without a crash, and new shapes get ids.
+    #[test]
+    fn odd_ids_and_layers_in_a_file_do_not_crash() {
+        let json = r#"{ "format": "darkburn-project", "version": 3, "next_id": 18446744073709551615,
+          "shapes": [
+            { "id": 18446744073709551615, "kind": { "type": "rect", "width": 2.0, "height": 1.0, "radius": 0.0 }, "layer": 99 },
+            { "id": 1, "kind": { "type": "group", "children": [ { "id": 1, "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 4000000000 } ] } }
+          ] }"#;
+        let mut doc = load(&zipped(json)).unwrap().doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter().flat_map(|s| s.leaves()) {
+            assert!(s.layer < LAYER_COUNT, "layer {} is put on a real layer", s.layer);
+        }
+        assert_eq!(doc.used_layers().len(), 1);
+        let new = doc.add(Shape::rect(kurbo::Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 0));
+        assert!(doc.get(new).is_some());
+        save(&doc, "t", None).unwrap();
+    }
+
+    /// A small file that unpacks to something enormous is refused instead of filling the memory.
+    #[test]
+    fn a_file_that_unpacks_too_large_is_refused() {
+        let mut json = String::from(r#"{ "format": "darkburn-project", "version": 3, "notes": ""#);
+        json.push_str(&" ".repeat(3_000_000));
+        json.push_str(r#"" }"#);
+        let bytes = zipped(&json);
+        assert!(bytes.len() < 20_000, "{} bytes on disk", bytes.len());
+        assert!(load_within(&bytes, 4_000_000).is_ok());
+        assert!(matches!(load_within(&bytes, 1_000_000), Err(ProjectError::Damaged(_))));
     }
 }

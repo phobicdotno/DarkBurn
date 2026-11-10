@@ -4,7 +4,8 @@ DarkBurn's windows, menus, ribbon and dialogs are tested by driving the real app
 harness: no desktop window, no OS-level clicks, no focus problems. Input is simulated as egui
 events, and the screen is drawn offscreen into a picture you can open.
 
-The code is in `apps/darkburn/src/ui_harness.rs` (the harness) and `ui_smoke_tests.rs` (the tests).
+The code is in `apps/darkburn/src/ui_harness.rs` (the harness), `ui_smoke_tests.rs` (the sweeps) and
+`ui_bug_tests.rs` (tests for bugs that were found and fixed).
 Both are `#[cfg(test)]` modules of the `darkburn` binary, so there is nothing extra to build.
 
 ## Run
@@ -110,8 +111,10 @@ fn offset_shapes_dialog_opens_and_closes() {
   `state_dialogs`. A new menu must be added to `menu_tests!` (a test fails until it is).
 - Double clicks are sent in one frame, because the harness's 250 ms frames are slower than egui's
   double-click window.
-- Escape closes a dialog only when nothing else took it: the canvas leaves Escape alone while any
-  window is open.
+- Escape closes one thing per press: a menu or drop-down list first, then the window on top. The
+  canvas and its tools leave Escape alone while any window is open (`escape.rs`). A window that is
+  not a `ui_kit::Window` must ask `escape::closes(ctx, id)`; `escape_closes_every_window_a_command_opens`
+  fails until it does.
 
 ## What the suite covers
 
@@ -124,6 +127,7 @@ fn offset_shapes_dialog_opens_and_closes() {
 | `every_state_driven_dialog_fits_and_closes` | The windows nothing in a menu opens, set by state, at three sizes |
 | `nothing_clips_at_*` | At 1280x720, 1920x1080, 2560x1440 and 3840x2160 pixels, at scale 1 and 2 (the window is never smaller than 960 x 600 points): no control outside the window, no text cut off or broken mid-word, no overlapping ribbon buttons, on every ribbon tab, with the default panels and with all of them |
 | `user_story_draw_set_up_preview_save_undo_and_reopen` | New project, draw a rectangle by dragging, set layer mode and speed, Preview, save G-code, undo and redo, save the project, reopen it |
+| `escape_*` (`ui_bug_tests.rs`) | One Escape closes every window a command or state opens, whatever tool is picked; menus and lists close before the window; windows close one at a time |
 | `the_harness_*`, `the_widget_registry_*`, `no_file_dialog_*`, `the_default_layout_matches_its_golden_picture` | The harness itself |
 
 Every test fails on a duplicate widget ID.

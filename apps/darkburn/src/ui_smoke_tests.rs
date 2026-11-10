@@ -414,11 +414,12 @@ fn sweep_commands(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>)
 }
 
 /// The windows nothing in a menu opens by itself: set the state that shows each one.
-fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) {
+pub(crate) type OpenDialog = (&'static str, Box<dyn Fn(&mut crate::shell::DarkBurn)>);
+
+/// Each window that opens from state alone, with the state that shows it.
+pub(crate) fn state_dialog_cases() -> Vec<OpenDialog> {
     use crate::devices::{Candidate, DeviceType, Wizard, WizardStep};
-    let mut g = Gui::new(w, h, 1.0);
-    type Open = (&'static str, Box<dyn Fn(&mut crate::shell::DarkBurn)>);
-    let mut cases: Vec<Open> = vec![
+    let mut cases: Vec<OpenDialog> = vec![
         ("about", Box::new(|a| a.about_open = true)),
         ("settings", Box::new(|a| a.settings_open = true)),
         ("notes", Box::new(|a| a.notes_open = true)),
@@ -450,7 +451,12 @@ fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) 
             }),
         ));
     }
-    for (what, open) in cases {
+    cases
+}
+
+fn state_dialogs(w: f32, h: f32, seen: &mut std::collections::BTreeSet<String>) {
+    let mut g = Gui::new(w, h, 1.0);
+    for (what, open) in state_dialog_cases() {
         fresh_design(&mut g);
         open(&mut g.app());
         g.frames(3);

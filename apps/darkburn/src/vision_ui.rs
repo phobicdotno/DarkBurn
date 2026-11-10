@@ -337,7 +337,8 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
 /// A click on the canvas while a position is being picked fills in that field.
 fn take_pick(ctx: &Context, app: &mut DarkBurn) {
     let Some((i, design)) = app.vision.ui.pnc.pick else { return };
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Escape stops the pick and is used up: the window the pick came from stays open.
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.vision.ui.pnc.pick = None;
         return;
     }
@@ -361,14 +362,19 @@ fn take_pick(ctx: &Context, app: &mut DarkBurn) {
 fn window(ctx: &Context, title: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
     let mut open = true;
     let screen = ctx.content_rect();
+    let id = Id::unique(("vision_window", title));
     egui::Window::new(title)
-        .id(Id::unique(("vision_window", title)))
+        .id(id)
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
         .default_pos(pos2((screen.right() - width - 330.0).max(60.0), 100.0))
         .default_width(width)
         .show(ctx, add);
+    // Escape closes the window, as it does for every other window in the app.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
     open
 }
 

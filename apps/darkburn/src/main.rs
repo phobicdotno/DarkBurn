@@ -16,6 +16,7 @@ mod cuts_panel;
 mod devices;
 mod devices_ui;
 mod dock_geom;
+mod escape;
 mod extras;
 mod file_io;
 mod files;
@@ -103,6 +104,8 @@ mod text_tests;
 mod text_ui;
 mod thumbnail;
 mod tools;
+#[cfg(test)]
+mod ui_bug_tests;
 #[cfg(test)]
 mod ui_harness;
 #[cfg(test)]

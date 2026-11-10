@@ -89,7 +89,8 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
             ctx.request_repaint();
         }
     }
-    let mut window = egui::Window::new("Preview").id(Id::unique("db_preview_window")).collapsible(false).resizable(true);
+    let id = Id::unique("db_preview_window");
+    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true);
     let screen = ctx.content_rect();
     window = if app.job.preview.maximised {
         window.fixed_pos(screen.min + vec2(8.0, 8.0)).fixed_size(screen.size() - vec2(16.0, 16.0))
@@ -99,6 +100,10 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     let mut open = true;
     let mut command: Option<(&'static str, serde_json::Value)> = None;
     window.open(&mut open).show(ctx, |ui| preview_body(ui, app, &mut command));
+    // Escape closes the Preview, unless a dialog on top of it wants the key.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
     if !open {
         app.job.preview.open = false;
         app.job.preview.playing = false;

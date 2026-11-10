@@ -194,8 +194,9 @@ impl Host {
         let Some((id, command, summary)) = open.into_iter().next() else { return };
         let t = Tokens::get();
         let mut answer = None;
+        let window = egui::Id::new(("db_mcp", "confirm"));
         egui::Window::new("An AI agent wants to start the machine")
-            .id(egui::Id::new(("db_mcp", "confirm")))
+            .id(window)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
@@ -218,6 +219,10 @@ impl Host {
                     }
                 });
             });
+        // Escape refuses, like Cancel. Nothing on the keyboard confirms.
+        if answer.is_none() && crate::escape::closes(ctx, window) {
+            answer = Some(false);
+        }
         if let Some(yes) = answer {
             let _ = gate.resolve_confirmation(&id, yes);
         }
@@ -442,5 +447,43 @@ pub fn run_headless(allow_simulator_control: bool) -> std::process::ExitCode {
             eprintln!("darkburn --mcp-headless: {e}");
             std::process::ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use darkburn_mcp::PendingState;
+
+    fn frame(ctx: &egui::Context, host: &mut Host, events: Vec<egui::Event>) {
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 700.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| host.confirmation_ui(ui.ctx()));
+        out.textures_delta.clear();
+    }
+
+    fn press(key: egui::Key) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn escape_refuses_the_agents_request_and_no_key_confirms_it() {
+        let app: SharedApp = Rc::new(RefCell::new(DarkBurn::new(crate::prefs::Prefs::default())));
+        let ctx = egui::Context::default();
+        let mut host = Host::new(app.clone());
+        let policy = McpPolicy { allow_hardware: true, ..McpPolicy::default() };
+        let mut gate = Gate::new(McpBackend::new(app, ctx.clone(), true), PolicyHandle::new(policy));
+        let pid = gate.execute("job.start", json!({})).unwrap_err().pending_id.expect("the request waits for the user");
+        host.gate = Some(gate);
+        let open = |host: &mut Host| host.gate.as_mut().unwrap().open_confirmations().len();
+        frame(&ctx, &mut host, vec![]);
+        assert_eq!(open(&mut host), 1);
+        // Enter and Space do nothing: only a click on Confirm says yes.
+        frame(&ctx, &mut host, vec![press(egui::Key::Enter), press(egui::Key::Space)]);
+        assert_eq!(open(&mut host), 1);
+        // Escape refuses: the request ends with an error and no token.
+        frame(&ctx, &mut host, vec![press(egui::Key::Escape)]);
+        assert_eq!(open(&mut host), 0);
+        let state = host.gate.as_mut().unwrap().pending(&pid).unwrap();
+        assert!(matches!(state, PendingState::Done { result: Err(_), .. }), "refused");
     }
 }

@@ -54,6 +54,8 @@ pub struct A11y {
     pub label: Option<String>,
     pub value: Option<String>,
     pub rect: Rect,
+    /// The widget's egui id (the accessibility node id is the same number).
+    pub id: u64,
 }
 
 /// One piece of text painted on screen, topmost last.
@@ -302,7 +304,7 @@ impl Gui {
             let Some(b) = ak.bounding_box() else { continue };
             let ppp = self.scale;
             let rect = Rect::from_min_max(pos2(b.x0 as f32 / ppp, b.y0 as f32 / ppp), pos2(b.x1 as f32 / ppp, b.y1 as f32 / ppp));
-            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect });
+            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect, id: ak.locate().0.0 });
         }
         out
     }

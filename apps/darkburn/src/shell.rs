@@ -692,6 +692,7 @@ impl DarkBurn {
         let Some(first) = shown.first() else { return };
         let active = self.prefs.active_tab.get(&area).filter(|id| shown.iter().any(|p| p.id == id.as_str())).cloned().unwrap_or(first.id.to_string());
         let r = ui.max_rect();
+        solidcraft_ui_registry::publish_rect(&format!("panel:area:{area:?}"), r);
         let header = Rect::from_min_size(r.min, vec2(r.width(), PANEL_HEADER));
         ui.painter().rect_filled(header, 0.0, t.panel_header);
         ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));

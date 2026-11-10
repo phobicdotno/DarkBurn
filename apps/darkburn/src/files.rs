@@ -693,11 +693,8 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
     if app.notes_open {
         let doc = &mut app.editor.doc;
         let (mut notes, mut show) = (doc.notes.clone(), doc.show_notes_on_load);
-        let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes")
-            .fields()
-            .keep_open_on_escape()
-            .actions("", "Close", None)
-            .show(ctx, true, |ui| {
+        let (closed, action) =
+            ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes").fields().actions("", "Close", None).show(ctx, true, |ui| {
                 ui_kit::text_area(ui, "Notes", egui::Id::unique("db_notes_text"), &mut notes, 12, 100_000);
                 ui_kit::checkbox(ui, "Show the notes when the project opens", &mut show);
             });

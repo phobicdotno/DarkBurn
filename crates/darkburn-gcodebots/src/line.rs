@@ -428,8 +428,11 @@ impl GcodeMachine for LineMachine {
         if points.is_empty() {
             return Err(MachineError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(MachineError::InvalidArgument("Framing speed must be above 0.".into()));
+        }
+        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         for p in points {
             if !self.in_travel(*p) {
@@ -461,8 +464,11 @@ impl GcodeMachine for LineMachine {
 
     fn jog(&self, step: JogStep) -> Result<(), MachineError> {
         let s = self.motion_ok()?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(MachineError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(MachineError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -488,8 +494,11 @@ impl GcodeMachine for LineMachine {
         if t.x.is_none() && t.y.is_none() && t.z.is_none() {
             return Ok(());
         }
-        if t.feed <= 0.0 {
+        if !positive(t.feed) {
             return Err(MachineError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [t.x, t.y, t.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(MachineError::InvalidArgument("The position is not a number.".into()));
         }
         if t.coords == darkburn_grbl::Coords::Machine && !self.cfg.supports_g53 {
             return Err(MachineError::Unsupported("moves in machine coordinates"));
@@ -1777,6 +1786,12 @@ impl Worker {
             self.emit(MachineEvent::StateChanged(new));
         }
     }
+}
+
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 fn strip_comment_simple(t: &str) -> String {

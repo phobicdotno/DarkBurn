@@ -865,3 +865,20 @@ fn homing_switches_the_fire_button_off_first() {
         m.disconnect();
     }
 }
+
+#[test]
+fn not_a_number_is_refused_by_every_machine() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin));
+    let (m, _log) = connect(&marlin_profile(), &emu);
+    assert!(m.jog(JogStep { dx: 1.0, dy: 0.0, dz: 0.0, feed: f64::NAN }).is_err());
+    assert!(m.jog(JogStep { dx: f64::NAN, dy: 0.0, dz: 0.0, feed: 600.0 }).is_err());
+    assert!(m.jog(JogStep { dx: 0.0, dy: 0.0, dz: f64::INFINITY, feed: 600.0 }).is_err());
+    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None }).is_err());
+    assert!(
+        m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), coords: darkburn_grbl::Coords::Work, feed: 600.0 }).is_err()
+    );
+    assert!(m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: None, coords: darkburn_grbl::Coords::Work, feed: f64::NAN }).is_err());
+    worker_passes(m.as_ref(), 20);
+    emu.with(|e| assert!(!e.stats().arrived.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().arrived));
+    m.disconnect();
+}

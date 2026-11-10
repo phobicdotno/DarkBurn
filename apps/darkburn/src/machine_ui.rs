@@ -856,7 +856,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "machine.stop" => mach(m.handle.stop()),
         "machine.frame" => {
             let r = Rect::new(need(a, "x")?, need(a, "y")?, need(a, "x")? + need(a, "width")?, need(a, "y")? + need(a, "height")?);
-            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent") };
+            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to: None };
             mach(m.handle.frame_rect(r, spec))
         }
         "machine.home" => mach(m.handle.home()),

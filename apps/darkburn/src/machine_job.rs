@@ -95,6 +95,11 @@ pub fn work_points(app: &DarkBurn, tp: &Toolpath) -> Vec<Point> {
     tp.ops.iter().filter_map(Op::target).map(|p| p + shift).collect()
 }
 
+/// A toolpath that only goes to where `tp` starts (for [`work_points`]).
+fn start_only(tp: &Toolpath) -> Toolpath {
+    Toolpath { ops: vec![Op::Rapid { to: tp.start }], start: tp.start, space: tp.space, layers: Vec::new() }
+}
+
 // ----- Building the machine's job -----------------------------------------------------------------
 
 /// How a toolpath becomes a Ruida job.
@@ -535,7 +540,10 @@ pub fn frame(app: &mut DarkBurn, kind: FrameKind) -> Result<Value, String> {
     if points.len() < 2 {
         return Err("There is nothing to frame.".into());
     }
-    app.machine.handle.frame_outline(points.clone(), FrameSpec { feed: 3000.0, laser_percent: laser }).map_err(|e| e.to_string())?;
+    // A job from the current position starts where the head is: the frame must leave the head
+    // there, or the job burns somewhere else than what was framed.
+    let return_to = (tp.space == CoordSpace::RelativeToStart).then(|| work_points(app, &start_only(&tp))).and_then(|p| p.first().copied());
+    app.machine.handle.frame_outline(points.clone(), FrameSpec { feed: 3000.0, laser_percent: laser, return_to }).map_err(|e| e.to_string())?;
     Ok(json!({ "ok": true, "points": points.len() }))
 }
 

@@ -316,7 +316,7 @@ fn smoothie_home_and_air_assist() {
 fn framing_draws_the_outline_with_the_laser_off_unless_asked() {
     let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Smoothie));
     let (m, mut log) = connect(&smoothie_profile(), &emu);
-    m.frame_rect(Rect::new(10.0, 10.0, 60.0, 40.0), FrameOptions { feed: 6000.0, laser_percent: None }).unwrap();
+    m.frame_rect(Rect::new(10.0, 10.0, 60.0, 40.0), FrameOptions { feed: 6000.0, laser_percent: None, return_to: None }).unwrap();
     assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
     emu.with(|e| {
         assert_eq!(e.stats().burned_mm, 0.0);
@@ -325,10 +325,10 @@ fn framing_draws_the_outline_with_the_laser_off_unless_asked() {
     });
     // With the laser on, power is capped.
     assert!(matches!(
-        m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 3000.0, laser_percent: Some(60.0) }),
+        m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 3000.0, laser_percent: Some(60.0), return_to: None }),
         Err(MachineError::InvalidArgument(_))
     ));
-    m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 6000.0, laser_percent: Some(2.0) }).unwrap();
+    m.frame_rect(Rect::new(0.0, 0.0, 10.0, 10.0), FrameOptions { feed: 6000.0, laser_percent: Some(2.0), return_to: None }).unwrap();
     assert!(log.wait_n(m.as_ref(), T, 2, |e| matches!(e, MachineEvent::JobFinished(_))));
     emu.with(|e| {
         assert!(e.stats().burned_mm > 30.0);
@@ -908,7 +908,7 @@ fn not_a_number_is_refused_by_every_machine() {
     assert!(m.jog(JogStep { dx: 1.0, dy: 0.0, dz: 0.0, feed: f64::NAN }).is_err());
     assert!(m.jog(JogStep { dx: f64::NAN, dy: 0.0, dz: 0.0, feed: 600.0 }).is_err());
     assert!(m.jog(JogStep { dx: 0.0, dy: 0.0, dz: f64::INFINITY, feed: 600.0 }).is_err());
-    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None }).is_err());
+    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None, return_to: None }).is_err());
     assert!(
         m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), coords: darkburn_grbl::Coords::Work, feed: 600.0 }).is_err()
     );

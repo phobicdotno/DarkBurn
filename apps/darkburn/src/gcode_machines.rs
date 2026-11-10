@@ -681,8 +681,12 @@ impl DriverAdapter for GcodeAdapter {
             C::Resume => m.resume().map_err(map_err),
             C::Stop => m.stop().map_err(map_err),
             C::EmergencyStop => m.emergency_stop().map_err(map_err),
-            C::FrameRect(r, f) => m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent }).map_err(map_err),
-            C::FrameOutline(p, f) => m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent }).map_err(map_err),
+            C::FrameRect(r, f) => {
+                m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to }).map_err(map_err)
+            }
+            C::FrameOutline(p, f) => {
+                m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to }).map_err(map_err)
+            }
             C::FrameOnController => unsupported("Framing on the controller"),
             C::JogStep(j) => {
                 if j.du != 0.0 {

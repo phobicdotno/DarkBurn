@@ -533,11 +533,14 @@ pub struct FrameOptions {
     pub feed: f64,
     /// Laser on at this power (percent) while tracing, limited by `max_fire_percent`.
     pub laser_percent: Option<f64>,
+    /// Where the head goes when the frame is done, laser off (work coordinates). A job that
+    /// starts from the current position needs the head back where it was.
+    pub return_to: Option<Point>,
 }
 
 impl Default for FrameOptions {
     fn default() -> Self {
-        Self { feed: 3000.0, laser_percent: None }
+        Self { feed: 3000.0, laser_percent: None, return_to: None }
     }
 }
 
@@ -809,7 +812,7 @@ impl GrblMachine {
         if !positive(opts.feed) {
             return Err(GrblError::InvalidArgument("Framing speed must be above 0.".into()));
         }
-        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+        if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
             return Err(GrblError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         if let Some(pct) = opts.laser_percent
@@ -820,7 +823,7 @@ impl GrblMachine {
         let s = self.motion_ok(false)?;
         if let Some(t) = s.travel(&self.opts) {
             let wco = s.status.wco;
-            for p in points {
+            for p in points.iter().chain(&opts.return_to) {
                 let m = Point::new(p.x + wco[0], p.y + wco[1]);
                 if !contains(t.xy, m) {
                     return Err(GrblError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", m.x, m.y)));
@@ -838,6 +841,10 @@ impl GrblMachine {
             lines.push(format!("G1 X{} Y{} F{f}", fmt_num(p.x), fmt_num(p.y)));
         }
         lines.push("M5 S0".to_owned());
+        if let Some(p) = opts.return_to {
+            // Laser off by the line above: back to where the head was.
+            lines.push(format!("G0 X{} Y{}", fmt_num(p.x), fmt_num(p.y)));
+        }
         let n = lines.len();
         let job = Job::from_lines(lines).with_total(n);
         self.send(Cmd::StartJob(job, JobKind::Frame))

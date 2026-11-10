@@ -655,3 +655,92 @@ fn estimate_and_gcode_do_what_the_planned_job_does() {
     }
     assert!(failures.is_empty(), "{} of 120 generated jobs:\n{}", failures.len(), failures.join("\n"));
 }
+
+// ----- Framing on the simulators -----------------------------------------------------------------
+
+mod on_machine {
+    use std::time::{Duration, Instant};
+
+    use serde_json::{Value, json};
+
+    use crate::api::execute_headless;
+    use crate::devices::DeviceType;
+    use crate::machine_api::LaserState;
+    use crate::prefs::Prefs;
+    use crate::shell::DarkBurn;
+
+    fn run(app: &mut DarkBurn, id: &str, args: Value) -> Result<Value, String> {
+        execute_headless(app, id, &args)
+    }
+
+    fn wait(app: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
+        let end = Instant::now() + Duration::from_secs(20);
+        loop {
+            app.machine.tick();
+            if f(app) {
+                return;
+            }
+            let s = app.machine.handle.snapshot();
+            assert!(Instant::now() < end, "timed out waiting for {what}; state {:?}, head {:?}", s.state, s.machine_pos);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn ready(app: &DarkBurn) -> bool {
+        app.machine.handle.snapshot().state == LaserState::Ready
+    }
+
+    fn head(app: &DarkBurn) -> (f64, f64) {
+        let s = app.machine.handle.snapshot();
+        (s.machine_pos[0], s.machine_pos[1])
+    }
+
+    /// Frame a job that starts from the current position, anchored at its centre, and say where
+    /// the head rests afterwards.
+    fn frame_from_the_centre(kind: DeviceType, command: &str) -> (f64, f64) {
+        let mut a = DarkBurn::new(Prefs::default());
+        let id = a.machine.devices.devices.iter().find(|d| d.kind == kind).unwrap().id;
+        run(&mut a, "device.select", json!({ "id": id })).unwrap();
+        run(&mut a, "machine.connect", json!({})).unwrap();
+        wait(&mut a, "connected", ready);
+        run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+        run(&mut a, "job.set_origin", json!({ "start_from": "current_position", "anchor": "centre" })).unwrap();
+        run(&mut a, "machine.move_to", json!({ "x": 100, "y": 100, "machine_coords": true })).unwrap();
+        wait(&mut a, "the move to the start", |a| ready(a) && (head(a).0 - 100.0).abs() < 1e-3 && (head(a).1 - 100.0).abs() < 1e-3);
+        let sent = run(&mut a, command, Value::Null).unwrap();
+        assert!(sent["points"].as_u64().unwrap() >= 5, "the frame goes round the square: {sent}");
+        // Let the frame get going (the Ruida simulator moves at once, GRBL takes its time).
+        let going = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < going {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        wait(&mut a, "the frame to end", ready);
+        // Let a last position report in.
+        let end = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < end {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(ready(&a));
+        head(&a)
+    }
+
+    /// The job starts where the head is. A frame that leaves the head on a corner of the frame
+    /// makes the job that follows burn somewhere else than what was framed.
+    #[test]
+    fn frame_from_the_current_position_brings_the_head_back_grbl() {
+        for command in ["job.frame", "job.frame_rubber"] {
+            let (x, y) = frame_from_the_centre(DeviceType::SimulatorGrbl, command);
+            assert!((x - 100.0).abs() < 0.01 && (y - 100.0).abs() < 0.01, "{command}: the head rests at {x:.2}, {y:.2}, it started at 100, 100");
+        }
+    }
+
+    #[test]
+    fn frame_from_the_current_position_brings_the_head_back_ruida() {
+        for command in ["job.frame", "job.frame_rubber"] {
+            let (x, y) = frame_from_the_centre(DeviceType::SimulatorRuida, command);
+            assert!((x - 100.0).abs() < 0.01 && (y - 100.0).abs() < 0.01, "{command}: the head rests at {x:.2}, {y:.2}, it started at 100, 100");
+        }
+    }
+}

@@ -431,10 +431,10 @@ impl GcodeMachine for LineMachine {
         if !positive(opts.feed) {
             return Err(MachineError::InvalidArgument("Framing speed must be above 0.".into()));
         }
-        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+        if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
             return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
-        for p in points {
+        for p in points.iter().chain(&opts.return_to) {
             if !self.in_travel(*p) {
                 return Err(MachineError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", p.x, p.y)));
             }
@@ -455,6 +455,10 @@ impl GcodeMachine for LineMachine {
             for p in points.iter().skip(1).chain(std::iter::once(&points[0])) {
                 src.push(format!("G1 X{} Y{} F{f}", num(p.x), num(p.y)));
             }
+        }
+        if let Some(p) = opts.return_to {
+            // Laser off (M5 above, or never on): back to where the head was.
+            src.push(format!("G0 X{} Y{}", num(p.x), num(p.y)));
         }
         let lines = translate(src.iter().map(String::as_str), &self.cfg.power);
         let n = lines.len();

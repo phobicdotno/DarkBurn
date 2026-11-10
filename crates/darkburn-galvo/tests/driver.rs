@@ -311,6 +311,34 @@ fn repeat_waits_for_the_foot_switch_each_time() {
     });
 }
 
+/// A frame that was shifted or scaled showed another place than the job marks: it does not
+/// count as framing the job.
+#[test]
+fn a_nudged_or_scaled_frame_does_not_count_as_framing_the_job() {
+    let mut d = dev();
+    d.require_framing = true;
+    let mut r = rig(d.clone());
+    let job = small_job(&d);
+    r.m.arm().unwrap();
+    let mut j = Job::new();
+    j.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, -10.0, 20.0, 20.0)]));
+    let as_is = FrameSpec::from_job_bounds(&j, 0.01).unwrap();
+    for (nudge, scale) in [((5.0, 0.0), 100.0), ((0.0, -3.0), 100.0), ((0.0, 0.0), 150.0)] {
+        let mut spec = as_is.clone();
+        spec.nudge_mm = nudge;
+        spec.scale_pct = scale;
+        let laps = r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count();
+        r.m.start_frame(compile_frame(&spec, &d).unwrap(), false).unwrap();
+        assert!(r.wait(|r| r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count() > laps));
+        assert_eq!(r.m.start_job(job.clone(), StartOptions::default()), Err(GalvoError::FramingRequired), "nudge {nudge:?}, scale {scale}");
+    }
+    let laps = r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count();
+    r.m.start_frame(compile_frame(&as_is, &d).unwrap(), false).unwrap();
+    assert!(r.wait(|r| r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count() > laps));
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::JobFinished { .. })));
+}
+
 #[test]
 fn require_framing_before_start() {
     let mut d = dev();

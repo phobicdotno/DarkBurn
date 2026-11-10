@@ -74,7 +74,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] HPGL import: `EA` / `ER` rectangles do not count against the item budget (`hpgl.rs`)
 - [ ] Not tested in pass 5 (files): Save As to a path that fails half-way, very long and non-ASCII paths, project files from older versions
 - [ ] Pause: a GRBL 0.9 controller (no laser mode, no spindle stop byte) that holds the laser on with `M3` keeps it on while a paused job stands still; GRBL 1.1 with `$32=0` gets the spindle stop byte `0x9E` in the pause now. Whether a pause on 0.9 should be refused, or done another way, is not decided; the firmware name must also be known (`$I`) for the byte to be sent
-- [ ] Galvo: a red-light frame that was nudged or scaled in the frame dialog still counts for "require framing" (`galvo_ui.rs`, the key is the job's own bounds), though the job is marked where it was, not where the frame was shown
 - [ ] Galvo: `SingleCmd::MoveAxisTo` carries no axis number, so a move of axis 1 is sent like a move of axis 0 (`machine.rs`, `axis_words`); how the board tells them apart is not known from the sources
 - [ ] Galvo: after a pause and resume while the job waits for the foot switch, the activity shows a running job, not waiting for the foot switch; and a door that opens outside the sending phases makes the job wait without saying why
 - [ ] Galvo MOPA: a layer without a pulse width after one with a pulse width keeps the earlier width, as no command sets it back (`job.rs`, `q_pulse_ns`)

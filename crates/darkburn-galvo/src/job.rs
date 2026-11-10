@@ -1150,7 +1150,10 @@ pub fn compile_frame(spec: &FrameSpec, dev: &DeviceSettings) -> Result<CompiledF
     for p in &outline {
         r = r.union_pt(*p);
     }
-    Ok(CompiledFrame { packets: packetize(&cmds), bounds_mm: r, key: spec.key })
+    // A shifted or scaled frame shows another place than the job marks, so it carries the key of
+    // what it showed, not the job's: it must not count for "require framing".
+    let as_is = spec.nudge_mm == (0.0, 0.0) && spec.scale_pct == 100.0;
+    Ok(CompiledFrame { packets: packetize(&cmds), bounds_mm: r, key: if as_is { spec.key } else { bounds_key(r) } })
 }
 
 #[cfg(test)]

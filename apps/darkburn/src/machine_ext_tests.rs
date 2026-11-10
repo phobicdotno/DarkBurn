@@ -507,6 +507,13 @@ fn galvo_red_light_frame_never_fires_and_satisfies_require_framing() {
         assert!(!g.log().singles.contains(&galvo::SingleCmd::EnableLaser), "framing never enables the laser");
         assert!(!g.log().motions.iter().any(|m| m.mark || m.emitting), "framing never marks");
     }
+    // That frame was shifted and scaled, so it showed another place than the job marks: the job
+    // is still refused. A frame of the job as it lies lets it start.
+    assert!(matches!(a.machine.handle.start_job(req.clone()), Err(MachineError::Refused(m)) if m.contains("Frame")));
+    let shifted = a.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key);
+    run(&mut a, "machine.galvo_frame", json!({ "repeat": false, "nudge_x": 0.0, "nudge_y": 0.0, "scale_pct": 100.0 })).unwrap();
+    wait(&mut a, "framed as it lies", |a| a.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.framed_key.is_some() && g.framed_key != shifted));
+    wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
     a.machine.handle.start_job(req).unwrap();
     wait(&mut a, "job done", |a| a.machine.handle.snapshot().state == LaserState::Busy || a.machine.handle.snapshot().state == LaserState::Ready);
     wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready && emu.lock().unwrap().log().motions.iter().any(|m| m.mark));

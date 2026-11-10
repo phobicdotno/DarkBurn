@@ -1011,3 +1011,16 @@ fn huge_numbers_from_an_agent_never_leave_a_design_that_cannot_be_saved() {
     assert_eq!(app.borrow().editor.doc.len(), saved.len());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_region_screenshot_of_a_window_with_no_pixels_is_an_error_not_a_crash() {
+    // A window that is minimized or zero pixels high hands over an empty picture.
+    let region = Some(Region { x: 10.0, y: 10.0, width: 50.0, height: 50.0 });
+    for size in [[0, 0], [0, 40], [40, 0]] {
+        let empty = egui::ColorImage::filled(size, egui::Color32::BLACK);
+        assert!(crate::mcp_backend::png_of(&empty, region, 1.0).is_err(), "{size:?}");
+        assert!(crate::mcp_backend::png_of(&empty, None, 1.0).is_err(), "{size:?}");
+    }
+    let small = egui::ColorImage::filled([40, 30], egui::Color32::BLACK);
+    assert!(crate::mcp_backend::png_of(&small, region, 1.0).is_ok());
+}

@@ -420,8 +420,11 @@ impl McpBackend {
     }
 }
 
-fn png_of(image: &egui::ColorImage, region: Option<Region>, ppp: f32) -> Result<Vec<u8>, String> {
+pub(crate) fn png_of(image: &egui::ColorImage, region: Option<Region>, ppp: f32) -> Result<Vec<u8>, String> {
     let [w, h] = image.size;
+    if w == 0 || h == 0 {
+        return Err("the window has no picture right now (is it minimized?)".into());
+    }
     let (x0, y0, cw, ch) = match region {
         Some(r) if r.width > 0.0 && r.height > 0.0 => {
             let x0 = ((r.x * ppp).max(0.0) as usize).min(w.saturating_sub(1));

@@ -10,3 +10,4 @@ Fix: A warning when a hole or part is smaller than the kerf offset and gets left
 Fix: Tabs never take more than half of a small shape, so there is always something left to cut
 Fix: Tabs and start points can be set on shapes inside a group
 Fix: A picture that cannot be read no longer keeps the processor busy while it is on screen
+Fix: A text whose letters are all deleted while typing is removed instead of staying as an invisible shape

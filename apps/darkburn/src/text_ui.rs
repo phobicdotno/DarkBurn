@@ -485,7 +485,8 @@ pub fn place_text(app: &mut DarkBurn, at: Point) {
     begin_typing(app, id, true);
 }
 
-/// End the typing session. An empty new text is taken back; an unchanged one leaves no undo step.
+/// End the typing session. An empty new text is taken back; an unchanged one leaves no undo
+/// step; a text that was typed away to nothing is taken out of the design (undo brings it back).
 pub fn finish_typing(app: &mut DarkBurn) {
     let Some(t) = app.text.typing.take() else { return };
     let text = text_mut(app, t.id).map(|x| x.text.clone());
@@ -494,6 +495,11 @@ pub fn finish_typing(app: &mut DarkBurn) {
     let unchanged = !t.new_shape && text.as_deref() == Some(t.original.as_str());
     if alone && (empty && t.new_shape || unchanged) {
         app.editor.drop_checkpoint();
+        app.editor.selection.retain_existing(&app.editor.doc);
+    } else if empty && text.is_some() {
+        // Nothing left to draw: an empty text would stay as a shape nobody can see or click.
+        app.editor.doc.remove(&[t.id]);
+        app.editor.touch();
         app.editor.selection.retain_existing(&app.editor.doc);
     } else if let Some(font) = text_mut(app, t.id).map(|x| x.font.clone()) {
         app.prefs.fonts.touch(&font);
@@ -1557,6 +1563,36 @@ pub fn settings_section(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Typing a text away to nothing takes the text out; it does not stay as a shape nobody can see.
+    #[test]
+    fn a_text_emptied_while_typing_is_taken_out() {
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let out =
+            crate::api::execute_headless(&mut app, "text.add", &json!({ "text": "Ab", "x": 10, "y": 10, "height": 10, "font": "IBM Plex Sans" }))
+                .unwrap();
+        let id = ShapeId(out["id"].as_u64().unwrap());
+        // the text tool clicked on it
+        app.editor.checkpoint("Edit text");
+        app.editor.touch();
+        begin_typing(&mut app, id, false);
+        // Backspace twice
+        let mut ty = app.text.typing.take().unwrap();
+        let mut s = text_mut(&mut app, id).unwrap().text.clone();
+        ty.caret.backspace(&mut s);
+        ty.caret.backspace(&mut s);
+        assert!(s.is_empty());
+        text_mut(&mut app, id).unwrap().text = s;
+        render::refresh(&mut app.editor.doc);
+        app.editor.touch();
+        ty.rev = app.editor.revision();
+        app.text.typing = Some(ty);
+        finish_typing(&mut app);
+        assert!(app.editor.doc.get(id).is_none(), "the emptied text is gone");
+        assert!(app.editor.selected().is_empty());
+        assert!(app.editor.undo(), "one undo step");
+        assert_eq!(text_cmds::find_text(&app.editor.doc, id).map(|t| t.text.as_str()), Some("Ab"), "undo brings the text back");
+    }
 
     /// "Weld text automatically" (Settings, Text) also holds for text made with the text tool.
     #[test]

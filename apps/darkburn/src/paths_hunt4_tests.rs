@@ -457,6 +457,158 @@ fn grouping_converting_and_ungrouping_leave_the_job_as_it_was() {
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
+// ---------------------------------------------------------------- every shape command on extreme shapes
+
+/// Outlines whose every coordinate is a number, from harmless to absurd.
+const NASTY: &[(&str, &str)] = &[
+    ("zero line", "M5 5 L5 5"),
+    ("zero triangle", "M5 5 L5 5 L5 5 Z"),
+    ("collinear closed", "M0 0 L10 0 L20 0 Z"),
+    ("out and back", "M0 0 L10 0 L0 0 Z"),
+    ("bow tie", "M0 0 L10 10 L10 0 L0 10 Z"),
+    ("self touching", "M0 0 L20 0 L20 10 L10 10 L10 20 L20 20 L20 10 L30 10 L30 30 L0 30 Z"),
+    ("duplicate nodes", "M0 0 L0 0 L10 0 L10 0 L10 10 L10 10 L0 10 L0 10 Z"),
+    ("point cubic", "M3 3 C3 3 3 3 3 3 Z"),
+    ("cusp cubic", "M0 0 C10 10 0 10 10 0 Z"),
+    ("sliver", "M0 0 L100 0 L100 1e-9 Z"),
+    ("tiny square", "M0 0 L1e-7 0 L1e-7 1e-7 L0 1e-7 Z"),
+    ("huge square", "M-1e9 -1e9 L1e9 -1e9 L1e9 1e9 L-1e9 1e9 Z"),
+    ("far square", "M1e11 1e11 L100000000010 1e11 L100000000010 100000000010 L1e11 100000000010 Z"),
+    ("absurd square", "M-1e300 -1e300 L1e300 -1e300 L1e300 1e300 L-1e300 1e300 Z"),
+    ("overflowing triangle", "M-1e308 -1e308 L1e308 1e308 L1e308 -1e308 Z"),
+    ("overflowing cubic", "M0 0 C1e308 1e308 -1e308 1e308 0 5 Z"),
+    ("overflowing open cubic", "M0 0 C1e308 1e308 -1e308 1e308 0 5 L5 5"),
+    ("open and closed", "M0 0 L10 0 L10 10 Z M20 0 L30 0 L30 10"),
+];
+
+#[test]
+fn no_shape_command_crashes_or_hangs_on_an_extreme_outline() {
+    use crate::shape_ops::tests::{run, select};
+    use serde_json::json;
+    let commands: Vec<(&str, serde_json::Value)> = vec![
+        ("edit.convert_path", json!({})),
+        ("edit.close_path", json!({})),
+        ("edit.close_tolerance", json!({ "tolerance": 1.0 })),
+        ("edit.auto_join", json!({ "tolerance": 0.1 })),
+        ("edit.auto_join", json!({ "tolerance": 1e-300 })),
+        ("edit.optimize", json!({})),
+        ("edit.optimize", json!({ "tolerance": 1.0 })),
+        ("edit.delete_duplicates", json!({})),
+        ("edit.delete_overlapping", json!({})),
+        ("tools.offset", json!({ "distance": 1.0 })),
+        ("tools.offset", json!({ "distance": 1.0, "side": "inward", "join": "sharp" })),
+        ("tools.offset", json!({ "distance": 0.5, "side": "both", "open_shapes": true, "outer_only": true })),
+        ("tools.weld", json!({})),
+        ("tools.union", json!({})),
+        ("tools.difference", json!({})),
+        ("tools.intersection", json!({})),
+        ("tools.cut_shapes", json!({})),
+        ("tools.round_corners", json!({ "radius": 2 })),
+        ("tools.round_corners", json!({ "radius": -2, "chamfer": true })),
+        ("shape.remove_rounded_corners", json!({})),
+        ("tools.resize_slots", json!({ "new_width": 3.0 })),
+        ("tools.select_smaller", json!({})),
+        ("arrange.break_apart", json!({})),
+        ("arrange.auto_group", json!({})),
+        ("arrange.rubber_band", json!({})),
+        ("arrange.nest", json!({})),
+        ("arrange.grid_array", json!({ "rows": 2, "cols": 2 })),
+        ("arrange.grid_array", json!({ "rows": 2, "cols": 2, "virtual": true })),
+        ("arrange.circular_array", json!({ "count": 3 })),
+        ("arrange.flip_h", json!({})),
+        ("arrange.rotate_by", json!({ "degrees": 33 })),
+        ("arrange.dock_left", json!({})),
+        ("arrange.group", json!({})),
+        ("edit.duplicate", json!({})),
+        ("measure.selection", json!({})),
+        ("tabs.auto", json!({ "force": true })),
+        ("tabs.add", json!({ "x": 5, "y": 0 })),
+        ("shape.set_start_point", json!({ "x": 5, "y": 0 })),
+        ("shape.reverse_direction", json!({})),
+        ("node.edit", json!({ "op": "smooth", "subpath": 0, "node": 0 })),
+        ("node.edit", json!({ "op": "insert", "subpath": 0, "seg": 0, "t": 0.5 })),
+        ("node.edit", json!({ "op": "delete", "subpath": 0, "node": 0 })),
+        ("node.edit", json!({ "op": "to_curve", "subpath": 0, "seg": 0 })),
+        ("node.edit", json!({ "op": "break", "subpath": 0, "node": 1 })),
+        ("node.edit", json!({ "op": "align", "nodes": [[0, 0], [0, 1], [0, 2]], "align": "left" })),
+        ("job", json!({})),
+    ];
+    let limit = std::time::Duration::from_secs(30);
+    let mut failures = Vec::new();
+    for (name, svg) in NASTY {
+        for (id, args) in &commands {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (svg, id, args) = (svg.to_string(), id.to_string(), args.clone());
+            let what = format!("{id} {args} on '{name}'");
+            if std::env::var_os("HUNT_TRACE").is_some() {
+                eprintln!("{what}");
+            }
+            std::thread::Builder::new()
+                .stack_size(32 << 20)
+                .spawn(move || {
+                    let r = std::panic::catch_unwind(|| {
+                        let mut a = app();
+                        a.editor.doc.layer_mut(0).main_mut().tabs.enabled = true;
+                        let good = add_rect(&mut a, 2.0, 2.0, 6.0, 6.0, 0);
+                        let Ok(v) = run(&mut a, "shape.add_path", json!({ "svg_path": svg, "layer": 0 })) else { return String::new() };
+                        let bad = ShapeId(v["id"].as_u64().unwrap());
+                        // The node and tab commands work on one shape; the others on both.
+                        if id.starts_with("node.") || id.starts_with("tabs.") || id.starts_with("shape.") {
+                            select(&mut a, &[bad]);
+                        } else {
+                            select(&mut a, &[good, bad]);
+                        }
+                        if id == "job" {
+                            let _ = build_job_simple(&input(a.editor.doc.clone()));
+                            return String::new();
+                        }
+                        let r = run(&mut a, &id, args);
+                        if std::env::var_os("HUNT_TRACE").is_some() {
+                            eprintln!(
+                                "  -> {}",
+                                r.map(|v| v.to_string()).unwrap_or_else(|e| format!("refused: {e}")).chars().take(90).collect::<String>()
+                            );
+                        }
+                        // Whatever it did, the good square is not lost by a command that only tidies.
+                        let tidies = [
+                            "edit.close_path",
+                            "edit.close_tolerance",
+                            "edit.auto_join",
+                            "edit.optimize",
+                            "edit.delete_overlapping",
+                            "arrange.break_apart",
+                        ];
+                        let area: f64 = a
+                            .editor
+                            .doc
+                            .iter()
+                            .map(|s| darkburn_geom::path::signed_area(&s.outline()).abs())
+                            .filter(|v| v.is_finite() && *v < 1e6)
+                            .sum();
+                        if tidies.contains(&id.as_str()) && !(35.9..).contains(&area) {
+                            return format!("the 6 mm square is gone (area left {area})");
+                        }
+                        String::new()
+                    });
+                    let _ = tx.send(match r {
+                        Ok(s) => s,
+                        Err(e) => format!(
+                            "panic: {}",
+                            e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
+                        ),
+                    });
+                })
+                .unwrap();
+            match rx.recv_timeout(limit) {
+                Ok(s) if s.is_empty() => {}
+                Ok(s) => failures.push(format!("{what}: {s}")),
+                Err(_) => failures.push(format!("{what}: no answer after {limit:?}")),
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
 // ---------------------------------------------------------------- Norwegian
 
 mod norwegian {

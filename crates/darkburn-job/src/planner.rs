@@ -206,41 +206,112 @@ pub fn plan(items: &[PlanItem], s: &PlannerSettings, start: Point, progress: &mu
             .map(|i| Planned { item: i, start: items[i].forced_start.unwrap_or(0), reversed: forced_reversal(&items[i]).unwrap_or(false) })
             .collect());
     }
-    // Sort into buckets by the sort keys.
-    let key = |i: usize| -> Vec<i64> {
-        s.order_by
-            .iter()
-            .filter_map(|k| match k {
-                OrderKey::Layer => Some(items[i].layer_rank as i64),
-                OrderKey::Priority => Some(items[i].priority as i64),
-                OrderKey::Group => None,
-            })
-            .collect()
-    };
-    let mut idx: Vec<usize> = (0..items.len()).collect();
-    idx.sort_by_key(|&i| key(i));
-    let mut buckets: Vec<Vec<usize>> = Vec::new();
-    for i in idx {
-        match buckets.last_mut() {
-            Some(b) if key(b[0]) == key(i) => b.push(i),
-            _ => buckets.push(vec![i]),
-        }
-    }
     let deadline = Instant::now() + Duration::from_millis(s.time_budget_ms);
-    let mut out = Vec::with_capacity(items.len());
-    let mut pos = start;
-    let mut heading = Vec2::ZERO;
-    let total = items.len().max(1) as f32;
-    for b in &buckets {
-        let planned = order_bucket(items, b, s, pos, heading, deadline, progress, out.len() as f32 / total, total)?;
-        if let Some(last) = planned.last() {
-            pos = last.exit(items);
-            heading = exit_heading(items, last);
-        }
-        out.extend(planned);
-    }
+    let idx: Vec<usize> = (0..items.len()).collect();
+    let mut walk = Walk { deadline, total: items.len().max(1) as f32, pos: start, heading: Vec2::ZERO, out: Vec::with_capacity(items.len()) };
+    plan_keys(items, &idx, &s.order_by, s, &mut walk, progress)?;
     progress.report(1.0)?;
-    Ok(out)
+    Ok(walk.out)
+}
+
+/// Where the planner is while it works through the sort keys.
+struct Walk {
+    deadline: Instant,
+    total: f32,
+    pos: Point,
+    heading: Vec2,
+    out: Vec<Planned>,
+}
+
+/// Plan the items `idx` by the sort keys in their order: Layer and Priority sort (lower
+/// first), Group keeps the shapes of a group together. A Group key with sort keys after it
+/// finishes one group (sorted by those keys) before the next one starts.
+fn plan_keys(
+    items: &[PlanItem],
+    idx: &[usize],
+    keys: &[OrderKey],
+    s: &PlannerSettings,
+    walk: &mut Walk,
+    progress: &mut Progress,
+) -> Result<(), Cancelled> {
+    let sorts = |k: &OrderKey| matches!(k, OrderKey::Layer | OrderKey::Priority);
+    match keys.split_first() {
+        Some((k, rest)) if sorts(k) => {
+            let value = |i: usize| if *k == OrderKey::Layer { items[i].layer_rank as i64 } else { items[i].priority as i64 };
+            let mut sorted = idx.to_vec();
+            sorted.sort_by_key(|&i| value(i));
+            let mut a = 0;
+            for b in 1..=sorted.len() {
+                if b == sorted.len() || value(sorted[b]) != value(sorted[a]) {
+                    plan_keys(items, &sorted[a..b], rest, s, walk, progress)?;
+                    a = b;
+                }
+            }
+        }
+        Some((OrderKey::Group, rest)) if rest.iter().any(sorts) => {
+            // Shapes in no group count one by one.
+            let mut clusters: Vec<Vec<usize>> = Vec::new();
+            let mut cluster_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for &i in idx {
+                let found = items[i].group.and_then(|g| clusters.iter().position(|c| items[c[0]].group == Some(g)));
+                let c = found.unwrap_or_else(|| {
+                    clusters.push(Vec::new());
+                    clusters.len() - 1
+                });
+                clusters[c].push(i);
+                cluster_of.insert(i, c);
+            }
+            // A group waits for the shapes of other groups that lie inside its shapes.
+            let n = clusters.len();
+            let mut pending = vec![0usize; n];
+            let mut waiting: Vec<Vec<usize>> = vec![Vec::new(); n];
+            if s.inner_first {
+                for (inner, outer) in containment(items, idx) {
+                    let (ci, co) = (cluster_of[&inner], cluster_of[&outer]);
+                    if ci != co {
+                        pending[co] += 1;
+                        waiting[ci].push(co);
+                    }
+                }
+            }
+            let bounds: Vec<Vec<Rect>> = clusters.iter().map(|c| c.iter().map(|&i| items[i].bounds()).collect()).collect();
+            let mut done = vec![false; n];
+            for _ in 0..n {
+                let ready: Vec<usize> = (0..n).filter(|&c| !done[c] && pending[c] == 0).collect();
+                let ready = if ready.is_empty() { (0..n).filter(|&c| !done[c]).collect() } else { ready };
+                let cost = |c: usize| -> f64 {
+                    bounds[c]
+                        .iter()
+                        .map(|r| match s.direction_order {
+                            Some(dir) => direction_key(*r, dir),
+                            None => {
+                                let dx = (r.x0 - walk.pos.x).max(walk.pos.x - r.x1).max(0.0);
+                                let dy = (r.y0 - walk.pos.y).max(walk.pos.y - r.y1).max(0.0);
+                                dx.hypot(dy)
+                            }
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                };
+                let Some(pick) = ready.iter().copied().min_by(|&a, &b| cost(a).total_cmp(&cost(b)).then(a.cmp(&b))) else { break };
+                done[pick] = true;
+                for &o in &waiting[pick] {
+                    pending[o] = pending[o].saturating_sub(1);
+                }
+                plan_keys(items, &clusters[pick], rest, s, walk, progress)?;
+            }
+        }
+        _ => {
+            let grouped = keys.contains(&OrderKey::Group);
+            let done_before = walk.out.len() as f32 / walk.total;
+            let planned = order_bucket(items, idx, s, grouped, walk.pos, walk.heading, walk.deadline, progress, done_before, walk.total)?;
+            if let Some(last) = planned.last() {
+                walk.pos = last.exit(items);
+                walk.heading = exit_heading(items, last);
+            }
+            walk.out.extend(planned);
+        }
+    }
+    Ok(())
 }
 
 /// Heading of the last cut move of a planned item.
@@ -394,6 +465,7 @@ fn order_bucket(
     items: &[PlanItem],
     idx: &[usize],
     s: &PlannerSettings,
+    grouped: bool,
     start: Point,
     start_heading: Vec2,
     deadline: Instant,
@@ -410,7 +482,6 @@ fn order_bucket(
         pending[local(outer)] += 1;
         outers[local(inner)].push(local(outer));
     }
-    let grouped = s.order_by.contains(&OrderKey::Group);
     let cluster = |li: usize| -> i64 {
         match items[idx[li]].group {
             Some(g) if grouped => g as i64,
@@ -704,6 +775,37 @@ mod tests {
         let improved = travel(&PlannerSettings { order_by: by_layer, ..Default::default() });
         assert!(improved < greedy - 1.0, "the example has travel to save: {improved} against {greedy}");
         assert_eq!(travel(&PlannerSettings::default()), improved, "the same with order by layer and group");
+    }
+
+    /// The order of the sort keys counts: group before layer finishes one group, all its layers,
+    /// before the next group starts.
+    #[test]
+    fn order_by_group_then_layer_finishes_each_group_before_the_next() {
+        let mk = |x: f64, group: u32, layer: usize| {
+            let mut it = PlanItem::new(ItemGeom::Open(vec![Point::new(x, 0.0), Point::new(x + 1.0, 0.0)]));
+            it.group = Some(group);
+            it.layer_rank = layer;
+            it
+        };
+        // Group 1 near the start, group 2 far away; each has a shape on two layers.
+        let items = vec![mk(0.0, 1, 0), mk(2.0, 1, 1), mk(100.0, 2, 0), mk(102.0, 2, 1)];
+        let order = |keys: Vec<OrderKey>| -> Vec<usize> {
+            let s = PlannerSettings { order_by: keys, ..Default::default() };
+            plan(&items, &s, Point::ZERO, &mut Progress::none()).unwrap().iter().map(|p| p.item).collect()
+        };
+        assert_eq!(order(vec![OrderKey::Group, OrderKey::Layer]), vec![0, 1, 2, 3]);
+        assert_eq!(order(vec![OrderKey::Layer, OrderKey::Group]), vec![0, 2, 3, 1], "layer first: one layer of both groups, then the next");
+        // A shape of another group inside a shape of this one is still cut first.
+        let sq = |x: f64, y: f64, w: f64, group: u32, layer: usize| {
+            let mut it = PlanItem::new(ItemGeom::Closed(square(x, y, w)));
+            it.group = Some(group);
+            it.layer_rank = layer;
+            it
+        };
+        let items = vec![sq(0.0, 0.0, 50.0, 1, 0), sq(20.0, 20.0, 5.0, 2, 1), sq(200.0, 0.0, 5.0, 2, 0)];
+        let s = PlannerSettings { order_by: vec![OrderKey::Group, OrderKey::Layer], ..Default::default() };
+        let p: Vec<usize> = plan(&items, &s, Point::ZERO, &mut Progress::none()).unwrap().iter().map(|p| p.item).collect();
+        assert_eq!(p, vec![2, 1, 0], "group 2 (its layers in order) holds the hole of group 1's plate");
     }
 
     #[test]

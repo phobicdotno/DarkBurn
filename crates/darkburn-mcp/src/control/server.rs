@@ -3,7 +3,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -59,7 +59,17 @@ struct Job {
     method: String,
     params: Value,
     reply: SyncSender<Result<Value, CommandError>>,
+    /// [`QUEUED`], then either [`RUNNING`] (the UI thread took it) or [`ABANDONED`] (its
+    /// connection gave up first). Whoever changes it from `QUEUED` wins, so a request the client
+    /// was told had failed can never run afterwards.
+    state: Arc<AtomicU8>,
 }
+
+const QUEUED: u8 = 0;
+const RUNNING: u8 = 1;
+const ABANDONED: u8 = 2;
+/// How often a connection that waits for the UI thread looks whether its client is still there.
+const WATCH: Duration = Duration::from_millis(100);
 
 pub struct ControlServer {
     addr: SocketAddr,
@@ -132,6 +142,10 @@ impl ControlServer {
         while n < max {
             match self.rx.try_recv() {
                 Ok(job) => {
+                    if job.state.compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                        // Its client timed out or went away while it waited: it is not run.
+                        continue;
+                    }
                     let r = dispatch(backend, &job.method, job.params);
                     let _ = job.reply.send(r);
                     n += 1;
@@ -240,6 +254,22 @@ fn linger_close(mut stream: TcpStream) {
     while Instant::now() < end && matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
 }
 
+/// Whether the client closed or lost its connection (nothing is read from it).
+fn peer_gone(stream: &TcpStream) -> bool {
+    use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+    if stream.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let mut byte = [0u8; 1];
+    let gone = match stream.peek(&mut byte) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => !matches!(e.kind(), WouldBlock | TimedOut | Interrupted),
+    };
+    let _ = stream.set_nonblocking(false);
+    gone
+}
+
 fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
     // Handshake: the first frame is a small hello with the token, within five seconds.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
@@ -278,15 +308,40 @@ fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicU
             None => Err(CommandError::invalid("request has no `method`")),
             Some(m) => {
                 let (rtx, rrx) = mpsc::sync_channel(1);
-                if tx.send(Job { method: m.to_string(), params: req.get("params").cloned().unwrap_or(Value::Null), reply: rtx }).is_err() {
+                let state = Arc::new(AtomicU8::new(QUEUED));
+                let job = Job { method: m.to_string(), params: req.get("params").cloned().unwrap_or(Value::Null), reply: rtx, state: state.clone() };
+                if tx.send(job).is_err() {
                     return;
                 }
                 if let Some(w) = &cfg.waker {
                     w();
                 }
-                match rrx.recv_timeout(cfg.request_timeout) {
-                    Ok(r) => r,
-                    Err(_) => Err(CommandError::new(ErrorCode::Timeout, "DarkBurn did not answer in time (the app may be frozen or closed)")),
+                let deadline = Instant::now() + cfg.request_timeout;
+                loop {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    match rrx.recv_timeout(WATCH.min(left)) {
+                        Ok(r) => break r,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    }
+                    let gone = peer_gone(stream);
+                    if !gone && Instant::now() < deadline {
+                        continue;
+                    }
+                    if state.compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                        if gone {
+                            return;
+                        }
+                        break Err(CommandError::new(
+                            ErrorCode::Timeout,
+                            "DarkBurn did not answer in time (the app may be frozen or closed). The request was dropped: it did not run and will not run later.",
+                        ));
+                    }
+                    // The UI thread is running it at this moment: what it answers is what happened.
+                    match rrx.recv() {
+                        Ok(r) if !gone => break r,
+                        _ => return,
+                    }
                 }
             }
         };

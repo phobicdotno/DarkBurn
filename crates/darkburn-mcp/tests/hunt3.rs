@@ -189,3 +189,53 @@ fn names_from_the_client_cannot_forge_or_flood_the_log() {
     }
     assert!(events[0].tool.starts_with("execute job.stop"), "the text itself is kept: {}", events[0].tool);
 }
+
+// ----- the control channel ---------------------------------------------------------------------------
+
+mod channel {
+    use std::time::Duration;
+
+    use darkburn_mcp::control::{ControlClient, ControlConfig, ControlServer, read_frame, write_frame};
+    use darkburn_mcp::{ErrorCode, Gate, McpPolicy, MockBackend, PolicyHandle};
+    use serde_json::json;
+
+    const TOKEN: &str = "hunt3-token-0123456789abcdef";
+
+    fn server(timeout: Duration) -> ControlServer {
+        ControlServer::bind(ControlConfig { port: 0, token: Some(TOKEN.into()), request_timeout: timeout, ..Default::default() }).unwrap()
+    }
+
+    #[test]
+    fn a_request_the_client_was_told_timed_out_does_not_run_later() {
+        // The UI thread is busy (a system file dialog is open, say) and serves nothing.
+        let server = server(Duration::from_millis(200));
+        let mut c = ControlClient::connect(server.addr(), TOKEN).unwrap();
+        let rect = json!({"id": "shape.add_rect", "args": {"x": 0, "y": 0, "width": 5, "height": 5}});
+        let e = c.call("execute", rect).unwrap_err();
+        assert_eq!(e.code, ErrorCode::Timeout, "{e}");
+        // The UI thread comes back. The agent was told the call failed, so it must not happen now.
+        let mut gate = Gate::new(MockBackend::new(), PolicyHandle::new(McpPolicy::default()));
+        assert_eq!(server.pump(&mut gate, 64), 0);
+        assert!(gate.inner().executed.is_empty(), "ran after the timeout: {:?}", gate.inner().executed);
+    }
+
+    #[test]
+    fn a_request_of_a_client_that_went_away_does_not_run_later() {
+        let server = server(Duration::from_secs(600));
+        let mut s = std::net::TcpStream::connect(server.addr()).unwrap();
+        write_frame(&mut s, &json!({"hello": {"token": TOKEN, "version": 1}})).unwrap();
+        assert_eq!(read_frame(&mut s, 4096).unwrap().unwrap()["ok"], true);
+        let rect = json!({"id": "shape.add_rect", "args": {"x": 0, "y": 0, "width": 5, "height": 5}});
+        write_frame(&mut s, &json!({"id": 1, "method": "execute", "params": rect})).unwrap();
+        // The agent is killed before the UI thread got to its request.
+        drop(s);
+        let end = std::time::Instant::now() + Duration::from_secs(5);
+        while server.connections() > 0 && std::time::Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(server.connections(), 0, "the dead client's connection is still held");
+        let mut gate = Gate::new(MockBackend::new(), PolicyHandle::new(McpPolicy::default()));
+        assert_eq!(server.pump(&mut gate, 64), 0);
+        assert!(gate.inner().executed.is_empty(), "ran for a client that is gone: {:?}", gate.inner().executed);
+    }
+}

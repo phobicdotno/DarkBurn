@@ -108,7 +108,11 @@ impl Grid {
     }
     fn near(&self, p: Point) -> impl Iterator<Item = usize> + '_ {
         let (kx, ky) = self.key(p);
-        (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (kx + dx, ky + dy))).flat_map(|k| self.map.get(&k).into_iter().flatten().copied())
+        // Wrapping: a point far outside the grid (or infinite) sits in the outermost cell, whose
+        // neighbours past the edge are simply empty.
+        (-1..=1)
+            .flat_map(move |dx: i64| (-1..=1).map(move |dy: i64| (kx.wrapping_add(dx), ky.wrapping_add(dy))))
+            .flat_map(|k| self.map.get(&k).into_iter().flatten().copied())
     }
 }
 

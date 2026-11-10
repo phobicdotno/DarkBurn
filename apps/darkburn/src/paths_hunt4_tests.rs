@@ -217,3 +217,27 @@ fn a_project_file_with_cut_settings_out_of_range_opens_with_them_in_range() {
         .collect();
     assert!(wrong.is_empty(), "{} settings out of range:\n{}", wrong.len(), wrong.join("\n"));
 }
+
+// ---------------------------------------------------------------- extreme shapes
+
+#[test]
+fn copy_along_a_path_whose_length_cannot_be_worked_out_is_refused_not_a_crash() {
+    use crate::shape_ops::tests::{run, select};
+    use serde_json::json;
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 5.0, 5.0, 0);
+    // Every coordinate is a number, but the curve is so large that its length is not.
+    let p = run(&mut a, "shape.add_path", json!({ "svg_path": "M0 0 C1e308 1e308 -1e308 1e308 0 5 L5 5" })).unwrap();
+    let p = ShapeId(p["id"].as_u64().unwrap());
+    select(&mut a, &[r, p]);
+    let before = a.editor.doc.len();
+    for args in [json!({ "count": 3 }), json!({ "spacing": 10.0 }), json!({ "count": 3, "virtual": true })] {
+        let _ = run(&mut a, "arrange.copy_along_path", args);
+        select(&mut a, &[r, p]);
+    }
+    for s in a.editor.doc.iter() {
+        let b = s.bbox();
+        assert!(b.x0.is_finite() && b.y0.is_finite() && b.x1.is_finite() && b.y1.is_finite(), "a copy with no real place: {b:?}");
+    }
+    assert!(a.editor.doc.len() >= before);
+}

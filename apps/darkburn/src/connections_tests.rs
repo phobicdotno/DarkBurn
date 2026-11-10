@@ -379,7 +379,18 @@ fn every_grbl_flavour_pauses_resumes_stops_and_reports_an_alarm() {
         assert!(matches!(refused, Err(MachineError::Alarm | MachineError::Busy)), "{fw:?}: no job while in alarm, got {refused:?}");
         assert!(!emu.with(|e| e.laser_on()));
         emu.with(|e| e.release_limit_switch());
-        h.command(MachineCommand::Unlock).unwrap();
+        // The alarm is reported at once; the driver then resets the controller, and until that
+        // is done it answers "busy". Unlock goes out when the driver takes it, not after a pause.
+        let end = Instant::now() + T;
+        loop {
+            match h.command(MachineCommand::Unlock) {
+                Ok(()) => break,
+                Err(MachineError::Busy) if Instant::now() < end => {
+                    h.wait_for(Duration::from_millis(5), |_, _| false);
+                }
+                Err(e) => panic!("{fw:?}: Unlock after the limit alarm: {e:?}"),
+            }
+        }
         ready(&mut h, name);
     }
 }
@@ -648,7 +659,14 @@ fn http_runs_a_job_against_a_loopback_web_server() {
     assert!(h.snapshot().port.starts_with("http://127.0.0.1:"));
     ready(&mut h, "http");
     h.start_job(zigzag(12, 5.0, 6000)).unwrap();
-    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_))), "the job finishes over HTTP");
+    let finished = wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_)));
+    if !finished {
+        for c in h.console() {
+            eprintln!("{:?} {}", c.kind, c.text);
+        }
+        eprintln!("requests seen: {}", seen.lock().unwrap().len());
+    }
+    assert!(finished, "the job finishes over HTTP: {:?} {:?} {:?}", h.snapshot().state, h.snapshot().link, h.snapshot().job);
     ready(&mut h, "http after the job");
     let seen = seen.lock().unwrap().clone();
     assert!(seen.iter().all(|p| p.starts_with("/command?plain=")), "{seen:?}");

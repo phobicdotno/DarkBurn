@@ -201,6 +201,10 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             if send_only {
                 return Err("A galvo marks as it is sent. Use Start.".into());
             }
+            if from_op.is_some_and(|op| op > 0) {
+                // The galvo job is made from the shapes, not from the preview's moves.
+                return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
+            }
             crate::galvo_job::request(&app.editor.doc, app.machine.active(), false, false)?.0
         }
     };
@@ -243,13 +247,26 @@ fn need_connection(app: &DarkBurn) -> Result<(), String> {
     if app.machine.handle.is_connected() { Ok(()) } else { Err("The laser is not connected. Press Connect in the Laser panel first.".into()) }
 }
 
+/// A galvo job is compiled from the shapes, not from the preview's moves, so it can only be
+/// marked whole: "from here" is refused instead of quietly marking everything [PREV-09].
+fn galvo_start(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
+    let (from_op, send) = match action {
+        Action::Start { from_op } => (from_op, false),
+        Action::Send { from_op } => (from_op, true),
+    };
+    if !send && from_op.is_some_and(|op| op > 0) {
+        return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
+    }
+    crate::machine_ext::galvo_start(app, send)
+}
+
 /// Window flow: build in the background, then act (progress and cancel come with the build).
 pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
     if !app.machine.handle.is_connected() {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
     if app.machine.handle.snapshot().family == Family::Galvo {
-        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+        return galvo_start(app, action);
     }
     job_cmds::start_build(app, After::Machine(action));
     Ok(json!({ "ok": true, "building": true }))
@@ -259,7 +276,7 @@ pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> 
 pub fn start_now(app: &mut DarkBurn, action: Action, allow_out_of_bounds: bool) -> Result<Value, String> {
     need_connection(app)?;
     if app.machine.handle.snapshot().family == Family::Galvo {
-        return crate::machine_ext::galvo_start(app, matches!(action, Action::Send { .. }));
+        return galvo_start(app, action);
     }
     let job = job_cmds::build_now(app)?;
     if job.out_of_bounds() && !allow_out_of_bounds {

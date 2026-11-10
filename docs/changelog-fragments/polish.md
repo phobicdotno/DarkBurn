@@ -5,3 +5,5 @@ Show the job log from Settings.
 Grid spacing can be set in Settings, and each device remembers its own.
 Library entries show an icon for line, fill or image.
 Help > Camera Selection Help explains how to pick a camera and what to check when it is missing.
+Preview: Run from here and Send from here are only offered on machines that can do it.
+A galvo no longer marks the whole job when asked to start part way.

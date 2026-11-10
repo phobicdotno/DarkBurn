@@ -398,3 +398,97 @@ fn help_menu_camera_selection_help_opens_that_topic() {
     g.close_dialogs();
     assert!(!g.app().extras.help_open);
 }
+
+// ----- PREV-09: start here, run, send or save from any point in the job ------------------------
+
+fn tick_until(app: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
+    let end = Instant::now() + T;
+    loop {
+        app.machine.tick();
+        if f(app) {
+            return;
+        }
+        assert!(Instant::now() < end, "timed out waiting for {what}; state {:?}", app.machine.handle.snapshot().state);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn connect(app: &mut DarkBurn, kind: DeviceType) {
+    let id = match app.machine.devices.devices.iter().find(|d| d.kind == kind) {
+        Some(d) => d.id,
+        None => run(app, "device.add", json!({ "type": format!("{kind:?}") })).unwrap()["id"].as_u64().unwrap(),
+    };
+    run(app, "device.select", json!({ "id": id })).unwrap();
+    run(app, "machine.connect", json!({})).unwrap();
+    tick_until(app, "connected and ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+}
+
+fn finished(app: &DarkBurn) -> usize {
+    app.machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count()
+}
+
+#[test]
+fn from_here_buttons_follow_the_machine_family() {
+    use crate::job_ui::from_here_actions;
+    use crate::machine_api::Family;
+    assert_eq!(from_here_actions(Family::Grbl), (true, false), "G-code: run, no send");
+    assert_eq!(from_here_actions(Family::Ruida), (true, true), "DSP: run and send");
+    for f in [Family::Galvo, Family::DesignOnly, Family::FileOnly] {
+        assert_eq!(from_here_actions(f), (false, false), "{f:?}");
+    }
+}
+
+#[test]
+fn a_dsp_machine_runs_and_stores_a_job_from_a_point_part_way() {
+    use crate::machine_api::JobData;
+    let mut a = DarkBurn::new(Prefs::default());
+    connect(&mut a, DeviceType::SimulatorRuida);
+    // Two squares: the later half of the job is the second one.
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    run(&mut a, "shape.add_rect", json!({ "x": 60, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    run(&mut a, "job.start", Value::Null).unwrap();
+    tick_until(&mut a, "whole job", |a| finished(a) == 1);
+    tick_until(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    let job = a.job.last_job.clone().expect("the job that ran");
+    let ops = job.toolpath.ops.len();
+    assert!(ops > 8, "{ops} operations");
+    let mid = ops / 2;
+
+    // What would be sent: the part-way file is shorter than the whole one, for run and for send.
+    let size = |a: &DarkBurn, from: Option<usize>, send: bool| match crate::machine_job::request_for(a, &job, from, send).unwrap().data {
+        JobData::RdFile { data, .. } => data.len(),
+        JobData::Rd(rd) => rd.to_rd_file(darkburn_ruida::Magic::DEFAULT).unwrap().len(),
+        _ => panic!("a DSP job"),
+    };
+    assert!(size(&a, Some(mid), true) < size(&a, None, true), "send from here leaves the first part out");
+    assert!(size(&a, Some(mid), false) < size(&a, None, false), "run from here leaves the first part out");
+
+    // Run from here, then Send from here: the controller runs one and stores the other.
+    run(&mut a, "job.preview_run_from_here", json!({ "op_index": mid })).unwrap();
+    tick_until(&mut a, "part job", |a| finished(a) == 2);
+    tick_until(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    let stored = |a: &DarkBurn| a.machine.handle.snapshot().ruida.files.as_ref().map_or(0, Vec::len);
+    let before = stored(&a);
+    run(&mut a, "job.preview_send_from_here", json!({ "op_index": mid })).unwrap();
+    tick_until(&mut a, "stored", |a| stored(a) > before);
+    assert_eq!(finished(&a), 2, "sending does not run it");
+    assert!(run(&mut a, "job.preview_run_from_here", json!({})).is_err(), "the point is required");
+}
+
+#[test]
+fn a_galvo_job_cannot_start_part_way_and_says_so() {
+    let mut a = DarkBurn::new(Prefs::default());
+    connect(&mut a, DeviceType::SimulatorGalvo);
+    run(&mut a, "shape.add_rect", json!({ "x": 40, "y": 40, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    run(&mut a, "layer.set_param", json!({ "layer": 0, "field": "speed", "value": 800 })).unwrap();
+    run(&mut a, "machine.galvo_arm", json!({ "on": true })).unwrap();
+    let e = run(&mut a, "job.preview_run_from_here", json!({ "op_index": 3 })).unwrap_err();
+    assert!(e.contains("part way"), "{e}");
+    let e = run(&mut a, "job.preview_send_from_here", json!({ "op_index": 3 })).unwrap_err();
+    assert!(e.contains("Use Start"), "{e}");
+    for _ in 0..20 {
+        a.machine.tick();
+    }
+    assert_eq!(finished(&a), 0);
+    assert!(!a.machine.job_log.iter().any(|l| l.starts_with("Job started")), "nothing was marked: {:?}", a.machine.job_log);
+}

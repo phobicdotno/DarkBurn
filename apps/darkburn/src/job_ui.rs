@@ -121,6 +121,17 @@ fn run_command(ctx: &egui::Context, app: &mut DarkBurn, id: &str, args: &serde_j
     }
 }
 
+/// What the Preview's "from here" buttons can do on a machine family [PREV-09]: (run, send).
+/// A G-code machine runs a job as it streams it, a DSP controller can also store it, and a
+/// galvo job is made whole from the shapes. Save from here always works.
+pub fn from_here_actions(family: crate::machine_api::Family) -> (bool, bool) {
+    use crate::machine_api::Family;
+    match family {
+        Family::Grbl => (true, false),
+        Family::Ruida => (true, true),
+        Family::Galvo | Family::DesignOnly | Family::FileOnly => (false, false),
+    }
+}
 fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) {
     let t = Tokens::get();
     let pending = app.job.pending.as_ref().map(|(task, _)| task.progress());
@@ -206,10 +217,12 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Run from here", have) {
+        let family = app.machine.active().kind.family();
+        let (can_run, can_send) = from_here_actions(family);
+        if b(ui, "Run from here", have && can_run) {
             *command = Some(("job.preview_run_from_here", serde_json::json!({ "op_index": op })));
         }
-        if b(ui, "Send from here", have) {
+        if b(ui, "Send from here", have && can_send) {
             *command = Some(("job.preview_send_from_here", serde_json::json!({ "op_index": op })));
         }
         if b(ui, "Save from here", have)

@@ -636,7 +636,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
 - [x] PREV-07 Zoom, pan, maximise
 - [x] PREV-08 Save preview image, optionally transparent
-- [~] PREV-09 Start here: run, send or save from any point in the job
+- [~] PREV-09 Start here: run, send or save from any point in the job *(run from here on G-code and DSP machines, send on DSP, save as G-code; a galvo job cannot start part way and says so; saving an RD file from a point waits on EXP-07)*
 - [x] PREV-10 Layer and pass readout
 - [x] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 

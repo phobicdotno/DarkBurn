@@ -371,6 +371,7 @@ fn label(text: &str, height: f64, at: Point, layer: usize) -> Shape {
 
 /// The points that frame the test the dialog would add (just the test, not the rest of the
 /// project), as work coordinates for the connected controller.
+#[cfg(test)]
 pub fn frame_points(app: &crate::shell::DarkBurn) -> Result<Vec<Point>, String> {
     frame_points_and_return(app).map(|(p, _)| p)
 }

@@ -512,7 +512,9 @@ fn galvo_red_light_frame_never_fires_and_satisfies_require_framing() {
     assert!(matches!(a.machine.handle.start_job(req.clone()), Err(MachineError::Refused(m)) if m.contains("Frame")));
     let shifted = a.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key);
     run(&mut a, "machine.galvo_frame", json!({ "repeat": false, "nudge_x": 0.0, "nudge_y": 0.0, "scale_pct": 100.0 })).unwrap();
-    wait(&mut a, "framed as it lies", |a| a.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.framed_key.is_some() && g.framed_key != shifted));
+    wait(&mut a, "framed as it lies", |a| {
+        a.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.framed_key.is_some() && g.framed_key != shifted)
+    });
     wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
     a.machine.handle.start_job(req).unwrap();
     wait(&mut a, "job done", |a| a.machine.handle.snapshot().state == LaserState::Busy || a.machine.handle.snapshot().state == LaserState::Ready);

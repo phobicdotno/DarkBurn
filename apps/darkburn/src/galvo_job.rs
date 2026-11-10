@@ -561,7 +561,10 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
             warnings.push(format!("Layer {} holds pictures but is not in Image mode; they were left out.", layer::layer_label(li)));
         }
         if !items.is_empty() && l.settings.iter().any(|s| s.enabled) && l.settings.iter().filter(|s| s.enabled).all(|s| s.mode == Mode::Image) {
-            warnings.push(format!("Layer {} is in Image mode but holds shapes that are not pictures; those shapes were left out.", layer::layer_label(li)));
+            warnings.push(format!(
+                "Layer {} is in Image mode but holds shapes that are not pictures; those shapes were left out.",
+                layer::layer_label(li)
+            ));
         }
     }
     if job.layers.is_empty() {

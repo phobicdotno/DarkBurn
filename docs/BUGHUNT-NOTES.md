@@ -14,3 +14,4 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] `edit.convert_path` on a text with no visible characters leaves an empty path shape in the document
 - [ ] Booleans and offsets read a text's stored outline; a text that was never rendered would give its placeholder rectangle (not seen in a test: the text commands render after every change)
 - [ ] Adjust Image is slow at the limits: forty mode and DPI changes on a 2 x 1 mm image at 25400 DPI with 1000 halftone cells took over a minute in a test (results were right)
+- [ ] `darkburn-grbl` `tests/driver.rs` `frame_rectangle_with_and_without_laser` failed once in a full workspace run under load (`laser_switch_ons >= 1`, driver.rs:514) and passed three times in a row on its own

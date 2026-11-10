@@ -386,7 +386,9 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             let offset = work_offset(app);
             let tp =
                 if tp.space == CoordSpace::MachineAbsolute && offset != Vec2::ZERO { darkburn_job::origin::pointer_offset(&tp, -offset) } else { tp };
-            JobRequest::gcode(crate::gcode_machines::job_lines(app.machine.active(), &tp, &app.job.gcode))
+            let laser_mode_off =
+                app.machine.handle.snapshot().grbl_settings.get(&32).and_then(|v| v.trim().parse::<f64>().ok()).is_some_and(|v| v == 0.0);
+            JobRequest::gcode(crate::gcode_machines::job_lines(app.machine.active(), &tp, &app.job.gcode, laser_mode_off))
         }
         Family::Ruida => {
             let shift = if tp.space == CoordSpace::RelativeToStart {

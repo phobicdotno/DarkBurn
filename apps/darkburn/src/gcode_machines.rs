@@ -353,10 +353,12 @@ pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     gc::translate::translate(lines, &gc::translate::TranslateOptions::for_profile(&p))
 }
 
-/// The lines to stream to `dev` for `tp`.
-pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec<String> {
+/// The lines to stream to `dev` for `tp`. `laser_mode_off`: the connected GRBL controller says
+/// its laser mode is off (`$32=0`), so it keeps the laser on through rapid moves like an old
+/// one does, and the travel moves switch it off themselves.
+pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings, laser_mode_off: bool) -> Vec<String> {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only());
+        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only() || laser_mode_off);
     }
     let neutral = crate::job_build::gcode_lines(tp, &neutral_gcode(base));
     translate_for(dev, &neutral)

@@ -139,6 +139,8 @@ pub fn commit(app: &mut DarkBurn, label: &str, undo: bool) {
             });
         } else {
             app.editor.doc.vision_settings = new.clone();
+            // Not an undo step, but still a change the project file does not have yet.
+            app.editor.touch();
         }
     }
     app.vision.synced = new;
@@ -1659,6 +1661,26 @@ mod tests {
         run(&mut app, "camera.set", json!({ "show": false })).unwrap();
         assert!(app.vision.state.camera.state.apply(&app.vision.overlay.as_ref().unwrap().img).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn camera_slider_changes_leave_the_project_needing_a_save() {
+        let mut app = app();
+        assert!(!app.editor.is_modified());
+        run(&mut app, "camera.set", json!({ "fade": 0.5 })).unwrap();
+        assert!(app.editor.doc.vision_settings.is_some(), "the fade is in the project");
+        assert!(app.editor.is_modified(), "so the project has a change to save");
+        assert!(!app.editor.history.can_undo(), "a slider is still not an undo step");
+        app.editor.mark_saved();
+        // the same value again changes nothing
+        run(&mut app, "camera.set", json!({ "fade": 0.5 })).unwrap();
+        assert!(!app.editor.is_modified());
+        run(&mut app, "camera.set", json!({ "x_shift": 3.0 })).unwrap();
+        assert!(app.editor.is_modified());
+        app.editor.mark_saved();
+        // the feeder numbers are kept the same way
+        run(&mut app, "test.feeder", json!({ "total_length": 2000.0 })).unwrap();
+        assert!(app.editor.is_modified());
     }
 
     #[test]

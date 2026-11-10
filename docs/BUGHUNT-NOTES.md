@@ -10,7 +10,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] A NaN coordinate in the document would be saved as `null` and make the project unopenable; no way to get one in was found, but save should refuse or clean it
 - [ ] Deleting a layer with its shapes removes a whole group if any child of the group is on that layer
 - [ ] "Same width/height" against a zero-size reference shape collapses the selected shape to nothing
-- [ ] Camera slider changes are written to the document without marking it changed
 - [ ] Job: the kerf offset of a Line sub-layer moves the outline for every sub-layer of the layer, so a Fill sub-layer on the same layer fills the grown shape (`job_build::collect` hands the engine one path per shape)
 - [ ] Job: after the last layer with a Z offset or Z step the head stays at that height when the job ends; the next job then starts from there. Not changed because what Z the job should end at needs a decision (absolute `G0 Z..` versus "relative Z moves only")
 - [ ] Job: the time estimate does not know the device's "fast whitespace scan" (the speed is changed only when the G-code is written), so the estimate is too long with it on

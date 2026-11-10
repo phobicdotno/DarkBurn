@@ -307,3 +307,262 @@ fn text_from_a_command_is_held_to_the_ranges_of_the_text_fields() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
+
+// ---------------------------------------------------------------- two ways to the same design
+
+fn gcode(a: &DarkBurn) -> String {
+    let job = build_job_simple(&input(a.editor.doc.clone())).unwrap();
+    gcode_text(&job, None, &DeviceGcodeSettings::default())
+}
+
+/// Every plain shape of the design as (kind, layer, outline rounded to a micrometre), in draw order.
+fn leaves(a: &DarkBurn) -> Vec<(String, usize, String)> {
+    let round = |p: &darkburn_core::kurbo::BezPath| {
+        let mut s = String::new();
+        for c in darkburn_geom::path::contours(&darkburn_geom::path::flatten(p, 0.001)) {
+            for n in c.nodes() {
+                s.push_str(&format!("{:.3},{:.3} ", n.x + 0.0, n.y + 0.0));
+            }
+            s.push_str(if c.closed { "Z " } else { "| " });
+        }
+        s.replace("-0.000", "0.000")
+    };
+    a.editor.doc.iter().flat_map(|s| s.leaves()).map(|l| (l.kind_name().to_string(), l.layer, round(&l.outline()))).collect()
+}
+
+fn scene() -> (DarkBurn, Vec<ShapeId>) {
+    use crate::shape_ops::tests::run;
+    use serde_json::json;
+    let mut a = app();
+    {
+        let s = a.editor.doc.layer_mut(0).main_mut();
+        s.mode = Mode::Line;
+        s.speed = 20.0;
+        s.max_power = 50.0;
+        let s = a.editor.doc.layer_mut(1).main_mut();
+        s.mode = Mode::Fill;
+        s.speed = 100.0;
+        s.max_power = 30.0;
+        s.interval = 0.5;
+    }
+    let id = |v: serde_json::Value| ShapeId(v["id"].as_u64().unwrap());
+    let r = id(run(&mut a, "shape.add_rect", json!({ "x": 20, "y": 20, "width": 8, "height": 4, "radius": 1, "layer": 0 })).unwrap());
+    let e = id(run(&mut a, "shape.add_ellipse", json!({ "x": 30, "y": 20, "width": 6, "height": 4, "layer": 1 })).unwrap());
+    let p = id(run(&mut a, "shape.add_polygon", json!({ "cx": 24, "cy": 30, "sides": 5, "radius": 3, "layer": 0 })).unwrap());
+    let l = id(run(&mut a, "shape.add_path", json!({ "svg_path": "M20 36 L28 36 C30 36 30 38 28 38", "layer": 0 })).unwrap());
+    (a, vec![r, e, p, l])
+}
+
+#[test]
+fn a_virtual_array_flattened_is_the_array_made_of_real_copies() {
+    use crate::shape_ops::tests::{run, select};
+    use serde_json::json;
+    let arrays = [
+        ("arrange.grid_array", json!({ "rows": 2, "cols": 3, "dx": 3, "dy": 2 })),
+        (
+            "arrange.grid_array",
+            json!({ "rows": 3, "cols": 2, "dx": 30, "dy": 25, "centre_to_centre": true, "shift": "alt_rows", "shift_amount": 4, "mirror_alt_rows": true }),
+        ),
+        (
+            "arrange.grid_array",
+            json!({ "rows": 2, "cols": 2, "dx": 3, "dy": 2, "shift": "hex", "reverse_x": true, "reverse_y": true, "mirror_alt_cols": true }),
+        ),
+        ("arrange.circular_array", json!({ "cx": 100, "cy": 100, "count": 5, "start_angle": 30, "sweep": 360, "rotate_items": true })),
+        (
+            "arrange.circular_array",
+            json!({ "cx": 100, "cy": 100, "count": 4, "start_angle": 0, "sweep": 90, "rotate_items": false, "clockwise": true }),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (id, args) in arrays {
+        let (mut real, ids) = scene();
+        let start = real.editor.doc.clone();
+        select(&mut real, &ids);
+        let mut ra = args.clone();
+        ra["virtual"] = json!(false);
+        run(&mut real, id, ra).unwrap();
+        let (mut virt, ids) = scene();
+        select(&mut virt, &ids);
+        let mut va = args.clone();
+        va["virtual"] = json!(true);
+        run(&mut virt, id, va).unwrap();
+        let (lr, lv) = (leaves(&real), leaves(&virt));
+        let (mut sr, mut sv) = (lr.clone(), lv.clone());
+        sr.sort();
+        sv.sort();
+        if sr != sv {
+            wrong.push(format!("{id} {args}: the virtual array holds other shapes than the real copies ({} and {})", lv.len(), lr.len()));
+        }
+        run(&mut virt, "arrange.array_flatten", json!({})).unwrap();
+        let mut sf = leaves(&virt);
+        sf.sort();
+        if sf != sr {
+            wrong.push(format!("{id} {args}: flattened, the shapes differ from the real copies"));
+        }
+        // Undo takes each back to the start, in as many steps as were made.
+        run(&mut real, "edit.undo", json!({})).unwrap();
+        if real.editor.doc != start {
+            wrong.push(format!("{id} {args}: one undo does not take the real copies away"));
+        }
+        run(&mut virt, "edit.undo", json!({})).unwrap();
+        run(&mut virt, "edit.undo", json!({})).unwrap();
+        if virt.editor.doc != start {
+            wrong.push(format!("{id} {args}: two undos do not take the flattened virtual array away"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+#[test]
+fn grouping_converting_and_ungrouping_leave_the_job_as_it_was() {
+    use crate::shape_ops::tests::{run, select};
+    use serde_json::json;
+    let (mut a, ids) = scene();
+    let start = a.editor.doc.clone();
+    let (job0, leaves0) = (gcode(&a), leaves(&a));
+    let mut wrong = Vec::new();
+    select(&mut a, &ids);
+    run(&mut a, "arrange.group", json!({})).unwrap();
+    if gcode(&a) != job0 {
+        wrong.push("grouped, the job differs".to_string());
+    }
+    run(&mut a, "arrange.ungroup", json!({})).unwrap();
+    if a.editor.doc.iter().map(|s| (&s.kind, s.transform, s.layer)).ne(start.iter().map(|s| (&s.kind, s.transform, s.layer))) {
+        wrong.push("group then ungroup does not give the shapes back as they were".to_string());
+    }
+    if gcode(&a) != job0 {
+        wrong.push("ungrouped again, the job differs".to_string());
+    }
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    if a.editor.doc != start {
+        wrong.push("two undos after group and ungroup do not give the start".to_string());
+    }
+    select(&mut a, &ids);
+    run(&mut a, "edit.convert_path", json!({})).unwrap();
+    if leaves(&a).iter().map(|l| (&l.1, &l.2)).ne(leaves0.iter().map(|l| (&l.1, &l.2))) {
+        wrong.push(format!("converted to paths, the outlines differ:\n{:?}\n{:?}", leaves(&a), leaves0));
+    }
+    if gcode(&a) != job0 {
+        wrong.push("converted to paths, the job differs".to_string());
+    }
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    if a.editor.doc != start {
+        wrong.push("undo after convert to path does not give the start".to_string());
+    }
+    run(&mut a, "edit.redo", json!({})).unwrap();
+    if gcode(&a) != job0 {
+        wrong.push("redone, the job differs".to_string());
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+// ---------------------------------------------------------------- Norwegian
+
+mod norwegian {
+    use crate::commands;
+    use crate::i18n::cmd_label;
+    use crate::ui_harness::Gui;
+
+    fn norwegian_gui() -> Gui {
+        let mut g = Gui::new(1920.0, 1080.0, 1.0);
+        g.app().prefs.language = "nb".into();
+        g.frames(3);
+        assert_eq!(crate::i18n::language(), "nb");
+        g
+    }
+
+    fn hint_of(g: &mut Gui, name: &str) -> String {
+        let r = g.rect_of(name).unwrap_or_else(|| panic!("no {name}"));
+        g.hover_pos(r.center());
+        g.frames(1);
+        g.app().hint.clone().unwrap_or_default()
+    }
+
+    /// The label of command `id` and its key, as a tooltip shows them.
+    fn tip(id: &str) -> String {
+        let c = commands::find(id).unwrap();
+        let key = crate::keymap::key_for(c);
+        if key.is_empty() { cmd_label(c) } else { format!("{} ({key})", cmd_label(c)) }
+    }
+
+    #[test]
+    fn tooltips_and_the_settings_and_about_windows_are_in_norwegian() {
+        let mut g = norwegian_gui();
+        let mut wrong = Vec::new();
+        // A command's name is translated in the menus: its button says the same.
+        assert_eq!(cmd_label(commands::find("tools.rect").unwrap()), "Rektangel");
+        let tools: Vec<String> = g.rects("tool:").into_iter().map(|(n, _)| n).collect();
+        assert!(tools.len() > 8, "{tools:?}");
+        for name in tools {
+            let h = hint_of(&mut g, &name);
+            let want = tip(name.trim_start_matches("tool:"));
+            if h != want {
+                wrong.push(format!("{name}: the hint is {h:?}, not {want:?}"));
+            }
+        }
+        // The buttons of the application bar.
+        for (name, id) in [("appbar:help", "help.about"), ("appbar:settings", "edit.settings")] {
+            let r = g.rect_of(name).unwrap();
+            g.hover_pos(r.center());
+            g.frames(4);
+            let label = cmd_label(commands::find(id).unwrap());
+            if !g.visible_texts().iter().any(|t| t.trim() == label) {
+                wrong.push(format!("{name}: no tooltip {label:?}"));
+            }
+        }
+        // The windows those two open.
+        for id in ["help.about", "edit.settings"] {
+            g.run_command(id);
+            g.settle();
+            let label = cmd_label(commands::find(id).unwrap());
+            if !g.window_titles().contains(&label) {
+                wrong.push(format!("{id}: the window is called {:?}, not {label:?}", g.window_titles()));
+            }
+            if g.visible_texts().iter().any(|t| t.trim() == "Close") {
+                wrong.push(format!("{id}: its button says Close, not Lukk"));
+            }
+            g.close_dialogs();
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
+    #[test]
+    fn tooltips_show_the_key_the_user_gave_a_command_not_the_default_one() {
+        let mut g = Gui::standard();
+        let mut wrong = Vec::new();
+        let mut check = |what: &str, got: String, want: &str| {
+            if got != want {
+                wrong.push(format!("{what}: {got:?}, not {want:?}"));
+            }
+        };
+        check("the default key", hint_of(&mut g, "tool:tools.rect"), "Rectangle (Ctrl+R)");
+        g.exec("hotkeys.set", serde_json::json!({ "command": "tools.rect", "key": "Ctrl+Alt+F7" }));
+        g.frames(2);
+        check("a changed key", hint_of(&mut g, "tool:tools.rect"), "Rectangle (Ctrl+Alt+F7)");
+        g.exec("hotkeys.set", serde_json::json!({ "command": "tools.rect", "key": "" }));
+        g.frames(2);
+        check("a key taken away", hint_of(&mut g, "tool:tools.rect"), "Rectangle");
+        // The ribbon: a key taken away leaves no empty brackets, and a command without a
+        // default key that is given one shows it.
+        let on_ribbon = |g: &Gui, with_key: bool| {
+            crate::ribbon::command_ids()
+                .into_iter()
+                .find(|id| {
+                    commands::find(id).is_some_and(|c| crate::keymap::default_key(c).is_empty() != with_key)
+                        && commands::works(id)
+                        && g.rect_of(&format!("ribbon:{id}")).is_some()
+                })
+                .expect("a ribbon button")
+        };
+        let had = on_ribbon(&g, true);
+        g.exec("hotkeys.set", serde_json::json!({ "command": had, "key": "" }));
+        g.frames(2);
+        check(had, hint_of(&mut g, &format!("ribbon:{had}")), commands::find(had).unwrap().label);
+        let had_none = on_ribbon(&g, false);
+        g.exec("hotkeys.set", serde_json::json!({ "command": had_none, "key": "Ctrl+Alt+F8" }));
+        g.frames(2);
+        check(had_none, hint_of(&mut g, &format!("ribbon:{had_none}")), &format!("{} (Ctrl+Alt+F8)", commands::find(had_none).unwrap().label));
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+}

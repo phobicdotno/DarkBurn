@@ -329,10 +329,10 @@ fn item_at(
                 ui.painter().galley(pos2(whole.center().x, whole.top() + 32.0), galley, ink);
             }
             solidcraft_ui_registry::publish_target(&format!("ribbon:{id}"), whole);
-            let tip = match (c.key.is_empty(), enabled) {
-                (true, true) => label.clone(),
-                (false, true) => format!("{} ({})", label, crate::keymap::key_for(c)),
-                (_, false) => format!("{} - {}", label, crate::i18n::tr("ui.later_version", "arrives in a later version")),
+            let tip = if enabled {
+                crate::shell::command_tip(c)
+            } else {
+                format!("{} - {}", label, crate::i18n::tr("ui.later_version", "arrives in a later version"))
             };
             if resp.hovered() {
                 *hint = Some(tip.clone());

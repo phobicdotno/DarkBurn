@@ -416,7 +416,8 @@ impl DarkBurn {
             }
             separator(ui, r, x + 8.0);
             x += 26.0;
-            for (icon, tip) in [("save", "Save (Ctrl+S)"), ("undo", "Undo (Ctrl+Z)"), ("redo", "Redo (Ctrl+Shift+Z)")] {
+            for (icon, id) in [("save", "file.save"), ("undo", "edit.undo"), ("redo", "edit.redo")] {
+                let tip = commands::find(id).map(command_tip).unwrap_or_default();
                 // Too narrow: these give way before they run into the settings and help buttons.
                 let right_cluster = r.right() - if custom { titlebar::WIDTH } else { 0.0 } - 22.0 - 2.0 * 34.0 - 8.0;
                 if x + 18.0 > right_cluster {
@@ -431,7 +432,8 @@ impl DarkBurn {
             // Right-hand cluster: version, settings, help, then the caption buttons.
             let captions = if custom { titlebar::WIDTH } else { 0.0 };
             let mut rx = r.right() - captions - 22.0;
-            for (icon, tip, id) in [("help", "About DarkBurn", "help.about"), ("settings", "Settings", "edit.settings")] {
+            for (icon, id) in [("help", "help.about"), ("settings", "edit.settings")] {
+                let tip = commands::find(id).map(crate::i18n::cmd_label).unwrap_or_default();
                 let br = Rect::from_center_size(pos2(rx, r.center().y), vec2(32.0, 32.0));
                 let resp = ui.interact(br, ui.scope_id().with(("ab", icon)), Sense::click());
                 if resp.hovered() {
@@ -873,7 +875,9 @@ impl DarkBurn {
 
     fn dialogs(&mut self, ctx: &egui::Context) {
         if self.about_open {
-            let (closed, action) = ui_kit::Window::new(egui::Id::unique("about"), "db_app", "About DarkBurn").actions("", "Close", None).show(ctx, true, |ui| {
+            let (closed, action) = ui_kit::Window::new(egui::Id::unique("about"), "db_app", &crate::i18n::tr("cmd.help.about", "About DarkBurn"))
+                .actions("", &crate::i18n::tr("ui.close", "Close"), None)
+                .show(ctx, true, |ui| {
                 let t = Tokens::get();
                 ui.label(egui::RichText::new(format!("DarkBurn {}", env!("CARGO_PKG_VERSION"))).font(fonts::semibold(t.font_subtitle)));
                 ui.label(crate::i18n::tr("about.tagline", "A laser cutter and engraver program."));
@@ -894,10 +898,10 @@ impl DarkBurn {
         if self.settings_open {
             let prefs = &mut self.prefs;
             let work_area = (prefs.page_width, prefs.page_height, prefs.origin);
-            let (closed, action) = ui_kit::Window::new(egui::Id::unique("settings"), "settings", "Settings")
+            let (closed, action) = ui_kit::Window::new(egui::Id::unique("settings"), "settings", &crate::i18n::tr("cmd.edit.settings", "Settings"))
                 .cards(2.0)
                 .fields()
-                .actions("", "Close", None)
+                .actions("", &crate::i18n::tr("ui.close", "Close"), None)
                 .show(ctx, true, |ui| {
                     crate::settings::page(ui, prefs);
                 });
@@ -972,6 +976,13 @@ const TOOLS: &[&str] = &[
     "tools.qr",
 ];
 
+/// A command's tooltip: its name in the language in use, and the key it has now (which the
+/// user may have changed or taken away).
+pub fn command_tip(c: &commands::Cmd) -> String {
+    let (label, key) = (crate::i18n::cmd_label(c), crate::keymap::key_for(c));
+    if key.is_empty() { label } else { format!("{label} ({key})") }
+}
+
 fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<String>, clicked: &mut Option<String>) {
     let t = Tokens::get();
     let host = Container::new(ui.ctx(), Surface::Chrome);
@@ -996,7 +1007,7 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
             }
             icons::paint_icon(ui.painter(), br.shrink(6.0), c.icon, if enabled { 1.0 } else { 0.5 });
             solidcraft_ui_registry::publish_target(&format!("tool:{id}"), br);
-            let tip = if c.key.is_empty() { c.label.to_string() } else { format!("{} ({})", c.label, c.key) };
+            let tip = command_tip(c);
             if resp.hovered() {
                 *hint = Some(tip.clone());
             }

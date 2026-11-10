@@ -3,3 +3,5 @@ Fix: cut settings from a project file or an AI agent are held to the same ranges
 Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
 Fix: the shape commands no longer make shapes without size, and a line on a layer that does not exist is refused
 Fix: text made by a command is held to the same height, spacing and offset ranges as the text fields
+Fix: tooltips show the shortcut you set, not the default one, and no empty brackets when a shortcut is removed
+Fix: tool tooltips, the Settings and About windows and their Close buttons follow the chosen language

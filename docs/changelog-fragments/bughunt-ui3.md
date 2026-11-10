@@ -7,3 +7,13 @@ Fix: More number fields take sums
 Fix: Head camera pictures land right on machines with the origin at the back
 Fix: Camera alignment clicks are a bit more exact
 Fix: AI agents are told when a change did nothing
+Fix: The update check only uses plain http on this computer
+Fix: Convert to Bitmap keeps pictures that sit inside a group
+Fix: A date format with a time zone no longer crashes variable text
+Fix: Big arrays of variable text with a long CSV file no longer freeze
+Fix: Auto-advance after a job now works
+Fix: Single-line fonts can be favourites
+Fix: Tab stays in the open dialog
+Fix: Enter presses the button you tabbed to
+Fix: One bad value in the settings file no longer resets all settings
+Fix: Two DarkBurn windows no longer undo each other's settings

@@ -382,7 +382,7 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         if s.advanced {
             advanced(ui, &mut c);
         } else {
-            common(ui, &mut c, &modes, &layer, &mut output, &mut air, &mut name, s.sub);
+            common(ui, &mut c, &modes, &layer, &mut output, &mut air, &mut name, (l, s.sub));
         }
         if galvo_device && s.advanced {
             galvo(ui, &mut c);
@@ -395,7 +395,9 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         app.images.offsets_open = true;
     }
     let lay = app.editor.doc.layer(l);
-    if (output, air, name.trim()) != (lay.output, lay.air, lay.name.as_str()) {
+    // An emptied name field is a name half typed, not a change.
+    let renamed = !name.trim().is_empty() && name.trim() != lay.name;
+    if (output, air) != (lay.output, lay.air) || renamed {
         for &other in &s.selected {
             let lay = app.editor.doc.layer_mut(other);
             if !lay.is_tool() {
@@ -403,7 +405,7 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
             }
             lay.air = air;
         }
-        if !name.trim().is_empty() {
+        if renamed {
             app.editor.doc.layer_mut(l).name = name.trim().to_string();
         }
         app.editor.touch();
@@ -484,12 +486,35 @@ fn scan_angle_rows(ui: &mut Ui, c: &mut CutSetting) {
 
 /// The Common tab.
 #[allow(clippy::too_many_arguments)]
-fn common(ui: &mut Ui, c: &mut CutSetting, modes: &[Mode], layer: &Layer, output: &mut bool, air: &mut bool, name: &mut String, sub: usize) {
+fn common(
+    ui: &mut Ui,
+    c: &mut CutSetting,
+    modes: &[Mode],
+    layer: &Layer,
+    output: &mut bool,
+    air: &mut bool,
+    name: &mut String,
+    (l, sub): (usize, usize),
+) {
     let t = Tokens::get();
     ui_kit::section_heading(ui, "Layer");
     ui_kit::row(ui, "Layer name", |ui| {
-        let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name));
+        // The layer takes the name without the spaces round it. While the field has the keyboard
+        // it shows what was typed, not the layer's name read back: else a space would vanish as
+        // soon as it is typed, and the field could never be emptied to type another name.
+        let typing = Id::unique("cse_layer_name_typing");
+        let typed = ui.data(|d| d.get_temp::<(usize, String)>(typing)).filter(|(of, _)| *of == l);
+        let mut text = typed.map_or_else(|| name.clone(), |(_, text)| text);
+        let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut text));
         crate::a11y::text(ui, &r, "Layer name");
+        if r.has_focus() {
+            ui.data_mut(|d| d.insert_temp(typing, (l, text.clone())));
+        } else {
+            ui.data_mut(|d| d.remove_temp::<(usize, String)>(typing));
+        }
+        if r.changed() {
+            *name = text;
+        }
     });
     if sub > 0 || layer.is_multi() {
         ui_kit::row(ui, "Sub-layer name", |ui| {

@@ -48,7 +48,7 @@ fn dressed(mut s: Shape, n: usize) -> Shape {
     s.name = format!("shape {n} æøå \"quoted\"");
     s.transform = Affine::new([1.5, 0.25, -0.5, 2.0, 10.0 + n as f64, -7.5]);
     s.layer = (n * 5 + 1) % LAYER_COUNT;
-    s.locked = n % 2 == 0;
+    s.locked = n.is_multiple_of(2);
     s.priority = n as i32 - 3;
     s.power_scale = 40.0 + n as f64;
     s.tabs = vec![[1.0, 2.5], [-3.0, 0.125]];
@@ -123,7 +123,7 @@ fn every_field_of_every_shape_and_layer_survives_save_and_open() {
         let mut l = everything_changed(doc.layer(i));
         l.index = i;
         l.name = format!("Layer {i} ø");
-        l.library_link = (i % 2 == 0).then(|| format!("Birch {i} mm"));
+        l.library_link = i.is_multiple_of(2).then(|| format!("Birch {i} mm"));
         for k in 0..i % 4 {
             l.add_sub_layer();
             l.settings[k + 1].name = format!("sub {k}");

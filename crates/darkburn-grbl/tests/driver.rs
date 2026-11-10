@@ -790,6 +790,10 @@ struct LinkFaults {
     swallow_banner: std::sync::atomic::AtomicBool,
     /// Nothing gets through in either direction; the link itself stays open.
     silent: std::sync::atomic::AtomicBool,
+    /// What the driver wrote while the link was silent.
+    unheard: std::sync::Mutex<Vec<u8>>,
+    /// The driver let the link go (a real port would be free again).
+    released: std::sync::atomic::AtomicBool,
 }
 
 struct Lossy<T: Transport> {
@@ -808,7 +812,12 @@ impl<T: Transport> Lossy<T> {
 
 impl<T: Transport> Transport for Lossy<T> {
     fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
-        if self.faults.silent.load(std::sync::atomic::Ordering::SeqCst) { Ok(()) } else { self.inner.write_all(data) }
+        if self.faults.silent.load(std::sync::atomic::Ordering::SeqCst) {
+            self.faults.unheard.lock().unwrap().extend_from_slice(data);
+            Ok(())
+        } else {
+            self.inner.write_all(data)
+        }
     }
     fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
         use std::sync::atomic::Ordering::SeqCst;
@@ -841,6 +850,12 @@ impl<T: Transport> Transport for Lossy<T> {
     }
     fn name(&self) -> String {
         self.inner.name()
+    }
+}
+
+impl<T: Transport> Drop for Lossy<T> {
+    fn drop(&mut self) {
+        self.faults.released.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -893,4 +908,35 @@ fn disconnecting_from_a_silent_controller_does_not_hang_the_caller() {
     m.disconnect();
     let took = t.elapsed();
     assert!(took < Duration::from_secs(2), "disconnect took {took:?}");
+}
+
+#[test]
+fn disconnecting_from_a_silent_controller_frees_the_port_at_once() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    faults.silent.store(true, SeqCst);
+    m.disconnect();
+    // Connecting again to the same port right away must find it free.
+    assert!(faults.released.load(SeqCst), "the worker still holds the link after disconnect gave up waiting");
+    // The last thing sent to the controller that did not answer is a reset: it turns the laser off.
+    let unheard = faults.unheard.lock().unwrap().clone();
+    assert_eq!(unheard.last(), Some(&0x18), "{unheard:?}");
+}
+
+#[test]
+fn disconnecting_from_a_controller_that_answers_still_stops_cleanly() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    m.disconnect();
+    assert!(faults.released.load(std::sync::atomic::Ordering::SeqCst));
+    emu.with(|e| {
+        assert_eq!(e.stats().soft_resets, 1, "hold, then one reset");
+        assert_eq!(e.stats().lines.last().map(String::as_str), Some("M5 S0"));
+        assert!(!e.laser_on());
+    });
 }

@@ -1137,6 +1137,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Inches on the screen is how sizes are shown, not what the machine is sent. The translated
+    /// devices used to get a job in inches (G20), which a Marlin as it is usually built does not
+    /// know: it would read the numbers as millimetres.
+    #[test]
+    fn the_unit_on_the_screen_does_not_change_the_g_code() {
+        let mut a = app();
+        with_square(&mut a);
+        run(&mut a, "job.generate", Value::Null).unwrap();
+        let job = a.job.last_job.clone().expect("a job");
+        use crate::devices::DeviceType;
+        for ty in [DeviceType::Grbl, DeviceType::Marlin, DeviceType::Smoothie, DeviceType::CustomGcode, DeviceType::LinuxCnc, DeviceType::Snapmaker] {
+            let mut dev = crate::devices::Device::new(ty);
+            let mm = crate::gcode_machines::job_text(&dev, &job, None, &dev.settings.gcode);
+            dev.state.inches = true;
+            let inches = crate::gcode_machines::job_text(&dev, &job, None, &dev.settings.gcode);
+            assert!(mm.contains("X50"), "{ty:?}: {mm}");
+            assert_eq!(inches, mm, "{ty:?}: the job changed with the unit shown on the screen");
+            assert!(!inches.lines().any(|l| l.split_whitespace().any(|w| w == "G20")), "{ty:?}: {inches}");
+        }
+    }
+
     #[test]
     fn the_finish_position_of_the_move_panel_reaches_a_saved_file() {
         let mut a = app();

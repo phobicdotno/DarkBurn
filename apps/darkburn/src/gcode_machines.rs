@@ -231,7 +231,9 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
         g0_for_overscan: g.overscan_as_g0,
         s_with_every_g1: g.s_every_g1,
         constant_power: e.constant_power,
-        units: if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres },
+        // The job is always written in millimetres. Inches on the screen (`state.inches`) is how
+        // sizes are shown, and goes to `state.units` below.
+        units: gp::Units::Millimetres,
         marlin_power: e.marlin_power,
         tool_index: e.tool_index,
         reduce_smoothie_pause_delay: e.reduce_smoothie_pause_delay,
@@ -243,7 +245,7 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
     let a = &s.additional;
     p.simulation =
         gp::SimulationSettings { accel_x: a.accel, accel_y: a.accel, max_speed_x: a.max_speed, max_speed_y: a.max_speed, rapid_speed: a.rapid_speed };
-    p.state.units = p.gcode.units;
+    p.state.units = if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres };
     p.state.grid_spacing_mm = d.state.grid_spacing;
     p.state.last_port = (!d.state.port.is_empty()).then(|| d.state.port.clone());
     p
@@ -306,7 +308,7 @@ pub fn from_profile(p: &gc::DeviceProfile) -> Device {
     s.additional.accel = p.simulation.accel_x;
     s.additional.max_speed = p.simulation.max_speed_x;
     s.additional.rapid_speed = p.simulation.rapid_speed;
-    d.state.inches = pg.units == gp::Units::Inches;
+    d.state.inches = p.state.units == gp::Units::Inches;
     d.state.grid_spacing = p.state.grid_spacing_mm;
     d
 }

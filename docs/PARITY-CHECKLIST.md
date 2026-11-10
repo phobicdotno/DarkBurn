@@ -42,7 +42,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] FILE-06 Show project notes
 - [x] FILE-07 Save
 - [x] FILE-08 Save As
-- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device) *(G-code works; RD, OUT and UD5 machine files wait on EXP-07)*
+- [~] FILE-09 Save machine file (G-code, RD, OUT or UD5, label follows device) *(G-code and RD work and the label follows the device; OUT and UD5 are not written because the formats are not public)*
 - [x] FILE-10 Export
 - [x] FILE-11 Print, black only
 - [x] FILE-12 Print, keep colours
@@ -265,7 +265,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] LASER-03 Start, pause, stop
 - [x] LASER-04 Frame as rectangle
 - [x] LASER-05 Frame as rubber-band outline, optionally with laser on
-- [~] LASER-06 Save machine file
+- [x] LASER-06 Save machine file
 - [x] LASER-07 Run a saved G-code file
 - [x] LASER-08 Send file to controller, optionally start at once
 - [x] LASER-09 Home
@@ -688,9 +688,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [ ] CONN-01 USB serial with baud choice
 - [ ] CONN-02 TCP/IP
 - [ ] CONN-03 TCP relay through a network bridge
-- [ ] CONN-04 UDP (Ruida Ethernet)
+- [x] CONN-04 UDP (Ruida Ethernet)
 - [ ] CONN-05 Raw USB
-- [ ] CONN-06 FTDI packet USB (Ruida over USB)
+- [~] CONN-06 FTDI packet USB (Ruida over USB) *(the controller's FTDI chip is opened as its serial port; direct FTDI access is a build option that has never run)*
 - [ ] CONN-07 HTTP
 - [ ] CONN-08 Bluetooth serial
 - [ ] CONN-09 UDP automation socket for start and status commands
@@ -715,8 +715,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] GCODE-05 Custom G-code device *(later)*
 
 ### DSP family
-- [ ] RUIDA-01 Ruida over Ethernet (UDP)
-- [ ] RUIDA-02 Ruida over USB
+- [x] RUIDA-01 Ruida over Ethernet (UDP)
+- [~] RUIDA-02 Ruida over USB *(works against the stream emulator through the FTDI serial port path; the serial port itself cannot be exercised without a controller, and Fire needs Ethernet)*
 - [x] RUIDA-03 Start, pause, stop, frame, home, go to origin
 - [x] RUIDA-04 Jog, including continuous jog
 - [x] RUIDA-05 Send file with name, auto-increment name, overwrite prompt
@@ -725,13 +725,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] RUIDA-08 Controller info: job time, laser-on time
 - [x] RUIDA-09 Dual tube and laser 2 offset
 - [x] RUIDA-10 U axis, rotary read and write
-- [ ] RUIDA-11 Job start and end delays
-- [ ] RUIDA-12 Hardware overscan, corner power, dot mode, PWM override
-- [ ] RUIDA-13 RD file save and import
-- [ ] RUIDA-14 Known board list (644x, 654x, 658x, 5121, 320A, 420B, 6332G, KT332N)
-- [ ] TROCEN-01 Trocen / AWC over USB and Ethernet, UD5 files
+- [ ] RUIDA-11 Job start and end delays *(no public source says where the controller keeps them; needs a capture)*
+- [x] RUIDA-12 Hardware overscan, corner power, dot mode, PWM override
+- [x] RUIDA-13 RD file save and import
+- [~] RUIDA-14 Known board list (644x, 654x, 658x, 5121, 320A, 420B, 6332G, KT332N) *(all listed and accepted; only RDC6442S and RDC8445S are recognised by card ID, the other IDs are not public)*
+- [ ] TROCEN-01 Trocen / AWC over USB and Ethernet, UD5 files *(protocol and file format are not public; the app says the controller is not supported yet)*
 - [ ] TROCEN-02 Trocen dual tube, PPI, auto-feed, overcut
-- [ ] TOPW-01 TopWisdom over USB and Ethernet, OUT files
+- [ ] TOPW-01 TopWisdom over USB and Ethernet, OUT files *(protocol and file format are not public; the app says the controller is not supported yet)*
 - [ ] TOPW-02 TopWisdom machine settings, framing, overcut
 
 ### Galvo (fiber, UV, CO2 galvo)
@@ -794,7 +794,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] EXP-04 PNG, JPG, BMP when the selection is a bitmap
 - [x] EXP-05 Export selection or everything
 - [x] EXP-06 G-code file (.gc, .gcode, .nc, .txt)
-- [ ] EXP-07 RD, OUT and UD5 machine files
+- [~] EXP-07 RD, OUT and UD5 machine files *(RD works; OUT and UD5 formats are not public)*
 
 ### Other files
 - [x] AUX-01 Material library files

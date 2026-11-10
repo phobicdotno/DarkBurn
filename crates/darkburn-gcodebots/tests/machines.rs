@@ -58,6 +58,34 @@ impl Log {
     }
 }
 
+/// Waits until the driver's worker has gone round its loop `n` more times (it stamps the
+/// snapshot on every pass). Tests use it instead of a pause of some length: how long the
+/// worker takes depends on how busy the computer is, how many passes it has made does not.
+fn worker_passes(m: &dyn GcodeMachine, n: usize) {
+    let end = Instant::now() + T;
+    let mut last = m.snapshot().updated;
+    let mut seen = 0;
+    while seen < n {
+        assert!(Instant::now() < end, "the driver's worker stopped running");
+        std::thread::sleep(Duration::from_millis(1));
+        let now = m.snapshot().updated;
+        if now != last {
+            last = now;
+            seen += 1;
+        }
+    }
+}
+
+/// Asserts that the driver sends no motion while its worker makes many passes. What counts
+/// is what has arrived at the controller, not what the controller has taken in: lines sent
+/// before the pause may still be waiting for room in its planner.
+fn assert_no_more_moves_are_sent(m: &dyn GcodeMachine, emu: &LineEmuHandle) {
+    let moves = || emu.with(|e| e.stats().arrived.iter().filter(|l| l.starts_with('G')).count());
+    let before = moves();
+    worker_passes(m, 25);
+    assert_eq!(moves(), before, "moves kept flowing while paused");
+}
+
 fn smoothie_profile() -> DeviceProfile {
     let mut p = DeviceProfile::for_kind(DeviceKind::Smoothie);
     p.width_mm = 300.0;
@@ -183,13 +211,8 @@ fn smoothie_pause_uses_suspend_and_resume_continues() {
     assert!(emu.with(|e| e.stats().lines.iter().any(|l| l == "suspend")));
     assert_eq!(m.snapshot().laser_status(), LaserStatus::Paused);
     // No new job lines go out while paused.
-    std::thread::sleep(Duration::from_millis(60));
-    let n1 = emu.with(|e| e.stats().lines.len());
-    std::thread::sleep(Duration::from_millis(120));
-    let n2 = emu.with(|e| e.stats().lines.len());
-    assert_eq!(n1, n2, "lines kept flowing while paused");
+    assert_no_more_moves_are_sent(m.as_ref(), &emu);
     m.resume().unwrap();
-    emu.with(|e| e.stats().lines.len());
     // Speed the emulator up so the rest finishes quickly.
     assert!(log.wait(m.as_ref(), Duration::from_secs(60), |e| matches!(e, MachineEvent::JobFinished(_))));
     assert!(emu.with(|e| e.stats().lines.iter().any(|l| l == "resume")));
@@ -226,10 +249,11 @@ fn smoothie_fire_button_is_capped_and_switches_itself_off() {
     let (m, mut log) = connect(&smoothie_profile(), &emu);
     assert!(matches!(m.fire(50.0, Duration::from_millis(100)), Err(MachineError::InvalidArgument(_))));
     assert!(matches!(m.fire(5.0, Duration::from_secs(600)), Err(MachineError::InvalidArgument(_))));
-    m.fire(5.0, Duration::from_millis(150)).unwrap();
-    assert!(m.as_ref().wait_until(T, |s| s.fire_on));
-    assert!(emu.with(|e| e.stats().lines.iter().any(|l| l == "fire 5")));
-    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::FireOff)));
+    // The pulse is timed from the button press and is dropped if the driver gets to it too
+    // late, so it is long enough here for a busy test machine to send it.
+    m.fire(5.0, Duration::from_secs(1)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l == "fire 5"))));
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::FireOff)), "it switches itself off");
     assert!(m.as_ref().wait_until(T, |_| !emu.with(|e| e.laser_on())));
     // Jogging while firing turns it off first.
     m.fire(5.0, Duration::from_secs(5)).unwrap();
@@ -381,11 +405,7 @@ fn marlin_pause_only_stops_sending_and_stop_uses_quick_stop() {
     m.pause().unwrap();
     assert!(m.as_ref().wait_until(T, |s| s.paused));
     assert_eq!(m.snapshot().state, MachineState::Hold(0));
-    std::thread::sleep(Duration::from_millis(100));
-    let n1 = emu.with(|e| e.stats().lines.iter().filter(|l| l.starts_with("G1")).count());
-    std::thread::sleep(Duration::from_millis(150));
-    let n2 = emu.with(|e| e.stats().lines.iter().filter(|l| l.starts_with("G1")).count());
-    assert_eq!(n1, n2);
+    assert_no_more_moves_are_sent(m.as_ref(), &emu);
     m.stop().unwrap();
     assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Stopped)));
     emu.with(|e| {
@@ -444,11 +464,13 @@ fn marlin_fire_uses_the_selected_power_mode() {
         p.gcode.marlin_power = mode;
         p.gcode.tool_index = tool;
         let (m, mut log) = connect(&p, &emu);
-        m.fire(5.0, Duration::from_millis(100)).unwrap();
+        // Switched off by hand once the controller has the fire command: a short timed pulse
+        // may rightly be dropped when the driver is late, and then there is no command to see.
+        m.fire(5.0, Duration::from_secs(5)).unwrap();
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l.starts_with(expect_on)))), "{mode:?}");
+        m.fire_off().unwrap();
         assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::FireOff)));
-        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l == expect_off))));
-        let lines = emu.with(|e| e.stats().lines.clone());
-        assert!(lines.iter().any(|l| l.starts_with(expect_on)), "{lines:?}");
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().lines.iter().any(|l| l == expect_off))), "{mode:?}");
         m.disconnect();
     }
 }
@@ -665,6 +687,23 @@ fn snapshot_at(m: &dyn GcodeMachine, pred: impl Fn(&MachineEvent) -> bool) -> Ma
             return m.snapshot();
         }
     }
+}
+
+#[test]
+fn a_fire_pulse_the_driver_reaches_too_late_is_dropped_not_fired_late() {
+    // The link holds the driver up for longer than the pulse lasts.
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin));
+    let link = SlowLink { inner: emu.transport(), delay: Duration::from_millis(40) };
+    let m = marlin_profile().connect(Box::new(link)).expect("connect");
+    let m = m.as_ref();
+    snapshot_at(m, |e| matches!(e, MachineEvent::Connected(_)));
+    m.fire(5.0, Duration::from_millis(5)).unwrap();
+    let s = snapshot_at(m, |e| matches!(e, MachineEvent::FireOff));
+    assert!(!s.fire_on);
+    emu.with(|e| {
+        assert!(!e.stats().lines.iter().any(|l| l.starts_with("M3")), "{:?}", e.stats().lines);
+        assert!(!e.laser_on());
+    });
 }
 
 #[test]

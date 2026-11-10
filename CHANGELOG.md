@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.316 (build 6)
+## v0.0.329 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -293,6 +293,19 @@
 - Fix: changes made while a file is still being opened are asked about instead of thrown away
 - Fix: importing preferences no longer shows another machine's work area on the canvas
 - Fix: art libraries are saved when DarkBurn closes and are open again at the next start
+- Fix: Camera alignment no longer accepts targets that sit on one line or were clicked twice
+- Fix: Focus test, interval test and feeder plan refuse absurd step counts instead of crashing
+- Fix: Changing a camera slider now counts as a change to save
+- Fix: Print and Cut now works on machines whose origin is not at the front left
+- Fix: The centre finder mark lands under the laser on machines whose origin is not at the front left
+- Fix: Head camera alignment no longer applies the lens correction twice to the clicked marks
+- Fix: Convert to Path leaves a text of only spaces alone instead of making an invisible shape
+- Fix: "Weld text automatically" also applies to text made with the text tool
+- Fix: A warning when a hole or part is smaller than the kerf offset and gets left out
+- Fix: Tabs never take more than half of a small shape, so there is always something left to cut
+- Fix: Tabs and start points can be set on shapes inside a group
+- Fix: A picture that cannot be read no longer keeps the processor busy while it is on screen
+- Fix: A text whose letters are all deleted while typing is removed instead of staying as an invisible shape
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

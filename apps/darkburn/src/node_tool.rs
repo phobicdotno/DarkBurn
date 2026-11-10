@@ -1057,7 +1057,14 @@ fn run_node_op(_ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, op: Nod
 
 /// A shape's manual tabs in document coordinates.
 pub fn tab_points(app: &DarkBurn, id: ShapeId) -> Vec<Point> {
-    app.editor.doc.get(id).map(|s| s.tabs.iter().map(|t| s.transform * Point::new(t[0], t[1])).collect()).unwrap_or_default()
+    crate::shape_nodes::tab_points(&app.editor.doc, id)
+}
+
+/// The shape under `p` that can carry tabs and start points: a plain shape, or a group (its
+/// shapes carry them).
+fn cut_hit(app: &DarkBurn, p: Point, tol: f64) -> Option<ShapeId> {
+    let id = select::hit(&app.editor.doc, p, tol)?;
+    crate::shape_nodes::cut_outline(&app.editor.doc, id).map(|_| id)
 }
 
 fn tab_size(app: &DarkBurn, id: ShapeId) -> f64 {
@@ -1076,7 +1083,7 @@ fn tabs_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
         && let Some(p) = raw
     {
         let mut ids = app.editor.selected();
-        if let Some(h) = plain_hit(app, p, tol)
+        if let Some(h) = cut_hit(app, p, tol)
             && !ids.contains(&h)
         {
             ids.push(h);
@@ -1090,7 +1097,7 @@ fn tabs_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
                 return;
             }
         }
-        if let Some(id) = plain_hit(app, p, tol) {
+        if let Some(id) = cut_hit(app, p, tol) {
             app.editor.selection.set([id]);
             run_cmd(app, ctx, st, "tabs.add", json!({ "shape": id.0, "x": p.x, "y": p.y }));
         }
@@ -1280,7 +1287,7 @@ fn start_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response:
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let id = match near {
         Some((id, _)) => id,
-        None => match plain_hit(app, p, tol) {
+        None => match cut_hit(app, p, tol) {
             Some(id) => {
                 app.editor.selection.set([id]);
                 return;
@@ -1493,13 +1500,13 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
         }
         Tool::Tabs => {
             let mut ids: Vec<ShapeId> = app.editor.selected();
-            if let Some(h) = hover.and_then(|p| plain_hit(app, p, tol))
+            if let Some(h) = hover.and_then(|p| cut_hit(app, p, tol))
                 && !ids.contains(&h)
             {
                 ids.push(h);
             }
             for id in &ids {
-                let Some(path) = crate::shape_ops::shape_path(&app.editor.doc, *id) else { continue };
+                let Some(path) = crate::shape_nodes::cut_outline(&app.editor.doc, *id) else { continue };
                 let size = tab_size(app, *id);
                 for g in crate::shape_nodes::auto_gaps(&app.editor.doc, *id, false) {
                     painter.line_segment([xf.to_screen(g.from), xf.to_screen(g.to)], Stroke::new(5.0, ORANGE.gamma_multiply(0.8)));

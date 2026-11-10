@@ -1,6 +1,6 @@
 //! Planar homographies: normalised DLT (Hartley and Zisserman, public method) plus LM refinement.
 
-use crate::linalg::{LmOptions, Matrix, levenberg_marquardt, null_vector};
+use crate::linalg::{LmOptions, Matrix, levenberg_marquardt, sym_eigen};
 use kurbo::{Affine, Point};
 use serde::{Deserialize, Serialize};
 
@@ -46,10 +46,15 @@ impl Homography {
         Some(Point::new((m[0] * p.x + m[1] * p.y + m[2]) / w, (m[3] * p.x + m[4] * p.y + m[5]) / w))
     }
 
+    fn det(&self) -> f64 {
+        let m = &self.m;
+        m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
+    }
+
     pub fn inverse(&self) -> Option<Homography> {
         let m = &self.m;
-        let det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
-        if det.abs() < 1e-300 {
+        let det = self.det();
+        if det.abs() < 1e-300 || !det.is_finite() {
             return None;
         }
         let i = 1.0 / det;
@@ -121,6 +126,9 @@ pub fn fit_homography_dlt(src: &[Point], dst: &[Point]) -> Result<Homography, Ho
     if src.len() < 4 {
         return Err(HomographyError::NotEnoughPoints);
     }
+    if src.iter().chain(dst).any(|p| !(p.x.is_finite() && p.y.is_finite())) {
+        return Err(HomographyError::Degenerate);
+    }
     let (ts, ns) = normalisation(src);
     let (td, nd) = normalisation(dst);
     let mut a = Matrix::zeros(2 * src.len(), 9);
@@ -133,8 +141,18 @@ pub fn fit_homography_dlt(src: &[Point], dst: &[Point]) -> Result<Homography, Ho
             a.set(r + 1, c, row2[c]);
         }
     }
-    let h = null_vector(&a);
+    // The answer is the one direction the equations leave free. When the points sit on a line or
+    // repeat, they leave more than one free and any of them fits the points: there is no answer.
+    let (vals, vecs) = sym_eigen(&a.gram());
+    if !(vals[1] > 1e-10 * vals[8]) {
+        return Err(HomographyError::Degenerate);
+    }
+    let h: Vec<f64> = (0..9).map(|k| vecs.get(k, 0)).collect();
     let hn = Homography { m: [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8]] };
+    // A map that squashes the plane onto a line or a point cannot be turned round (bed to picture).
+    if !(hn.det().abs() > 1e-9) {
+        return Err(HomographyError::Degenerate);
+    }
     let td_inv = Homography { m: td }.inverse().ok_or(HomographyError::Degenerate)?;
     let out = td_inv.then_after(&hn).then_after(&Homography { m: ts });
     if out.m.iter().any(|v| !v.is_finite()) {
@@ -231,6 +249,65 @@ mod tests {
     fn errors() {
         assert_eq!(fit_homography(&grid()[..3], &grid()[..3]).unwrap_err(), HomographyError::NotEnoughPoints);
         assert_eq!(fit_homography(&grid(), &grid()[..5]).unwrap_err(), HomographyError::LengthMismatch);
+    }
+
+    fn square() -> Vec<Point> {
+        vec![Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(100.0, 80.0), Point::new(0.0, 80.0)]
+    }
+
+    #[test]
+    fn hand_computed_identity_translation_and_rotation() {
+        let src = square();
+        let h = fit_homography(&src, &src).unwrap();
+        assert!((h.apply(Point::new(37.0, 11.0)).unwrap() - Point::new(37.0, 11.0)).hypot() < 1e-9);
+        let moved: Vec<Point> = src.iter().map(|p| Point::new(p.x + 5.0, p.y - 7.0)).collect();
+        let h = fit_homography(&src, &moved).unwrap();
+        assert!((h.apply(Point::new(37.0, 11.0)).unwrap() - Point::new(42.0, 4.0)).hypot() < 1e-9);
+        // a quarter turn counter-clockwise: (x, y) -> (-y, x)
+        let turned: Vec<Point> = src.iter().map(|p| Point::new(-p.y, p.x)).collect();
+        let h = fit_homography(&src, &turned).unwrap();
+        assert!((h.apply(Point::new(37.0, 11.0)).unwrap() - Point::new(-11.0, 37.0)).hypot() < 1e-9);
+        // and back again through the inverse
+        assert!((h.inverse().unwrap().apply(Point::new(-11.0, 37.0)).unwrap() - Point::new(37.0, 11.0)).hypot() < 1e-9);
+    }
+
+    #[test]
+    fn points_on_one_line_are_refused() {
+        let src = [Point::new(10.0, 10.0), Point::new(110.0, 60.0), Point::new(210.0, 110.0), Point::new(310.0, 160.0)];
+        let dst = [Point::new(0.0, 0.0), Point::new(50.0, 0.0), Point::new(100.0, 0.0), Point::new(150.0, 0.0)];
+        assert_eq!(fit_homography(&src, &dst), Err(HomographyError::Degenerate), "source and bed points on a line");
+        assert_eq!(fit_homography(&src, &square()), Err(HomographyError::Degenerate), "source points on a line");
+        assert_eq!(fit_homography(&square(), &dst), Err(HomographyError::Degenerate), "bed points on a line");
+        // five points, still on a line (not evenly spaced)
+        let five = [Point::new(0.3, 0.1), Point::new(1.3, 0.4), Point::new(3.3, 1.0), Point::new(4.3, 1.3), Point::new(9.3, 2.8)];
+        let grid = [Point::new(0.0, 0.0), Point::new(9.0, 0.0), Point::new(9.0, 9.0), Point::new(0.0, 9.0), Point::new(4.0, 5.0)];
+        assert_eq!(fit_homography(&five, &grid), Err(HomographyError::Degenerate));
+    }
+
+    #[test]
+    fn repeated_points_are_refused() {
+        // the same point clicked twice: only three different pairs
+        let mut src = square();
+        src[3] = src[2];
+        let mut dst = square();
+        dst[3] = dst[2];
+        assert_eq!(fit_homography(&src, &dst), Err(HomographyError::Degenerate));
+        // one picture point for two different bed points
+        assert_eq!(fit_homography(&src, &square()), Err(HomographyError::Degenerate));
+        // every point the same
+        let same = [Point::new(5.0, 5.0); 4];
+        assert_eq!(fit_homography(&same, &square()), Err(HomographyError::Degenerate));
+        assert_eq!(fit_homography(&square(), &same), Err(HomographyError::Degenerate));
+    }
+
+    #[test]
+    fn values_that_are_not_numbers_are_refused() {
+        for bad in [f64::NAN, f64::INFINITY] {
+            let mut src = square();
+            src[1].x = bad;
+            assert_eq!(fit_homography(&src, &square()), Err(HomographyError::Degenerate));
+            assert_eq!(fit_homography(&square(), &src), Err(HomographyError::Degenerate));
+        }
     }
 
     #[test]

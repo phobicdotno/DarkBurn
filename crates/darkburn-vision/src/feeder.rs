@@ -73,19 +73,37 @@ pub struct FeedWindow {
     pub feed_after: f64,
 }
 
+/// The most windows a plan can have.
+pub const MAX_WINDOWS: usize = 100_000;
+
 /// Split a piece of `total_length` into windows of `window_height` that overlap by `overlap`.
 pub fn plan_windows(total_length: f64, window_height: f64, overlap: f64) -> Result<Vec<FeedWindow>, FeederError> {
     let advance = distance_per_feed(window_height, overlap)?;
     if !(total_length > 0.0) {
         return Err(FeederError::InvalidSize);
     }
-    let n = if total_length <= window_height { 1 } else { (((total_length - overlap) / advance) - 1e-9).ceil() as usize };
+    let count = if total_length <= window_height { 1.0 } else { (((total_length - overlap) / advance) - 1e-9).ceil() };
+    // More windows than any roll has: a typing slip, and too many to list.
+    if !(count <= MAX_WINDOWS as f64) {
+        return Err(FeederError::InvalidSize);
+    }
+    let n = count as usize;
     Ok((0..n).map(|i| FeedWindow { index: i, start: i as f64 * advance, feed_after: if i + 1 < n { advance } else { 0.0 } }).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plan_with_an_absurd_number_of_windows_is_refused_not_a_crash() {
+        assert_eq!(plan_windows(1e300, 300.0, 10.0).unwrap_err(), FeederError::InvalidSize);
+        assert_eq!(plan_windows(f64::INFINITY, 300.0, 10.0).unwrap_err(), FeederError::InvalidSize);
+        assert_eq!(plan_windows(1e9, 1.0, 0.0).unwrap_err(), FeederError::InvalidSize);
+        assert_eq!(plan_windows(f64::NAN, 300.0, 10.0).unwrap_err(), FeederError::InvalidSize);
+        // a long roll is still fine
+        assert_eq!(plan_windows(100_000.0, 300.0, 10.0).unwrap().len(), 345);
+    }
 
     #[test]
     fn feed_distance_and_errors() {

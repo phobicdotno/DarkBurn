@@ -702,6 +702,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut frame_paths = Vec::new();
     let mut tool_frame: Vec<BezPath> = Vec::new();
     let mut kerf_note = [false; layer::LAYER_COUNT];
+    let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
     let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
@@ -809,8 +810,14 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     _ => 0,
                 };
                 let kerf = if depth % 2 == 1 { -kerf } else { kerf };
-                path = darkburn_geom::offset::kerf_offset(&path, kerf, input.device.tolerance);
+                let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
+                path = offset;
+                kerf_lost[li] += lost;
                 kerf_note[li] |= differ;
+                if path.elements().is_empty() {
+                    // Nothing of the shape is left to cut.
+                    continue;
+                }
             }
             if let Some(m) = &vision_map {
                 path = m.apply(path);
@@ -842,6 +849,17 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     for (li, differ) in kerf_note.iter().enumerate() {
         if *differ {
             warnings.push(format!("Layer {} has different kerf offsets on its sub-layers; the first one is used.", layer::layer_label(li)));
+        }
+    }
+
+    for (li, lost) in kerf_lost.iter().enumerate() {
+        if *lost > 0 {
+            warnings.push(format!(
+                "Layer {}: {lost} shape or hole{} smaller than the kerf offset {} left out.",
+                layer::layer_label(li),
+                if *lost == 1 { "" } else { "s" },
+                if *lost == 1 { "was" } else { "were" }
+            ));
         }
     }
 
@@ -1434,6 +1452,24 @@ mod tests {
         d.layer_mut(0).main_mut().kerf = 1.0;
         let b = build_job_simple(&input(d)).unwrap();
         assert!((b.bounds.width() - 22.0).abs() < 0.05, "{:?}", b.bounds);
+    }
+
+    #[test]
+    fn a_hole_the_kerf_closes_up_is_said() {
+        use darkburn_core::kurbo::Shape as _;
+        let mut d = square_doc();
+        d.layer_mut(0).main_mut().kerf = 0.5;
+        // a 0.4 mm hole in the square, and one that is big enough
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((15.0, 15.0), 0.2).to_path(0.001), 0));
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((25.0, 25.0), 3.0).to_path(0.001), 0));
+        let b = build_job_simple(&input(d)).unwrap();
+        let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("kerf")).collect();
+        assert_eq!(said.len(), 1, "{:?}", b.warnings);
+        assert!(said[0].contains("1 shape or hole") && said[0].contains("left out"), "{}", said[0]);
+        // without a kerf nothing is said
+        let mut d = square_doc();
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((15.0, 15.0), 0.2).to_path(0.001), 0));
+        assert!(build_job_simple(&input(d)).unwrap().warnings.iter().all(|w| !w.contains("kerf")));
     }
 
     #[test]

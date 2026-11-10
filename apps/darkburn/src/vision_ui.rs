@@ -1129,7 +1129,7 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         );
         match tex {
             Some((id, size)) => {
-                let shown: Vec<Point> = app.vision.marks.iter().map(|m| m.image).chain(d.pending).collect();
+                let shown: Vec<Point> = app.vision.marks.iter().map(|m| vc::mark_in_view(app, m)).chain(d.pending).collect();
                 if let Some(p) = clickable_picture(ui, id, size, &shown) {
                     d.pending = Some(p);
                 }
@@ -1150,11 +1150,8 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
             if ui.add_enabled(d.pending.is_some(), egui::Button::new("Add mark")).clicked()
                 && let Some(p) = d.pending.take()
             {
-                app.vision.marks.push(darkburn_vision::camera::HeadMark {
-                    image: p,
-                    head_pos: Point::new(d.head[0], d.head[1]),
-                    bed: Point::new(d.bed[0], d.bed[1]),
-                });
+                let mark = vc::head_mark(app, p, Point::new(d.head[0], d.head[1]), Point::new(d.bed[0], d.bed[1]));
+                app.vision.marks.push(mark);
             }
             if button(ui, "Clear marks", "") {
                 app.vision.marks.clear();

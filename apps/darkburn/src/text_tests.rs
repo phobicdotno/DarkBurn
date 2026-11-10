@@ -359,6 +359,26 @@ fn convert_to_path_bakes_variable_text_and_codes() {
 }
 
 #[test]
+fn convert_to_path_leaves_a_text_with_nothing_to_draw_alone() {
+    let mut a = app();
+    let blank = add(&mut a, "   ", json!({}));
+    select(&mut a, &[blank]);
+    let r = run(&mut a, "edit.convert_path", Value::Null).unwrap();
+    assert_eq!(r["converted"], 0, "{r}");
+    assert!(matches!(a.editor.doc.get(blank).unwrap().kind, ShapeKind::Text(_)), "still a text that can be typed into");
+    // together with a text that has letters: only that one becomes a path
+    let word = add(&mut a, "A", json!({}));
+    select(&mut a, &[blank, word]);
+    let r = run(&mut a, "edit.convert_path", Value::Null).unwrap();
+    assert_eq!(r["converted"], 1, "{r}");
+    assert!(matches!(a.editor.doc.get(blank).unwrap().kind, ShapeKind::Text(_)));
+    assert!(matches!(a.editor.doc.get(word).unwrap().kind, ShapeKind::Path { .. }));
+    for s in a.editor.doc.iter() {
+        assert!(!matches!(&s.kind, ShapeKind::Path { path } if path.elements().is_empty()), "no empty path shape is left");
+    }
+}
+
+#[test]
 fn fonts_and_defaults() {
     let mut a = app();
     let r = run(&mut a, "text.fonts", json!({ "query": "plex" })).unwrap();

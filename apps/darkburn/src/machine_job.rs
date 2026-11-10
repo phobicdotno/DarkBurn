@@ -352,7 +352,7 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
                 // The galvo job is made from the shapes, not from the preview's moves.
                 return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
             }
-            crate::galvo_job::request(&app.editor.doc, app.machine.active(), false, false)?.0
+            crate::galvo_job::request(&crate::galvo_job::job_document(app)?, app.machine.active(), false, false)?.0
         }
     };
     req.name = name;

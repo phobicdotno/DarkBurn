@@ -36,6 +36,25 @@ fn job(a: &DarkBurn) -> Toolpath {
     job_with(a, |_| {})
 }
 
+#[test]
+fn cut_selected_graphics_holds_on_a_galvo_too() {
+    let mut a = app();
+    let id = run(&mut a, "device.add", json!({ "type": "SimulatorGalvo" })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "device.select", json!({ "id": id })).unwrap();
+    add_rect(&mut a, 10.0, 10.0, 10.0, 10.0, 0);
+    let near = add_rect(&mut a, 60.0, 60.0, 10.0, 10.0, 0);
+    let width = |v: &Value| v["bounds"][2].as_f64().unwrap() - v["bounds"][0].as_f64().unwrap();
+    let all = run(&mut a, "galvo.estimate", json!({})).unwrap();
+    assert!((width(&all) - 60.0).abs() < 0.5, "both squares: {all}");
+    run(&mut a, "job.set_origin", json!({ "cut_selected": true })).unwrap();
+    select(&mut a, &[near]);
+    let only = run(&mut a, "galvo.estimate", json!({})).unwrap();
+    assert!((width(&only) - 10.0).abs() < 0.5, "only the selected square is marked: {only}");
+    select(&mut a, &[]);
+    let e = run(&mut a, "galvo.estimate", json!({})).unwrap_err();
+    assert!(e.contains("nothing is selected"), "{e}");
+}
+
 /// The laser-off stretches inside the cuts, as (from, to), joined across vertices.
 fn gaps(tp: &Toolpath) -> Vec<(Point, Point)> {
     let mut out: Vec<(Point, Point)> = Vec::new();

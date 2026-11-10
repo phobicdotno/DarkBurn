@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use darkburn_core::kurbo::Rect;
 use darkburn_core::{Shape, ShapeId};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::DarkBurn;
 use crate::api::execute_headless;
@@ -35,7 +35,6 @@ fn app() -> DarkBurn {
     DarkBurn::new(Prefs::default())
 }
 
-#[allow(dead_code)]
 fn run(app: &mut DarkBurn, id: &str, args: Value) -> Result<Value, String> {
     execute_headless(app, id, &args)
 }
@@ -97,4 +96,31 @@ fn a_project_with_the_longest_file_name_the_system_allows_can_be_saved() {
     crate::files::save_to(&mut a, &project).expect("the project is saved under the long name");
     assert!(project.is_file());
     assert!(!a.editor.is_modified());
+}
+
+/// "Save as" of the two libraries adds the file ending to the name that was typed. A name with
+/// a dot in it ("Birch 3.5") keeps what is after the dot; before, it was written to
+/// "Birch 3.dbclb", over a library of that name if there was one.
+#[test]
+fn a_library_saved_under_a_name_with_a_dot_keeps_the_whole_name() {
+    let dir = TempDir::new("dotname");
+    // The cut library.
+    let other = dir.path("Birch 3.dbclb");
+    std::fs::write(&other, b"another library").unwrap();
+    let mut a = app();
+    run(&mut a, "library.save_as", json!({ "path": dir.path("Birch 3.5").to_string_lossy() })).unwrap();
+    assert_eq!(std::fs::read(&other).unwrap(), b"another library", "the library beside it is not written over");
+    assert!(dir.path("Birch 3.5.dbclb").is_file());
+    assert_eq!(a.extras.library.path.as_deref(), Some(dir.path("Birch 3.5.dbclb").as_path()));
+    // A name that has the ending already (in any case) is taken as it is.
+    run(&mut a, "library.save_as", json!({ "path": dir.path("Oak.DBCLB").to_string_lossy() })).unwrap();
+    assert_eq!(a.extras.library.path.as_deref(), Some(dir.path("Oak.DBCLB").as_path()));
+    // The art library.
+    let other = dir.path("Signs v2.dbart");
+    std::fs::write(&other, b"another library").unwrap();
+    let l = run(&mut a, "art.new", json!({})).unwrap()["library"].as_u64().unwrap();
+    run(&mut a, "art.save_as", json!({ "library": l, "path": dir.path("Signs v2.1").to_string_lossy() })).unwrap();
+    assert_eq!(std::fs::read(&other).unwrap(), b"another library", "the library beside it is not written over");
+    assert!(dir.path("Signs v2.1.dbart").is_file());
+    assert_eq!(a.extras.art.libs[l as usize].path.as_deref(), Some(dir.path("Signs v2.1.dbart").as_path()));
 }

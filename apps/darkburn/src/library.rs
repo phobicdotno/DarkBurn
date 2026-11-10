@@ -405,7 +405,7 @@ impl LibraryState {
     }
 
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
-        let path = path.with_extension(FILE_EXTENSION);
+        let path = crate::files::with_ending(path, FILE_EXTENSION);
         self.lib.save(&path)?;
         self.path = Some(path);
         self.dirty_since = None;

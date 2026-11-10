@@ -48,3 +48,26 @@ fn undo_back_to_the_saved_state_is_a_saved_project() {
     g.key(Key::Z, Modifiers::COMMAND);
     assert!(!g.app().editor.is_modified());
 }
+
+/// Device Settings, Additional page: "Read from the controller" belongs to the connected
+/// machine. A window that edits another device does not offer the connected machine's numbers.
+#[test]
+fn read_from_the_controller_is_only_offered_for_the_connected_device() {
+    const BUTTON: &str = "Read from the controller";
+    let mut g = Gui::standard();
+    connect_simulator(&mut g);
+    let in_use = g.app().machine.devices.active.unwrap();
+    let mine = g.app().machine.devices.get(in_use).unwrap().clone();
+    let other = g.app().machine.devices.devices.iter().find(|d| d.id != in_use).unwrap().clone();
+    g.app().machine.dlg.settings = Some((mine, 3));
+    g.settle();
+    assert!(g.has_text(BUTTON), "the connected device can read its numbers: {:?}", g.visible_texts());
+    g.click_id("dialog:cancel");
+    g.frames(3);
+    g.app().machine.dlg.settings = Some((other.clone(), 3));
+    g.settle();
+    assert!(g.has_text("Cut acceleration"), "the Additional page is shown");
+    assert!(!g.has_text(BUTTON), "{} is offered the numbers of the connected machine", other.name);
+    g.click_id("dialog:cancel");
+    g.frames(3);
+}

@@ -361,3 +361,40 @@ fn library_panel_draws_a_different_icon_for_line_fill_and_image_entries() {
     let picked = g.app().extras.library.selected;
     assert_eq!(picked.map(|i| g.app().extras.library.lib.entries[i].description.clone()).as_deref(), Some("Photo"));
 }
+
+// ----- HELP-05: camera selection help ----------------------------------------------------------
+
+#[test]
+fn camera_selection_help_is_its_own_topic_and_says_how_to_pick_and_what_to_check() {
+    let t = crate::help::topic("camera_selection");
+    assert_eq!(t.title, "Choosing a camera");
+    assert!(t.paragraphs.len() >= 4);
+    let all = t.paragraphs.join(" ");
+    for needle in ["Camera Control", "Allow live camera", "Find cameras", "Start", "Not in the list", "one program", "Camera capture", "picture file"]
+    {
+        assert!(all.contains(needle), "the help mentions {needle}");
+    }
+    assert_ne!(crate::help::topic("camera").title, t.title, "the panel's own help is another topic");
+    // The controls the text names are the ones the Camera Control panel has.
+    let src = include_str!("vision_ui.rs");
+    for control in ["\"Allow live camera\"", "\"Find cameras\"", "\"Start\""] {
+        assert!(src.contains(control), "the panel still has {control}");
+    }
+}
+
+#[test]
+fn help_menu_camera_selection_help_opens_that_topic() {
+    let mut g = Gui::standard();
+    g.open_menu("Help", "Camera Selection Help");
+    g.frames(2);
+    assert!(g.app().extras.help_open);
+    assert_eq!(g.app().extras.help_topic, "camera_selection");
+    assert!(g.window_titles().contains(&"Help".to_string()), "{:?}", g.window_titles());
+    assert!(g.has_text("Choosing a camera"), "{:?}", g.visible_texts());
+    g.screenshot("help-camera-selection");
+    assert!(g.layout_problems().is_empty(), "{:?}", g.layout_problems());
+    // No camera was opened or even listed by reading the help.
+    assert!(!g.app().vision.live && g.app().vision.cameras.is_empty());
+    g.close_dialogs();
+    assert!(!g.app().extras.help_open);
+}

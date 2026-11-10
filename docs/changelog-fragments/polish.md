@@ -4,3 +4,4 @@ The job log now has each job's start time, how long it ran and the file, and you
 Show the job log from Settings.
 Grid spacing can be set in Settings, and each device remembers its own.
 Library entries show an icon for line, fill or image.
+Help > Camera Selection Help explains how to pick a camera and what to check when it is missing.

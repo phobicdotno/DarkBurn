@@ -26,6 +26,7 @@ pub const TOPICS: &[&str] = &[
     "cuts",
     "console",
     "camera",
+    "camera_selection",
     "variable_text",
     "shape_properties",
     "laser",
@@ -87,6 +88,31 @@ pub fn topic(id: &str) -> Topic {
                 "help.camera.p1",
                 "Place a live or captured picture of the bed behind your design so artwork can be lined up with the material. It becomes active when a camera is set up.",
             )],
+        ),
+        "camera_selection" => (
+            tr("help.camera_selection.title", "Choosing a camera"),
+            vec![
+                tr(
+                    "help.camera_selection.p1",
+                    "The camera is chosen in the Camera Control panel (Window menu). Tick Allow live camera, press Find cameras, pick yours in the Camera list and press Start. DarkBurn never opens a camera before that.",
+                ),
+                tr(
+                    "help.camera_selection.p2",
+                    "Not in the list? Check the cable and press Find cameras again. Close other programs that use the camera, such as video calls or the system's camera app: only one program can use a camera at a time. On Windows, also look under Settings, Privacy and security, Camera: desktop apps must be allowed to use it.",
+                ),
+                tr(
+                    "help.camera_selection.p3",
+                    "Wrong picture? A laptop's own webcam is usually first in the list and the laser's camera comes after it. Pick the other one and press Start again.",
+                ),
+                tr(
+                    "help.camera_selection.p4",
+                    "A black, slow or striped picture often means the camera cannot deliver the size asked for. Lower the width and height under Camera capture in Settings, and plug the camera straight into the computer instead of a hub.",
+                ),
+                tr(
+                    "help.camera_selection.p5",
+                    "No camera? The panel also takes a picture file of the bed, and everything except the live view works with it.",
+                ),
+            ],
         ),
         "variable_text" => (
             tr("help.variable_text.title", "Variable Text"),
@@ -353,8 +379,23 @@ pub fn write_support_zip(path: &Path, prefs_json: &str, settings_dir: Option<&Pa
     std::fs::write(path, zip(&support_files(prefs_json, settings_dir))).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
+thread_local! {
+    static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The addresses [`open_url`] was asked to open on this thread (tests only: no browser starts).
+#[cfg(test)]
+pub fn take_opened() -> Vec<String> {
+    OPENED.with(|o| std::mem::take(&mut *o.borrow_mut()))
+}
+
 /// Open `url` in the system browser. No other network access happens.
 pub fn open_url(url: &str) {
+    #[cfg(test)]
+    {
+        OPENED.with(|o| o.borrow_mut().push(url.to_string()));
+    }
     if cfg!(test) {
         return; // UI tests never start a browser
     }

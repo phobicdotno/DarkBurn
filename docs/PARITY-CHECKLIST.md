@@ -199,7 +199,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] HELP-02 Quick help and context help on F1
 - [x] HELP-03 Online documentation link
 - [x] HELP-04 Generate support data
-- [~] HELP-05 Camera selection help
+- [x] HELP-05 Camera selection help
 - [~] HELP-06 Check for updates
 - [x] HELP-07 Enable debug log
 

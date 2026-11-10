@@ -38,6 +38,19 @@ pub fn fit_circle(points: &[Point]) -> Result<CircleFit, CircleError> {
     // Centre the data for conditioning.
     let n = points.len() as f64;
     let (mx, my) = (points.iter().map(|p| p.x).sum::<f64>() / n, points.iter().map(|p| p.y).sum::<f64>() / n);
+    // Points on one line (or all the same) have no area and no circle: say so instead of
+    // answering with a circle of an enormous radius.
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for p in points {
+        let (x, y) = (p.x - mx, p.y - my);
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+    }
+    let spread = sxx + syy;
+    if !(sxx * syy - sxy * sxy > 1e-12 * spread * spread) {
+        return Err(CircleError::Collinear);
+    }
     // Kåsa fit: x² + y² = 2 a x + 2 b y + c
     let mut a = Matrix::zeros(points.len(), 3);
     let mut rhs = Vec::with_capacity(points.len());
@@ -100,6 +113,18 @@ mod tests {
         let arc = on_circle(Point::new(0.0, 0.0), 30.0, &[0.0, 20.0, 45.0, 70.0, 90.0]);
         let f = fit_circle(&arc).unwrap();
         assert!((f.radius - 30.0).abs() < 1e-5 && f.centre.to_vec2().hypot() < 1e-5);
+    }
+
+    #[test]
+    fn points_on_a_line_are_refused_whatever_their_values() {
+        let line = [Point::new(0.1, 0.3), Point::new(0.2, 0.6), Point::new(0.7, 2.1), Point::new(1.3, 3.9)];
+        assert_eq!(fit_circle(&line).unwrap_err(), CircleError::Collinear);
+        let far = [Point::new(1000.1, 2000.3), Point::new(1100.2, 2100.4), Point::new(1250.35, 2250.55)];
+        assert_eq!(fit_circle(&far).unwrap_err(), CircleError::Collinear);
+        let same = [Point::new(3.3, 1.1), Point::new(3.3, 1.1), Point::new(7.7, 4.9)];
+        assert_eq!(fit_circle(&same).unwrap_err(), CircleError::Collinear);
+        let nan = [Point::new(0.0, 0.0), Point::new(f64::NAN, 1.0), Point::new(2.0, 0.0)];
+        assert_eq!(fit_circle(&nan).unwrap_err(), CircleError::Collinear);
     }
 
     #[test]

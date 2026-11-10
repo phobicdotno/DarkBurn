@@ -1194,7 +1194,8 @@ pub fn centre_find(app: &mut DarkBurn, pts: &[Point], mark: bool, layer: usize) 
     let fit = fit_circle(pts).map_err(|e| e.to_string())?;
     let mut created = Vec::new();
     if mark {
-        let c = fit.centre;
+        // The points are laser positions; the mark goes where that spot is in the design.
+        let c = laser_to_design(app, fit.centre);
         let path = {
             let mut p = darkburn_core::kurbo::Circle::new(c, fit.radius).to_path(0.05);
             p.extend(vision_tools::target_mark(c, (fit.radius * 0.3).clamp(2.0, 10.0)));
@@ -1954,6 +1955,20 @@ mod tests {
         assert!((f["corrected_steps_per_mm"].as_f64().unwrap() - 81.632653).abs() < 1e-5);
         assert_eq!(f["drawn"]["created"].as_array().unwrap().len(), 8);
         assert!(run(&mut app, "test.feeder", json!({ "overlap": 400 })).is_err());
+    }
+
+    /// The edge points are laser positions (machine coordinates); the mark goes in the design.
+    #[test]
+    fn centre_mark_lands_under_the_laser_on_a_machine_with_its_origin_at_the_back() {
+        let mut app = app();
+        app.machine.devices.active_mut().unwrap().origin = darkburn_job::origin::Corner::TopLeft;
+        let height = app.machine.active().job_device().bed_h;
+        let pts = [(60.0, 30.0), (50.0, 40.0), (40.0, 30.0), (50.0, 20.0)].map(|(x, y)| json!({"x": x, "y": y}));
+        let r = run(&mut app, "laser.centre_finder", json!({ "points": pts, "mark": true })).unwrap();
+        assert!((r["centre"]["y"].as_f64().unwrap() - 30.0).abs() < 1e-6, "reported as a laser position");
+        let id = ShapeId(r["created"][0].as_u64().unwrap());
+        let c = app.editor.doc.get(id).unwrap().bbox().center();
+        assert!((c.x - 50.0).abs() < 0.01 && (c.y - (height - 30.0)).abs() < 0.01, "mark at {c:?}, bed {height} high");
     }
 
     #[test]

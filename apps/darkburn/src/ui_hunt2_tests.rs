@@ -59,3 +59,74 @@ fn text_typed_over_an_open_dialog_does_not_go_into_the_text_behind_it() {
         assert_eq!(text(&g).as_deref(), Some("abc"), "{window}: typing did not go on after the window closed");
     }
 }
+
+fn show_panel(g: &mut Gui, panel: &str) {
+    if !g.app().prefs.panel(panel).visible {
+        g.run_command(&format!("panel.{panel}"));
+    }
+    let area = g.app().prefs.panel(panel).area;
+    g.app().prefs.active_tab.insert(area, panel.to_string());
+    g.frames(3);
+}
+
+/// Close on an art library with unsaved changes asks first: save, drop the changes, or keep it
+/// open. A library without changes closes at once.
+#[test]
+fn closing_an_art_library_with_unsaved_changes_asks_first() {
+    use serde_json::json;
+    let mut g = Gui::standard();
+    g.sample_design();
+    show_panel(&mut g, "art_library");
+    let open = |g: &Gui| g.app().extras.art.libs.len();
+    g.exec("art.new", json!({}));
+    g.click_label("Close");
+    assert_eq!(open(&g), 0, "a library without changes closes at once");
+
+    g.exec("art.new", json!({}));
+    g.exec("art.add_selection", json!({ "library": 0, "name": "Box" }));
+    assert!(g.app().extras.art.libs[0].dirty);
+    g.click_label("Close");
+    assert_eq!(open(&g), 1, "the library closed with unsaved changes, without a question");
+    g.click_label("Keep open");
+    assert_eq!(open(&g), 1);
+    assert!(!g.has_text("Keep open"), "the question is gone");
+    // Save and close with no file picked: it stays open with its changes.
+    g.click_label("Close");
+    g.click_label("Save and close");
+    assert!(open(&g) == 1 && g.app().extras.art.libs[0].dirty, "a cancelled save closed the library");
+    let file = g.temp("kept.dbart");
+    g.answer_dialog(&file);
+    g.click_label("Save and close");
+    assert_eq!(open(&g), 0);
+    let saved = crate::art_library::Open::load(&file).unwrap();
+    assert_eq!(saved.lib.folders[0].items[0].name, "Box", "the changes are in the file");
+
+    g.exec("art.new", json!({}));
+    g.exec("art.add_selection", json!({ "library": 0, "name": "Box" }));
+    g.click_label("Close");
+    g.click_label("Close without saving");
+    assert_eq!(open(&g), 0);
+}
+
+/// A question about an item ("is already in this folder") goes away with its library; it used to
+/// stay and its buttons then reached for a library that was no longer there.
+#[test]
+fn closing_an_art_library_drops_the_question_about_its_item() {
+    use crate::art_library::Item;
+    use serde_json::json;
+    let mut g = Gui::standard();
+    g.sample_design();
+    show_panel(&mut g, "art_library");
+    g.exec("art.new", json!({}));
+    g.exec("art.new", json!({}));
+    g.app().extras.art.pending = Some((1, 0, Item { name: "Box".into(), payload: String::new() }));
+    g.frames(2);
+    assert!(g.has_text("Replace it"));
+    // The first library closes: the question follows its own library.
+    g.click_label_nth("Close", 0);
+    assert_eq!(g.app().extras.art.pending.as_ref().map(|p| p.0), Some(0));
+    g.click_label("Close");
+    assert!(g.app().extras.art.libs.is_empty());
+    assert!(!g.has_text("Replace it"), "the question outlived its library");
+    assert!(g.app().extras.art.pending.is_none());
+}

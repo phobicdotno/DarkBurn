@@ -472,7 +472,12 @@ pub fn begin_typing(app: &mut DarkBurn, id: ShapeId, new_shape: bool) {
 /// Place a new, empty text at `at` and start typing.
 pub fn place_text(app: &mut DarkBurn, at: Point) {
     finish_typing(app);
-    let t = TextShape { font: text_cmds::default_font(app), height: app.prefs.fonts.default_size.max(0.1), ..Default::default() };
+    let t = TextShape {
+        font: text_cmds::default_font(app),
+        height: app.prefs.fonts.default_size.max(0.1),
+        welded: app.prefs.opts.auto_weld,
+        ..Default::default()
+    };
     let layer = app.editor.current_layer;
     app.editor.checkpoint("Add text");
     let id = app.editor.doc.add(Shape::new(ShapeKind::Text(t), Affine::translate(at.to_vec2()), layer));
@@ -1552,6 +1557,18 @@ pub fn settings_section(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Weld text automatically" (Settings, Text) also holds for text made with the text tool.
+    #[test]
+    fn the_text_tool_follows_weld_text_automatically() {
+        for auto in [false, true] {
+            let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+            app.prefs.opts.auto_weld = auto;
+            place_text(&mut app, Point::new(20.0, 20.0));
+            let id = app.text.typing.as_ref().unwrap().id;
+            assert_eq!(text_cmds::find_text(&app.editor.doc, id).unwrap().welded, auto);
+        }
+    }
 
     /// The Text Options toolbar changes text through `apply` (-> `text.set`); every control's
     /// arguments are exercised on a selected text shape, then the ribbon is drawn with them.

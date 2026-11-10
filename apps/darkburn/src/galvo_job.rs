@@ -6,7 +6,7 @@
 //! Coordinates: the document is the square field with its lower-left corner at the bed origin;
 //! the board is centred, so every shape moves by minus half the field.
 
-use darkburn_core::kurbo::{Affine, BezPath, Rect};
+use darkburn_core::kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use darkburn_core::layer::{self, CutSetting, Mode};
 use darkburn_core::{Document, ShapeKind};
 use darkburn_galvo as galvo;
@@ -82,6 +82,122 @@ pub fn job_document(app: &crate::shell::DarkBurn) -> Result<Document, String> {
     Ok(doc)
 }
 
+/// One shape of a layer on its way into the galvo job (document coordinates).
+struct Item {
+    path: BezPath,
+    priority: i32,
+    /// Power scale, 0 to 1.
+    scale: f64,
+    /// Forced start points.
+    starts: Vec<Point>,
+    /// How many other shapes of the layer this one lies inside (odd: a hole).
+    depth: usize,
+    /// The smallest shape of the layer this one lies inside.
+    parent: Option<usize>,
+}
+
+impl Item {
+    /// The outline as it is marked: grown by the kerf (shrunk for a hole), started at its forced
+    /// start points and moved to the board's coordinates.
+    fn placed(&self, kerf: f64, shift: Affine) -> BezPath {
+        let mut p = if kerf != 0.0 {
+            darkburn_geom::offset::kerf_offset(&self.path, if self.depth % 2 == 1 { -kerf } else { kerf }, crate::job_build::TOLERANCE)
+        } else {
+            self.path.clone()
+        };
+        if !self.starts.is_empty() {
+            p = started_at(&p, &self.starts);
+        }
+        p.apply_affine(shift);
+        p
+    }
+}
+
+/// Work out which shapes lie inside which (the same test the kerf offset of the other machines
+/// uses: the bounding box and the first point).
+fn nest(items: &mut [Item]) {
+    let tol = crate::job_build::TOLERANCE;
+    let closed: Vec<Vec<(Rect, Vec<Point>)>> = items
+        .iter()
+        .map(|it| {
+            darkburn_job::geom::flatten(&it.path, tol).into_iter().filter(|p| p.closed).map(|p| (darkburn_job::geom::bbox(&p.pts), p.pts)).collect()
+        })
+        .collect();
+    for i in 0..items.len() {
+        let bbox = items[i].path.bounding_box();
+        let Some(darkburn_core::kurbo::PathEl::MoveTo(p0)) = items[i].path.elements().first().copied() else { continue };
+        let mut around: Vec<(f64, usize)> = Vec::new();
+        for (j, polys) in closed.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            let holds = polys.iter().filter(|(r, pts)| {
+                r.area() > bbox.area() + 1e-9 && darkburn_job::geom::rect_inside(bbox, *r) && darkburn_job::geom::point_in_polygon(p0, pts)
+            });
+            if let Some(smallest) = holds.map(|(r, _)| r.area()).min_by(f64::total_cmp) {
+                around.push((smallest, j));
+            }
+        }
+        items[i].depth = around.len();
+        items[i].parent = around.iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|a| a.1);
+    }
+}
+
+/// `path` with each closed outline that a forced start point sits on started at that point.
+/// Each point goes to the outline nearest to it. Outlines with a start point become polylines
+/// (the board is sent polylines in any case); the others are kept as they are.
+fn started_at(path: &BezPath, starts: &[Point]) -> BezPath {
+    let mut polys = darkburn_job::geom::flatten(path, crate::job_build::TOLERANCE / 4.0);
+    let mut moved = false;
+    for &q in starts {
+        // (distance, outline, segment, point on it)
+        let mut best: Option<(f64, usize, usize, Point)> = None;
+        for (pi, poly) in polys.iter().enumerate().filter(|(_, p)| p.closed) {
+            let n = poly.pts.len();
+            for i in 0..n {
+                let (a, b) = (poly.pts[i], poly.pts[(i + 1) % n]);
+                let ab = b - a;
+                let t = if ab.hypot2() > 0.0 { ((q - a).dot(ab) / ab.hypot2()).clamp(0.0, 1.0) } else { 0.0 };
+                let on = a + ab * t;
+                let d = on.distance(q);
+                if best.is_none_or(|(bd, ..)| d < bd) {
+                    best = Some((d, pi, i, on));
+                }
+            }
+        }
+        let Some((_, pi, i, on)) = best else { continue };
+        let pts = &polys[pi].pts;
+        let n = pts.len();
+        let mut out = vec![on];
+        out.extend((1..=n).map(|k| pts[(i + k) % n]));
+        out.dedup_by(|a, b| a.distance(*b) < 1e-9);
+        if out.len() > 1 && out[0].distance(out[out.len() - 1]) < 1e-9 {
+            out.pop();
+        }
+        if out.len() >= 3 {
+            polys[pi].pts = out;
+            moved = true;
+        }
+    }
+    if !moved {
+        return path.clone();
+    }
+    let mut out = BezPath::new();
+    for poly in &polys {
+        let mut pts = poly.pts.iter();
+        if let Some(p) = pts.next() {
+            out.move_to(*p);
+        }
+        for p in pts {
+            out.line_to(*p);
+        }
+        if poly.closed {
+            out.close_path();
+        }
+    }
+    out
+}
+
 /// Build the galvo job for the document and device.
 pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
     let gs = &dev.settings.galvo;
@@ -102,13 +218,17 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
     job.door_protect = gs.door_protect;
     job.optimize = gs.optimize;
 
+    // Cut order priority counts when the project's optimization settings order by it, as in the
+    // job of every other machine.
+    let planner = crate::job_build::JobProjectSettings::from_doc(doc, &darkburn_job::PlannerSettings::default()).planner;
+    let by_priority = planner.optimize && planner.order_by.contains(&darkburn_job::OrderKey::Priority);
     let order: Vec<usize> = doc.layer_order.clone();
     for li in order {
         let l = doc.layer(li);
         if !l.outputs() || layer::is_tool_layer(li) {
             continue;
         }
-        let mut paths: Vec<BezPath> = Vec::new();
+        let mut items: Vec<Item> = Vec::new();
         let mut images = Vec::new();
         for top in doc.iter() {
             for leaf in top.leaves() {
@@ -123,53 +243,102 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                     warnings.push("A text shape has no outline yet and was left out.".to_owned());
                     continue;
                 }
-                let mut p = leaf.outline();
+                let p = leaf.outline();
                 if p.elements().is_empty() {
                     continue;
                 }
-                p.apply_affine(shift);
-                paths.push(p);
+                items.push(Item {
+                    path: p,
+                    priority: if by_priority { leaf.priority } else { 0 },
+                    scale: (leaf.power_scale / 100.0).clamp(0.0, 1.0),
+                    starts: leaf.start_points().map(|q| leaf.transform * Point::new(q[0], q[1])).collect(),
+                    depth: 0,
+                    parent: None,
+                });
             }
         }
-        if paths.is_empty() && images.is_empty() {
+        if items.is_empty() && images.is_empty() {
             continue;
         }
+        nest(&mut items);
+        // Shapes that differ in power scale or cut order priority are marked as layers of
+        // their own, the lower priority number first; shapes that agree stay together.
+        let mut groups: Vec<(i32, f64)> = Vec::new();
+        for it in &items {
+            if !groups.iter().any(|g| *g == (it.priority, it.scale)) {
+                groups.push((it.priority, it.scale));
+            }
+        }
+        groups.sort_by_key(|g| g.0);
+        let outlines = |group: (i32, f64), kerf: f64| -> Vec<BezPath> {
+            items.iter().filter(|it| (it.priority, it.scale) == group).map(|it| it.placed(kerf, shift)).collect()
+        };
+        // What a group fills when all shapes are filled as one: its own shapes that are filled
+        // (not holes), each with the shapes directly inside it as its holes, whatever group
+        // those are in.
+        let fill_of = |group: (i32, f64)| -> Vec<BezPath> {
+            if groups.len() == 1 {
+                return outlines(group, 0.0);
+            }
+            let owner = |i: usize| (items[i].priority, items[i].scale) == group && items[i].depth % 2 == 0;
+            (0..items.len()).filter(|&i| owner(i) || items[i].parent.is_some_and(owner)).map(|i| items[i].placed(0.0, shift)).collect()
+        };
         let base = if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() };
         for (si, s) in l.settings.iter().enumerate().filter(|(_, s)| s.enabled) {
             let name = if si == 0 { base.clone() } else { format!("{base} / {}", if s.name.is_empty() { si.to_string() } else { s.name.clone() }) };
-            let params = mark_params(s, gs);
+            let layer_params = mark_params(s, gs);
             let passes = s.passes.max(1) * s.galvo.global_passes.max(1);
             if s.galvo.pause_before_ms != 0.0 || s.galvo.pause_after_ms != 0.0 {
                 warnings.push(format!("Layer {name}: pause before and after are not used by the galvo board."));
             }
-            let mut push = |mode: LayerMode, tag: &str, geometry: Vec<BezPath>| {
-                let mut gl = galvo::Layer::new(&format!("{name}{tag}"), mode, params.clone(), geometry);
-                gl.passes = passes;
-                gl.wobble = gs.wobble_for(&s.galvo);
-                job.layers.push(gl);
-            };
-            match s.mode {
-                Mode::Line if s.galvo.drill => push(
-                    LayerMode::Drill(galvo::DrillSettings {
-                        dwell_ms: s.galvo.drill_dwell_ms.clamp(0.01, 60_000.0),
-                        spacing_mm: s.galvo.drill_spacing_mm.max(0.0),
-                    }),
-                    "",
-                    paths.clone(),
-                ),
-                Mode::Line => push(LayerMode::Line, "", paths.clone()),
-                Mode::Fill | Mode::OffsetFill => {
-                    if s.mode == Mode::OffsetFill {
-                        warnings.push(format!("Layer {name}: offset fill is marked as a normal fill on a galvo."));
+            if s.mode == Mode::OffsetFill {
+                warnings.push(format!("Layer {name}: offset fill is marked as a normal fill on a galvo."));
+            }
+            let params = layer_params.clone();
+            for &group in &groups {
+                if s.mode == Mode::Image {
+                    break;
+                }
+                let mut params = layer_params.clone();
+                params.power_pct = (params.power_pct * group.1).clamp(0.0, 100.0);
+                let mut push = |mode: LayerMode, tag: &str, geometry: Vec<BezPath>| {
+                    if geometry.is_empty() {
+                        return;
                     }
+                    let mut gl = galvo::Layer::new(&format!("{name}{tag}"), mode, params.clone(), geometry);
+                    gl.passes = passes;
+                    gl.wobble = gs.wobble_for(&s.galvo);
+                    job.layers.push(gl);
+                };
+                let fill = |s: &CutSetting| {
                     let f = fill_settings(s);
-                    push(if s.flood_fill { LayerMode::Flood(f) } else { LayerMode::Fill(f) }, "", paths.clone());
+                    let geometry = if matches!(f.grouping, FillGrouping::Individually) { outlines(group, 0.0) } else { fill_of(group) };
+                    (if s.flood_fill { LayerMode::Flood(f) } else { LayerMode::Fill(f) }, geometry)
+                };
+                match s.mode {
+                    Mode::Line if s.galvo.drill => push(
+                        LayerMode::Drill(galvo::DrillSettings {
+                            dwell_ms: s.galvo.drill_dwell_ms.clamp(0.01, 60_000.0),
+                            spacing_mm: s.galvo.drill_spacing_mm.max(0.0),
+                        }),
+                        "",
+                        outlines(group, 0.0),
+                    ),
+                    Mode::Line => push(LayerMode::Line, "", outlines(group, s.kerf)),
+                    Mode::Fill | Mode::OffsetFill => {
+                        let (mode, geometry) = fill(s);
+                        push(mode, "", geometry);
+                    }
+                    Mode::FillLine => {
+                        let (mode, geometry) = fill(s);
+                        push(mode, " fill", geometry);
+                        push(LayerMode::Line, " line", outlines(group, s.kerf));
+                    }
+                    Mode::Image => {}
                 }
-                Mode::FillLine => {
-                    let f = fill_settings(s);
-                    push(if s.flood_fill { LayerMode::Flood(f) } else { LayerMode::Fill(f) }, " fill", paths.clone());
-                    push(LayerMode::Line, " line", paths.clone());
-                }
+            }
+            match s.mode {
+                Mode::Line | Mode::Fill | Mode::OffsetFill | Mode::FillLine => {}
                 Mode::Image => {
                     for (bbox, img) in &images {
                         let Some((w, h, depth)) = depth_of(doc, img) else {

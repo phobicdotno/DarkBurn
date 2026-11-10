@@ -243,3 +243,51 @@ fn the_camera_panel_leaves_the_overlay_size_alone_until_it_is_edited() {
     assert_eq!(g.app().vision.state.camera.overlay.height_mm, Some(0.9));
     assert!(g.app().editor.is_modified());
 }
+
+/// The shape dialogs with OK, Apply and Cancel: Cancel, Escape and the close button change
+/// nothing and leave no preview on the canvas; OK is one undo step that undo takes back whole.
+#[test]
+fn shape_dialogs_cancel_cleanly_and_ok_is_one_undo_step() {
+    for id in ["tools.offset", "arrange.grid_array", "arrange.circular_array", "arrange.copy_along_path", "arrange.nest"] {
+        let mut g = Gui::standard();
+        g.sample_design();
+        let before = g.app().editor.doc.clone();
+        let selected = g.app().editor.selected();
+        let steps = g.app().editor.history.len();
+        let untouched = |g: &Gui, how: &str| {
+            let app = g.app();
+            assert!(app.shape_ui.open.is_none(), "{id}: {how} left the dialog open");
+            assert!(app.editor.doc == before, "{id}: {how} changed the drawing");
+            assert_eq!(app.editor.history.len(), steps, "{id}: {how} made an undo step");
+            assert_eq!(app.editor.selected(), selected, "{id}: {how} changed the selection");
+            assert!(app.shape_ui.preview.is_empty() && app.shape_ui.highlights.is_empty(), "{id}: {how} left a preview on the canvas");
+        };
+        g.run_command(id);
+        assert!(g.dialog_open(), "{id} opened a dialog");
+        g.frames(2);
+        if id != "arrange.nest" {
+            assert!(!g.app().shape_ui.preview.is_empty(), "{id} shows a preview");
+        }
+        g.click_label("Cancel");
+        untouched(&g, "Cancel");
+        g.run_command(id);
+        g.frames(2);
+        g.escape();
+        untouched(&g, "Escape");
+        g.run_command(id);
+        g.frames(2);
+        g.click_label("OK");
+        g.frames(2);
+        {
+            let app = g.app();
+            assert!(app.shape_ui.open.is_none(), "{id}: OK left the dialog open: {:?}", app.shape_ui.error);
+            assert!(app.editor.doc != before, "{id}: OK changed nothing");
+            assert_eq!(app.editor.history.len(), steps + 1, "{id}: OK is one undo step");
+            assert!(app.shape_ui.preview.is_empty(), "{id}: OK left a preview on the canvas");
+        }
+        g.key(Key::Z, Modifiers::COMMAND);
+        assert!(g.app().editor.doc == before, "{id}: one undo did not take back the whole OK");
+        g.key(Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
+        assert!(g.app().editor.doc != before, "{id}: redo brings it back");
+    }
+}

@@ -207,3 +207,28 @@ fn the_status_bar_gives_the_selection_in_machine_coordinates() {
     let numbers: Vec<f64> = pointer.split_whitespace().filter_map(|w| w.parse().ok()).collect();
     assert!((numbers[0] - 380.0).abs() < 1.0 && (numbers[1] - 380.0).abs() < 1.0, "{pointer}");
 }
+
+/// The mouse wheel over a window scrolls that window; it does not zoom the drawing behind it.
+#[test]
+fn the_wheel_over_a_window_does_not_zoom_the_canvas_behind_it() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.run_command("edit.settings");
+    let window = g.dialog_windows().into_iter().next().expect("Settings is open");
+    assert!(g.canvas_rect().contains(window.center()), "the window is over the canvas");
+    let view = g.app().prefs.view;
+    g.scroll(window.center(), egui::vec2(0.0, -120.0));
+    g.scroll(window.center(), egui::vec2(0.0, 240.0));
+    assert_eq!(g.app().prefs.view, view, "the wheel over Settings zoomed the canvas");
+    // An open menu is in front of the canvas too.
+    g.close_dialogs();
+    let empty = g.mm_to_screen(300.0, 300.0);
+    g.right_click_pos(empty);
+    let item = g.find_text("Select All").expect("the canvas menu is open").center();
+    g.scroll(item, egui::vec2(0.0, 120.0));
+    assert_eq!(g.app().prefs.view, view, "the wheel over a menu zoomed the canvas");
+    g.escape();
+    // Over the bare canvas the wheel zooms as before.
+    g.scroll(empty, egui::vec2(0.0, 120.0));
+    assert!(g.app().prefs.view.zoom > view.zoom);
+}

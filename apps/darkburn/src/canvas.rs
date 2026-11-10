@@ -77,7 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     solidcraft_ui_registry::publish_rect("canvas", canvas);
     let id = ui.scope_id().with("canvas");
     let response = ui.interact(canvas, id, Sense::click_and_drag());
-    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p));
+    // The pointer on the canvas itself: not on a window, menu or list in front of it (the wheel
+    // there scrolls that, and must not zoom the drawing behind).
+    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p) && response.contains_pointer());
     let pan_mode = {
         let prefs = &mut app.prefs;
         let view = &mut prefs.view;

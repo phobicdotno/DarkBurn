@@ -112,6 +112,16 @@ impl GweikeSettings {
             .map(|i| format!("{}{}: {}", if i.severity == mcc::craft::Severity::Error { "" } else { "(warning) " }, i.path, i.message))
             .collect()
     }
+
+    /// The problems that are errors: a value outside the machine's limits or a craft the vendor
+    /// software would refuse. A table with one of these is not written out.
+    pub fn craft_errors(&self) -> Vec<String> {
+        errors_of(self.crafts.validate())
+    }
+}
+
+fn errors_of(issues: Vec<mcc::craft::CraftIssue>) -> Vec<String> {
+    issues.into_iter().filter(|i| i.severity == mcc::craft::Severity::Error).map(|i| format!("{}: {}", i.path, i.message)).collect()
 }
 
 // ----- Geometry ----------------------------------------------------------------------------------
@@ -230,7 +240,13 @@ pub fn crafts_json(s: &GweikeSettings, doc: &Document) -> String {
 }
 
 /// Write `path` (the `.chf`) and `<path>.crafts.json`. Returns the build and the sidecar path.
+///
+/// Nothing is written while the craft table holds a value outside the machine's limits: the
+/// table beside the `.chf` is what the operator enters in the vendor software.
 pub fn export_chf(doc: &Document, s: &GweikeSettings, path: &std::path::Path) -> Result<(ChfBuild, std::path::PathBuf), String> {
+    if let Some(e) = s.craft_errors().first() {
+        return Err(format!("The craft table has a value the machine does not allow ({e}). Correct it, then export again."));
+    }
     let build = build_chf(doc, s)?;
     std::fs::write(path, &build.bytes).map_err(|e| format!("Could not write {}: {e}", path.display()))?;
     let mut side = path.as_os_str().to_owned();
@@ -242,14 +258,27 @@ pub fn export_chf(doc: &Document, s: &GweikeSettings, path: &std::path::Path) ->
 
 // ----- Craft editing [MCC-04] ---------------------------------------------------------------------
 
-/// Set a craft slot from JSON (the shape of `mcc::FibreCraft` or `mcc::Co2Craft`).
+/// Set a craft slot from JSON (the shape of `mcc::FibreCraft` or `mcc::Co2Craft`). A craft with
+/// a value outside the machine's limits is refused and the slot keeps what it had.
 pub fn set_craft(s: &mut GweikeSettings, head: Head, slot: usize, value: &serde_json::Value) -> Result<(), String> {
     if slot >= mcc::craft::LAYERS_PER_HEAD {
         return Err(format!("Craft slots are 0 to {}.", mcc::craft::LAYERS_PER_HEAD - 1));
     }
+    let refuse = |issues: Vec<mcc::craft::CraftIssue>| match errors_of(issues).first() {
+        Some(e) => Err(format!("The craft was not stored, it has a value the machine does not allow ({e}).")),
+        None => Ok(()),
+    };
     match head {
-        Head::Fibre => s.crafts.fibre[slot] = serde_json::from_value(value.clone()).map_err(|e| format!("fibre craft: {e}"))?,
-        Head::Co2 => s.crafts.co2[slot] = serde_json::from_value(value.clone()).map_err(|e| format!("CO2 craft: {e}"))?,
+        Head::Fibre => {
+            let c: mcc::FibreCraft = serde_json::from_value(value.clone()).map_err(|e| format!("fibre craft: {e}"))?;
+            refuse(c.validate())?;
+            s.crafts.fibre[slot] = c;
+        }
+        Head::Co2 => {
+            let c: mcc::Co2Craft = serde_json::from_value(value.clone()).map_err(|e| format!("CO2 craft: {e}"))?;
+            refuse(c.validate())?;
+            s.crafts.co2[slot] = c;
+        }
         Head::Skip => return Err("A layer that is not cut has no craft.".into()),
     }
     Ok(())

@@ -1183,21 +1183,21 @@ fn bridge_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
     }
     match action {
-        Action::Ok if last => match {
+        Action::Ok if last => {
             let was = app.machine.devices.active;
             let added = w.finish(&mut app.machine.devices);
             app.machine.end_link_if_device_changed(was);
-            added
-        } {
-            Ok(id) => {
-                app.machine.dlg.devices_sel = Some(id);
-                app.machine.say("Added the laser behind the bridge. Press Connect in the Laser panel when you are ready.");
+            match added {
+                Ok(id) => {
+                    app.machine.dlg.devices_sel = Some(id);
+                    app.machine.say("Added the laser behind the bridge. Press Connect in the Laser panel when you are ready.");
+                }
+                Err(e) => {
+                    app.machine.dlg.message = Some(e);
+                    app.machine.conn.bridge = Some(w);
+                }
             }
-            Err(e) => {
-                app.machine.dlg.message = Some(e);
-                app.machine.conn.bridge = Some(w);
-            }
-        },
+        }
         Action::Ok => {
             w.step += 1;
             app.machine.conn.bridge = Some(w);

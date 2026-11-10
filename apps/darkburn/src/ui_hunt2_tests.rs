@@ -231,7 +231,7 @@ fn the_camera_panel_leaves_the_overlay_size_alone_until_it_is_edited() {
     show_panel(&mut g, "camera");
     g.frames(3);
     assert!(g.has_text("Overlay") || g.has_text("OVERLAY"), "the Camera panel is shown");
-    let o = g.app().vision.state.camera.overlay.clone();
+    let o = g.app().vision.state.camera.overlay;
     assert_eq!((o.width_mm, o.height_mm), (Some(0.9), Some(0.9)), "the panel rewrote the overlay size");
     assert!(!g.app().editor.is_modified(), "showing the Camera panel changed the project");
     // A value typed into the field is still taken.
@@ -479,12 +479,12 @@ fn the_qr_dialog_cancels_cleanly_and_ok_uses_what_was_typed() {
     assert!(g.dialog_open());
     g.click_id("dialog:cancel");
     g.frames(3);
-    assert!(!g.app().text.qr.open && g.app().editor.doc.len() == 0 && g.app().editor.history.len() == steps);
+    assert!(!g.app().text.qr.open && g.app().editor.doc.is_empty() && g.app().editor.history.len() == steps);
     g.run_command("tools.qr");
     g.settle();
     g.escape();
     g.frames(3);
-    assert!(!g.app().text.qr.open && g.app().editor.doc.len() == 0, "Escape closes it and adds nothing");
+    assert!(!g.app().text.qr.open && g.app().editor.doc.is_empty(), "Escape closes it and adds nothing");
 
     g.run_command("tools.qr");
     g.settle();

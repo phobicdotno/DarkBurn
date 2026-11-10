@@ -349,6 +349,12 @@ pub struct AdjustDialog {
     preview: Option<(String, TextureHandle, TextureHandle, bool)>,
     pub warning: Option<String>,
     pub notice: Option<String>,
+    /// The project had no unsaved changes when the window opened.
+    clean_at_open: bool,
+    /// A live edit was written to the document.
+    touched: bool,
+    /// The project was saved while live edits were in it.
+    saved_since: bool,
 }
 
 impl AdjustDialog {
@@ -378,15 +384,22 @@ impl AdjustDialog {
             preview: None,
             warning: None,
             notice: None,
+            clean_at_open: !app.editor.is_modified(),
+            touched: false,
+            saved_since: false,
         })
     }
 
     /// Writes edits made in the window to the document (no undo step).
     pub fn sync(&mut self, app: &mut DarkBurn) {
+        if self.touched && !app.editor.is_modified() {
+            self.saved_since = true;
+        }
         if self.args != self.applied {
             match image_ops::adjust_doc(&mut app.editor.doc, &self.ids, &self.args) {
                 Ok(_) => {
                     app.editor.touch();
+                    self.touched = true;
                     self.applied = self.args.clone();
                 }
                 Err(e) => self.notice = Some(e),
@@ -410,8 +423,14 @@ impl AdjustDialog {
             .next()
     }
 
-    /// Puts the document back as it was when the window opened.
+    /// Puts the document back as it was when the window opened. A project without unsaved
+    /// changes then has none again (unless it was saved with the live edits in it).
     pub fn restore(&self, app: &mut DarkBurn) {
+        if !self.touched {
+            // Nothing was written, so there is nothing to put back and nothing has changed.
+            return;
+        }
+        let saved_since = self.saved_since || !app.editor.is_modified();
         let doc = &mut app.editor.doc;
         for (id, adj) in &self.original.0 {
             if let Some(s) = doc.get_mut(*id)
@@ -424,6 +443,9 @@ impl AdjustDialog {
             *doc.layer_mut(*l).main_mut() = c.clone();
         }
         app.editor.touch();
+        if self.clean_at_open && !saved_since {
+            app.editor.mark_saved();
+        }
     }
 
     /// OK: the changes become one undo step.
@@ -1224,6 +1246,50 @@ mod tests {
         assert_eq!(i.adjust.brightness, 25.0);
         app.editor.undo();
         assert_eq!(app.editor.doc.layer(3).main().image_mode, LayerMode::Dither);
+    }
+
+    /// Opening Adjust Image and leaving it with Cancel (or OK with nothing changed) is not a change
+    /// to the project: it used to count as modified from then on.
+    #[test]
+    fn cancelling_adjust_image_leaves_a_saved_project_saved() {
+        let (mut app, id) = app_with_image();
+        app.editor.mark_saved();
+        // Looked at and cancelled.
+        let mut d = AdjustDialog::new(&app, vec![id]).unwrap();
+        d.sync(&mut app);
+        d.restore(&mut app);
+        assert!(!app.editor.is_modified(), "Cancel with nothing edited changed the project");
+        // Edited, then cancelled: the edit shows as a change while the window is open.
+        let mut d = AdjustDialog::new(&app, vec![id]).unwrap();
+        d.args.brightness = Some(25.0);
+        d.sync(&mut app);
+        assert!(app.editor.is_modified());
+        d.sync(&mut app);
+        d.restore(&mut app);
+        let ShapeKind::Image(i) = &app.editor.doc.get(id).unwrap().kind else { panic!() };
+        assert_eq!(i.adjust.brightness, 0.0);
+        assert!(!app.editor.is_modified(), "Cancel after an edit left the project changed");
+        // OK with nothing changed: no undo step and no change.
+        let mut d = AdjustDialog::new(&app, vec![id]).unwrap();
+        d.sync(&mut app);
+        d.commit(&mut app);
+        assert_eq!(app.editor.history.len(), 0);
+        assert!(!app.editor.is_modified(), "OK with nothing edited changed the project");
+        // Saved while a live edit was in the document: after Cancel the file and the project differ.
+        let mut d = AdjustDialog::new(&app, vec![id]).unwrap();
+        d.args.brightness = Some(40.0);
+        d.sync(&mut app);
+        app.editor.mark_saved();
+        d.sync(&mut app);
+        d.restore(&mut app);
+        assert!(app.editor.is_modified(), "the saved file holds the edit that Cancel took back");
+        // A project with unsaved changes keeps them through a Cancel.
+        app.editor.touch();
+        let mut d = AdjustDialog::new(&app, vec![id]).unwrap();
+        d.args.brightness = Some(10.0);
+        d.sync(&mut app);
+        d.restore(&mut app);
+        assert!(app.editor.is_modified());
     }
 
     #[test]

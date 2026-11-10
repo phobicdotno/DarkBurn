@@ -6,3 +6,4 @@ Fix: a saved position no longer squeezes the Move panel out of view
 Fix: the camera alignment is dropped when the lens correction changes, with a note to run it again
 Fix: adding a new laser or removing the one in use ends the open connection, so a job is never built for one machine and sent to another
 Fix: "Use current layers as defaults" in Device Settings belongs to the laser you are editing, and Cancel takes it back
+Fix: looking at Adjust Image and cancelling no longer marks the project as changed

@@ -480,3 +480,178 @@ fn tool_layer_frame_follows_the_print_and_cut_alignment() {
         assert!(close(bbox_of(&frame), Rect::new(30.0, 10.0, 80.0, 60.0), 0.05), "{kind:?}: {:?}", bbox_of(&frame));
     }
 }
+
+// ----- The estimate and the G-code against the planned job --------------------------------------
+
+/// What a G-code program does, read the way the controller reads it: the length burned, the
+/// length moved with the laser off, and the rapid moves made with the laser still on.
+#[derive(Debug, Default)]
+struct Ran {
+    burn: f64,
+    off: f64,
+    hot_rapids: usize,
+    end: Point,
+}
+
+fn run_gcode(text: &str, dev: &DeviceGcodeSettings, start: Point) -> Ran {
+    use darkburn_job::gcode::{Flavor, MarlinPower};
+    let mut r = Ran::default();
+    let (mut pos, mut relative, mut motion) = (start, false, 0u32);
+    let (mut s, mut spindle, mut fan, mut q) = (0.0f64, false, 0.0f64, 0.0f64);
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("");
+        let line = if line.trim_start().starts_with('(') { "" } else { line };
+        let mut words: Vec<(char, f64)> = Vec::new();
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i].to_ascii_uppercase();
+            i += 1;
+            if !c.is_ascii_alphabetic() {
+                continue;
+            }
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_digit() || matches!(chars[i], '.' | '-' | '+')) {
+                i += 1;
+            }
+            if let Ok(v) = chars[start..i].iter().collect::<String>().parse::<f64>() {
+                words.push((c, v));
+            }
+        }
+        let get = |k: char| words.iter().find(|w| w.0 == k).map(|w| w.1);
+        let m = get('M').map(|v| v as i64);
+        match m {
+            Some(3) | Some(4) => spindle = true,
+            Some(5) => spindle = false,
+            Some(106) => fan = get('S').unwrap_or(255.0),
+            Some(107) => fan = 0.0,
+            Some(67) | Some(68) => q = get('Q').unwrap_or(0.0),
+            _ => {}
+        }
+        if m != Some(106) {
+            if let Some(v) = get('S') {
+                s = v;
+            }
+        }
+        for w in &words {
+            if w.0 == 'G' {
+                match w.1 as i64 {
+                    0..=3 => motion = w.1 as u32,
+                    90 => relative = false,
+                    91 => relative = true,
+                    _ => {}
+                }
+            }
+        }
+        let (x, y) = (get('X'), get('Y'));
+        if (x.is_none() && y.is_none()) || m.is_some() || get('G').is_some_and(|g| g as i64 > 3) {
+            continue;
+        }
+        let to = if relative {
+            Point::new(pos.x + x.unwrap_or(0.0), pos.y + y.unwrap_or(0.0))
+        } else {
+            Point::new(x.unwrap_or(pos.x), y.unwrap_or(pos.y))
+        };
+        let len = pos.distance(to);
+        let on = match (dev.flavor, dev.marlin_power) {
+            (Flavor::LinuxCnc, _) => q > 0.0,
+            (Flavor::Marlin, MarlinPower::M106) => fan > 0.0,
+            (Flavor::Smoothieware, _) => s > 0.0,
+            _ => spindle && s > 0.0,
+        };
+        // GRBL (laser mode), Smoothieware and Marlin's inline power switch the laser off in a
+        // rapid themselves; the others burn whenever the output is on.
+        let firmware_blanks =
+            !matches!((dev.flavor, dev.marlin_power), (Flavor::LinuxCnc, _) | (Flavor::Marlin, MarlinPower::M3 | MarlinPower::M106));
+        if motion == 0 {
+            if on && !firmware_blanks && len > 1e-9 {
+                r.hot_rapids += 1;
+            }
+            r.off += len;
+        } else if on {
+            r.burn += len;
+        } else {
+            r.off += len;
+        }
+        pos = to;
+    }
+    r.end = pos;
+    r
+}
+
+fn check_outputs(seed: u64) -> Result<(), String> {
+    use darkburn_job::gcode::MarlinPower;
+    let case = make_case(seed, false);
+    let b = build_job_simple(&case.input).map_err(|e| format!("no job: {e}"))?;
+    let ms = segs(&b.toolpath);
+    if ms.iter().any(|s| s.kind == 'A') {
+        return Ok(());
+    }
+    let burn: f64 = ms.iter().filter(|s| burning(s)).map(|s| s.from.distance(s.to)).sum();
+    let all: f64 = ms.iter().map(|s| s.from.distance(s.to)).sum();
+
+    // The estimate walks the same moves.
+    let sim = b.simulate(&case.input.motion);
+    if (sim.cut_distance - burn).abs() > 1e-6 * (1.0 + burn) {
+        return Err(format!("estimate cuts {} mm, the job {burn} mm", sim.cut_distance));
+    }
+    if (sim.cut_distance + sim.scan_distance + sim.rapid_distance - all).abs() > 1e-6 * (1.0 + all) {
+        return Err("estimate and job move different distances".into());
+    }
+    let mut t = 0.0;
+    let mut slowest = 0.0;
+    for s in &sim.segments {
+        if (s.t0 - t).abs() > 1e-6 || !(s.duration >= 0.0) {
+            return Err(format!("estimate has a gap or a negative time at op {}", s.op_index));
+        }
+        t = s.t0 + s.duration;
+        if let Some(Op::Cut { speed, .. }) = b.design.ops.get(s.op_index) {
+            slowest += s.length / speed.max(1e-9);
+            if s.duration < s.length / speed.max(1e-9) - 1e-6 && *speed <= case.input.motion.motion().max_speed {
+                return Err(format!("op {} is estimated faster than its speed allows", s.op_index));
+            }
+        }
+    }
+    if (sim.total_time - t).abs() > 1e-6 || sim.total_time < slowest - 1e-3 {
+        return Err("estimate total is not the end of its last move".into());
+    }
+
+    // The G-code burns what the job burns, for every flavour.
+    for flavor in 0..6 {
+        for mp in [MarlinPower::Inline, MarlinPower::M3, MarlinPower::M106] {
+            if flavor != 3 && mp != MarlinPower::Inline {
+                continue;
+            }
+            let mut dev = DeviceGcodeSettings::default();
+            dev.set_flavor_index(flavor);
+            dev.marlin_power = mp;
+            dev.overscan_as_g0 = seed % 3 == 0;
+            dev.s_every_g1 = seed % 5 == 0;
+            let text = gcode_text(&b, None, &dev);
+            let ran = run_gcode(&text, &dev, b.toolpath.start);
+            let name = DeviceGcodeSettings::flavor_names()[flavor];
+            if ran.hot_rapids > 0 {
+                return Err(format!("{name} {mp:?}: {} rapid moves with the laser on", ran.hot_rapids));
+            }
+            let slack = 0.002 * ms.len() as f64 + 0.001 * burn;
+            if (ran.burn - burn).abs() > slack {
+                return Err(format!("{name} {mp:?}: the G-code burns {:.3} mm, the job {burn:.3} mm", ran.burn));
+            }
+            if (ran.burn + ran.off - all).abs() > 0.002 * ms.len() as f64 + 0.001 * all {
+                return Err(format!("{name} {mp:?}: the G-code moves {:.3} mm, the job {all:.3} mm", ran.burn + ran.off));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn estimate_and_gcode_do_what_the_planned_job_does() {
+    let mut failures = Vec::new();
+    for seed in 0..120u64 {
+        if let Err(e) = check_outputs(seed) {
+            failures.push(format!("seed {seed}: {e}"));
+        }
+    }
+    assert!(failures.is_empty(), "{} of 120 generated jobs:\n{}", failures.len(), failures.join("\n"));
+}

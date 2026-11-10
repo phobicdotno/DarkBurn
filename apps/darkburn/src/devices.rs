@@ -522,6 +522,7 @@ impl Device {
             pointer_offset: [self.settings.red_dot_x, self.settings.red_dot_y],
             tab_pulse_width: self.settings.tab_pulse_width,
             m3_only: self.m3_only(),
+            no_pauses: self.family() == Family::Ruida,
             ..JobDevice::default()
         }
     }

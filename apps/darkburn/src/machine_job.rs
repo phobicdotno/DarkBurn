@@ -261,6 +261,33 @@ pub fn toolpath_to_rd_with(tp: &Toolpath, shift: Vec2, options: RdOptions) -> Re
     Ok(job)
 }
 
+/// What [`toolpath_to_rd_with`] leaves out of `tp`, one line per layer: a Ruida job has no
+/// command for standing still with the laser on or off, so start and end pauses and cut-through
+/// are not sent (the dots of dot mode are: the controller times those itself).
+pub fn rd_dropped_pauses(tp: &Toolpath) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur: Option<&darkburn_job::IrLayer> = None;
+    let mut said: Vec<(usize, usize)> = Vec::new();
+    for op in &tp.ops {
+        match op {
+            Op::LayerStart { layer } => cur = tp.layers.get(*layer),
+            Op::Dwell { ms, power } if *ms > 0.0 => {
+                let Some(l) = cur else { continue };
+                if (l.dot.is_some() && *power > 0.0) || said.contains(&(l.layer_index, l.sublayer)) {
+                    continue;
+                }
+                said.push((l.layer_index, l.sublayer));
+                out.push(format!(
+                    "Layer {}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
+                    l.name
+                ));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Why `dev` has no machine file DarkBurn can write, if so (FILE-09).
 pub fn machine_file_unsupported(dev: &crate::devices::Device) -> Option<String> {
     use crate::devices::DeviceType as T;

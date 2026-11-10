@@ -221,6 +221,46 @@ fn return_to_finish_goes_back_to_the_start() {
 }
 
 #[test]
+fn pauses_a_ruida_job_cannot_carry_are_named_in_a_warning() {
+    let mut d = line_doc(20.0);
+    {
+        let s = d.layer_mut(0).main_mut();
+        s.start_pause_ms = 200.0;
+        s.cut_through_start = true;
+        s.cut_through_power = 80.0;
+        s.end_pause_ms = 50.0;
+    }
+    // A G-code machine gets the pauses: no warning.
+    let gcode = build_job_simple(&input(d.clone())).unwrap();
+    assert!(gcode.toolpath.ops.iter().any(|o| matches!(o, Op::Dwell { .. })));
+    assert!(!gcode.warnings.iter().any(|w| w.contains("pause")), "{:?}", gcode.warnings);
+    // A Ruida job has no place for them, and says so.
+    let ruida_dev = crate::devices::Device::new(crate::devices::DeviceType::SimulatorRuida);
+    assert!(ruida_dev.job_device().no_pauses);
+    assert!(!crate::devices::Device::default().job_device().no_pauses);
+    let mut i = input(d.clone());
+    i.device.no_pauses = true;
+    let b = build_job_simple(&i).unwrap();
+    let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("pause")).collect();
+    assert_eq!(said.len(), 1, "one warning for the layer: {:?}", b.warnings);
+    assert!(said[0].contains(&layer::layer_label(0)), "{said:?}");
+    // Without pauses there is nothing to warn about, and dot mode is sent (no warning either).
+    {
+        let s = d.layer_mut(0).main_mut();
+        s.start_pause_ms = 0.0;
+        s.cut_through_start = false;
+        s.end_pause_ms = 0.0;
+        s.dot_mode = true;
+        s.dot_time_ms = 3.0;
+        s.dot_spacing = 2.0;
+    }
+    let mut i = input(d);
+    i.device.no_pauses = true;
+    let b = build_job_simple(&i).unwrap();
+    assert!(!b.warnings.iter().any(|w| w.contains("pause")), "{:?}", b.warnings);
+}
+
+#[test]
 fn dsp_fields_reach_the_ruida_job() {
     use darkburn_core::kurbo::Vec2;
     let mut d = line_doc(20.0);

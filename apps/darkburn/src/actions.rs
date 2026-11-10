@@ -154,6 +154,8 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             e.edit("Unlock", |d, sel| {
                 let changed = arrange::set_locked(d, &targets, false);
                 sel.set(targets.iter().copied());
+                // Not the ones on hidden layers: they are unlocked, but cannot be seen or clicked.
+                sel.retain_selectable(d);
                 changed
             });
         }

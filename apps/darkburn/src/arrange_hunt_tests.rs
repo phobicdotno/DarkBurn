@@ -113,3 +113,58 @@ fn hiding_a_layer_deselects_its_shapes() {
     assert!(a.editor.doc.layer(2).show);
     assert_eq!(a.editor.selected(), vec![hidden, shown]);
 }
+
+/// Unlock with nothing selected unlocks everything, and selects what it unlocked: but not the
+/// shapes on a hidden layer, which nobody can see.
+#[test]
+fn unlocking_everything_does_not_select_shapes_on_hidden_layers() {
+    let ctx = egui::Context::default();
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 10.0, 10.0, 2);
+    let s = add_rect(&mut a, 20.0, 0.0, 10.0, 10.0, 3);
+    select(&mut a, &[r, s]);
+    a.run(&ctx, "arrange.lock");
+    run(&mut a, "layer.set_param", json!({ "layer": 2, "field": "show", "value": false })).unwrap();
+    a.run(&ctx, "arrange.unlock");
+    assert!(!a.editor.doc.get(r).unwrap().locked && !a.editor.doc.get(s).unwrap().locked);
+    assert_eq!(a.editor.selected(), vec![s]);
+}
+
+/// Group, rotate, ungroup, flip, same width, align and page corner, each against hand numbers.
+#[test]
+fn group_rotate_flip_same_width_align_and_page_corner_give_the_hand_computed_boxes() {
+    let ctx = egui::Context::default();
+    let mut a = app();
+    let r = add_rect(&mut a, 10.0, 10.0, 20.0, 10.0, 2);
+    let s = add_rect(&mut a, 50.0, 30.0, 10.0, 30.0, 3);
+    select(&mut a, &[r, s]);
+    a.run(&ctx, "arrange.group");
+    // The group spans 10..60 by 10..60: centre 35, 35.
+    a.run(&ctx, "arrange.rotate_cw");
+    let g = a.editor.selected()[0];
+    a.run(&ctx, "arrange.ungroup");
+    let _ = g;
+    // Clockwise about (35, 35): (x, y) -> (35 + (y - 35), 35 - (x - 35)). r 10..30 x 10..20 -> x 10..20, y 40..60.
+    let b = a.editor.doc.get(r).unwrap().bbox();
+    assert!((b.x0 - 10.0).abs() < 1e-6 && (b.x1 - 20.0).abs() < 1e-6 && (b.y0 - 40.0).abs() < 1e-6 && (b.y1 - 60.0).abs() < 1e-6, "{b:?}");
+    // s 50..60 x 30..60 -> x 30..60, y 10..20.
+    let b = a.editor.doc.get(s).unwrap().bbox();
+    assert!((b.x0 - 30.0).abs() < 1e-6 && (b.x1 - 60.0).abs() < 1e-6 && (b.y0 - 10.0).abs() < 1e-6 && (b.y1 - 20.0).abs() < 1e-6, "{b:?}");
+    select(&mut a, &[r, s]);
+    a.run(&ctx, "arrange.flip_h");
+    // About x = 35: r 10..20 -> 50..60; s 30..60 -> 10..40.
+    let b = a.editor.doc.get(r).unwrap().bbox();
+    assert!((b.x0 - 50.0).abs() < 1e-6 && (b.x1 - 60.0).abs() < 1e-6, "{b:?}");
+    a.run(&ctx, "arrange.same_width");
+    // r becomes as wide as s (30) about its centre 55: 40..70.
+    let b = a.editor.doc.get(r).unwrap().bbox();
+    assert!((b.x0 - 40.0).abs() < 1e-6 && (b.x1 - 70.0).abs() < 1e-6, "{b:?}");
+    a.run(&ctx, "arrange.align_h_centres");
+    a.run(&ctx, "arrange.align_right");
+    let b = a.editor.doc.get(r).unwrap().bbox();
+    // s is x 10..40, y 10..20 (centre y 15); r 30 wide, 20 tall (y 40..60).
+    assert!((b.x1 - 40.0).abs() < 1e-6 && (b.center().y - 15.0).abs() < 1e-6, "{b:?}");
+    a.run(&ctx, "arrange.page_lower_right");
+    let u = a.editor.doc.bbox().unwrap();
+    assert!((u.x1 - 400.0).abs() < 1e-6 && u.y0.abs() < 1e-6, "{u:?}");
+}

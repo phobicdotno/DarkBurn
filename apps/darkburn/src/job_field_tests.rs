@@ -279,6 +279,44 @@ fn kerf_shrinks_a_hole_drawn_as_its_own_shape() {
 }
 
 #[test]
+fn a_cropped_image_burns_only_inside_its_crop() {
+    use darkburn_core::kurbo::Shape as _;
+    let mut d = image_doc(|s| s.image_mode = layer::ImageMode::Threshold, vec![0u8; 16]);
+    let id = d.iter().next().unwrap().id;
+    // Keep the left half of the 10 x 10 mm picture (local coordinates, centred on the origin).
+    if let ShapeKind::Image(img) = &mut d.get_mut(id).unwrap().kind {
+        img.crop = Some(Rect::new(-5.0, -5.0, 0.0, 5.0).to_path(0.01));
+    }
+    let b = build(d);
+    let burns: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+    assert!(!burns.is_empty());
+    let max_x = burns.iter().map(|s| s.from.x.max(s.to.x)).fold(f64::MIN, f64::max);
+    assert!(max_x < 10.6, "nothing burns right of the crop at x = 10: {max_x}");
+    assert!((burn_len(&b.toolpath) - 100.0).abs() < 15.0, "20 lines of 5 mm: {}", burn_len(&b.toolpath));
+}
+
+#[test]
+fn an_image_too_fine_to_scan_is_left_out_with_the_reason() {
+    // 1000 x 1000 mm at 0.001 mm a line would be a million million dots.
+    let mut d = image_doc(
+        |s| {
+            s.image_mode = layer::ImageMode::Threshold;
+            s.interval = 0.001;
+        },
+        vec![0u8; 16],
+    );
+    let id = d.iter().next().unwrap().id;
+    d.get_mut(id).unwrap().transform = Affine::translate((600.0, 600.0)) * Affine::scale(100.0);
+    d.layer_mut(0).main_mut().mode = Mode::Line;
+    sq(&mut d, 0, 10.0, 10.0, 20.0);
+    let mut i = input(d);
+    i.device = JobDevice::new(2000.0, 2000.0);
+    let b = build_job_simple(&i).unwrap();
+    assert!(b.warnings.iter().any(|w| w.contains("lower the DPI")), "{:?}", b.warnings);
+    assert!((burn_len(&b.toolpath) - 80.0).abs() < 1e-6, "only the square is cut");
+}
+
+#[test]
 fn perforation_cuts_and_skips() {
     let mut d = line_doc(20.0);
     {

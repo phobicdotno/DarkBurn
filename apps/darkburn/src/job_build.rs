@@ -587,8 +587,8 @@ fn image_inputs(
     doc: &Document,
     leaves: &[(&Shape, Option<u32>)],
     s: &CutSetting,
-    cache: &mut HashMap<String, Arc<darkburn_raster::GrayF>>,
     tuning: &crate::scan_offsets::ScanTuning,
+    warnings: &mut Vec<String>,
 ) -> Vec<job::ImageInput> {
     let settings = darkburn_raster::ImageSettings {
         mode: raster_mode(s),
@@ -608,14 +608,21 @@ fn image_inputs(
     let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64)> = Vec::new();
     for (shape, group) in leaves {
         let ShapeKind::Image(img) = &shape.kind else { continue };
-        let Some(data) = doc.images.get(&img.image) else { continue };
-        let gray = match cache.get(&img.image) {
-            Some(g) => g.clone(),
-            None => {
-                let Ok(decoded) = image::load_from_memory(&data.bytes) else { continue };
-                let g = Arc::new(darkburn_raster::GrayF::from_dynamic(&decoded));
-                cache.insert(img.image.clone(), g.clone());
-                g
+        let label = layer::layer_label(shape.layer.min(layer::LAYER_COUNT - 1));
+        // An image too fine to scan is left out before anything that big is allocated.
+        let (w, h) = crate::images::size_mm(shape, img);
+        let bb = shape.bbox();
+        let dots = crate::images::dots_for(bb.width().max(w), bb.height().max(h), settings.line_interval_mm);
+        if dots > crate::images::MAX_DOTS {
+            warnings.push(format!("An image on layer {label} was left out: {}.", crate::images::ImageError::TooLarge { dots, shape: shape.id.0 }));
+            continue;
+        }
+        // The pixels with the image's crop applied (outside the crop nothing burns).
+        let gray = match crate::images::source_gray(doc, img) {
+            Ok(g) => g,
+            Err(e) => {
+                warnings.push(format!("An image on layer {label} was left out: {e}."));
+                continue;
             }
         };
         let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
@@ -843,7 +850,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     }
 
     // Images, layer by layer.
-    let mut cache = HashMap::new();
     for li in 0..layer::LAYER_COUNT {
         if leaves_by_layer[li].is_empty() {
             continue;
@@ -858,7 +864,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         match image_setting {
             Some(s) => {
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, s, &mut cache, &tuning);
+                entry.images = image_inputs(doc, &refs, s, &tuning, &mut warnings);
             }
             None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
         }

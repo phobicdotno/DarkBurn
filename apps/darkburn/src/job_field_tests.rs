@@ -295,6 +295,34 @@ fn a_cropped_image_burns_only_inside_its_crop() {
     assert!((burn_len(&b.toolpath) - 100.0).abs() < 15.0, "20 lines of 5 mm: {}", burn_len(&b.toolpath));
 }
 
+/// What a crop (or transparency) takes away never burns, whatever is done to the tones.
+#[test]
+fn outside_its_crop_an_image_burns_nothing_when_made_negative_or_darker() {
+    use darkburn_core::kurbo::Shape as _;
+    let cases: [(&str, u8, bool, f64); 3] = [("negative", 255, true, 0.0), ("darker", 255, false, -100.0), ("plain", 0, false, 0.0)];
+    for (what, grey, negative, brightness) in cases {
+        let mut d = image_doc(
+            |s| {
+                s.image_mode = layer::ImageMode::Threshold;
+                s.negative = negative;
+            },
+            vec![grey; 16],
+        );
+        let id = d.iter().next().unwrap().id;
+        // Keep the left half of the 10 x 10 mm picture (local coordinates, centred on the origin).
+        if let ShapeKind::Image(img) = &mut d.get_mut(id).unwrap().kind {
+            img.crop = Some(Rect::new(-5.0, -5.0, 0.0, 5.0).to_path(0.01));
+            img.adjust.brightness = brightness;
+        }
+        let b = build(d);
+        let burns: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+        assert!(!burns.is_empty(), "{what}");
+        let max_x = burns.iter().map(|s| s.from.x.max(s.to.x)).fold(f64::MIN, f64::max);
+        assert!(max_x < 10.6, "{what}: nothing burns right of the crop at x = 10: {max_x}");
+        assert!((burn_len(&b.toolpath) - 100.0).abs() < 15.0, "{what}: 20 lines of 5 mm: {}", burn_len(&b.toolpath));
+    }
+}
+
 #[test]
 fn an_image_too_fine_to_scan_is_left_out_with_the_reason() {
     // 1000 x 1000 mm at 0.001 mm a line would be a million million dots.

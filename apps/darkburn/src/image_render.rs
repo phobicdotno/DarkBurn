@@ -87,7 +87,7 @@ pub fn window(gray: &GrayF, size_mm: (f64, f64), interval_mm: f64, max_side: u32
     let (w, h) = (gray.width, gray.height);
     let (sw, sh) = (((f64::from(w) * fx) as u32).clamp(1, w), ((f64::from(h) * fy) as u32).clamp(1, h));
     let (x0, y0) = ((w - sw) / 2, (h - sh) / 2);
-    let sub = GrayF::from_fn(sw, sh, |x, y| gray.get(x0 + x, y0 + y));
+    let sub = gray.window(x0, y0, sw, sh);
     (std::borrow::Cow::Owned(sub), (size_mm.0 * f64::from(sw) / f64::from(w), size_mm.1 * f64::from(sh) / f64::from(h)), true)
 }
 

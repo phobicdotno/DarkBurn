@@ -672,3 +672,24 @@ fn homing_turns_the_fire_button_off_first() {
     wait_snap(&m, "fire flag cleared", |s| !s.fire_on);
     emu.with(|e| assert!(!e.laser_on()));
 }
+
+#[test]
+fn stop_during_homing_acts_at_once() {
+    let mut cfg = EmulatorConfig::atomstack().with_setting(22, 1.0);
+    cfg.homing_seconds = 30.0;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.home().unwrap();
+    wait_emu(&emu, "homing", |e| e.state_name() == "Home");
+    let t = Instant::now();
+    m.stop().unwrap();
+    wait_emu(&emu, "reset", |e| e.stats().soft_resets >= 1);
+    assert!(t.elapsed() < Duration::from_secs(1), "Stop took {:?} to reach the controller while homing", t.elapsed());
+    wait_event(&m, |e| matches!(e, Event::Stopped));
+    wait_snap(&m, "idle driver", |s| s.activity == Activity::Idle);
+    // Homing was aborted, so the controller is locked; unlocking makes it usable again.
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+}

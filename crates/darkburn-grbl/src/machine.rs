@@ -1622,8 +1622,11 @@ impl Worker {
         self.snap.paused = false;
         let state = &self.snap.status.state;
         let may_move = state.is_moving() || matches!(state, MachineState::Hold(_)) || self.motion_pending || !self.in_flight.is_empty();
+        // A homing cycle ignores feed hold and answers no status requests, so its state here
+        // is stale; only a reset stops it.
+        let homing = self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H"));
         let now = Instant::now();
-        if self.snap.is_v11() && may_move && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
+        if self.snap.is_v11() && may_move && !homing && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
             self.write(&[rt::FEED_HOLD])?;
             self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now });
         } else {

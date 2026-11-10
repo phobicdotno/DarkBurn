@@ -5,3 +5,4 @@ Fix: PDF pages with a user unit come in at their real size
 Fix: a damaged PDF layer entry that points at itself no longer closes DarkBurn
 Fix: a PDF image whose mask points at itself no longer closes DarkBurn
 Fix: a PDF fax image with an absurd width is skipped instead of closing DarkBurn
+Fix: Same Width against a line with no width no longer flattens the other shapes

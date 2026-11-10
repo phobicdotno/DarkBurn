@@ -591,6 +591,40 @@ struct Window {
     band: Option<(f64, f64)>,
     /// `(layer, geometry index)` allowed in this window; `None` = all.
     shapes: Option<Vec<(usize, usize)>>,
+    /// The lowest band of its design (or shape): the only one that owns its lower edge.
+    first_band: bool,
+}
+
+/// Takes the parts lying on the lower edge `y0` of a band out of a clipped piece. Such a part
+/// belongs to the band below, which marks it; marking it here as well would burn it twice.
+fn without_lower_edge(piece: Vec<Point>, y0: f64) -> Vec<Vec<Point>> {
+    let on_edge = |p: &Point| (p.y - y0).abs() < 1e-9;
+    let mut out: Vec<Vec<Point>> = Vec::new();
+    let mut cur: Vec<Point> = Vec::new();
+    for w in piece.windows(2) {
+        if on_edge(&w[0]) && on_edge(&w[1]) {
+            if cur.len() > 1 {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.clear();
+            continue;
+        }
+        if cur.is_empty() {
+            cur.push(w[0]);
+        }
+        cur.push(w[1]);
+    }
+    if cur.len() > 1 {
+        out.push(cur);
+    }
+    out
+}
+
+/// The pieces of an open polyline this window marks.
+fn band_pieces(pts: &[Point], win: &Window) -> Option<Vec<Vec<Point>>> {
+    let (y0, y1) = win.band?;
+    let pieces = clip_polyline_y(pts, y0, y1);
+    Some(if win.first_band { pieces } else { pieces.into_iter().flat_map(|p| without_lower_edge(p, y0)).collect() })
 }
 
 fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOptions) -> Result<Vec<Window>, CompileError> {
@@ -619,7 +653,7 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
         let h = (b - a) / n as f64;
         for k in 0..n {
             let (y0, y1) = (a + h * k as f64, a + h * (k + 1) as f64);
-            out.push(Window { center_y: Some((y0 + y1) / 2.0), band: Some((y0, y1)), shapes: shapes.clone() });
+            out.push(Window { center_y: Some((y0 + y1) / 2.0), band: Some((y0, y1)), shapes: shapes.clone(), first_band: k == 0 });
         }
     };
     match rc.mode {
@@ -630,7 +664,7 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
             let (mut g0, mut g1) = (0.0, 0.0);
             let close = |group: &mut Vec<(usize, usize)>, g0: f64, g1: f64, out: &mut Vec<Window>| {
                 if !group.is_empty() {
-                    out.push(Window { center_y: Some((g0 + g1) / 2.0), band: None, shapes: Some(std::mem::take(group)) });
+                    out.push(Window { center_y: Some((g0 + g1) / 2.0), band: None, shapes: Some(std::mem::take(group)), first_band: true });
                 }
             };
             for (id, r) in shapes {
@@ -704,8 +738,8 @@ fn emit_line_layer(w: &mut Writer, layer: &Layer, shapes: &[Vec<Poly>], win: &Wi
         if poly.closed && pts.len() > 1 {
             pts.push(pts[0]);
         }
-        let pieces = match win.band {
-            Some((a, b)) => clip_polyline_y(&pts, a, b).into_iter().map(|p| (p, false)).collect::<Vec<_>>(),
+        let pieces = match band_pieces(&pts, win) {
+            Some(pieces) => pieces.into_iter().map(|p| (p, false)).collect::<Vec<_>>(),
             None => vec![(pts, poly.closed)],
         };
         for (p, closed) in pieces {
@@ -785,8 +819,8 @@ fn emit_fill_layer(
         // pieces of this scan line after clipping to the rotary band
         let mut pieces: Vec<(Point, Point)> = Vec::new();
         for (a, b) in line {
-            match win.band {
-                Some((y0, y1)) => pieces.extend(clip_polyline_y(&[a, b], y0, y1).into_iter().map(|p| (p[0], p[p.len() - 1]))),
+            match band_pieces(&[a, b], win) {
+                Some(inside) => pieces.extend(inside.into_iter().map(|p| (p[0], p[p.len() - 1]))),
                 None => pieces.push((a, b)),
             }
         }
@@ -901,7 +935,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
     let bounds = job.bounds(opt.tolerance_mm).ok_or(CompileError::NothingToMark)?;
     let windows = match &job.rotary {
         Some(rc) => plan_windows(job, rc, dev.field.size_mm, opt)?,
-        None => vec![Window { center_y: None, band: None, shapes: None }],
+        None => vec![Window { center_y: None, band: None, shapes: None, first_band: true }],
     };
 
     // one repeat body
@@ -1499,6 +1533,48 @@ mod tests {
         assert_eq!(moves.len(), 2 + 3);
         assert_eq!(moves[0], 11.0);
         assert_eq!(moves[1], 105.0);
+    }
+
+    /// Total length of everything marked, in mm.
+    fn marked_mm(c: &CompiledJob) -> f64 {
+        let field = Field::new(dev().field);
+        let (mut at, mut sum) = (Point::ORIGIN, 0.0);
+        for cmd in c.list_commands() {
+            match cmd {
+                ListCmd::JumpTo { x, y, .. } => at = field.galvo_to_mm(x as f64, y as f64),
+                ListCmd::MarkTo { x, y, .. } => {
+                    let to = field.galvo_to_mm(x as f64, y as f64);
+                    sum += at.distance(to);
+                    at = to;
+                }
+                _ => {}
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn rotary_marks_a_line_on_the_edge_between_two_bands_once() {
+        // Bands 0..40 and 40..80: the top of the square lies exactly on the edge between them.
+        let mut tick = BezPath::new();
+        tick.move_to((20.0, 0.0));
+        tick.line_to((20.0, 80.0));
+        let mut job = Job::new();
+        job.layers.push(line_layer(vec![rect_path(-10.0, 0.0, 20.0, 40.0), tick.clone()]));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let mm = marked_mm(&c);
+        assert!((mm - 200.0).abs() < 0.2, "a 20 x 40 square and an 80 mm line are 200 mm, marked {mm}");
+
+        // A fill whose scan line falls on the edge: 0.5..60.5 with 1 mm lines has one at y = 40.
+        let mut job = Job::new();
+        let fs = FillSettings { interval_mm: 1.0, bidirectional: false, ..Default::default() };
+        job.layers.push(Layer::new("F", LayerMode::Fill(fs), MarkParams::default(), vec![rect_path(-10.0, 0.5, 20.0, 60.0)]));
+        job.layers.push(line_layer(vec![tick]));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let mm = marked_mm(&c);
+        assert!((mm - (60.0 * 20.0 + 80.0)).abs() < 0.5, "60 scan lines of 20 mm and the 80 mm line, marked {mm}");
     }
 
     #[test]

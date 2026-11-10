@@ -312,7 +312,20 @@ pub fn apply_op(
             }
             let mut items = segs.clone();
             items.sort_by_key(|x| std::cmp::Reverse(*x));
-            each(&mut p, &|p, s, i| gnode::delete_segment(p, s, i), &items)?;
+            // Taking a line out of a closed subpath opens it, and the open subpath starts after
+            // that line: the lines before it move up by `shift`.
+            let mut opened: Option<(usize, usize)> = None;
+            for (s, i) in items {
+                let cs = contours(&p);
+                let i = match opened {
+                    Some((sub, shift)) if sub == s => i + shift,
+                    _ => i,
+                };
+                if let Some(c) = cs.get(s).filter(|c| c.closed && i < c.segs.len()) {
+                    opened = Some((s, c.segs.len() - 1 - i));
+                }
+                p = gnode::delete_segment(&p, s, i).map_err(err_text)?;
+            }
         }
         NodeOp::ToLine | NodeOp::ToCurve => {
             if segs.is_empty() {
@@ -328,11 +341,25 @@ pub fn apply_op(
             if desc.is_empty() {
                 return Err("select nodes first".into());
             }
+            // Breaking a closed subpath opens it with the break as its first node: the nodes
+            // before the break move up by `shift`.
+            let mut opened: Option<(usize, usize)> = None;
             for n in &desc {
+                let mut n = *n;
+                if let Some((sub, shift)) = opened
+                    && sub == n.subpath
+                {
+                    n.node += shift;
+                }
+                if op == NodeOp::Break
+                    && let Some(c) = contours(&p).get(n.subpath).filter(|c| c.closed && n.node < c.segs.len())
+                {
+                    opened = Some((n.subpath, c.segs.len() - n.node));
+                }
                 p = match op {
-                    NodeOp::Corner => gnode::set_node_corner(&p, *n),
-                    NodeOp::Smooth => gnode::set_node_smooth(&p, *n),
-                    _ => gnode::break_at_node(&p, *n),
+                    NodeOp::Corner => gnode::set_node_corner(&p, n),
+                    NodeOp::Smooth => gnode::set_node_smooth(&p, n),
+                    _ => gnode::break_at_node(&p, n),
                 }
                 .map_err(err_text)?;
             }
@@ -1814,6 +1841,30 @@ mod tests {
         assert!(apply_op(&line, NodeOp::Delete, &both, None, Point::ZERO, &[]).unwrap().elements().is_empty());
         let all: Vec<NodeRef> = (0..4).map(|i| NodeRef::new(0, i)).collect();
         assert!(apply_op(&square(), NodeOp::Delete, &all, None, Point::ZERO, &[]).unwrap().elements().is_empty());
+    }
+
+    #[test]
+    fn several_breaks_or_deleted_lines_on_a_closed_shape_hit_the_chosen_ones() {
+        // Delete the bottom and the top line of the square: the right and the left line stay.
+        let nodes = [NodeRef::new(0, 0), NodeRef::new(0, 2)];
+        let out = apply_op(&square(), NodeOp::DeleteSegment, &nodes, None, Point::ZERO, &[]).unwrap();
+        let cs = contours(&out);
+        assert_eq!(cs.len(), 2);
+        for c in &cs {
+            assert_eq!(c.segs.len(), 1);
+            assert!((c.start().unwrap().x - c.end().unwrap().x).abs() < 1e-9, "an upright line is left: {c:?}");
+        }
+        // Break at two opposite corners: two halves of two lines each, meeting at those corners.
+        let nodes = [NodeRef::new(0, 1), NodeRef::new(0, 3)];
+        let out = apply_op(&square(), NodeOp::Break, &nodes, None, Point::ZERO, &[]).unwrap();
+        let cs = contours(&out);
+        assert_eq!(cs.len(), 2);
+        let corners = [Point::new(10.0, 0.0), Point::new(0.0, 10.0)];
+        for c in &cs {
+            assert!(!c.closed);
+            assert_eq!(c.segs.len(), 2);
+            assert!(corners.contains(&c.start().unwrap()) && corners.contains(&c.end().unwrap()), "{c:?}");
+        }
     }
 
     #[test]

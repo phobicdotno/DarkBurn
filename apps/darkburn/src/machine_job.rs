@@ -43,6 +43,8 @@ pub fn head(app: &DarkBurn) -> Option<Point> {
 
 /// Each frame: where the head is, for jobs that start from the current position.
 pub fn update_head(app: &mut DarkBurn) {
+    // Also each frame: "Start here" does not outlive the design it was picked in.
+    job_cmds::start_op(app);
     if let Some(h) = head(app) {
         app.job.head = Some(h);
     } else if !app.machine.handle.is_connected() {

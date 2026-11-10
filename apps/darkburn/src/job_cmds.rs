@@ -260,6 +260,9 @@ pub struct JobState {
     pub last_position: Option<LastPosition>,
     /// "Start here": the operation the next start, send or save begins at.
     pub start_op: Option<usize>,
+    /// The document revision `start_op` was picked in: the number means nothing in the job of
+    /// a changed design (see [`start_op`]).
+    pub start_op_revision: u64,
     pub preview: PreviewUi,
     pub pending: Option<(BuildTask, After)>,
     pub pending_started: Option<std::time::Instant>,
@@ -328,6 +331,15 @@ impl JobState {
     pub fn user_origin_design(&self, device: &JobDevice) -> Option<Point> {
         self.user_origin.map(|u| device.geometry().affine().inverse() * u)
     }
+}
+
+/// "Start here": the operation the next start, send or save begins at. It is dropped once the
+/// design has changed since it was picked, because the new job has other operations.
+pub fn start_op(app: &mut DarkBurn) -> Option<usize> {
+    if app.job.start_op.is_some() && app.job.start_op_revision != app.editor.revision() {
+        app.job.start_op = None;
+    }
+    app.job.start_op
 }
 
 /// The job settings saved in the open project (or the user's defaults).
@@ -544,7 +556,7 @@ pub fn run(app: &mut DarkBurn, _ctx: &egui::Context, id: &str) -> bool {
             let Some(path) = rfd::FileDialog::new().add_filter(kind.filter, kind.extensions).set_file_name(name).save_file() else {
                 return true;
             };
-            let from_op = app.job.start_op;
+            let from_op = start_op(app);
             start_build(app, After::SaveGcode { path, from_op });
         }
         "laser.material_test" => app.job.material_open = true,
@@ -801,7 +813,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
         }),
         "job.save_gcode" | "file.save_gcode" => (|| {
             let path = PathBuf::from(text(a, "path")?);
-            let from_op = if a.get("from_op").is_some() { Some(index(a, "from_op")?) } else { app.job.start_op };
+            let from_op = if a.get("from_op").is_some() { Some(index(a, "from_op")?) } else { start_op(app) };
             let job = build_now(app)?;
             if job.out_of_bounds() && !flag(a, "allow_out_of_bounds")?.unwrap_or(false) {
                 return Err(format!(
@@ -1004,6 +1016,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
         "job.preview_start_here" => (|| {
             let op = index(a, "op_index")?;
             app.job.start_op = Some(op);
+            app.job.start_op_revision = app.editor.revision();
             Ok(json!({ "start_op": op }))
         })(),
         "job.preview_save_from_here" => {
@@ -1102,6 +1115,23 @@ mod tests {
         assert!(run(&mut a, "job.preview_save_from_here", json!({ "path": part.to_string_lossy(), "op_index": 99999 })).is_err());
         run(&mut a, "job.preview_start_here", json!({ "op_index": 3 })).unwrap();
         assert_eq!(a.job.start_op, Some(3));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn start_here_is_dropped_when_the_design_changes() {
+        let mut a = app();
+        with_square(&mut a);
+        let dir = temp("stale");
+        let path = dir.join("job.gc");
+        run(&mut a, "job.preview_start_here", json!({ "op_index": 3 })).unwrap();
+        let r = run(&mut a, "job.save_gcode", json!({ "path": path.to_string_lossy() })).unwrap();
+        assert_eq!(r["from_op"], 3, "the same design: Start here holds");
+        // Another shape: operation 3 of the new job is some other move.
+        run(&mut a, "shape.add_rect", json!({ "x": 60, "y": 20, "width": 10, "height": 10, "layer": 0 })).unwrap();
+        let r = run(&mut a, "job.save_gcode", json!({ "path": path.to_string_lossy() })).unwrap();
+        assert!(r["from_op"].is_null(), "the whole new job is written: {r}");
+        assert_eq!(a.job.start_op, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

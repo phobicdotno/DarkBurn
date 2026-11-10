@@ -9,3 +9,4 @@ Fix: Cut selected graphics now also holds on a galvo laser
 Fix: the material test no longer changes the settings of layers your design already uses
 Fix: with an origin set on a G-code machine, the job now runs where its frame runs
 Fix: the material test refuses an absurd number of rows or columns instead of crashing
+Fix: Start here is forgotten when the design changes, so a changed job no longer starts part way

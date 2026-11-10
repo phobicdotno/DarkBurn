@@ -123,9 +123,9 @@ fn nest(items: &mut [Item]) {
             darkburn_job::geom::flatten(&it.path, tol).into_iter().filter(|p| p.closed).map(|p| (darkburn_job::geom::bbox(&p.pts), p.pts)).collect()
         })
         .collect();
-    for i in 0..items.len() {
-        let bbox = items[i].path.bounding_box();
-        let Some(darkburn_core::kurbo::PathEl::MoveTo(p0)) = items[i].path.elements().first().copied() else { continue };
+    for (i, item) in items.iter_mut().enumerate() {
+        let bbox = item.path.bounding_box();
+        let Some(darkburn_core::kurbo::PathEl::MoveTo(p0)) = item.path.elements().first().copied() else { continue };
         let mut around: Vec<(f64, usize)> = Vec::new();
         for (j, polys) in closed.iter().enumerate() {
             if j == i {
@@ -138,8 +138,8 @@ fn nest(items: &mut [Item]) {
                 around.push((smallest, j));
             }
         }
-        items[i].depth = around.len();
-        items[i].parent = around.iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|a| a.1);
+        item.depth = around.len();
+        item.parent = around.iter().min_by(|a, b| a.0.total_cmp(&b.0)).map(|a| a.1);
     }
 }
 
@@ -265,7 +265,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
         // their own, the lower priority number first; shapes that agree stay together.
         let mut groups: Vec<(i32, f64)> = Vec::new();
         for it in &items {
-            if !groups.iter().any(|g| *g == (it.priority, it.scale)) {
+            if !groups.contains(&(it.priority, it.scale)) {
                 groups.push((it.priority, it.scale));
             }
         }
@@ -280,7 +280,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
             if groups.len() == 1 {
                 return outlines(group, 0.0);
             }
-            let owner = |i: usize| (items[i].priority, items[i].scale) == group && items[i].depth % 2 == 0;
+            let owner = |i: usize| (items[i].priority, items[i].scale) == group && items[i].depth.is_multiple_of(2);
             (0..items.len()).filter(|&i| owner(i) || items[i].parent.is_some_and(owner)).map(|i| items[i].placed(0.0, shift)).collect()
         };
         let base = if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() };

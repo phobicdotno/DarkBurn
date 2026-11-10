@@ -153,3 +153,10 @@ fn a_form_inside_a_form_carries_every_matrix() {
     let b = paths(&doc)[0].path.bounding_box();
     assert!(box_pt(b, 100.0, 20.0, 120.0, 20.0), "{b:?}");
 }
+
+#[test]
+fn a_layer_membership_that_names_itself_is_not_followed_forever() {
+    let ocmd = b"<< /Type /OCMD /OCGs 5 0 R >>".to_vec();
+    let doc = read(&pdf("/MediaBox [0 0 300 300] /Resources << /Properties << /P 5 0 R >> >>", "/OC /P BDC 0 0 10 10 re S EMC", &[ocmd]));
+    assert_eq!(paths(&doc).len(), 1);
+}

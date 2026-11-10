@@ -449,7 +449,7 @@ impl<'a> Interp<'a> {
                 }
                 "BMC" => mc.push(None),
                 "BDC" => {
-                    let entry = if a.first().and_then(name) == Some(b"OC") { a.get(1).and_then(|p| self.ocg_layer(p, &res)) } else { None };
+                    let entry = if a.first().and_then(name) == Some(b"OC") { a.get(1).and_then(|p| self.ocg_layer(p, &res, 0)) } else { None };
                     mc.push(entry);
                 }
                 "EMC" => {
@@ -494,7 +494,11 @@ impl<'a> Interp<'a> {
     }
 
     /// Layer name and hidden state of an optional-content property (name or inline dict).
-    fn ocg_layer(&self, prop: &Object, res: &Res<'a>) -> Option<(String, bool)> {
+    fn ocg_layer(&self, prop: &Object, res: &Res<'a>, depth: u32) -> Option<(String, bool)> {
+        // A membership dictionary can name another one, or in a damaged file itself.
+        if depth > 8 {
+            return None;
+        }
         let doc = self.doc;
         let (obj, id) = match prop {
             Object::Name(nm) => res.lookup(doc, b"Properties", nm)?,
@@ -508,7 +512,7 @@ impl<'a> Interp<'a> {
                 Object::Array(a) => a.first()?,
                 _ => ocgs,
             };
-            return self.ocg_layer(first, res);
+            return self.ocg_layer(first, res, depth + 1);
         }
         let label = dict_get(doc, d, b"Name").and_then(|n| n.as_str().ok()).map(pdf_string).unwrap_or_else(|| "Layer".into());
         let hidden = id.is_some_and(|i| self.off.contains(&i));
@@ -552,7 +556,7 @@ impl<'a> Interp<'a> {
                 // Optional content on the form itself.
                 let mut mc2 = mc.to_vec();
                 if let Ok(oc) = stream.dict.get(b"OC") {
-                    mc2.push(self.ocg_layer(oc, res));
+                    mc2.push(self.ocg_layer(oc, res, 0));
                 }
                 self.run(&content, inner, g, depth + 1, mc2);
             }

@@ -305,28 +305,73 @@ pub fn auto_gaps(doc: &Document, id: ShapeId, force: bool) -> Vec<Gap> {
 
 fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
     let t = doc.layer(s.layer).main().tabs;
-    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() {
+    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() || t.size <= 0.0 {
         return Vec::new();
     }
-    let opts = TabOptions {
-        count: t.min_count.max(1) as usize,
-        spacing: Some(t.spacing.max(0.1)),
-        min_count: t.min_count as usize,
-        max_count: t.max_count.max(1) as usize,
-        size: t.size,
-        skip_shorter_than: None,
-        offset_from_start: 0.0,
-    };
     let subs = gpath::subpaths(&s.outline());
-    let tree = query::containment(&subs, 1e-6);
+    // The closed outlines a shape can lie inside, as the job counts them: every closed outline
+    // of its own layer, and those the other layers cut as lines.
+    let around: Vec<BezPath> = if t.skip_inner { outlines_around(doc, s.layer) } else { Vec::new() };
     let mut out = Vec::new();
-    for (i, sub) in subs.iter().enumerate() {
-        if t.skip_inner && tree.depth.get(i).copied().unwrap_or(0) > 0 {
+    for sub in &subs {
+        if !gpath::is_closed(sub, 0.0) || (t.skip_inner && lies_inside_another(sub, &around)) {
             continue;
         }
+        // The same count and tab length as the job (`darkburn_job::line`): the spacing gives the
+        // count, held between Min tabs and Max tabs (Min wins when it is the larger), and the
+        // tabs together never take more than half of the outline.
+        let l = gpath::length(sub);
+        if l <= 1e-9 {
+            continue;
+        }
+        let n = ((l / t.spacing.max(0.1)).round() as u32).clamp(t.min_count, t.max_count.max(t.min_count)) as usize;
+        if n == 0 {
+            continue;
+        }
+        let opts = TabOptions {
+            count: n,
+            spacing: None,
+            min_count: 0,
+            max_count: usize::MAX,
+            size: t.size.min(l / (2.0 * n as f64)),
+            skip_shorter_than: None,
+            offset_from_start: 0.0,
+        };
         out.extend(tabs::place_tabs(sub, &opts).gaps);
     }
     out
+}
+
+/// The closed outlines that make a shape of `layer` an inner shape when it lies inside one: the
+/// closed outlines of `layer` itself and those of the other layers that are cut as lines.
+fn outlines_around(doc: &Document, layer: usize) -> Vec<BezPath> {
+    let cuts_lines = |l: usize| {
+        let l = doc.layer(l);
+        l.output
+            && l.settings.iter().any(|c| c.enabled && c.passes > 0 && matches!(c.mode, darkburn_core::Mode::Line | darkburn_core::Mode::FillLine))
+    };
+    doc.iter()
+        .flat_map(Shape::leaves)
+        .filter(|l| !l.is_image() && (l.layer == layer || cuts_lines(l.layer)))
+        .flat_map(|l| gpath::subpaths(&l.outline()))
+        .filter(|p| gpath::is_closed(p, 0.0))
+        .collect()
+}
+
+/// Whether the closed outline `sub` lies inside a larger one of `around`.
+fn lies_inside_another(sub: &BezPath, around: &[BezPath]) -> bool {
+    let (Some(bb), Some(first)) = (gpath::bounding_box(sub), gpath::start_point(sub)) else { return false };
+    let area = gpath::signed_area(sub).abs();
+    let nodes: Vec<Point> = gpath::contours(sub).iter().flat_map(|c| c.nodes()).collect();
+    let mid = nodes.get(nodes.len() / 2).copied().unwrap_or(first);
+    around.iter().any(|q| {
+        let Some(qb) = gpath::bounding_box(q) else { return false };
+        let within = bb.x0 >= qb.x0 - 1e-9 && bb.y0 >= qb.y0 - 1e-9 && bb.x1 <= qb.x1 + 1e-9 && bb.y1 <= qb.y1 + 1e-9;
+        within
+            && gpath::signed_area(q).abs() > area
+            && query::point_in_shape(q, first, darkburn_geom::FillRule::EvenOdd)
+            && query::point_in_shape(q, mid, darkburn_geom::FillRule::EvenOdd)
+    })
 }
 
 fn tabs_auto(e: &mut Editor, a: &Value) -> R {

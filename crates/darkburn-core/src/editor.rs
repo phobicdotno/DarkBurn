@@ -83,6 +83,8 @@ struct Snapshot {
     doc: Document,
     selection: Selection,
     label: String,
+    /// The editor's revision when this state was current.
+    revision: u64,
 }
 
 /// Unlimited undo and redo.
@@ -178,7 +180,12 @@ impl Editor {
 
     /// Record the state before a change called `label`. Call it, then change `doc`.
     pub fn checkpoint(&mut self, label: &str) {
-        self.history.undo.push(Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string() });
+        self.history.undo.push(Snapshot {
+            doc: self.doc.clone(),
+            selection: self.selection.clone(),
+            label: label.to_string(),
+            revision: self.revision,
+        });
         self.history.redo.clear();
         self.revision += 1;
     }
@@ -186,7 +193,7 @@ impl Editor {
     /// Make an undoable change: `f` changes the document and selection; nothing is recorded
     /// when it returns false.
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
-        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string() };
+        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision };
         let changed = f(&mut self.doc, &mut self.selection);
         if changed {
             self.history.undo.push(before);
@@ -205,7 +212,12 @@ impl Editor {
         if let Some(s) = self.history.undo.pop() {
             self.restore_doc(s.doc);
             self.selection = s.selection;
+            // Back at the state of the checkpoint: still saved if it was saved then.
+            let was_saved = s.revision == self.saved_revision;
             self.revision += 1;
+            if was_saved {
+                self.saved_revision = self.revision;
+            }
         }
     }
 
@@ -221,7 +233,12 @@ impl Editor {
 
     pub fn undo(&mut self) -> bool {
         let Some(s) = self.history.undo.pop() else { return false };
-        let now = Snapshot { doc: self.restore_doc(s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let now = Snapshot {
+            doc: self.restore_doc(s.doc),
+            selection: std::mem::replace(&mut self.selection, s.selection),
+            label: s.label,
+            revision: self.revision,
+        };
         self.history.redo.push(now);
         self.revision += 1;
         true
@@ -229,7 +246,12 @@ impl Editor {
 
     pub fn redo(&mut self) -> bool {
         let Some(s) = self.history.redo.pop() else { return false };
-        let now = Snapshot { doc: self.restore_doc(s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let now = Snapshot {
+            doc: self.restore_doc(s.doc),
+            selection: std::mem::replace(&mut self.selection, s.selection),
+            label: s.label,
+            revision: self.revision,
+        };
         self.history.undo.push(now);
         self.revision += 1;
         true
@@ -360,5 +382,32 @@ mod tests {
         e.doc.notes = "new".into();
         e.drop_checkpoint();
         assert_eq!(e.doc.notes, "new");
+    }
+
+    /// A drag that is cancelled or ends where it began changes nothing: a saved project stays saved.
+    #[test]
+    fn a_dropped_checkpoint_does_not_mark_a_saved_project_as_changed() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        let id = e.doc.iter().next().unwrap().id;
+        let before = e.revision();
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0));
+        e.touch();
+        e.drop_checkpoint();
+        assert!(!e.is_modified(), "nothing changed since the save");
+        assert!(e.revision() > before, "but the canvas is told to draw again");
+        // With unsaved changes before the drag it stays changed.
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        e.checkpoint("Move");
+        e.drop_checkpoint();
+        assert!(e.is_modified());
     }
 }

@@ -88,8 +88,12 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
     // Path with overcut.
     let perimeter = geom::polyline_length(pts);
     let mut path = pts.to_vec();
-    if closed && ls.overcut > 0.0 {
-        let oc = ls.overcut.min(perimeter);
+    // Overcut closes a cut line over its own start. Dots have no line to close: going on past
+    // the start would only fire the first dots again, or new ones between them.
+    let dots = ls.dot_mode.is_some_and(|d| d.spacing > EPS);
+    let overcut = if dots { 0.0 } else { ls.overcut };
+    if closed && overcut > 0.0 {
+        let oc = overcut.min(perimeter);
         let pieces = geom::split_at(pts, &[oc]);
         path.extend(pieces[0].iter().skip(1));
     }
@@ -192,7 +196,7 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
         out.push(Op::Dwell { ms: ls.end_pause_ms, power: if ls.cut_through_end { ls.pause_power } else { 0.0 } });
     }
     if let Some(l) = lead_out {
-        let t_end = if closed && ls.overcut > 0.0 { geom::point_at(&path, total).1 } else { t1 };
+        let t_end = if closed && overcut > 0.0 { geom::point_at(&path, total).1 } else { t1 };
         let (_, op) = lead_geometry(l, path_end, t_end, normal(t_end), false, speed, power);
         out.push(op);
     }
@@ -518,6 +522,17 @@ mod tests {
         emit_path(&square(), true, &ctx(&s), &mut ops);
         let dots = ops.iter().filter(|o| matches!(o, Op::Dwell { .. })).count();
         assert_eq!(dots, 20);
+        // Overcut does not fire dots a second time, on the first ones or between them.
+        for spacing in [2.0, 3.0] {
+            s.line.dot_mode = Some(DotMode { time_ms: 5.0, spacing });
+            s.line.overcut = 0.0;
+            let mut plain = Vec::new();
+            emit_path(&square(), true, &ctx(&s), &mut plain);
+            s.line.overcut = 10.0;
+            let mut with = Vec::new();
+            emit_path(&square(), true, &ctx(&s), &mut with);
+            assert_eq!(with, plain, "spacing {spacing}");
+        }
         let mut s = CutSettings::line(10.0, 50.0);
         s.line.start_pause_ms = 100.0;
         s.line.cut_through_start = true;

@@ -5,3 +5,4 @@ Fix: reconnecting right after disconnecting from a laser that stopped answering 
 Fix: galvo jobs follow the cut direction of a shape and leave its tabs
 Fix: the finish position is also written into saved G-code and RD files
 Fix: a saved Marlin, Smoothieware, Snapmaker, LinuxCNC or custom G-code file is no longer run shifted on a machine with an origin set
+Fix: dot mode with overcut no longer fires the first dots twice

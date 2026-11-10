@@ -107,11 +107,16 @@ pub struct ImageInput {
     pub transform: Affine,
     pub group: Option<u32>,
     pub priority: i32,
+    /// Scanning offset, mm: how far apart the machine burns the two directions of a
+    /// bidirectional scan at this speed. Lines scanned forward (towards +X of the scan frame)
+    /// are moved back by half of it and lines scanned in reverse forward by half, whichever
+    /// way the planner ends up scanning each line. Not used for one-way scans.
+    pub direction_offset: f64,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0 }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0 }
     }
 }
 

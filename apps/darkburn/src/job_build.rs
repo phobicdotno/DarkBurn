@@ -587,8 +587,8 @@ fn image_inputs(
     doc: &Document,
     leaves: &[(&Shape, Option<u32>)],
     s: &CutSetting,
-    cache: &mut HashMap<String, Arc<darkburn_raster::GrayF>>,
     tuning: &crate::scan_offsets::ScanTuning,
+    warnings: &mut Vec<String>,
 ) -> Vec<job::ImageInput> {
     let settings = darkburn_raster::ImageSettings {
         mode: raster_mode(s),
@@ -608,14 +608,21 @@ fn image_inputs(
     let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64)> = Vec::new();
     for (shape, group) in leaves {
         let ShapeKind::Image(img) = &shape.kind else { continue };
-        let Some(data) = doc.images.get(&img.image) else { continue };
-        let gray = match cache.get(&img.image) {
-            Some(g) => g.clone(),
-            None => {
-                let Ok(decoded) = image::load_from_memory(&data.bytes) else { continue };
-                let g = Arc::new(darkburn_raster::GrayF::from_dynamic(&decoded));
-                cache.insert(img.image.clone(), g.clone());
-                g
+        let label = layer::layer_label(shape.layer.min(layer::LAYER_COUNT - 1));
+        // An image too fine to scan is left out before anything that big is allocated.
+        let (w, h) = crate::images::size_mm(shape, img);
+        let bb = shape.bbox();
+        let dots = crate::images::dots_for(bb.width().max(w), bb.height().max(h), settings.line_interval_mm);
+        if dots > crate::images::MAX_DOTS {
+            warnings.push(format!("An image on layer {label} was left out: {}.", crate::images::ImageError::TooLarge { dots, shape: shape.id.0 }));
+            continue;
+        }
+        // The pixels with the image's crop applied (outside the crop nothing burns).
+        let gray = match crate::images::source_gray(doc, img) {
+            Ok(g) => g,
+            Err(e) => {
+                warnings.push(format!("An image on layer {label} was left out: {e}."));
+                continue;
             }
         };
         let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
@@ -623,9 +630,10 @@ fn image_inputs(
         processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
     }
     let mut out = Vec::new();
-    let build = |mut plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
-        // The device's scanning offset table moves forward and reverse lines apart (DS-08).
-        crate::scan_offsets::shift_plans(&mut plans, s.speed, &tuning.offsets);
+    // The device's scanning offset table moves forward and reverse lines apart (DS-08). The job
+    // engine applies it, because only it knows which way each line ends up being scanned.
+    let direction_offset = if s.bidirectional { tuning.offsets.offset_at(s.speed) } else { 0.0 };
+    let build = |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
         for plan in plans {
             let lines = plan
                 .lines
@@ -641,6 +649,7 @@ fn image_inputs(
             input.transform = plan.scan_to_mm();
             input.group = group;
             input.priority = priority;
+            input.direction_offset = direction_offset;
             out.push(input);
         }
     };
@@ -699,6 +708,27 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
+    // Kerf: a shape drawn inside another shape of its layer is a hole, and its kerf goes the
+    // other way. These are the closed outlines of the cut shapes on layers with a kerf offset,
+    // each with the number of its shape.
+    let mut kerf_outlines: Vec<Vec<(usize, Rect, Vec<Point>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+    let mut leaf_no = 0usize;
+    for top in &tops {
+        for leaf in top.leaves() {
+            leaf_no += 1;
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if !l.outputs() || leaf.is_image() || kerf_of(l).0 == 0.0 {
+                continue;
+            }
+            for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
+                if poly.closed {
+                    kerf_outlines[li].push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                }
+            }
+        }
+    }
+    let mut leaf_no = 0usize;
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -706,6 +736,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         report(0.25 * n as f32 / total as f32);
         let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
         for leaf in top.leaves() {
+            leaf_no += 1;
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
@@ -764,6 +795,20 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             let (kerf, differ) = kerf_of(l);
             if kerf != 0.0 {
+                // How many other shapes of the layer this one lies inside: odd means a hole.
+                let depth = match path.elements().first() {
+                    Some(PathEl::MoveTo(p0)) => kerf_outlines[li]
+                        .iter()
+                        .filter(|(no, r, pts)| {
+                            *no != leaf_no
+                                && r.area() > bbox.area() + 1e-9
+                                && job::geom::rect_inside(bbox, *r)
+                                && job::geom::point_in_polygon(*p0, pts)
+                        })
+                        .count(),
+                    _ => 0,
+                };
+                let kerf = if depth % 2 == 1 { -kerf } else { kerf };
                 path = darkburn_geom::offset::kerf_offset(&path, kerf, input.device.tolerance);
                 kerf_note[li] |= differ;
             }
@@ -805,7 +850,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     }
 
     // Images, layer by layer.
-    let mut cache = HashMap::new();
     for li in 0..layer::LAYER_COUNT {
         if leaves_by_layer[li].is_empty() {
             continue;
@@ -820,7 +864,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         match image_setting {
             Some(s) => {
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, s, &mut cache, &tuning);
+                entry.images = image_inputs(doc, &refs, s, &tuning, &mut warnings);
             }
             None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
         }

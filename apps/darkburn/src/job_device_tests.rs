@@ -90,6 +90,109 @@ fn scan_offset_table_shifts_forward_and_reverse_lines() {
     }
 }
 
+/// The burning moves of the image job without and with a 0.4 mm scanning offset at its speed.
+fn with_and_without_offset(setup: impl Fn(&mut BuildInput, &mut Document)) -> Vec<(crate::job_field_tests::Seg, crate::job_field_tests::Seg)> {
+    let mk = |tuning: crate::scan_offsets::ScanTuning| {
+        let mut d = image_doc(|s| s.image_mode = layer::ImageMode::Threshold, vec![0u8; 16]);
+        let mut i = input(Document::new());
+        setup(&mut i, &mut d);
+        i.doc = d;
+        i.tuning = Some(tuning);
+        let b = build_job_simple(&i).unwrap();
+        segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect::<Vec<_>>()
+    };
+    let base = mk(crate::scan_offsets::ScanTuning::default());
+    let mut t = crate::scan_offsets::ScanTuning::default();
+    t.offsets.set(200.0, 0.4);
+    let shifted = mk(t);
+    assert_eq!(base.len(), shifted.len());
+    assert!(base.len() > 4);
+    base.into_iter().zip(shifted).collect()
+}
+
+#[test]
+fn scan_offsets_follow_the_direction_each_line_is_really_scanned_in() {
+    // The machine's 0,0 is top left: the head starts above the image and scans it top down,
+    // so every line runs the other way than in a bottom-up scan.
+    let pairs = with_and_without_offset(|i, _| i.device.origin = darkburn_job::Corner::TopLeft);
+    assert!(pairs[0].0.from.y < pairs[pairs.len() - 1].0.from.y, "scanned from the top (machine Y grows downwards)");
+    for (a, b) in &pairs {
+        let forward = a.to.x > a.from.x;
+        let dx = b.from.x - a.from.x;
+        assert!((dx - if forward { -0.2 } else { 0.2 }).abs() < 1e-6, "forward lines move back, reverse lines forward: {dx} (forward: {forward})");
+    }
+}
+
+#[test]
+fn scan_offsets_leave_a_one_way_scan_alone() {
+    let pairs = with_and_without_offset(|_, d| d.layer_mut(3).main_mut().bidirectional = false);
+    for (a, b) in &pairs {
+        assert!(a.to.x > a.from.x && b.to.x > b.from.x, "every line runs forward");
+        assert!((b.from.x - a.from.x).abs() < 1e-9, "no line moves: {}", b.from.x - a.from.x);
+    }
+}
+
+#[test]
+fn a_job_on_a_machine_with_an_origin_set_runs_where_its_frame_runs() {
+    use crate::machine_api::{JobData, LaserState};
+    use serde_json::json;
+    let mut a = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+    let run = |a: &mut crate::shell::DarkBurn, id: &str, args: serde_json::Value| crate::api::execute_headless(a, id, &args).unwrap();
+    let wait = |a: &mut crate::shell::DarkBurn, what: &str, f: &dyn Fn(&crate::shell::DarkBurn) -> bool| {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            a.machine.tick();
+            if f(a) {
+                return;
+            }
+            assert!(std::time::Instant::now() < end, "timed out waiting for {what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let ready = |a: &crate::shell::DarkBurn| a.machine.handle.snapshot().state == LaserState::Ready;
+    let id = a.machine.devices.devices.iter().find(|d| d.kind == crate::devices::DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": id }));
+    run(&mut a, "machine.connect", json!({}));
+    wait(&mut a, "ready", &ready);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 }));
+    // Put the head at 50, 60 and set the origin there (GRBL keeps it as a work offset).
+    run(&mut a, "machine.move_to", json!({ "x": 50, "y": 60 }));
+    wait(&mut a, "the move", &|a| {
+        let s = a.machine.handle.snapshot();
+        ready(a) && (s.machine_pos[0] - 50.0).abs() < 1e-6 && (s.machine_pos[1] - 60.0).abs() < 1e-6
+    });
+    run(&mut a, "machine.set_origin", json!({}));
+    wait(&mut a, "the work offset", &|a| {
+        let s = a.machine.handle.snapshot();
+        ready(a) && s.work_pos[0].abs() < 1e-6 && s.work_pos[1].abs() < 1e-6 && (s.machine_pos[0] - 50.0).abs() < 1e-6
+    });
+    // The X range of the moves in a job's G-code, as the controller reads them.
+    let x_range = |a: &crate::shell::DarkBurn| {
+        let job = crate::job_cmds::build_now(a).unwrap();
+        let JobData::Gcode(lines) = crate::machine_job::request_for(a, &job, None, false).unwrap().data else { panic!("a G-code job") };
+        let xs: Vec<f64> = lines
+            .iter()
+            .filter(|l| l.starts_with("G0") || l.starts_with("G1"))
+            .flat_map(|l| l.split_whitespace())
+            .filter_map(|w| w.strip_prefix('X'))
+            .filter_map(|v| v.parse().ok())
+            .collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let frame_range = |a: &crate::shell::DarkBurn| {
+        let tp = build_frame(&crate::job_cmds::build_input(a), FrameKind::Rectangle, 100.0, None).unwrap();
+        let xs: Vec<f64> = crate::machine_job::work_points(a, &tp).iter().map(|p| p.x).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    // Absolute coordinates: the square is at bed 10..30, which is 40 mm left of the origin.
+    assert_eq!(frame_range(&a), (-40.0, -20.0));
+    assert_eq!(x_range(&a), frame_range(&a), "absolute coordinates");
+    // From the user origin: the square's corner sits on the origin.
+    run(&mut a, "job.set_origin", json!({ "start_from": "user_origin" }));
+    assert_eq!(frame_range(&a), (0.0, 20.0));
+    assert_eq!(x_range(&a), frame_range(&a), "user origin");
+}
+
 #[test]
 fn output_tolerance_changes_how_curves_are_flattened() {
     let mut d = Document::new();

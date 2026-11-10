@@ -43,6 +43,8 @@ pub fn head(app: &DarkBurn) -> Option<Point> {
 
 /// Each frame: where the head is, for jobs that start from the current position.
 pub fn update_head(app: &mut DarkBurn) {
+    // Also each frame: "Start here" does not outlive the design it was picked in.
+    job_cmds::start_op(app);
     if let Some(h) = head(app) {
         app.job.head = Some(h);
     } else if !app.machine.handle.is_connected() {
@@ -325,6 +327,12 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             if send_only {
                 return Err("A G-code machine runs a job as it streams it. Use Start (or Save G-code).".into());
             }
+            // An absolute job is in machine coordinates, but the controller reads its moves in
+            // work coordinates: they differ by the work offset once an origin is set. The frame
+            // is sent the same way (`work_points`).
+            let offset = work_offset(app);
+            let tp =
+                if tp.space == CoordSpace::MachineAbsolute && offset != Vec2::ZERO { darkburn_job::origin::pointer_offset(&tp, -offset) } else { tp };
             JobRequest::gcode(crate::gcode_machines::job_lines(app.machine.active(), &tp, &app.job.gcode))
         }
         Family::Ruida => {
@@ -352,7 +360,7 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
                 // The galvo job is made from the shapes, not from the preview's moves.
                 return Err("A galvo job is marked whole: it cannot start part way. Use Start (and clear Start here in the Preview).".into());
             }
-            crate::galvo_job::request(&app.editor.doc, app.machine.active(), false, false)?.0
+            crate::galvo_job::request(&crate::galvo_job::job_document(app)?, app.machine.active(), false, false)?.0
         }
     };
     req.name = name;

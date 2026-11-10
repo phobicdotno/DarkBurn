@@ -70,14 +70,15 @@ enum UnitKind {
         depth: usize,
         tabs: Vec<Point>,
     },
+    /// `scales`: the power scale of each polygon's shape.
     Fill {
         polys: Vec<Vec<Point>>,
-        scale: f64,
+        scales: Vec<f64>,
         reversible: bool,
     },
     Offset {
         polys: Vec<Vec<Point>>,
-        scale: f64,
+        scales: Vec<f64>,
     },
     Image {
         image: usize,
@@ -172,6 +173,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
     // Emit runs of consecutive units from the same block, pass by pass.
     let mut cur_laser: Option<u8> = None;
     let mut cur_air = false;
+    let mut cur_z: Option<f64> = None;
     let mut i = 0;
     while i < planned.len() {
         let bi = units[planned[i].item].block;
@@ -196,7 +198,13 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         for pass in 1..=s.passes {
             tp.ops.push(Op::PassStart { pass });
             if s.z.enabled {
-                tp.ops.push(Op::ZMove { z: s.z.offset + s.z.step_per_pass * (pass - 1) as f64 });
+                let z = s.z.offset + s.z.step_per_pass * (pass - 1) as f64;
+                tp.ops.push(Op::ZMove { z });
+                cur_z = Some(z);
+            } else if cur_z.is_some_and(|z| z != 0.0) {
+                // An earlier layer moved Z; this one has no Z offset and runs at the start height.
+                tp.ops.push(Op::ZMove { z: 0.0 });
+                cur_z = Some(0.0);
             }
             for p in &planned[i..j] {
                 emit_unit(&units[p.item], p, &items, b, &input.layers[b.layer], pass, &opts.planner, &mut tp.ops);
@@ -377,13 +385,13 @@ fn fill_units(bi: usize, b: &Block, layer: &LayerInput, polys: &[Vec<Poly>], sta
     let clusters = fill::fill_clusters(&closed, &shape_of, &groups, b.settings.fill.grouping);
     for c in clusters {
         let cpolys: Vec<Vec<Point>> = c.iter().map(|&i| closed[i].clone()).collect();
-        let scale = c.iter().map(|&i| layer.shapes[shape_of[i]].power_scale).fold(0.0, f64::max);
+        let scales: Vec<f64> = c.iter().map(|&i| layer.shapes[shape_of[i]].power_scale).collect();
         let group = layer.shapes[shape_of[c[0]]].group;
         let priority = c.iter().map(|&i| layer.shapes[shape_of[i]].priority).min().unwrap_or(0);
         let kind = if b.mode == CutMode::OffsetFill {
-            UnitKind::Offset { polys: cpolys, scale }
+            UnitKind::Offset { polys: cpolys, scales }
         } else {
-            UnitKind::Fill { polys: cpolys, scale, reversible: b.settings.fill.bidirectional }
+            UnitKind::Fill { polys: cpolys, scales, reversible: b.settings.fill.bidirectional }
         };
         let unit = Unit { block: bi, kind };
         let mut ops = Vec::new();
@@ -440,8 +448,8 @@ fn emit_unit(unit: &Unit, p: &Planned, items: &[PlanItem], b: &Block, layer: &La
 fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point, out: &mut Vec<Op>) {
     let f = &s.fill;
     match &unit.kind {
-        UnitKind::Fill { polys, scale, .. } => {
-            let power = s.max_power * scale;
+        UnitKind::Fill { polys, scales, .. } => {
+            let powers: Vec<f64> = scales.iter().map(|k| s.max_power * k).collect();
             let refs: Vec<&[Point]> = polys.iter().map(|p| p.as_slice()).collect();
             let base = f.angle_deg + f.angle_step_per_pass * (pass - 1) as f64;
             let mut angles = vec![base];
@@ -450,7 +458,7 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
             }
             for deg in angles {
                 let a = deg.to_radians();
-                let mut rows = fill::scan_polygons(&refs, f.fill_rule, f.interval, a, power);
+                let mut rows = fill::scan_polygons_powers(&refs, &powers, f.fill_rule, f.interval, a);
                 fill::mark_ramps(&mut rows, f.ramp_outer_edge);
                 let mut ordered = fill::order_rows(rows, f.bidirectional, f.flood_fill, f.interval);
                 if p.reversed {
@@ -466,13 +474,12 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                     speed: s.speed,
                     overscan: f.overscan.distance(s.speed),
                     rapid_gap: f.rapid_gap,
-                    ramp: (f.ramp_length, s.min_power.min(power)),
+                    ramp: (f.ramp_length, s.min_power),
                 };
                 fill::emit_rows(&ordered, &e, out);
             }
         }
-        UnitKind::Offset { polys, scale } => {
-            let power = s.max_power * scale;
+        UnitKind::Offset { polys, scales } => {
             let parents = fill::parents(polys);
             let mut pos = from;
             for (pi, poly) in polys.iter().enumerate() {
@@ -481,6 +488,7 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
                 if depth % 2 == 1 {
                     continue;
                 }
+                let power = s.max_power * scales[pi];
                 let rings = fill::offset_rings(poly, f.interval);
                 for (k, ring) in rings.iter().enumerate() {
                     let st = planner::choose_start(ring, pos, false);
@@ -535,6 +543,16 @@ fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
         if is.bidirectional {
             for o in ordered.iter_mut() {
                 o.1 = !o.1;
+            }
+        }
+    }
+    let half = img.direction_offset / 2.0;
+    if is.bidirectional && half != 0.0 {
+        for (row, forward) in ordered.iter_mut() {
+            let d = if *forward { -half } else { half };
+            for r in row.runs.iter_mut() {
+                r.x0 += d;
+                r.x1 += d;
             }
         }
     }
@@ -607,6 +625,126 @@ mod tests {
         assert_eq!(rapids, 1);
         let cuts = tp.ops.iter().filter(|o| matches!(o, Op::Cut { .. })).count();
         assert_eq!(cuts, 5 * 4 + 4);
+    }
+
+    /// The powers the laser fires at left and right of x = 50.
+    fn powers_by_side(tp: &Toolpath) -> (Vec<f64>, Vec<f64>) {
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        let mut pos = Point::ZERO;
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                let side = if pos.midpoint(*to).x < 50.0 { &mut left } else { &mut right };
+                if !side.contains(power) {
+                    side.push(*power);
+                }
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        (left, right)
+    }
+
+    #[test]
+    fn every_shape_of_a_fill_keeps_its_own_power_scale() {
+        for mode in [CutMode::Fill, CutMode::OffsetFill] {
+            let mut s = CutSettings::fill(100.0, 80.0, 1.0);
+            s.mode = mode;
+            let full = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+            let mut half = ShapeInput::new(rect_path(100.0, 0.0, 10.0, 10.0));
+            half.power_scale = 0.5;
+            let tp = run(LayerInput::new(0, "A", s).with_shape(full).with_shape(half), &JobOptions::default());
+            assert_eq!(powers_by_side(&tp), (vec![80.0], vec![40.0]), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_hole_with_another_power_scale_stays_a_hole() {
+        let outer = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+        let mut hole = ShapeInput::new(rect_path(3.0, 3.0, 4.0, 4.0));
+        hole.power_scale = 0.5;
+        let tp = run(LayerInput::new(0, "A", CutSettings::fill(100.0, 80.0, 1.0)).with_shape(outer).with_shape(hole), &JobOptions::default());
+        let mut pos = Point::ZERO;
+        let mut burnt = 0.0;
+        for op in &tp.ops {
+            if let Op::Cut { to, power, .. } = op
+                && *power > 0.0
+            {
+                assert_eq!(*power, 80.0, "the ring burns at the outer shape's power");
+                burnt += pos.distance(*to);
+            }
+            if let Some(t) = op.target() {
+                pos = t;
+            }
+        }
+        assert!((burnt - (100.0 - 16.0)).abs() < 1e-6, "{burnt}");
+    }
+
+    #[test]
+    fn an_image_scan_offset_follows_the_direction_of_each_line() {
+        // The burning moves of four 10 mm lines starting at `y0`, as (from, to).
+        let burns = |offset: f64, bidirectional: bool, y0: f64| {
+            let lines = (0..4).map(|k| crate::input::Scanline { y: y0 + k as f64, runs: vec![(0.0, 10.0, 1.0)] }).collect();
+            let mut img = ImageInput::new(lines);
+            img.direction_offset = offset;
+            let mut s = CutSettings::image(100.0, 50.0, 0.0);
+            s.image.bidirectional = bidirectional;
+            let mut l = LayerInput::new(0, "A", s);
+            l.images.push(img);
+            let tp = run(l, &JobOptions::default());
+            let mut pos = Point::ZERO;
+            let mut out = Vec::new();
+            for op in &tp.ops {
+                if let Op::Cut { to, power, .. } = op
+                    && *power > 0.0
+                {
+                    out.push((pos, *to));
+                }
+                if let Some(t) = op.target() {
+                    pos = t;
+                }
+            }
+            out
+        };
+        // Above the start the image is scanned bottom up, below it top down (every line then
+        // runs the other way).
+        for y0 in [5.0, -10.0] {
+            let plain = burns(0.0, true, y0);
+            let shifted = burns(0.4, true, y0);
+            assert_eq!(plain.len(), 4);
+            assert_eq!(plain[0].0.y < plain[3].0.y, y0 > 0.0, "scan order at {y0}");
+            for (a, b) in plain.iter().zip(&shifted) {
+                let want = if a.1.x > a.0.x { -0.2 } else { 0.2 };
+                assert!((b.0.x - a.0.x - want).abs() < 1e-9 && (b.1.x - a.1.x - want).abs() < 1e-9, "at {y0}: {a:?} {b:?}");
+            }
+            assert_eq!(burns(0.4, false, y0), burns(0.0, false, y0), "a one-way scan is not shifted");
+        }
+    }
+
+    #[test]
+    fn a_layer_without_z_offset_goes_back_to_the_start_height() {
+        let mut a = LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0)));
+        a.settings[0].z = ZSettings { enabled: true, offset: 2.0, step_per_pass: 0.0 };
+        let b = LayerInput::new(1, "B", CutSettings::line(10.0, 50.0)).with_shape(ShapeInput::new(rect_path(20.0, 0.0, 10.0, 10.0)));
+        let tp = generate(&JobInput { layers: vec![a, b.clone()] }, &JobOptions::default(), &mut Progress::none()).unwrap();
+        // Z at each cut, by layer.
+        let mut z = None;
+        let mut layer = 0;
+        let mut seen = Vec::new();
+        for op in &tp.ops {
+            match op {
+                Op::LayerStart { layer: l } => layer = *l,
+                Op::ZMove { z: v } => z = Some(*v),
+                Op::Cut { .. } if !seen.contains(&(layer, z)) => seen.push((layer, z)),
+                _ => {}
+            }
+        }
+        assert_eq!(seen, vec![(0, Some(2.0)), (1, Some(0.0))], "the second layer is cut at the start height, not 2 mm up");
+        // A job that never moves Z has no Z moves at all.
+        let tp = generate(&JobInput { layers: vec![b] }, &JobOptions::default(), &mut Progress::none()).unwrap();
+        assert!(!tp.ops.iter().any(|o| matches!(o, Op::ZMove { .. })));
     }
 
     #[test]

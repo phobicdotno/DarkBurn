@@ -629,7 +629,7 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
     };
     Some(match id {
         "job.start" | "machine.start" => {
-            let from_op = op(a).or(app.job.start_op);
+            let from_op = op(a).or(crate::job_cmds::start_op(app));
             start(app, Action::Start { from_op })
         }
         "job.preview_run_from_here" => match op(a) {
@@ -637,7 +637,7 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
             None => Err("argument op_index must be a whole number".into()),
         },
         "job.send" => {
-            let from_op = app.job.start_op;
+            let from_op = crate::job_cmds::start_op(app);
             start(app, Action::Send { from_op })
         }
         "job.preview_send_from_here" => match op(a) {

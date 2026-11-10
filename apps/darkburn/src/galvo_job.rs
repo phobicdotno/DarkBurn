@@ -68,6 +68,20 @@ fn depth_of(doc: &Document, img: &darkburn_core::ImageShape) -> Option<(u32, u32
     Some((w, h, decoded.into_raw().into_iter().map(|v| 255 - v).collect()))
 }
 
+/// The document a galvo job is made from: the whole project, or only the selected shapes when
+/// "Cut selected graphics" is on (LASER-13).
+pub fn job_document(app: &crate::shell::DarkBurn) -> Result<Document, String> {
+    let mut doc = app.editor.doc.clone();
+    if crate::job_cmds::current_settings(app).cut_selected {
+        let selected = app.editor.selected();
+        if selected.is_empty() {
+            return Err(crate::job_build::BuildError::NothingSelected.to_string());
+        }
+        doc.shapes.retain(|s| selected.contains(&s.id));
+    }
+    Ok(doc)
+}
+
 /// Build the galvo job for the document and device.
 pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
     let gs = &dev.settings.galvo;

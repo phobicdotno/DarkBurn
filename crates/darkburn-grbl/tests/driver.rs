@@ -769,14 +769,14 @@ fn not_a_number_is_refused() {
     let m = connect(&emu, ConnectOptions::default());
     wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
     assert!(matches!(m.jog(JogStep { dx: 1.0, feed: f64::NAN, ..Default::default() }), Err(GrblError::InvalidArgument(_))));
-    assert!(matches!(m.jog(JogStep { dx: f64::NAN, feed: 100.0, ..Default::default() }), Err(_)));
-    assert!(matches!(m.jog(JogStep { dz: f64::INFINITY, feed: 100.0, ..Default::default() }), Err(_)));
+    assert!(m.jog(JogStep { dx: f64::NAN, feed: 100.0, ..Default::default() }).is_err());
+    assert!(m.jog(JogStep { dz: f64::INFINITY, feed: 100.0, ..Default::default() }).is_err());
     assert!(matches!(
         m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, ..Default::default() }),
         Err(GrblError::InvalidArgument(_))
     ));
-    assert!(matches!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), feed: 100.0, coords: Coords::Work }), Err(_)));
-    assert!(matches!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: None, feed: f64::INFINITY, coords: Coords::Work }), Err(_)));
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), feed: 100.0, coords: Coords::Work }).is_err());
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: None, feed: f64::INFINITY, coords: Coords::Work }).is_err());
     std::thread::sleep(Duration::from_millis(200));
     emu.with(|e| assert!(!e.stats().lines.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().lines));
 }

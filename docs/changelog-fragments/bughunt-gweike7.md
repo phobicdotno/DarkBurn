@@ -2,3 +2,4 @@ Fix: A Gweike craft with a value the machine does not allow (gas pressure, speed
 Fix: A device file with a short Gweike craft table no longer crashes the craft editor
 Fix: Framing the material test, or a rectangle by numbers, with the job set to start from the current position now brings the head back to where it was
 Fix: A galvo job with a Z move too long for the board is refused instead of being marked at the wrong height
+Fix: Resuming a paused galvo job gives the fibre source its warm-up wait before marking goes on

@@ -167,3 +167,51 @@ fn commands_that_change_nothing_say_so() {
     assert_eq!(r["changed"], true);
     assert_eq!(g.app().editor.history.len(), steps + 2);
 }
+
+fn show_panel(g: &mut Gui, panel: &str) {
+    if !g.app().prefs.panel(panel).visible {
+        g.run_command(&format!("panel.{panel}"));
+    }
+    let area = g.app().prefs.panel(panel).area;
+    g.app().prefs.active_tab.insert(area, panel.to_string());
+    g.frames(3);
+}
+
+/// "Auto-advance after a job" does what it says: a job made from the project that finishes on
+/// the machine moves the serial number on, and the canvas then shows the next one. The tick box
+/// was stored and never looked at.
+#[test]
+fn a_finished_job_moves_variable_text_on_when_auto_advance_is_ticked() {
+    let mut g = Gui::standard();
+    connect_simulator(&mut g);
+    g.exec("text.add", json!({ "text": "{serial}", "variable": "serial", "x": 50, "y": 50, "height": 10, "layer": 0 }));
+    let run_job = |g: &mut Gui| {
+        let finished = |g: &Gui| g.app().machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count();
+        let before = finished(g);
+        g.run_command("job.start");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while finished(g) == before {
+            assert!(std::time::Instant::now() < end, "the job finished; log {:?}, note {:?}", g.app().machine.job_log, g.app().note);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            g.frames(2);
+        }
+        g.frames(3);
+    };
+    let current = |g: &Gui| g.app().editor.doc.variables.serial.current;
+    run_job(&mut g);
+    assert_eq!(current(&g), 1, "auto-advance is off: the number stays");
+    g.exec("variable.set", json!({ "auto_advance": true }));
+    run_job(&mut g);
+    assert_eq!(current(&g), 2, "the finished job did not move the serial number on");
+    run_job(&mut g);
+    assert_eq!(current(&g), 3);
+    // A job that is stopped does not count.
+    g.run_command("job.start");
+    g.wait_for_job_build();
+    g.run_command("job.stop");
+    for _ in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        g.frames(2);
+    }
+    assert!(current(&g) == 3 || g.app().machine.job_log.last().is_some_and(|l| l.starts_with("Job finished")), "a stopped job moved the number on");
+}

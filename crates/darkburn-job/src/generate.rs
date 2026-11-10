@@ -173,6 +173,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
     // Emit runs of consecutive units from the same block, pass by pass.
     let mut cur_laser: Option<u8> = None;
     let mut cur_air = false;
+    let mut cur_z: Option<f64> = None;
     let mut i = 0;
     while i < planned.len() {
         let bi = units[planned[i].item].block;
@@ -197,7 +198,13 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
         for pass in 1..=s.passes {
             tp.ops.push(Op::PassStart { pass });
             if s.z.enabled {
-                tp.ops.push(Op::ZMove { z: s.z.offset + s.z.step_per_pass * (pass - 1) as f64 });
+                let z = s.z.offset + s.z.step_per_pass * (pass - 1) as f64;
+                tp.ops.push(Op::ZMove { z });
+                cur_z = Some(z);
+            } else if cur_z.is_some_and(|z| z != 0.0) {
+                // An earlier layer moved Z; this one has no Z offset and runs at the start height.
+                tp.ops.push(Op::ZMove { z: 0.0 });
+                cur_z = Some(0.0);
             }
             for p in &planned[i..j] {
                 emit_unit(&units[p.item], p, &items, b, &input.layers[b.layer], pass, &opts.planner, &mut tp.ops);
@@ -714,6 +721,30 @@ mod tests {
             }
             assert_eq!(burns(0.4, false, y0), burns(0.0, false, y0), "a one-way scan is not shifted");
         }
+    }
+
+    #[test]
+    fn a_layer_without_z_offset_goes_back_to_the_start_height() {
+        let mut a = LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0)));
+        a.settings[0].z = ZSettings { enabled: true, offset: 2.0, step_per_pass: 0.0 };
+        let b = LayerInput::new(1, "B", CutSettings::line(10.0, 50.0)).with_shape(ShapeInput::new(rect_path(20.0, 0.0, 10.0, 10.0)));
+        let tp = generate(&JobInput { layers: vec![a, b.clone()] }, &JobOptions::default(), &mut Progress::none()).unwrap();
+        // Z at each cut, by layer.
+        let mut z = None;
+        let mut layer = 0;
+        let mut seen = Vec::new();
+        for op in &tp.ops {
+            match op {
+                Op::LayerStart { layer: l } => layer = *l,
+                Op::ZMove { z: v } => z = Some(*v),
+                Op::Cut { .. } if !seen.contains(&(layer, z)) => seen.push((layer, z)),
+                _ => {}
+            }
+        }
+        assert_eq!(seen, vec![(0, Some(2.0)), (1, Some(0.0))], "the second layer is cut at the start height, not 2 mm up");
+        // A job that never moves Z has no Z moves at all.
+        let tp = generate(&JobInput { layers: vec![b] }, &JobOptions::default(), &mut Progress::none()).unwrap();
+        assert!(!tp.ops.iter().any(|o| matches!(o, Op::ZMove { .. })));
     }
 
     #[test]

@@ -1892,6 +1892,32 @@ mod tests {
     }
 
     #[test]
+    fn deleting_the_last_nodes_of_a_shape_removes_the_shape() {
+        use crate::shape_ops::tests::{app, run, select};
+        let mut app = app();
+        let id = ShapeId(run(&mut app, "shape.add_line", json!({ "points": [[0, 0], [10, 0]], "connect": false })).unwrap()["id"].as_u64().unwrap());
+        let other = crate::shape_ops::tests::add_rect(&mut app, 50.0, 50.0, 10.0, 10.0, 0);
+        select(&mut app, &[id]);
+        // The node tool: both nodes selected, Delete.
+        let mut st = State::default();
+        st.nodes.push((id, NodeRef::new(0, 0)));
+        st.nodes.push((id, NodeRef::new(0, 1)));
+        press(&mut app, &mut st, Key::Delete, Modifiers::NONE);
+        assert!(app.editor.doc.get(id).is_none(), "no empty shape is left behind");
+        assert_eq!(app.editor.doc.len(), 1);
+        assert!(app.editor.selected().is_empty());
+        app.editor.undo();
+        assert_eq!(crate::shape_ops::shape_path(&app.editor.doc, id).map(|p| cleanup::node_count(&p)), Some(2), "undo brings the line back");
+        // The command: deleting one node of a two-node line leaves nothing to draw.
+        select(&mut app, &[id]);
+        run(&mut app, "node.edit", json!({ "op": "delete", "subpath": 0, "node": 0 })).unwrap();
+        assert!(app.editor.doc.get(id).is_none());
+        assert!(app.editor.doc.get(other).is_some());
+        let bb = app.editor.doc.bbox_of(&darkburn_core::select::all(&app.editor.doc)).unwrap();
+        assert!((bb.x0 - 50.0).abs() < 1e-9 && (bb.y0 - 50.0).abs() < 1e-9, "{bb:?}");
+    }
+
+    #[test]
     fn dropping_an_end_on_an_end_joins() {
         let mut p = BezPath::new();
         p.move_to((0.0, 0.0));

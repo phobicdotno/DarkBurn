@@ -173,8 +173,12 @@ pub fn shape_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     (!s.is_group() && !s.is_image()).then(|| s.outline())
 }
 
-/// Give shape `id` the document-space outline `path` (it becomes a path shape).
+/// Give shape `id` the document-space outline `path` (it becomes a path shape). A `path` with
+/// nothing left to draw (its last nodes were deleted) takes the shape out of the document.
 pub fn set_shape_path(doc: &mut Document, id: ShapeId, path: BezPath) -> bool {
+    if gpath::contours(&path).is_empty() {
+        return doc.remove(&[id]) > 0;
+    }
     let Some(s) = doc.get_mut(id) else { return false };
     map_shape(s, &mut |_| Some(path.clone())) > 0
 }

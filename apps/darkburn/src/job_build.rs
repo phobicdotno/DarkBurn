@@ -57,6 +57,8 @@ pub struct JobDevice {
     pub pointer_offset: [f64; 2],
     /// Curve flattening tolerance for the job, mm (SET-36).
     pub tolerance: f64,
+    /// The controller has no dynamic power: every layer is written with M3 (GRBL-02).
+    pub m3_only: bool,
 }
 
 impl Default for JobDevice {
@@ -71,6 +73,7 @@ impl Default for JobDevice {
             z_reverse: false,
             pointer_offset: [0.0, 0.0],
             tolerance: TOLERANCE,
+            m3_only: false,
         }
     }
 }
@@ -722,7 +725,15 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let entry = layers[li].get_or_insert_with(|| {
-                let settings = l.settings.iter().map(|s| map_settings_with(s, l, input.device.z_enabled, &tuning)).collect();
+                let settings = l
+                    .settings
+                    .iter()
+                    .map(|s| {
+                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                        c.constant_power |= input.device.m3_only;
+                        c
+                    })
+                    .collect();
                 LayerInput {
                     index: li,
                     name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },

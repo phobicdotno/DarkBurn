@@ -21,9 +21,11 @@ neg_cmp_op_on_partial_ord = "allow"
 [features]
 # Live webcam capture only opens after the user turns it on, picks a camera and presses Start.
 # Real USB serial ports for GRBL machines: listing ports, and opening one only when the user clicks Connect.
-default = ["live-camera", "serial"]
+# Raw USB for G-code controllers with no serial driver: devices are listed, and one is opened only when the user clicks Connect.
+default = ["live-camera", "serial", "rawusb"]
 live-camera = ["darkburn-vision/capture"]
 serial = ["darkburn-grbl/serial"]
+rawusb = ["darkburn-grbl/rawusb"]
 # Ruida over raw FTDI USB.
 usb = ["darkburn-ruida/usb"]
 

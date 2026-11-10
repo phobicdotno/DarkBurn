@@ -43,6 +43,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     macro_dialog(ctx, app);
     crate::galvo_ui::dialogs(ctx, app);
     crate::gweike_ui::dialogs(ctx, app);
+    crate::connections::dialogs(ctx, app);
 }
 
 // ----- Devices [DEV-01, DEV-04, DEV-05] ---------------------------------------------------------
@@ -58,10 +59,12 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if small(ui, "New", "Add a device with the wizard", true) {
                     app.machine.dlg.wizard = Some(Wizard::new());
                 }
-                if small(ui, "Find my laser", "List the serial ports that look like a laser. Nothing is opened.", true) {
+                if small(ui, "Find my laser", "List the serial ports and USB devices that look like a laser. Nothing is opened.", true) {
                     app.machine.rescan_ports();
+                    crate::connections::rescan_usb(app);
                     app.machine.dlg.find = Some(find_my_laser(&app.machine.ports));
                 }
+                crate::connections::devices_toolbar(ui, app);
                 if small(ui, "Import", "Add a device from a .dbdev file", true)
                     && let Some(p) = rfd::FileDialog::new().add_filter("DarkBurn device", &["dbdev"]).pick_file()
                 {
@@ -315,6 +318,9 @@ fn connection_fields(ui: &mut Ui, d: &mut Device) {
             );
         }
         ConnectionKind::None => {}
+        ConnectionKind::Bluetooth | ConnectionKind::Http | ConnectionKind::RawUsb | ConnectionKind::Bridge => {
+            crate::connections::connection_fields(ui, d)
+        }
     }
 }
 
@@ -348,8 +354,10 @@ fn find_dialog(ctx: &Context, app: &mut DarkBurn) {
                 note(ui, &c.note);
             }
             note(ui, RUIDA_DISCOVERY_NOTE);
-            if small(ui, "Rescan", "List the ports again", true) {
+            crate::connections::find_rows(ui, app);
+            if small(ui, "Rescan", "List the ports and USB devices again", true) {
                 app.machine.rescan_ports();
+                crate::connections::rescan_usb(app);
                 app.machine.dlg.find = Some(find_my_laser(&app.machine.ports));
             }
         });
@@ -423,6 +431,7 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         d.connection = kinds[idx];
         connection_fields(ui, d);
     }
+    crate::connections::simulator_fields(ui, d);
     ui_kit::section_heading(ui, "Work area");
     if d.family() == Family::Galvo {
         note(ui, "The work area of a galvo is its square lens field. Set the size on the Galvo page.");
@@ -566,6 +575,7 @@ fn gcode_page(ui: &mut Ui, d: &mut Device) {
     ui_kit::text_area(ui, "Start script", Id::unique("ds_start_script"), &mut g.start_script, 3, 10_000);
     ui_kit::text_area(ui, "End script", Id::unique("ds_end_script"), &mut g.end_script, 3, 10_000);
     d.settings.gcode.s_max = d.settings.gcode.s_max.max(1.0);
+    crate::connections::dtr_fields(ui, d);
     if d.kind.is_translated() {
         gcode_firmware_fields(ui, d);
     }

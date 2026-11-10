@@ -83,6 +83,12 @@ pub enum Link {
     SimulatorGalvo,
     /// A galvo board over USB. Not built into this version: simulator only.
     GalvoUsb,
+    /// G-code sent as one HTTP request per line.
+    Http { host: String, port: u16, path: String },
+    /// G-code over two bulk endpoints of a USB device (needs the `rawusb` feature).
+    RawUsb { vid: u16, pid: u16, serial: Option<String>, interface: u8, ep_out: u8, ep_in: u8 },
+    /// Ruida through a network bridge: TCP to the bridge, which relays to the controller.
+    Bridge { host: String, port: u16 },
 }
 
 impl Link {
@@ -91,8 +97,10 @@ impl Link {
     }
     pub fn family(&self) -> Family {
         match self {
-            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) => Family::Grbl,
-            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } => Family::Ruida,
+            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) | Link::Http { .. } | Link::RawUsb { .. } => {
+                Family::Grbl
+            }
+            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } | Link::Bridge { .. } => Family::Ruida,
             Link::SimulatorGalvo | Link::GalvoUsb => Family::Galvo,
         }
     }
@@ -107,6 +115,9 @@ impl Link {
             Link::Tcp { host, port } => format!("tcp://{host}:{port}"),
             Link::Udp { ip } => format!("udp://{ip}"),
             Link::Usb { serial } => format!("USB {}", serial.as_deref().unwrap_or("(first FTDI)")),
+            Link::Http { host, port, path } => format!("http://{host}:{port}{path}"),
+            Link::RawUsb { vid, pid, interface, .. } => format!("USB {vid:04X}:{pid:04X} interface {interface}"),
+            Link::Bridge { host, port } => format!("bridge tcp://{host}:{port}"),
         }
     }
 }
@@ -151,6 +162,8 @@ pub struct ConnectConfig {
     pub gcode: Option<Arc<darkburn_gcodebots::DeviceProfile>>,
     /// The galvo board's settings.
     pub galvo: Option<Arc<crate::galvo_settings::GalvoDeviceSettings>>,
+    /// GRBL simulator only: which firmware the in-memory controller pretends to be.
+    pub sim_firmware: crate::connections::SimFirmware,
 }
 
 impl Default for ConnectConfig {
@@ -170,6 +183,7 @@ impl Default for ConnectConfig {
             net_timeout_ms: None,
             gcode: None,
             galvo: None,
+            sim_firmware: crate::connections::SimFirmware::default(),
         }
     }
 }
@@ -348,6 +362,8 @@ pub struct Snapshot {
     pub air_on: bool,
     /// The galvo board's state.
     pub galvo: Option<crate::galvo_machine::GalvoStatus>,
+    /// A known diode laser recognised from what the controller printed [GRBL-12].
+    pub detected: Option<grbl::DetectedLaser>,
 }
 
 impl Snapshot {
@@ -949,18 +965,7 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
 /// Build the adapter for `spec`. The only place a real link can be opened.
 pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Result<Box<dyn DriverAdapter>, MachineError> {
     match &spec.link {
-        Link::SimulatorGrbl => {
-            let mut cfg = grbl::EmulatorConfig::atomstack().with_time_scale(spec.config.sim_time_scale.max(0.1));
-            cfg.record_lines = true;
-            if spec.config.sim_homing {
-                cfg = cfg.with_setting(22, 1.0);
-            }
-            if let Some((w, h)) = spec.config.bed {
-                cfg = cfg.with_setting(130, w).with_setting(131, h);
-            }
-            let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(cfg));
-            Ok(Box::new(GrblAdapter::new(Box::new(emu.transport()), &spec.config, true, Some(emu))))
-        }
+        Link::SimulatorGrbl => Ok(Box::new(crate::connections::grbl_simulator(&spec.config).0)),
         Link::SimulatorRuida => {
             let mut cfg = ruida::EmulatorConfig { step_mode: true, ..Default::default() };
             if let Some((w, h)) = spec.config.bed {
@@ -974,7 +979,8 @@ pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Res
         Link::SimulatorGcode(kind) => crate::gcode_machines::open_simulator(*kind, &spec.config),
         Link::SimulatorGalvo => crate::galvo_machine::open_simulator(&spec.config),
         real => {
-            if cfg!(test) {
+            // Tests may only reach a listener they started themselves on this computer.
+            if cfg!(test) && !crate::connections::loopback_only(real) {
                 return Err(MachineError::Refused("Real connections are disabled in test builds.".into()));
             }
             if consent.is_none() {
@@ -1018,6 +1024,12 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         }
         #[cfg(not(feature = "usb"))]
         Link::Usb { .. } => Err(MachineError::Unsupported("this build has no raw USB support".into())),
+        Link::Http { host, port, path } => crate::connections::open_http(host, *port, path, config),
+        Link::RawUsb { vid, pid, serial, interface, ep_out, ep_in } => {
+            let addr = grbl::RawUsbAddress { vid: *vid, pid: *pid, serial: serial.clone(), interface: *interface, ep_out: *ep_out, ep_in: *ep_in };
+            crate::connections::open_raw_usb(&addr, config)
+        }
+        Link::Bridge { host, port } => crate::connections::open_bridge(host, *port, config),
         Link::GalvoUsb => Err(MachineError::Unsupported(
             "the galvo USB link is not built into this version. Use the galvo simulator until the hardware checks in docs/hardware-checks-galvo.md are done."
                 .into(),
@@ -1135,6 +1147,7 @@ impl GrblAdapter {
         s.fire_on = g.fire_on;
         s.alarm = g.last_alarm.as_ref().filter(|_| g.alarm_locked || g.status.state.is_alarm()).map(|(_, m)| m.clone());
         s.grbl_settings = g.settings.clone();
+        s.detected = g.detected.clone();
         let job = g.job.as_ref().map(|p| self.progress(p));
         self.snap.job = job;
     }

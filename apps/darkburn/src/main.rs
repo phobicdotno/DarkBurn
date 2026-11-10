@@ -11,6 +11,9 @@ mod canvas_tests;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;
+mod connections;
+#[cfg(test)]
+mod connections_tests;
 mod cut_settings;
 mod cuts_panel;
 mod devices;

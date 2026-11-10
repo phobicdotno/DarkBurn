@@ -488,3 +488,83 @@ fn a_tiny_window_draws_and_the_layout_recovers() {
     assert!(near(dock(&g, "Bottom").height(), 180.0), "{}", dock(&g, "Bottom").height());
     assert!(g.id_clashes_now().is_empty());
 }
+
+// ----- dialogs with a machine connected -----
+
+/// Machine Settings with the settings of a connected (simulated) GRBL machine listed: the window
+/// fits the smallest window. It was 1317 points wide in a 960 point window, its left part and
+/// the Close button's row off screen.
+#[test]
+fn machine_settings_with_settings_listed_fits_the_smallest_window() {
+    for (w, h) in [(960.0, 600.0), (1280.0, 720.0), (1920.0, 1080.0)] {
+        let mut g = Gui::new(w, h, 1.0);
+        g.run_command("machine.connect");
+        g.run_command("machine.read_settings");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while g.app().machine.handle.snapshot().grbl_settings.is_empty() {
+            assert!(std::time::Instant::now() < end, "the simulator answered with its settings");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            g.frames(2);
+        }
+        g.run_command("edit.machine_settings");
+        g.frames(3);
+        g.screenshot(&format!("uibugs-machine-settings-{w}x{h}"));
+        assert!(g.has_text("ALL SETTINGS") && g.window_titles().contains(&"Machine Settings".to_string()), "{:?}", g.visible_texts());
+        let screen = g.screen();
+        for r in g.dialog_windows() {
+            assert!(!crate::ui_harness::outside(screen, r), "{w} x {h}: the window {r:?} is not inside {screen:?}");
+        }
+        let problems = g.layout_problems();
+        assert!(problems.is_empty(), "{w} x {h}: {problems:#?}");
+        g.close_dialogs();
+    }
+}
+/// With the simulator connected and its settings read (the sweeps in `ui_smoke_tests` run with
+/// nothing connected), at the smallest window: every window a command opens and every panel shows
+/// no clipped, broken or off-screen text, and every window is inside the screen.
+#[test]
+fn nothing_clips_in_any_window_or_panel_with_a_machine_connected() {
+    let mut g = Gui::new(960.0, 600.0, 1.0);
+    g.run_command("machine.connect");
+    g.run_command("machine.read_settings");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while g.app().machine.handle.snapshot().grbl_settings.is_empty() {
+        assert!(std::time::Instant::now() < end, "the simulator answered with its settings");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        g.frames(2);
+    }
+    let mut bad = std::collections::BTreeSet::new();
+    let ids: Vec<&str> = commands::COMMANDS.iter().chain(crate::machine_ui::COMMANDS).map(|c| c.id).collect();
+    for id in ids {
+        // Commands that act on the machine or leave the app are not window openers.
+        if id.starts_with("machine.") || id == "file.exit" {
+            continue;
+        }
+        g.close_dialogs();
+        crate::files::new_project(&mut g.app());
+        g.sample_design();
+        g.run_command(id);
+        g.frames(6);
+        if g.dialog_open() {
+            for p in g.layout_problems() {
+                bad.insert(format!("{id} {:?}: {p}", g.window_titles()));
+            }
+        }
+    }
+    g.close_dialogs();
+    for p in crate::panels::PANELS {
+        if !g.app().prefs.panel(p.id).visible {
+            g.run_command(&format!("panel.{}", p.id));
+        }
+    }
+    for p in crate::panels::PANELS {
+        let area = g.app().prefs.panel(p.id).area;
+        g.app().prefs.active_tab.insert(area, p.id.to_string());
+        g.frames(3);
+        for q in g.layout_problems() {
+            bad.insert(format!("panel {}: {q}", p.id));
+        }
+    }
+    assert!(g.app().machine.handle.is_connected(), "the simulator stayed connected");
+    assert!(bad.is_empty(), "{} layout problems:\n{}", bad.len(), bad.into_iter().collect::<Vec<_>>().join("\n"));
+}

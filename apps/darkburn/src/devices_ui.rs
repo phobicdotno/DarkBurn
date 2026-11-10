@@ -824,11 +824,18 @@ fn grbl_settings_body(ui: &mut Ui, app: &mut DarkBurn) {
                     if ui_kit::checkbox(ui, "", &mut on).changed() {
                         v = if on { "1".into() } else { "0".into() };
                     }
+                } else if let Some(i) = info.filter(|i| !i.unit.is_empty()) {
+                    // The field leaves room for its unit: a field as wide as the row pushed the unit
+                    // past the edge, and the window grew wider with every row.
+                    let unit = egui::WidgetText::from(i.unit).into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body);
+                    let room = unit.size().x + ui.spacing().item_spacing.x;
+                    ui.scope(|ui| {
+                        ui.set_max_width((ui.available_width() - room).max(40.0));
+                        ui_kit::field(ui, &mut v);
+                    });
+                    ui.label(unit);
                 } else {
                     ui_kit::field(ui, &mut v);
-                    if let Some(i) = info.filter(|i| !i.unit.is_empty()) {
-                        ui.label(i.unit);
-                    }
                 }
             });
             if let Some(i) = info {

@@ -244,7 +244,8 @@ fn copy_along_path(e: &mut Editor, a: &Value) -> R {
     let mut ids = selected_items(e)?;
     let path_id = match a.get("path_shape").and_then(Value::as_u64) {
         Some(p) => ShapeId(p),
-        None => *ids.last().ok_or("nothing is selected")?,
+        // The last selected one (`ids` is in draw order, where the path may come first).
+        None => e.selected().last().copied().ok_or("nothing is selected")?,
     };
     ids.retain(|i| *i != path_id);
     if ids.is_empty() {
@@ -280,7 +281,12 @@ fn array_edit(e: &mut Editor, a: &Value, env: &Env) -> R {
         ("grid", ArrayKind::Grid(_)) | ("", ArrayKind::Grid(_)) => ArrayKind::Grid(grid_from(a, &grid_of(&def.kind))),
         ("grid", _) => ArrayKind::Grid(grid_from(a, &GridDef::default())),
         ("circular", ArrayKind::Circular(_)) | ("", ArrayKind::Circular(_)) => ArrayKind::Circular(circ_from(a, &circ_of(&def.kind))),
-        ("circular", _) => ArrayKind::Circular(circ_from(a, &CircularDef { cx: env.page.center().x, cy: env.page.center().y, ..Default::default() })),
+        ("circular", _) => {
+            // The page centre in the array's own coordinates: the array may have been moved or turned.
+            let to_own = e.doc.get(id).map(|s| s.transform.inverse()).unwrap_or_default();
+            let c = to_own * env.page.center();
+            ArrayKind::Circular(circ_from(a, &CircularDef { cx: c.x, cy: c.y, ..Default::default() }))
+        }
         ("along_path", ArrayKind::AlongPath(p)) | ("", ArrayKind::AlongPath(p)) => ArrayKind::AlongPath(along_from(a, p)),
         (other, _) => return Err(format!("cannot change the array to kind {other:?}")),
     };

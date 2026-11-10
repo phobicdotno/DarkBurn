@@ -550,6 +550,8 @@ pub fn push_to(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
     let text = app.editor.clipboard.to_text();
     sys.set_text(text.clone());
     app.files.last_clip_text = Some(text);
+    // Our text took the place of any bitmap there: the same bitmap copied again later is new.
+    app.files.last_clip_image = None;
 }
 
 /// Take newer contents from the system clipboard: shapes from another DarkBurn, SVG text or a
@@ -564,6 +566,7 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
                 app.editor.clipboard = Clipboard { cut_settings: app.editor.clipboard.cut_settings.take(), ..clip };
             }
             app.files.last_clip_text = Some(text);
+            app.files.last_clip_image = None;
             return;
         }
         if import::is_svg_text(&text) {
@@ -576,6 +579,7 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
                 Err(e) => log::info!("clipboard SVG not read: {e}"),
             }
             app.files.last_clip_text = Some(text);
+            app.files.last_clip_image = None;
             return;
         }
         // Plain text: text shapes come later.
@@ -587,6 +591,8 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
         return;
     }
     app.files.last_clip_image = Some(key);
+    // The bitmap took the place of the text there: the same text copied again later is new.
+    app.files.last_clip_text = None;
     let Some(png) = import::rgba_to_png(w, h, rgba) else { return };
     let opts = import_options(app);
     if let Ok(mut imp) = import::bitmap(&png, &opts, None) {
@@ -597,7 +603,15 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
 
 /// Before a paste: take shapes from the system clipboard when it holds something newer.
 pub fn pull_system_clipboard(app: &mut DarkBurn, _ctx: &egui::Context) {
-    pull_from(app, &mut Arboard::open());
+    pull_if_used(app, &mut Arboard::open());
+}
+
+/// [`pull_from`], unless the system clipboard is turned off in the settings: then Paste gives
+/// what was copied in this window, whatever other programs have copied since.
+pub fn pull_if_used(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
+    if app.prefs.opts.system_clipboard {
+        pull_from(app, sys);
+    }
 }
 
 // ----- Each frame -----
@@ -1173,6 +1187,49 @@ mod tests {
         b.editor.clipboard.shapes.clear();
         pull_from(&mut b, &mut sys);
         assert!(b.editor.clipboard.shapes.is_empty());
+    }
+
+    /// A bitmap pasted once, then shapes copied here, then the same bitmap copied again in the
+    /// other program: Paste gives the bitmap (the newest copy), not the shapes. And the other way
+    /// round for shapes from a second DarkBurn copied again after a bitmap.
+    #[test]
+    fn the_same_thing_copied_again_elsewhere_after_something_else_is_pasted() {
+        let dir = TempDir::new("clip-again");
+        let mut a = app(&dir);
+        let mut sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        pull_from(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image());
+        add_rect(&mut a);
+        let ids = a.editor.doc.iter().map(|s| s.id).collect::<Vec<_>>();
+        a.editor.clipboard.copy(&a.editor.doc, &ids);
+        push_to(&mut a, &mut sys);
+        assert!(sys.image.is_none(), "our text replaced the bitmap");
+        let ours = sys.text.clone();
+        // The other program copies its bitmap again.
+        sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        pull_from(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image(), "the bitmap is the newest copy");
+        // And our own shapes text again (as a second DarkBurn would put it there).
+        sys = FakeClip { text: ours, image: None };
+        pull_from(&mut a, &mut sys);
+        assert!(!a.editor.clipboard.shapes[0].is_image(), "the shapes are the newest copy");
+    }
+
+    /// With "Use the system clipboard" off, Paste does not take what another program copied.
+    #[test]
+    fn paste_leaves_the_system_clipboard_alone_when_it_is_turned_off() {
+        let dir = TempDir::new("clip-off");
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        let ids = a.editor.doc.iter().map(|s| s.id).collect::<Vec<_>>();
+        a.editor.clipboard.copy(&a.editor.doc, &ids);
+        let mut sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        a.prefs.opts.system_clipboard = false;
+        pull_if_used(&mut a, &mut sys);
+        assert!(!a.editor.clipboard.shapes[0].is_image(), "the copied rectangle stays");
+        a.prefs.opts.system_clipboard = true;
+        pull_if_used(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image());
     }
 
     #[test]

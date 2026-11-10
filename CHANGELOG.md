@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.372 (build 6)
+## v0.0.383 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -349,6 +349,17 @@
 - Fix: Cancel in the Cut Settings Editor no longer leaves the project marked as changed
 - Fix: number fields in the panels and dialogs take sums and units (20 + 22, 10in/4, 7 mm), not only plain numbers
 - Fix: Plan test in Rotary Setup only shows the plan; it no longer switches rotary on or keeps the settings behind your back
+- Fix: Distribute and Move Together now work right when one shape overlaps or reaches past the others
+- Fix: Moving a layer several places up or down the list keeps the others in order
+- Fix: Copy or Cut with nothing selected no longer empties the clipboard
+- Fix: Copy Along Path follows the shape you selected last
+- Fix: A moved array changed to a circular one turns about the page centre
+- Fix: Shapes of a deleted layer no longer come back inside an editable array
+- Fix: Hiding a layer deselects its shapes
+- Fix: Unlocking everything no longer selects shapes on hidden layers
+- Fix: With the system clipboard turned off, Paste no longer takes what other programs copied
+- Fix: Paste takes the newest copy when you copy the same picture or shapes again in another program
+- Fix: Deleting a layer with its pictures no longer leaves their pixels in the project file
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

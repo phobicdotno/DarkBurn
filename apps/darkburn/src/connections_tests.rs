@@ -345,6 +345,8 @@ fn every_grbl_flavour_pauses_resumes_stops_and_reports_an_alarm() {
         assert!(h.wait_for(T, |s, _| s.state == LaserState::Busy), "{fw:?} busy");
         h.pause().unwrap();
         assert!(h.wait_for(T, |s, _| s.state == LaserState::Paused), "{fw:?} paused, was {:?}", h.snapshot().state);
+        // "Paused" is shown from the moment the hold is asked for; the machine still slows down.
+        assert!(h.wait_for(T, |_, _| emu.with(|e| e.state_name() == "Hold:0")), "{fw:?} comes to a stop");
         let held = emu.with(|e| e.machine_position());
         h.wait_for(Duration::from_millis(150), |_, _| false);
         assert_eq!(emu.with(|e| e.machine_position()), held, "{fw:?}: nothing moves while paused");

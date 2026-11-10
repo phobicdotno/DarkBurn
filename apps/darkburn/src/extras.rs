@@ -170,10 +170,18 @@ fn txt<'a>(a: &'a Value, key: &str) -> Result<&'a str, String> {
 
 /// The commands for libraries, art and hotkeys that take arguments; None for any other id.
 pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
+    if id.starts_with("library.") {
+        // The device's own library, as the panel would show it.
+        library::ensure_loaded(app);
+    }
     Some(match id {
         "library.new" => {
-            app.extras.library.lib = library::Library::default();
+            app.extras.library.lib = library::Library { device: app.extras.library.device.clone(), ..Default::default() };
             app.extras.library.path = None;
+            app.extras.library.selected = None;
+            app.extras.library.editing = None;
+            app.extras.library.dirty_since = None;
+            app.extras.library.touch();
             Ok(json!({ "ok": true }))
         }
         "library.open" => {

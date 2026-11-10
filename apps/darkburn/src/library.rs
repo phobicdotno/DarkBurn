@@ -325,6 +325,29 @@ pub struct LibraryState {
     /// The device whose library is shown; each device remembers its own file.
     pub device: String,
     pub loaded: bool,
+    /// The settings folder: where a library without a file of its own is kept.
+    pub settings_dir: Option<PathBuf>,
+}
+
+/// The file a library without a file of its own is kept in, one per device.
+pub fn autosave_file(dir: &Path, device: &str) -> PathBuf {
+    let slug: String = device.trim().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+    let name = if slug.is_empty() { format!("library-autosave.{FILE_EXTENSION}") } else { format!("library-autosave-{slug}.{FILE_EXTENSION}") };
+    dir.join(name)
+}
+
+/// Load the library of the active device once, before the panel or a command first uses it.
+pub fn ensure_loaded(app: &mut DarkBurn) {
+    let st = &mut app.extras.library;
+    if st.loaded {
+        return;
+    }
+    st.loaded = true;
+    st.settings_dir = app.settings_dir.clone();
+    if !st.is_dirty() {
+        let dev = st.device.clone();
+        st.switch_device(&dev, &app.prefs);
+    }
 }
 
 impl LibraryState {
@@ -336,19 +359,30 @@ impl LibraryState {
         self.dirty_since.is_some()
     }
 
-    /// Switch to the library of `device` (the path remembered for it, else an empty library).
+    /// Switch to the library of `device`: the file remembered for it, else the library kept for
+    /// it in the settings folder, else an empty one. Changes to the library shown are written
+    /// first, so switching never drops them.
     pub fn switch_device(&mut self, device: &str, prefs: &crate::prefs::Prefs) {
+        self.flush();
         self.device = device.to_string();
-        match prefs.library_paths.get(device).map(PathBuf::from).filter(|p| p.is_file()) {
-            Some(p) => {
-                let _ = self.open(&p);
-            }
-            None => {
-                self.lib = Library { device: device.to_string(), ..Default::default() };
-                self.path = None;
-                self.dirty_since = None;
-                self.selected = None;
-            }
+        self.editing = None;
+        if let Some(p) = prefs.library_paths.get(device).map(PathBuf::from).filter(|p| p.is_file())
+            && self.open(&p).is_ok()
+        {
+            return;
+        }
+        let kept = self.settings_dir.as_deref().map(|d| autosave_file(d, device)).filter(|p| p.is_file()).and_then(|p| Library::load(&p).ok());
+        self.lib = kept.filter(|l| l.device == device).unwrap_or_else(|| Library { device: device.to_string(), ..Default::default() });
+        self.path = None;
+        self.dirty_since = None;
+        self.selected = None;
+    }
+
+    /// Write unsaved changes now (to the library's file, or the one kept in the settings folder).
+    pub fn flush(&mut self) {
+        if let Some(since) = self.dirty_since {
+            let dir = self.settings_dir.clone();
+            self.autosave(dir.as_deref(), since + AUTOSAVE_AFTER);
         }
     }
 
@@ -377,7 +411,8 @@ impl LibraryState {
     }
 
     /// Auto-save: a changed library is written some seconds after the change, to its file or, if
-    /// it has none, to `library-autosave.dbclb` in the settings folder.
+    /// it has none, to the device's `library-autosave` file in the settings folder (which is read
+    /// back the next time the device's library is loaded).
     pub fn autosave(&mut self, settings_dir: Option<&Path>, now: Instant) {
         let Some(since) = self.dirty_since else { return };
         if now.duration_since(since) < AUTOSAVE_AFTER {
@@ -387,7 +422,7 @@ impl LibraryState {
             (Some(p), _) => self.lib.save(p).is_ok(),
             (None, Some(dir)) => {
                 let _ = std::fs::create_dir_all(dir);
-                self.lib.save(&dir.join(format!("library-autosave.{FILE_EXTENSION}"))).is_ok()
+                self.lib.save(&autosave_file(dir, &self.device)).is_ok()
             }
             _ => false,
         };
@@ -495,12 +530,7 @@ fn btn(ui: &mut Ui, text: &str, tip: &str, enabled: bool) -> bool {
 pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     let inches = app.prefs.numeric_inches;
-    if !app.extras.library.loaded {
-        app.extras.library.loaded = true;
-        let dev = app.extras.library.device.clone();
-        let prefs = app.prefs.clone();
-        app.extras.library.switch_device(&dev, &prefs);
-    }
+    ensure_loaded(app);
     let mut st = std::mem::take(&mut app.extras.library);
     let mut status = None;
 
@@ -527,7 +557,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             st.path = None;
             st.selected = None;
             st.editing = None;
+            // Changed: the empty library replaces the one kept for this device.
             st.dirty_since = None;
+            st.touch();
         }
         if btn(ui, &tr("library.load", "Load"), &tr("library.load_tip", "Open a library file"), true)
             && let Some(p) = rfd::FileDialog::new().add_filter("Cut library", &[FILE_EXTENSION]).pick_file()
@@ -896,5 +928,48 @@ mod tests {
         st.switch_device("diode", &prefs);
         assert_eq!(st.lib.entries.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A library that was never given a file is kept in the settings folder, per device, and is
+    /// there again after a restart or after a look at another device.
+    #[test]
+    fn a_library_without_a_file_comes_back_after_a_restart() {
+        let dir = std::env::temp_dir().join(format!("darkburn-lib-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let prefs = Prefs::default();
+        let mut st = LibraryState { settings_dir: Some(dir.clone()), ..Default::default() };
+        st.switch_device("diode", &prefs);
+        st.lib.add(entry("Card", None, "Engrave", 300.0));
+        st.touch();
+        st.autosave(Some(&dir), Instant::now() + AUTOSAVE_AFTER + Duration::from_secs(1));
+        assert!(!st.is_dirty(), "it was written");
+        // The next start.
+        let mut again = LibraryState { settings_dir: Some(dir.clone()), ..Default::default() };
+        again.switch_device("diode", &prefs);
+        assert_eq!(again.lib.entries.len(), 1, "the auto-saved library is read back");
+        // Another device starts empty; its entries do not replace the first device's.
+        again.switch_device("co2", &prefs);
+        assert!(again.lib.entries.is_empty());
+        again.lib.add(entry("Acrylic", Some(3.0), "Cut", 8.0));
+        again.lib.add(entry("Acrylic", Some(5.0), "Cut", 4.0));
+        again.touch();
+        again.switch_device("diode", &prefs);
+        assert_eq!(again.lib.entries.len(), 1, "the diode's library");
+        again.switch_device("co2", &prefs);
+        assert_eq!(again.lib.entries.len(), 2, "changes made just before switching are not dropped");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An entry made by a command before the Library panel was ever shown is still there when
+    /// the panel first draws.
+    #[test]
+    fn entries_made_before_the_panel_was_shown_stay() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        g.exec("library.create_from_layer", serde_json::json!({ "layer": 2, "material": "Birch", "thickness": 3.0, "description": "Cut" }));
+        g.click_id("panel:tab:library");
+        g.frames(2);
+        assert_eq!(g.app().extras.library.lib.entries.len(), 1);
+        assert!(g.visible_texts().join(" ").contains("Birch"), "{:?}", g.visible_texts());
     }
 }

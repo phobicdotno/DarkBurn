@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.292 (build 6)
+## v0.0.303 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -269,6 +269,17 @@
 - Fix: scrolling in a window or menu no longer zooms the drawing behind it
 - Fix: Tab steps through the shapes again and no longer switches the other keys off
 - Fix: the work area size and origin set in Settings are now the ones the job uses
+- Fix: The fire button now switches off before homing or any other command starts
+- Fix: Stop during homing now stops the machine right away
+- Fix: Stop on old GRBL 0.9 controllers no longer ends in an alarm
+- Fix: Disconnecting in the middle of a job on Marlin and Smoothieware machines now stops the cut right away
+- Fix: A job started while the fire button was on no longer loses its laser part-way through
+- Fix: Ruida over network: a late answer from the controller can no longer hide a lost piece of a job
+- Fix: Stop on a Ruida laser no longer waits behind other commands or an unanswered overwrite question
+- Fix: Closing the program while it asks whether to overwrite a file on a Ruida controller no longer hangs
+- Fix: A galvo device set up with a port bit above 15 is now refused with a clear message instead of never finishing its connect
+- Fix: A galvo frequency too low for the board now gives the lowest frequency it can do, not a much higher one
+- Fix: An absurd fire time typed into a command no longer crashes the program
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

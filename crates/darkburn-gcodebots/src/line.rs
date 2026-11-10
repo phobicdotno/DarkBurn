@@ -428,8 +428,11 @@ impl GcodeMachine for LineMachine {
         if points.is_empty() {
             return Err(MachineError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(MachineError::InvalidArgument("Framing speed must be above 0.".into()));
+        }
+        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         for p in points {
             if !self.in_travel(*p) {
@@ -461,8 +464,11 @@ impl GcodeMachine for LineMachine {
 
     fn jog(&self, step: JogStep) -> Result<(), MachineError> {
         let s = self.motion_ok()?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(MachineError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(MachineError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -488,8 +494,11 @@ impl GcodeMachine for LineMachine {
         if t.x.is_none() && t.y.is_none() && t.z.is_none() {
             return Ok(());
         }
-        if t.feed <= 0.0 {
+        if !positive(t.feed) {
             return Err(MachineError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [t.x, t.y, t.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(MachineError::InvalidArgument("The position is not a number.".into()));
         }
         if t.coords == darkburn_grbl::Coords::Machine && !self.cfg.supports_g53 {
             return Err(MachineError::Unsupported("moves in machine coordinates"));
@@ -938,8 +947,27 @@ impl Worker {
     }
 
     fn shutdown(&mut self, _why: Option<&str>) {
+        // Motion the controller has buffered would go on, laser and all, after the link is
+        // closed: a `laser off` line only runs when the moves ahead of it are done.
+        let moving = self.job.is_some() || self.stop.is_some() || self.inflight.iter().any(|s| !matches!(s.tag, Tag::Poll | Tag::Ident));
         self.abort_job("Disconnected");
         if self.snap.connection == ConnectionState::Connected {
+            if moving {
+                match self.cfg.quick_stop.clone() {
+                    QuickStop::None => {}
+                    QuickStop::Realtime(b) => {
+                        let _ = self.t.write_all(&[b]);
+                        // Give the reset a moment, as Stop does, then clear the halt it leaves.
+                        std::thread::sleep(Duration::from_millis(30));
+                        for l in render_lines(&self.cfg.commands.after_stop, &[]) {
+                            let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                        }
+                    }
+                    QuickStop::Line(l) => {
+                        let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                    }
+                }
+            }
             // Make sure the laser is off before letting go.
             for l in render_lines(&self.cfg.commands.laser_off, &[]) {
                 let _ = self.t.write_all(format!("{l}\n").as_bytes());
@@ -969,8 +997,12 @@ impl Worker {
                     return Flow::Quit;
                 }
             }
-            Cmd::Line { text, tag } => self.enqueue(text, tag),
+            Cmd::Line { text, tag } => {
+                self.fire_off_before(&tag);
+                self.enqueue(text, tag);
+            }
             Cmd::Lines { lines, tag } => {
+                self.fire_off_before(&tag);
                 for l in lines {
                     self.enqueue(l, tag.clone());
                 }
@@ -1015,6 +1047,10 @@ impl Worker {
         if self.job.is_some() || self.stop.is_some() {
             self.emit(MachineEvent::Rejected("A job is already running.".into()));
             return;
+        }
+        if self.fire_until.is_some() {
+            // Off now, ahead of the job's first line, not from the timer in the middle of it.
+            self.fire_off();
         }
         let Job { lines, total_lines, finish, stop_on_error, .. } = job;
         self.job = Some(ActiveJob {
@@ -1064,8 +1100,22 @@ impl Worker {
         self.queue.push_front(Out { text, tag: Tag::Plain, urgent: true });
     }
 
+    /// The fire button never stays on while another command runs: homing and long moves
+    /// would hold back the timed switch-off until they are done.
+    fn fire_off_before(&mut self, tag: &Tag) {
+        if self.fire_until.is_some() && *tag != Tag::Poll {
+            self.fire_off();
+        }
+    }
+
     fn fire_off(&mut self) {
         self.fire_until = None;
+        if self.job.is_some() {
+            // A job controls the laser itself; a switch-off between its lines would leave
+            // the rest of it unburned.
+            self.snap.fire_on = false;
+            return;
+        }
         if self.snap.fire_on || self.stop.is_none() {
             // Drop queued fire-on lines first so they cannot switch the laser on afterwards.
             self.queue.retain(|o| o.tag != Tag::Fire);
@@ -1736,6 +1786,12 @@ impl Worker {
             self.emit(MachineEvent::StateChanged(new));
         }
     }
+}
+
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 fn strip_comment_simple(t: &str) -> String {

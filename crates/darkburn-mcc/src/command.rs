@@ -603,7 +603,8 @@ pub fn fifo_packed_frame(frame_id: u32, frame: &fifo::PackedFrame) -> Result<Saf
 }
 
 /// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then outputs off. The follower stop
-/// `[101]` of the vendor sequence is deliberately absent (project rule).
+/// `[101]` of the vendor sequence is deliberately absent (project rule). Every write in it has
+/// [`Policy::Always`].
 pub fn stop_sequence(
     params: &MachineParams,
     fifo_running: bool,
@@ -616,7 +617,18 @@ pub fn stop_sequence(
     seq.push(pwm_off(1234, MISC_PWM_5V)?);
     seq.push(da_zero(1)?);
     seq.push(da_zero(2)?);
-    seq.push(do_bulk_off(current_do_word, laser_ports)?);
+    // Every step of a stop must be one the gate lets through in any arming state: after an alarm
+    // or an E-stop the gate is disarmed. The bulk write is that only while no lamp or gas port
+    // stays on in it (keeping one on counts as a motion write). With one on, the laser ports are
+    // switched off one by one instead, which touches no other port and needs no arming.
+    match do_bulk_off(current_do_word, laser_ports) {
+        Ok(w) if w.policy() == Policy::Always => seq.push(w),
+        _ => {
+            for &port in laser_ports {
+                seq.push(do_off(port)?);
+            }
+        }
+    }
     Ok(seq)
 }
 
@@ -721,6 +733,13 @@ mod tests {
         assert!(seq.iter().all(|w| w.words() != [101]));
         let seq = stop_sequence(&p(), true, 0, 0, &[5, 9]).unwrap();
         assert_eq!(seq[0].name(), "fifo_stop");
+        // With the lamp (1) and the gas (2) on as well, every step is still one the gate lets
+        // through in any arming state, and the laser ports are still switched off.
+        let seq = stop_sequence(&p(), true, 0, 0b1_0001_0011, &[5, 9]).unwrap();
+        assert!(seq.iter().all(|w| w.policy() == Policy::Always), "{:?}", seq.iter().map(|w| (w.name(), w.policy())).collect::<Vec<_>>());
+        for bit in [1u32 << 4, 1 << 8] {
+            assert!(seq.iter().any(|w| matches!(w.words(), [9999, 2, mask, value] if mask & bit != 0 && value & bit == 0)));
+        }
     }
 
     #[test]

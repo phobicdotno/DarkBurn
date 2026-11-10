@@ -424,3 +424,22 @@ fn disconnect_clears_and_reset_reconnects() {
     assert!(!h.is_connected());
     assert_eq!(h.stop(), Err(MachineError::NotConnected));
 }
+
+#[test]
+fn an_absurd_fire_time_is_refused_not_a_crash() {
+    // A time no clock can hold used to stop the program in its tracks (a panic while
+    // converting it), for GRBL and for the other G-code controllers alike.
+    let links = [Link::SimulatorGrbl, Link::SimulatorGcode(crate::gcode_machines::SimGcode::Marlin)];
+    for link in links {
+        let mut h = Sim::new();
+        let mut s = ConnectSpec::simulator(Family::Grbl);
+        s.link = link.clone();
+        h.connect(&s, None).unwrap();
+        assert!(h.wait_for(T, |s, _| s.connected()), "{link:?} connects");
+        ready(&mut h);
+        for secs in [1.0e300, f64::INFINITY, f64::NAN, -1.0, 0.0] {
+            assert!(matches!(h.fire(5.0, secs), Err(MachineError::Invalid(_))), "{link:?} {secs}");
+        }
+        assert!(!h.snapshot().fire_on);
+    }
+}

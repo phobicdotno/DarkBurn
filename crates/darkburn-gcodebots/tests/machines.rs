@@ -735,3 +735,150 @@ fn the_snapshot_already_shows_what_an_event_reports() {
         assert_eq!(s.laser_status(), LaserStatus::Alarm, "{kind:?}");
     }
 }
+
+// ----- stop, disconnect and the fire button around other commands -----
+
+/// A link whose answers arrive late: every read is held back for `delay` after a write that
+/// holds `after`, like a slow USB serial adapter.
+struct LateAnswers<T: Transport> {
+    inner: T,
+    after: u8,
+    delay: Duration,
+    quiet_until: Option<Instant>,
+}
+
+impl<T: Transport> Transport for LateAnswers<T> {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        if data.contains(&self.after) {
+            self.quiet_until = Some(Instant::now() + self.delay);
+        }
+        self.inner.write_all(data)
+    }
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        if self.quiet_until.is_some_and(|t| Instant::now() < t) {
+            std::thread::sleep(timeout.min(Duration::from_millis(2)));
+            return Ok(0);
+        }
+        self.inner.read(buf, timeout)
+    }
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+}
+
+#[test]
+fn smoothie_stop_clears_the_halt_even_when_the_alarm_line_comes_late() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Smoothie).with_time_scale(1.0));
+    let p = smoothie_profile();
+    let link = LateAnswers { inner: emu.transport(), after: 0x18, delay: Duration::from_millis(120), quiet_until: None };
+    let m = p.connect(Box::new(link)).expect("connect");
+    let mut log = Log::new();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Connected(_))));
+    m.start_job(translated_job(&p, 60)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 10)));
+    m.stop().unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Stopped)));
+    worker_passes(m.as_ref(), 100);
+    emu.with(|e| {
+        assert!(!e.laser_on());
+        assert!(
+            e.stats().arrived.iter().any(|l| l == "M999"),
+            "the halt was never cleared: {:?}",
+            &e.stats().arrived[e.stats().arrived.len().saturating_sub(4)..]
+        );
+        assert!(!e.is_halted(), "M999 should have cleared the halt");
+    });
+    let s = m.snapshot();
+    assert_eq!(s.activity, Activity::Idle);
+    assert!(s.alarm.is_none(), "{:?}", s.alarm);
+    m.disconnect();
+}
+
+fn long_cut_job(p: &DeviceProfile) -> Job {
+    // Six 200 mm cuts at 1200 mm/min: ten seconds each.
+    let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M4 S0".to_owned(), "G0 X10 Y10".to_owned()];
+    for i in 0..6 {
+        let x = if i % 2 == 0 { 210.0 } else { 10.0 };
+        src.push(format!("G1 X{x} Y{} S500 F1200", 10 + i));
+    }
+    src.push("M5".to_owned());
+    let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(p));
+    let n = out.len();
+    Job::from_lines(out).with_total(n)
+}
+
+#[test]
+fn disconnecting_in_the_middle_of_a_job_stops_the_cut() {
+    for (flavor, p) in [(EmuFlavor::Marlin, marlin_profile()), (EmuFlavor::Smoothie, smoothie_profile())] {
+        let emu = LineEmuHandle::with_config(EmuConfig::new(flavor).with_time_scale(1.0));
+        let (m, _log) = connect(&p, &emu);
+        m.start_job(long_cut_job(&p)).unwrap();
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_on() && e.planner_len() >= 1)), "{flavor:?}: never started cutting");
+        m.disconnect();
+        let burned = emu.with(|e| e.stats().burned_mm);
+        // The controller lives on after the program let go of it.
+        emu.with(|e| e.advance(Duration::from_secs(30)));
+        emu.with(|e| {
+            let after = e.stats().burned_mm;
+            assert!(after - burned < 1.0, "{flavor:?}: the machine cut another {:.0} mm after Disconnect", after - burned);
+        });
+    }
+}
+
+#[test]
+fn a_job_started_while_the_fire_button_is_on_keeps_its_laser() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+    let p = marlin_profile();
+    let (m, mut log) = connect(&p, &emu);
+    // The fire button's own timer runs out while the job is cutting.
+    m.fire(5.0, Duration::from_millis(600)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_armed())));
+    m.start_job(translated_job(&p, 40)).unwrap();
+    assert!(log.wait(m.as_ref(), Duration::from_secs(30), |e| matches!(e, MachineEvent::JobFinished(_))));
+    let lines = emu.with(|e| e.stats().arrived.clone());
+    let first = lines.iter().position(|l| l.starts_with("G1")).expect("the job cut something");
+    let last = lines.iter().rposition(|l| l.starts_with("G1")).expect("the job cut something");
+    assert!(last - first > 70, "{lines:?}");
+    assert!(!lines[first..last].iter().any(|l| l == "M5"), "the laser was switched off in the middle of the job: {lines:?}");
+    assert!(lines[..first].iter().any(|l| l == "M5"), "the fire button is switched off before the job: {lines:?}");
+    assert!(!m.snapshot().fire_on);
+    m.disconnect();
+}
+
+#[test]
+fn homing_switches_the_fire_button_off_first() {
+    for (flavor, p) in [(EmuFlavor::Marlin, marlin_profile()), (EmuFlavor::Smoothie, smoothie_profile())] {
+        let emu = LineEmuHandle::with_config(EmuConfig::new(flavor).with_time_scale(1.0));
+        let (m, mut log) = connect(&p, &emu);
+        m.fire(5.0, Duration::from_secs(8)).unwrap();
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_on() || e.laser_armed())), "{flavor:?}");
+        m.home().unwrap();
+        assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Homed)), "{flavor:?}");
+        emu.with(|e| {
+            let a = &e.stats().arrived;
+            let home = a.iter().rposition(|l| l.starts_with("G28") || l.starts_with("$H")).expect("homing was sent");
+            let off = a.iter().position(|l| l == "M5" || l == "fire off" || l.starts_with("M107"));
+            assert!(off.is_some_and(|i| i < home), "{flavor:?}: the laser stayed on while homing: {a:?}");
+            assert!(!e.laser_on());
+        });
+        assert!(!m.snapshot().fire_on);
+        m.disconnect();
+    }
+}
+
+#[test]
+fn not_a_number_is_refused_by_every_machine() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin));
+    let (m, _log) = connect(&marlin_profile(), &emu);
+    assert!(m.jog(JogStep { dx: 1.0, dy: 0.0, dz: 0.0, feed: f64::NAN }).is_err());
+    assert!(m.jog(JogStep { dx: f64::NAN, dy: 0.0, dz: 0.0, feed: 600.0 }).is_err());
+    assert!(m.jog(JogStep { dx: 0.0, dy: 0.0, dz: f64::INFINITY, feed: 600.0 }).is_err());
+    assert!(m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, laser_percent: None }).is_err());
+    assert!(
+        m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), coords: darkburn_grbl::Coords::Work, feed: 600.0 }).is_err()
+    );
+    assert!(m.move_to(darkburn_grbl::MoveTarget { x: Some(1.0), y: None, z: None, coords: darkburn_grbl::Coords::Work, feed: f64::NAN }).is_err());
+    worker_passes(m.as_ref(), 20);
+    emu.with(|e| assert!(!e.stats().arrived.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().arrived));
+    m.disconnect();
+}

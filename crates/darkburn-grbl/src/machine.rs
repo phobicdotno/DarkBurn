@@ -767,8 +767,11 @@ impl GrblMachine {
         if points.is_empty() {
             return Err(GrblError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(GrblError::InvalidArgument("Framing speed must be above 0.".into()));
+        }
+        if points.iter().any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(GrblError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         if let Some(pct) = opts.laser_percent
             && !(0.0..=self.opts.max_fire_percent).contains(&pct)
@@ -806,8 +809,11 @@ impl GrblMachine {
     /// Relative jog (`$J=G91`), works for X/Y diagonals and Z. Turns the fire button off first.
     pub fn jog(&self, step: JogStep) -> Result<(), GrblError> {
         let s = self.motion_ok(true)?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(GrblError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -842,7 +848,7 @@ impl GrblMachine {
         if !s.is_v11() {
             return Err(GrblError::Unsupported("continuous jog needs GRBL 1.1"));
         }
-        if feed <= 0.0 {
+        if !positive(feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
         }
         let t =
@@ -918,8 +924,11 @@ impl GrblMachine {
         if target.x.is_none() && target.y.is_none() && target.z.is_none() {
             return Ok(());
         }
-        if target.feed <= 0.0 {
+        if !positive(target.feed) {
             return Err(GrblError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [target.x, target.y, target.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(GrblError::InvalidArgument("The position is not a number.".into()));
         }
         if let Some(t) = s.travel(&self.opts) {
             let off = if target.coords == Coords::Machine { [0.0; 4] } else { s.status.wco };
@@ -1084,6 +1093,12 @@ impl Drop for GrblMachine {
     }
 }
 
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
+}
+
 fn contains(r: Rect, p: Point) -> bool {
     let eps = 1e-6;
     p.x >= r.x0 - eps && p.x <= r.x1 + eps && p.y >= r.y0 - eps && p.y <= r.y1 + eps
@@ -1211,6 +1226,9 @@ enum StopPhase {
 struct StopSeq {
     phase: StopPhase,
     since: Instant,
+    /// Where the last status report after the feed hold put the machine. GRBL 0.9 does not
+    /// say when a hold is complete, so the reset waits until two reports agree.
+    held_at: Option<Axes>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1473,6 +1491,7 @@ impl Worker {
                     if origin == Origin::Console {
                         self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
                     }
+                    self.fire_off_before_command();
                     self.queue.push_back(Outgoing::new(text, origin));
                 }
             }
@@ -1480,6 +1499,7 @@ impl Worker {
                 if busy {
                     self.reject("Busy, macro not run.");
                 } else {
+                    self.fire_off_before_command();
                     for text in lines {
                         if origin == Origin::Macro {
                             self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
@@ -1554,6 +1574,14 @@ impl Worker {
         }
     }
 
+    /// The fire button never stays on while something else runs: a homing cycle or another
+    /// command that waits for the machine would hold back the timed `M5` until it is done.
+    fn fire_off_before_command(&mut self) {
+        if self.fire_until.is_some() {
+            self.fire_off(false);
+        }
+    }
+
     fn start_job(&mut self, job: Job, kind: JobKind) -> Result<(), String> {
         if self.job.is_some() || self.stop.is_some() {
             self.reject("A job is already running.");
@@ -1612,13 +1640,18 @@ impl Worker {
         self.snap.paused = false;
         let state = &self.snap.status.state;
         let may_move = state.is_moving() || matches!(state, MachineState::Hold(_)) || self.motion_pending || !self.in_flight.is_empty();
+        // A homing cycle ignores feed hold and answers no status requests, so its state here
+        // is stale; only a reset stops it.
+        let homing = self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H"));
         let now = Instant::now();
-        if self.snap.is_v11() && may_move && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
+        // Feed hold first on every GRBL version: a reset while the machine moves raises an
+        // alarm and loses the position.
+        if may_move && !homing && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
             self.write(&[rt::FEED_HOLD])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now, held_at: None });
         } else {
             self.write(&[rt::SOFT_RESET])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now, held_at: None });
         }
         self.publish();
         Ok(())
@@ -1626,12 +1659,12 @@ impl Worker {
 
     fn stop_reset(&mut self) -> Result<(), String> {
         self.write(&[rt::SOFT_RESET])?;
-        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now(), held_at: None });
         Ok(())
     }
 
     fn stop_after_reset(&mut self) -> Result<(), String> {
-        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now(), held_at: None });
         self.poll(true)
     }
 
@@ -2133,11 +2166,20 @@ impl Worker {
         if changed {
             self.emit(Event::StateChanged(r.state.clone()));
         }
-        if let Some(stop) = &self.stop {
+        let v11 = self.snap.is_v11();
+        let mpos = self.snap.status.mpos;
+        if let Some(stop) = &mut self.stop {
             match stop.phase {
                 StopPhase::Hold => {
                     let after_hold = poll_time.is_some_and(|t| t > stop.since);
-                    if after_hold && !r.state.is_moving() {
+                    // GRBL 1.1 reports `Hold:1` while it slows down. GRBL 0.9 reports a plain
+                    // `Hold` all the way, so there the machine stands still once two reports
+                    // in a row give the same position.
+                    let still = v11 || !matches!(r.state, MachineState::Hold(_)) || stop.held_at == Some(mpos);
+                    if after_hold {
+                        stop.held_at = Some(mpos);
+                    }
+                    if after_hold && !r.state.is_moving() && still {
                         self.stop_reset()?;
                     }
                 }

@@ -1244,6 +1244,30 @@ mod tests {
     }
 
     #[test]
+    fn an_emergency_stop_with_the_gas_on_still_sends_every_stop_step() {
+        let mut l = armed();
+        // Gas valve on (port 2), as during a cut.
+        l.write(&command::SafeWrite::try_from_raw(0x65, &[9999, 2, 0b10, 0b10]).unwrap()).unwrap();
+        assert_eq!(l.poll_status().unwrap().word(Status::Do) & 0xFFFF, 0b10);
+        // The card reports an E-stop: the gate latches, disarms and the stop sequence goes out.
+        l.sim.inject_alarm(Some(1 << 30), None);
+        let before = l.sim.commands().len();
+        l.poll_status().unwrap();
+        assert!(l.gate.arming.estop_latched());
+        let sent: Vec<Vec<u32>> = l.sim.commands()[before..].to_vec();
+        // Whatever form it takes, the laser ports 5, 6 and 9 are told to switch off.
+        for port in [5u32, 6, 9] {
+            let bit = 1 << (port - 1);
+            assert!(
+                sent.iter().any(|c| c.len() == 4 && c[0] == 9999 && c[1] == 2 && c[2] & bit != 0 && c[3] & bit == 0),
+                "nothing switched laser port {port} off: {sent:?}"
+            );
+        }
+        // And the gas stays as it was: a stop never switches anything on.
+        assert_eq!(l.sim.outputs() & 0b10, 0b10);
+    }
+
+    #[test]
     fn forbidden_requests_are_refused_and_recorded() {
         let mut sim = CardSimulator::new(SimConfig::default());
         let mk = |addr: u32, words: &[u32]| {

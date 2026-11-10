@@ -494,7 +494,9 @@ fn fire_button_turns_itself_off() {
 
 #[test]
 fn frame_rectangle_with_and_without_laser() {
-    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(50.0));
+    // Slow enough that the framing state lasts well over half a second of real time: at 50x
+    // the whole frame took 120 ms and a loaded machine could miss it.
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(10.0));
     let m = connect(&emu, ConnectOptions::default());
     m.frame_rect(Rect::new(10.0, 20.0, 110.0, 70.0), FrameOptions::default()).unwrap();
     wait_snap(&m, "framing", |s| s.activity == Activity::Framing);
@@ -649,4 +651,132 @@ fn eta_hook_is_used() {
     m.start_job(job).unwrap();
     let Event::JobFinished(p) = wait_event(&m, |e| matches!(e, Event::JobFinished(_))) else { unreachable!() };
     assert_eq!(p.eta, Some(Duration::ZERO));
+}
+
+#[test]
+fn homing_turns_the_fire_button_off_first() {
+    let emu = emulator(EmulatorConfig::atomstack().with_setting(22, 1.0).with_time_scale(50.0));
+    let opts = ConnectOptions { max_fire_duration: Duration::from_secs(60), ..Default::default() };
+    let m = connect(&emu, opts);
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.fire(1.0, Duration::from_secs(30)).unwrap();
+    wait_emu(&emu, "laser on", |e| e.laser_on());
+    wait_snap(&m, "fire flag", |s| s.fire_on);
+    m.home().unwrap();
+    wait_event(&m, |e| matches!(e, Event::Homed));
+    emu.with(|e| {
+        let lines = &e.stats().lines;
+        let home = lines.iter().rposition(|l| l == "$H").expect("homing was sent");
+        let fire = lines.iter().rposition(|l| l.contains("M3")).expect("fire was sent");
+        assert!(lines[fire..home].iter().any(|l| l.starts_with("M5")), "the laser must be switched off before homing starts: {:?}", &lines[fire..]);
+    });
+    wait_snap(&m, "fire flag cleared", |s| !s.fire_on);
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
+#[test]
+fn stop_during_homing_acts_at_once() {
+    let mut cfg = EmulatorConfig::atomstack().with_setting(22, 1.0);
+    cfg.homing_seconds = 30.0;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.home().unwrap();
+    wait_emu(&emu, "homing", |e| e.state_name() == "Home");
+    let t = Instant::now();
+    m.stop().unwrap();
+    wait_emu(&emu, "reset", |e| e.stats().soft_resets >= 1);
+    assert!(t.elapsed() < Duration::from_secs(1), "Stop took {:?} to reach the controller while homing", t.elapsed());
+    wait_event(&m, |e| matches!(e, Event::Stopped));
+    wait_snap(&m, "idle driver", |s| s.activity == Activity::Idle);
+    // Homing was aborted, so the controller is locked; unlocking makes it usable again.
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+}
+
+#[test]
+fn stop_on_grbl_09_holds_first_and_waits_for_the_machine_to_stand_still() {
+    // Real time, and a machine that needs 0.7 s to slow down: a reset before it stands still
+    // raises "ALARM: Abort during cycle" and loses the position.
+    let mut cfg = EmulatorConfig::flavor(EmulatorFlavor::Grbl09);
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    wait_emu(&emu, "M5 after reset", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    emu.with(|e| {
+        assert!(!e.laser_on());
+        assert_eq!(e.stats().soft_resets, 1);
+        assert!(e.stats().realtime.contains(&rt::FEED_HOLD));
+        assert_eq!(e.state_name(), "Idle");
+    });
+    wait_snap(&m, "idle after stop", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+}
+
+#[test]
+fn stop_on_grbl_11_waits_out_a_slow_feed_hold() {
+    let mut cfg = EmulatorConfig::atomstack();
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
+#[test]
+fn stop_after_jog_pause_or_start_leaves_no_alarm() {
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(5.0));
+    let m = connect(&emu, ConnectOptions::default());
+    m.jog(JogStep { dx: 300.0, feed: 3000.0, ..Default::default() }).unwrap();
+    wait_emu(&emu, "jogging", |e| e.state_name() == "Jog");
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after a pause, while still decelerating.
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on());
+    m.pause().unwrap();
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after starting, many times.
+    for i in 0..15 {
+        m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+        std::thread::sleep(Duration::from_millis(i * 7));
+        m.stop().unwrap();
+        let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+        assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop {i}: {events:?}");
+        wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+        emu.with(|e| assert!(!e.laser_on()));
+    }
+}
+
+#[test]
+fn not_a_number_is_refused() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let m = connect(&emu, ConnectOptions::default());
+    wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
+    assert!(matches!(m.jog(JogStep { dx: 1.0, feed: f64::NAN, ..Default::default() }), Err(GrblError::InvalidArgument(_))));
+    assert!(m.jog(JogStep { dx: f64::NAN, feed: 100.0, ..Default::default() }).is_err());
+    assert!(m.jog(JogStep { dz: f64::INFINITY, feed: 100.0, ..Default::default() }).is_err());
+    assert!(matches!(
+        m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, ..Default::default() }),
+        Err(GrblError::InvalidArgument(_))
+    ));
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), feed: 100.0, coords: Coords::Work }).is_err());
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: None, feed: f64::INFINITY, coords: Coords::Work }).is_err());
+    std::thread::sleep(Duration::from_millis(200));
+    emu.with(|e| assert!(!e.stats().lines.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().lines));
 }

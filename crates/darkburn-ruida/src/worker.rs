@@ -21,8 +21,9 @@
 //! }
 //! ```
 //!
-//! Requests run one at a time in the order sent. While a send is waiting for an overwrite
-//! answer, other requests wait. Dropping the handle stops the thread.
+//! Requests run one at a time in the order sent, except [`Request::Stop`], which goes ahead of
+//! everything that is waiting. While a send is waiting for an overwrite answer, other requests
+//! wait; a Stop gives that send up. Dropping the handle stops the thread.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -193,7 +194,7 @@ impl RuidaHandle {
         let (etx, rx) = mpsc::channel::<Event>();
         let thread = std::thread::Builder::new()
             .name("ruida".into())
-            .spawn(move || Worker { m: machine, rx: mrx, tx: etx, cfg, queued: VecDeque::new() }.run())
+            .spawn(move || Worker { m: machine, rx: mrx, tx: etx, cfg, queued: VecDeque::new(), shutdown: false }.run())
             .expect("spawn ruida worker thread");
         RuidaHandle { tx, rx, next: 1, thread: Some(thread), backlog: VecDeque::new() }
     }
@@ -262,13 +263,30 @@ struct Worker<T: Transport> {
     tx: Sender<Event>,
     cfg: WorkerConfig,
     queued: VecDeque<(RequestId, Request)>,
+    /// The handle asked the thread to end while a request was being handled.
+    shutdown: bool,
 }
 
 impl<T: Transport> Worker<T> {
     fn run(mut self) {
         let mut last_poll = Instant::now();
-        loop {
-            let next = if let Some(q) = self.queued.pop_front() {
+        'run: loop {
+            if self.shutdown {
+                break;
+            }
+            // Take in everything that is waiting, so a Stop among it can go first.
+            loop {
+                match self.rx.try_recv() {
+                    Ok(Msg::Req(id, r)) => self.queued.push_back((id, r)),
+                    Ok(Msg::Overwrite(..)) => {}
+                    Ok(Msg::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => break 'run,
+                    Err(mpsc::TryRecvError::Empty) => break,
+                }
+            }
+            let stop = self.queued.iter().position(|(_, r)| matches!(r, Request::Stop));
+            let next = if let Some(q) = stop.and_then(|i| self.queued.remove(i)) {
+                Some(q)
+            } else if let Some(q) = self.queued.pop_front() {
                 Some(q)
             } else {
                 let wait = match self.cfg.status_interval {
@@ -363,15 +381,25 @@ impl<T: Transport> Worker<T> {
     fn send_logical(&mut self, id: RequestId, name: &str, logical: &[u8], options: &SendOptions) -> Result<SendOutcome> {
         // The prompt and progress callbacks need the channels while the machine is borrowed,
         // so they are split out of `self` here.
-        let Worker { m, rx, tx, queued, .. } = self;
+        let Worker { m, rx, tx, queued, shutdown, .. } = self;
         let mut prompt = |n: &str| {
             let _ = tx.send(Event::OverwritePrompt { id, name: n.to_string() });
             loop {
                 match rx.recv() {
                     Ok(Msg::Overwrite(aid, c)) if aid == id => return c,
                     Ok(Msg::Overwrite(..)) => {}
+                    // Stop never waits for a question to be answered: the send is given up
+                    // and Stop is the next thing done.
+                    Ok(Msg::Req(rid, Request::Stop)) => {
+                        queued.push_back((rid, Request::Stop));
+                        return OverwriteChoice::Cancel;
+                    }
                     Ok(Msg::Req(rid, r)) => queued.push_back((rid, r)),
-                    Ok(Msg::Shutdown) | Err(_) => return OverwriteChoice::Cancel,
+                    Ok(Msg::Shutdown) | Err(_) => {
+                        // The message is used up here, so the main loop must be told.
+                        *shutdown = true;
+                        return OverwriteChoice::Cancel;
+                    }
                 }
             }
         };

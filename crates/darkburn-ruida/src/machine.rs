@@ -113,12 +113,26 @@ pub struct RuidaMachine<T: Transport = Box<dyn Transport>> {
     pub bytes_sent: usize,
     /// Resends performed, for diagnostics.
     pub resends: usize,
+    /// Copies of a datagram that were sent and never answered in time. Each may still be
+    /// acknowledged late; such an acknowledge must not be taken for the next datagram's.
+    late_acks: usize,
 }
 
 impl<T: Transport> RuidaMachine<T> {
     pub fn new(transport: T, cfg: MachineConfig) -> Self {
         let swz = Swizzler::new(cfg.magic.unwrap_or_default());
-        RuidaMachine { t: transport, cfg, swz, inbox: VecDeque::new(), stream_buf: Vec::new(), info: None, bed_um: None, bytes_sent: 0, resends: 0 }
+        RuidaMachine {
+            t: transport,
+            cfg,
+            swz,
+            inbox: VecDeque::new(),
+            stream_buf: Vec::new(),
+            info: None,
+            bed_um: None,
+            bytes_sent: 0,
+            resends: 0,
+            late_acks: 0,
+        }
     }
 
     pub fn config(&self) -> &MachineConfig {
@@ -278,10 +292,14 @@ impl<T: Transport> RuidaMachine<T> {
     }
 
     fn send_datagram(&mut self, datagram: &[u8], first: bool) -> Result<()> {
+        self.drain_late_acks()?;
         let mut attempt = 0;
         loop {
             self.t.send(Channel::Data, datagram)?;
             let outcome = self.wait_ack()?;
+            if matches!(outcome, Ack::Timeout) {
+                self.late_acks += 1;
+            }
             match outcome {
                 Ack::Ok => return Ok(()),
                 Ack::Timeout if attempt < self.cfg.retries => {}
@@ -294,6 +312,32 @@ impl<T: Transport> RuidaMachine<T> {
             attempt += 1;
             self.resends += 1;
         }
+    }
+
+    /// Datagrams carry no number, so an acknowledge cannot be matched to the datagram it is
+    /// for. After a datagram went unanswered and was sent again, the answer to the earlier copy
+    /// may still be on its way; it is waited for here (at most the normal timeout) before a new
+    /// datagram goes out. Otherwise it would be taken as the acknowledge of that new datagram,
+    /// which could then be lost without anyone noticing.
+    fn drain_late_acks(&mut self) -> Result<()> {
+        if self.late_acks == 0 {
+            return Ok(());
+        }
+        let deadline = Instant::now() + self.cfg.timeout;
+        while self.late_acks > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let Some(d) = self.t.recv(Channel::Data, left)? else { break };
+            let logical = self.swz.unswizzle(&d);
+            match logical.as_slice() {
+                [0xCC] | [0xCF] | [0xCD] => self.late_acks -= 1,
+                _ => self.inbox.extend(parse_commands(&logical)),
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+        }
+        self.late_acks = 0;
+        Ok(())
     }
 
     fn wait_ack(&mut self) -> Result<Ack> {
@@ -620,7 +664,11 @@ impl<T: Transport> RuidaMachine<T> {
             Axis::Z => s.z,
             Axis::U => s.u,
         };
-        let target = cur + mm_to_um(distance_mm);
+        if !distance_mm.is_finite() {
+            return Err(RuidaError::Encode("the jog distance is not a number".into()));
+        }
+        let target =
+            cur.checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
         if matches!(axis, Axis::X | Axis::Y) {
             let p = if axis == Axis::X { Point::new(um_to_mm(target), um_to_mm(s.y)) } else { Point::new(um_to_mm(s.x), um_to_mm(target)) };
             self.check_bounds(p)?;
@@ -762,8 +810,9 @@ impl<T: Transport> RuidaMachine<T> {
     /// UNCERTAIN: the result address (0x390 + index) and its unit (taken as ms) come from
     /// MeerK40t's emulator and need checking.
     pub fn calc_time(&mut self, index: u16) -> Result<Duration> {
+        let result = addr::FILE_TIME_BASE.checked_add(index).ok_or_else(|| RuidaError::NoSuchFile(format!("there is no file number {index}")))?;
         self.send_commands(&[Command::CalcFileTime(index)])?;
-        let ms = self.read_setting(addr::FILE_TIME_BASE + index)?;
+        let ms = self.read_setting(result)?;
         Ok(Duration::from_millis(ms as u64))
     }
 }

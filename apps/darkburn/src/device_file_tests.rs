@@ -43,7 +43,7 @@ const TYPES: [DeviceType; 29] = [
 ];
 
 /// Every leaf of `v` as a path of keys and indexes.
-fn leaves(v: &Value, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+pub(crate) fn leaves(v: &Value, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
     match v {
         Value::Object(m) if !m.is_empty() => {
             for (k, x) in m {
@@ -63,14 +63,14 @@ fn leaves(v: &Value, at: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
     }
 }
 
-fn at<'a>(v: &'a Value, path: &[String]) -> &'a Value {
+pub(crate) fn at<'a>(v: &'a Value, path: &[String]) -> &'a Value {
     path.iter().fold(v, |v, k| match v {
         Value::Array(a) => k.parse::<usize>().ok().and_then(|i| a.get(i)).unwrap_or(&Value::Null),
         _ => v.get(k).unwrap_or(&Value::Null),
     })
 }
 
-fn at_mut<'a>(v: &'a mut Value, path: &[String]) -> &'a mut Value {
+pub(crate) fn at_mut<'a>(v: &'a mut Value, path: &[String]) -> &'a mut Value {
     path.iter().fold(v, |v, k| match v {
         Value::Array(a) => &mut a[k.parse::<usize>().unwrap()],
         _ => v.get_mut(k).unwrap(),
@@ -79,7 +79,7 @@ fn at_mut<'a>(v: &'a mut Value, path: &[String]) -> &'a mut Value {
 
 /// Other values a leaf could hold. Several are offered because not every one is a value the
 /// field takes (an enum written as text, a whole number, a number with a range).
-fn others(v: &Value) -> Vec<Value> {
+pub(crate) fn others(v: &Value) -> Vec<Value> {
     match v {
         Value::Bool(b) => vec![Value::Bool(!b)],
         Value::Number(n) => {
@@ -232,4 +232,45 @@ fn every_field_of_every_device_type_survives_the_device_files() {
         "state.backups",
     ];
     assert_eq!(names, known, "no other value was found for these");
+}
+
+/// The same for the preferences file: every setting that is exported comes back on import,
+/// except the two that belong to this computer (the recent projects and the AI agent settings).
+#[test]
+fn every_preference_survives_export_and_import() {
+    use crate::prefs::Prefs;
+    let dir = std::env::temp_dir().join(format!("darkburn-prefs-fields-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("prefs.json");
+    let json: Value = serde_json::from_str(&Prefs::default().to_json()).unwrap();
+    let mut paths = Vec::new();
+    leaves(&json, &mut Vec::new(), &mut paths);
+    assert!(paths.len() > 120, "only {} settings found", paths.len());
+    let (mut tried, mut lost) = (0, Vec::new());
+    for path in &paths {
+        let name = path.join(".");
+        if path[0] == "recent" || path[0] == "mcp" {
+            continue;
+        }
+        // The first other value the setting keeps (settings are brought into range when read).
+        let changed = others(at(&json, path)).into_iter().find_map(|new| {
+            let mut j = json.clone();
+            *at_mut(&mut j, path) = new.clone();
+            let p = Prefs::from_json(&j.to_string());
+            let back: Value = serde_json::from_str(&p.to_json()).unwrap();
+            (at(&back, path) == &new).then_some((p, new))
+        });
+        let Some((theirs, new)) = changed else { continue };
+        tried += 1;
+        crate::prefs_files::export(&theirs, &file).unwrap();
+        let mut mine = Prefs::default();
+        crate::prefs_files::import(&mut mine, &file, None).unwrap();
+        if mine != theirs {
+            lost.push(format!("{name} = {new}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(lost.is_empty(), "{} of {tried} settings were lost:\n{}", lost.len(), lost.join("\n"));
+    assert!(tried > 90, "only {tried} settings were tried");
 }

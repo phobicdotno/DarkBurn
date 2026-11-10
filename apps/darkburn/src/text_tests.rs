@@ -380,3 +380,17 @@ fn every_command_has_a_valid_schema() {
         }
     }
 }
+
+#[test]
+fn text_is_not_put_on_a_path_without_length() {
+    let mut a = app();
+    let t = add(&mut a, "Hi", json!({}));
+    let before = bbox(&a, t);
+    assert!(before.width() > 1.0);
+    let dot = run(&mut a, "shape.add_line", json!({ "points": [[5, 5], [5, 5]], "connect": false })).unwrap()["id"].as_u64().unwrap();
+    // The text used to vanish: it stayed in the project with nothing to draw or burn.
+    let err = run(&mut a, "text.on_path", json!({ "text_id": t.0, "path_id": dot })).unwrap_err();
+    assert!(err.contains("no length"), "{err}");
+    assert!(text_of(&a, t).on_path.is_none());
+    assert_eq!(bbox(&a, t), before);
+}

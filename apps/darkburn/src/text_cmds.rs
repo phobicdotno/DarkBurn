@@ -485,6 +485,9 @@ fn on_path(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if ps.local_outline().elements().is_empty() {
         return Err("the path is empty".into());
     }
+    if darkburn_geom::path::length(&ps.local_outline()) <= 1e-9 {
+        return Err("the path has no length".into());
+    }
     let path = path_for_text(&ts, &ps);
     let pt = PathText {
         path,

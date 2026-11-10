@@ -8,3 +8,4 @@ Fix: Convert to Path leaves a text of only spaces alone instead of making an inv
 Fix: "Weld text automatically" also applies to text made with the text tool
 Fix: A warning when a hole or part is smaller than the kerf offset and gets left out
 Fix: Tabs never take more than half of a small shape, so there is always something left to cut
+Fix: Tabs and start points can be set on shapes inside a group

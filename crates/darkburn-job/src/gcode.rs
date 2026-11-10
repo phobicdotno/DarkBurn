@@ -64,7 +64,7 @@ pub struct GcodeSettings {
     /// S value at 100 % power (GRBL `$30`, often 1000).
     pub s_max: f64,
     pub decimals: usize,
-    /// Fewer decimals for fill and image layers.
+    /// Fewer decimals for fill layers (image layers keep `decimals`: their dots are a grid).
     pub raster_decimals: usize,
     /// Write S on every G1 even when it did not change.
     pub s_every_g1: bool,
@@ -507,8 +507,12 @@ impl<'a> Emitter<'a> {
             Op::LayerStart { layer } => {
                 self.layer = self.tp.layers.get(*layer);
                 if !self.relative {
-                    let raster = self.layer.is_some_and(|l| l.raster);
-                    self.dec = if raster { self.s.raster_decimals } else { self.s.decimals };
+                    // A fill's line ends fall anywhere, and a hundredth is far below the beam.
+                    // A picture's dots are a grid: at 300 DPI a dot is 0.085 mm, and both of
+                    // its ends rounded to a hundredth would change its length by up to an
+                    // eighth (a quarter at 600 DPI). Pictures keep the full decimals.
+                    let coarse = self.layer.is_some_and(|l| l.raster && l.mode != crate::input::CutMode::Image);
+                    self.dec = if coarse { self.s.raster_decimals } else { self.s.decimals };
                 }
                 if self.s.flavor.is_grbl() {
                     let want = self.wanted_spindle();
@@ -631,6 +635,30 @@ mod tests {
         let g = emit(&tp(sq(), true), &GcodeSettings { comments: false, s_every_g1: true, ..GcodeSettings::grbl() });
         assert!(g.contains("M3 S0\n"));
         assert!(g.contains("G1 Y11 S500\n"));
+    }
+
+    /// The dots of a picture keep their length in the G-code at 300 and 600 DPI.
+    #[test]
+    fn picture_dots_are_not_rounded_out_of_shape() {
+        for dpi in [300.0, 600.0, 1270.0] {
+            let pitch = 25.4 / dpi;
+            let mut ops = vec![Op::Rapid { to: Point::new(10.0, 5.0) }];
+            for i in 1..=200 {
+                ops.push(Op::Cut { to: Point::new(10.0 + i as f64 * pitch, 5.0), speed: 100.0, power: if i % 2 == 1 { 50.0 } else { 0.0 } });
+            }
+            let mut t = tp(ops, false);
+            t.layers[0].raster = true;
+            t.layers[0].mode = CutMode::Image;
+            let g = emit(&t, &GcodeSettings { comments: false, ..GcodeSettings::grbl() });
+            let xs: Vec<f64> = g.lines().filter(|l| l.starts_with("G1 X")).map(|l| l[4..].split(' ').next().unwrap().parse().unwrap()).collect();
+            assert_eq!(xs.len(), 200, "{dpi} DPI");
+            let mut from = 10.0;
+            for x in xs {
+                let dot = x - from;
+                assert!((dot - pitch).abs() <= pitch * 0.06, "{dpi} DPI: a dot of {dot:.4} mm, should be {pitch:.4}");
+                from = x;
+            }
+        }
     }
 
     #[test]

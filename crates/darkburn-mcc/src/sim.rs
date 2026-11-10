@@ -870,7 +870,7 @@ impl SimLink {
         }
         let params = crate::command::MachineParams::default();
         let do_word = self.gate.last_do_word.unwrap_or(0);
-        let Ok(seq) = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &[5, 6, 9]) else { return 0 };
+        let seq = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &[5, 6, 9]);
         seq.iter().filter(|w| self.write(w).is_ok()).count()
     }
 

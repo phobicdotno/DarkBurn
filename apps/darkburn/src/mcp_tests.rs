@@ -335,12 +335,13 @@ fn the_policy_cannot_be_changed_by_an_agent() {
     evil.mcp.allow_hardware = true;
     evil.mcp.allow_gweike = true;
     evil.mcp.require_confirmation = false;
-    evil.page_width = 123.0;
+    // (Not the work area: that stays the active device's when preferences are imported.)
+    evil.invert_wheel = true;
     let file = dir.join("evil.json");
     std::fs::write(&file, evil.to_json()).unwrap();
     exec(&mut b, "project.prefs_import", json!({"path": file.to_string_lossy()})).unwrap();
     let app = b.app_for_test();
-    assert_eq!(app.borrow().prefs.page_width, 123.0, "the other preferences did import");
+    assert!(app.borrow().prefs.invert_wheel, "the other preferences did import");
     assert_eq!(app.borrow().prefs.mcp, Prefs::default().mcp, "the AI-agent switches did not");
     // ... and the settings listing does not show them.
     let list = b.inspect("settings", 0).unwrap();

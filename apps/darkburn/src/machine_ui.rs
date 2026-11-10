@@ -1163,7 +1163,12 @@ pub fn save_default_layers(app: &mut DarkBurn) -> bool {
 
 pub fn apply_default_layers(app: &mut DarkBurn) -> bool {
     let Some(text) = app.machine.active().state.default_layers.clone() else { return false };
-    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(&text) else { return false };
+    apply_layers(app, &text)
+}
+
+/// Put stored default layers (a device's `default_layers` text) on the open project, as one undo step.
+pub fn apply_layers(app: &mut DarkBurn, text: &str) -> bool {
+    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(text) else { return false };
     if layers.len() != app.editor.doc.layers.len() {
         return false;
     }

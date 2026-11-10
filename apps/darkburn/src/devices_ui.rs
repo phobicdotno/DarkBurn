@@ -517,14 +517,17 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
         ui_kit::number_field(ui, &mut d.state.grid_spacing, 0.0..=1000.0, 0.5, " mm");
     });
     ui.horizontal(|ui| {
-        if small(ui, "Use current layers as defaults", "", true) {
-            machine_ui::save_default_layers(app);
-            if let Some(saved) = app.machine.devices.get(d.id) {
-                d.state.default_layers = saved.state.default_layers.clone();
-            }
+        // Both work on the device this window is editing (not on the one in use), and the new
+        // defaults are part of the draft: Cancel leaves the device as it was.
+        if small(ui, "Use current layers as defaults", "", true)
+            && let Ok(layers) = serde_json::to_string(&app.editor.doc.layers)
+        {
+            d.state.default_layers = Some(layers);
         }
-        if small(ui, "Apply default layers", "", d.state.default_layers.is_some()) {
-            machine_ui::apply_default_layers(app);
+        if small(ui, "Apply default layers", "", d.state.default_layers.is_some())
+            && let Some(text) = d.state.default_layers.clone()
+        {
+            machine_ui::apply_layers(app, &text);
         }
     });
 }

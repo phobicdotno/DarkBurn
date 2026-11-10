@@ -334,3 +334,57 @@ fn a_new_or_removed_device_in_use_ends_the_open_connection() {
     assert!(!g.app().machine.handle.is_connected(), "the removed device is still connected");
     g.close_dialogs();
 }
+
+/// Scroll the open window until the text `label` is well inside it.
+fn scroll_window_to(g: &mut Gui, label: &str) {
+    let window = g.dialog_windows().into_iter().next().expect("a window is open");
+    for _ in 0..80 {
+        if g.find_text(label).is_some_and(|r| r.top() > window.top() + 60.0 && r.bottom() < window.bottom() - 70.0) {
+            return;
+        }
+        g.scroll(window.center(), egui::vec2(0.0, -60.0));
+    }
+    // The last rows of a window stop just above its buttons: that is as far as it scrolls.
+    assert!(g.find_text(label).is_some_and(|r| window.contains_rect(r)), "{label:?} did not scroll into view; texts: {:?}", g.visible_texts());
+}
+
+/// "Use current layers as defaults" in Device Settings belongs to the device being edited and
+/// to its OK: it used to write to the device in use at once, whichever device the window was
+/// for, and Cancel did not take it back.
+#[test]
+fn device_settings_default_layers_go_to_the_edited_device_on_ok_only() {
+    const BUTTON: &str = "Use current layers as defaults";
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.app().editor.doc.layer_mut(1).main_mut().speed = 77.0;
+    let in_use = g.app().machine.devices.active.unwrap();
+    let other = g.app().machine.devices.devices.iter().find(|d| d.id != in_use).unwrap().clone();
+    let defaults = |g: &Gui, id: u64| g.app().machine.devices.get(id).unwrap().state.default_layers.clone();
+    let open = |g: &mut Gui| {
+        g.app().machine.dlg.settings = Some((other.clone(), 0));
+        g.settle();
+        scroll_window_to(g, BUTTON);
+        g.click_label(BUTTON);
+    };
+    open(&mut g);
+    assert_eq!(defaults(&g, in_use), None, "the button wrote to the device in use, not the edited one");
+    g.click_id("dialog:cancel");
+    g.frames(3);
+    assert!(g.app().machine.dlg.settings.is_none());
+    assert_eq!((defaults(&g, in_use), defaults(&g, other.id)), (None, None), "Cancel kept the new default layers");
+    open(&mut g);
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert_eq!(defaults(&g, in_use), None);
+    assert!(defaults(&g, other.id).is_some_and(|t| t.contains("77")), "OK stores the layers with the edited device");
+    // Apply puts the edited device's defaults on the project, as one undo step.
+    g.app().editor.doc.layer_mut(1).main_mut().speed = 5.0;
+    let steps = g.app().editor.history.len();
+    let other = g.app().machine.devices.get(other.id).unwrap().clone();
+    g.app().machine.dlg.settings = Some((other, 0));
+    g.settle();
+    scroll_window_to(&mut g, "Apply default layers");
+    g.click_label("Apply default layers");
+    assert_eq!(g.app().editor.doc.layer(1).main().speed, 77.0, "Apply used another device's defaults");
+    assert_eq!(g.app().editor.history.len(), steps + 1);
+}

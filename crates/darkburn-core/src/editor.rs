@@ -217,14 +217,26 @@ impl Editor {
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
     pub fn drop_checkpoint(&mut self) {
         if let Some(s) = self.history.undo.pop() {
+            // Back at the state of the checkpoint: still saved if it was saved then.
+            let was_saved = self.is_saved_state(&s);
             self.restore_doc(s.doc);
             self.selection = s.selection;
-            // Back at the state of the checkpoint: still saved if it was saved then.
-            let was_saved = s.revision == self.saved_revision;
-            self.revision += 1;
-            if was_saved {
-                self.saved_revision = self.revision;
-            }
+            self.step_to(was_saved);
+        }
+    }
+
+    /// Whether `s` holds the document as it was last saved or opened. The notes are not part of
+    /// an undo step, so they must still be the ones that were saved.
+    fn is_saved_state(&self, s: &Snapshot) -> bool {
+        s.revision == self.saved_revision && s.doc.notes == self.doc.notes && s.doc.show_notes_on_load == self.doc.show_notes_on_load
+    }
+
+    /// Move the revision on after a step through the history; `saved` says the document is now
+    /// the one that was saved.
+    fn step_to(&mut self, saved: bool) {
+        self.revision += 1;
+        if saved {
+            self.saved_revision = self.revision;
         }
     }
 
@@ -240,6 +252,7 @@ impl Editor {
 
     pub fn undo(&mut self) -> bool {
         let Some(s) = self.history.undo.pop() else { return false };
+        let saved = self.is_saved_state(&s);
         let now = Snapshot {
             doc: self.restore_doc(s.doc),
             selection: std::mem::replace(&mut self.selection, s.selection),
@@ -247,12 +260,13 @@ impl Editor {
             revision: self.revision,
         };
         self.history.redo.push(now);
-        self.revision += 1;
+        self.step_to(saved);
         true
     }
 
     pub fn redo(&mut self) -> bool {
         let Some(s) = self.history.redo.pop() else { return false };
+        let saved = self.is_saved_state(&s);
         let now = Snapshot {
             doc: self.restore_doc(s.doc),
             selection: std::mem::replace(&mut self.selection, s.selection),
@@ -260,7 +274,7 @@ impl Editor {
             revision: self.revision,
         };
         self.history.undo.push(now);
-        self.revision += 1;
+        self.step_to(saved);
         true
     }
 
@@ -415,6 +429,62 @@ mod tests {
         });
         e.checkpoint("Move");
         e.drop_checkpoint();
+        assert!(e.is_modified());
+    }
+
+    /// Undo back to what was saved (and redo forward to it) is the saved project again.
+    #[test]
+    fn undo_and_redo_back_to_the_saved_state_are_not_unsaved_changes() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        e.edit("Add", |d, _| {
+            d.add(square(40.0));
+            true
+        });
+        assert!(e.undo());
+        assert!(e.is_modified(), "one step short of the saved state");
+        assert!(e.undo());
+        assert!(!e.is_modified(), "undo back to the saved state");
+        assert!(e.undo());
+        assert!(e.is_modified(), "undo past the saved state");
+        assert!(e.redo());
+        assert!(!e.is_modified(), "redo forward to the saved state");
+        assert!(e.redo() && e.redo());
+        assert!(e.is_modified());
+        assert!(e.undo() && e.undo());
+        assert!(!e.is_modified(), "and back again");
+        // Notes are not undo steps: with other notes than the saved ones it is not the saved project.
+        e.edit("Add", |d, _| {
+            d.add(square(60.0));
+            true
+        });
+        e.doc.notes = "changed".into();
+        e.touch();
+        assert!(e.undo());
+        assert!(e.is_modified(), "the notes differ from the saved ones");
+        // A new change after an undo past the save can never be undone into the saved state.
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        assert!(e.undo());
+        e.edit("Add", |d, _| {
+            d.add(square(5.0));
+            true
+        });
+        assert!(e.undo());
+        assert!(e.is_modified(), "the empty document was never saved");
+        assert!(e.redo());
         assert!(e.is_modified());
     }
 }

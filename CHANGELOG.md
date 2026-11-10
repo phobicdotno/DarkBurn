@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.383 (build 6)
+## v0.0.402 (build 6)
 - The ribbon now shrinks to icons and a » menu on narrow windows
 - Panel tabs that do not fit move behind a » menu
 - Cuts / Layers columns are readable at the default panel width
@@ -360,6 +360,25 @@
 - Fix: With the system clipboard turned off, Paste no longer takes what other programs copied
 - Fix: Paste takes the newest copy when you copy the same picture or shapes again in another program
 - Fix: Deleting a layer with its pictures no longer leaves their pixels in the project file
+- Fix: Undo back to where you saved no longer counts as unsaved work
+- Fix: Read from the controller only shows for the laser that is connected
+- Fix: New Device wizard keeps the port and address when you click the type again
+- Fix: Barcode OK waits until the data fits the barcode
+- Fix: Focus Test and Interval Test keep their numbers until Create
+- Fix: More number fields take sums
+- Fix: Head camera pictures land right on machines with the origin at the back
+- Fix: Camera alignment clicks are a bit more exact
+- Fix: AI agents are told when a change did nothing
+- Fix: The update check only uses plain http on this computer
+- Fix: Convert to Bitmap keeps pictures that sit inside a group
+- Fix: A date format with a time zone no longer crashes variable text
+- Fix: Big arrays of variable text with a long CSV file no longer freeze
+- Fix: Auto-advance after a job now works
+- Fix: Single-line fonts can be favourites
+- Fix: Tab stays in the open dialog
+- Fix: Enter presses the button you tabbed to
+- Fix: One bad value in the settings file no longer resets all settings
+- Fix: Two DarkBurn windows no longer undo each other's settings
 
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent

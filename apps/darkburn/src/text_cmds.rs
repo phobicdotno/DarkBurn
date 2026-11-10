@@ -534,7 +534,8 @@ fn edit_variables(app: &mut DarkBurn, label: &str, f: impl FnOnce(&mut Document)
             return false;
         }
         render::refresh(d);
-        d.variables != before || true
+        // Nothing asked for, or what was already set: no undo step and `changed: false`.
+        d.variables != before
     });
     match err {
         Some(e) => Err(e),

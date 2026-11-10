@@ -1037,12 +1037,37 @@ impl Wizard {
         Wizard { step: WizardStep::NameAndSize, draft: d }
     }
     /// Pick the type; the rest of the draft follows the type's usual values.
+    /// Picking the type the draft already has changes nothing, and what was set by hand or
+    /// taken over from Find my laser (port, connection, host, baud rate) goes along to a new
+    /// type that can use it.
     pub fn set_type(&mut self, kind: DeviceType) {
-        let name = self.draft.name.clone();
-        let keep_name = !name.starts_with("My ") && !name.starts_with("Simulator") && name != "Design only";
-        self.draft = Device::new(kind);
-        if keep_name {
-            self.draft.name = name;
+        if kind == self.draft.kind {
+            return;
+        }
+        let old = std::mem::replace(&mut self.draft, Device::new(kind));
+        let usual = Device::new(old.kind);
+        let d = &mut self.draft;
+        if !old.name.starts_with("My ") && !old.name.starts_with("Simulator") && old.name != "Design only" {
+            d.name = old.name;
+        }
+        if kind.is_simulator() || kind == DeviceType::DesignOnly {
+            return;
+        }
+        let kinds = kind.connections();
+        if (old.connection != usual.connection || !old.state.port.is_empty()) && kinds.contains(&old.connection) {
+            d.connection = old.connection;
+        }
+        if kinds.contains(&ConnectionKind::Serial) {
+            d.state.port = old.state.port;
+        }
+        if old.host != usual.host && !old.host.trim().is_empty() {
+            d.host = old.host;
+        }
+        if old.tcp_port != usual.tcp_port {
+            d.tcp_port = old.tcp_port;
+        }
+        if old.settings.gcode.baud_rate != usual.settings.gcode.baud_rate {
+            d.settings.gcode.baud_rate = old.settings.gcode.baud_rate;
         }
     }
     /// Problems with the current step; empty means Next is allowed.
@@ -1338,6 +1363,38 @@ mod tests {
         let cand = Candidate { port: "COM5".into(), label: "COM5".into(), kind: DeviceType::Grbl, note: String::new() };
         let from = Wizard::from_candidate(&cand);
         assert_eq!((from.draft.state.port.as_str(), from.step), ("COM5", WizardStep::NameAndSize));
+    }
+
+    /// Back on the Type page, a click on the type that is already picked keeps the draft, and
+    /// another type keeps what was typed or found where it can use it.
+    #[test]
+    fn picking_a_type_again_keeps_what_was_set_up() {
+        let cand = Candidate { port: "COM5".into(), label: "COM5".into(), kind: DeviceType::Grbl, note: String::new() };
+        let mut w = Wizard::from_candidate(&cand);
+        w.draft.settings.gcode.baud_rate = 250_000;
+        w.draft.width_mm = 777.0;
+        w.set_type(DeviceType::Grbl);
+        assert_eq!(w.draft.state.port, "COM5", "the found port was lost");
+        assert_eq!((w.draft.settings.gcode.baud_rate, w.draft.width_mm), (250_000, 777.0), "the same type started the draft again");
+        w.set_type(DeviceType::GrblHal);
+        assert_eq!(w.draft.kind, DeviceType::GrblHal);
+        assert_eq!((w.draft.state.port.as_str(), w.draft.connection), ("COM5", ConnectionKind::Serial));
+        assert_eq!(w.draft.settings.gcode.baud_rate, 250_000);
+        assert_eq!(w.draft.settings.gcode.flavor, DeviceType::GrblHal.flavor(), "the rest follows the new type");
+        assert_eq!(w.draft.name, "Laser on COM5");
+
+        let mut w = Wizard::new();
+        w.set_type(DeviceType::Ruida);
+        w.draft.host = "10.0.0.7".into();
+        w.set_type(DeviceType::Ruida);
+        assert_eq!(w.draft.host, "10.0.0.7", "the typed address was lost");
+        // An untouched draft takes the new type's usual values, and a simulator takes nothing over.
+        let mut w = Wizard::new();
+        w.set_type(DeviceType::Ruida);
+        assert_eq!(w.draft, Device { id: w.draft.id, ..Device::new(DeviceType::Ruida) });
+        w.draft.host = "10.0.0.7".into();
+        w.set_type(DeviceType::SimulatorGrbl);
+        assert_eq!(w.draft, Device::new(DeviceType::SimulatorGrbl));
     }
 
     #[test]

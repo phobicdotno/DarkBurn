@@ -111,6 +111,9 @@ pub const JOB_LOG_HEADER: &str = "start (UTC),duration (s),file,device,result,de
 #[derive(Clone, Copy, Debug, Default)]
 pub struct JobRun {
     started: Option<(u64, Instant)>,
+    /// The job handed to the machine last was made from the project (not a G-code file run as
+    /// it is): when it finishes, variable text moves on if the project asks for that.
+    pub from_project: bool,
 }
 
 #[cfg(test)]
@@ -275,9 +278,14 @@ pub fn on_machine_events(app: &mut DarkBurn, events: &[crate::machine_api::Machi
             }
             E::JobFinished(p) => {
                 done = true;
+                // Auto-advance of the Variable Text panel: the next serial number or CSV row.
+                if std::mem::take(&mut app.job_run.from_project) {
+                    crate::text_cmds::after_job(app);
+                }
                 ("finished", String::new(), Some(p))
             }
             E::JobAborted(r) => {
+                app.job_run.from_project = false;
                 let by_user = stopped_by_user(r);
                 error |= !by_user;
                 (if by_user { "stopped" } else { "failed" }, r.to_string(), None)

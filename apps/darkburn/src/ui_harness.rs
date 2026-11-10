@@ -142,6 +142,11 @@ static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::ne
 impl Gui {
     /// A fresh app in a `width` x `height` point window at `scale` pixels per point.
     pub fn new(width: f32, height: f32, scale: f32) -> Gui {
+        Gui::with_prefs(width, height, scale, Prefs::default())
+    }
+
+    /// A fresh app that starts with `prefs`, as after a restart with those preferences stored.
+    pub fn with_prefs(width: f32, height: f32, scale: f32, prefs: Prefs) -> Gui {
         let dir =
             std::env::temp_dir().join(format!("darkburn-ui-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&dir);
@@ -162,7 +167,7 @@ impl Gui {
                 })
                 .wgpu()
                 .build_eframe(move |cc| {
-                    let mut app = DarkBurn::new(Prefs::default());
+                    let mut app = DarkBurn::new(prefs.clone());
                     app.settings_dir = Some(dir2.clone());
                     app.safe_mode = true;
                     app.custom_titlebar = true;

@@ -441,6 +441,7 @@ pub fn after_build(app: &mut DarkBurn, job: Arc<BuiltJob>, action: Action) -> Re
     };
     job_cmds::record_last_job(app, &job);
     app.job.start_op = None;
+    app.job_run.from_project = true;
     Ok(out)
 }
 

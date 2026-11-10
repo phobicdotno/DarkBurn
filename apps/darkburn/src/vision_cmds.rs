@@ -724,8 +724,12 @@ fn align_clear(app: &mut DarkBurn) -> Value {
 
 // ----- Head-mounted camera ----------------------------------------------------------------------
 
+/// A mark holds where the head stood as the controller reports it (machine coordinates, like
+/// every laser position here) and where the mark is in the design. The picture is placed in
+/// design coordinates, so the head positions are turned to the design first.
 pub fn head_solve(app: &mut DarkBurn, marks: Vec<HeadMark>, size: (u32, u32)) -> Result<Value, String> {
     sync(app);
+    let marks: Vec<HeadMark> = marks.into_iter().map(|m| HeadMark { head_pos: laser_to_design(app, m.head_pos), ..m }).collect();
     let cam = &app.vision.state.camera;
     let cal = HeadCameraCalibration::solve(&marks, size, cam.lens.clone(), cam.focal_scale).map_err(|e| e.to_string())?;
     let rms = cal.rms_mm;
@@ -778,7 +782,9 @@ pub fn mark_in_view(app: &DarkBurn, mark: &HeadMark) -> Point {
     }
 }
 
+/// `head` is where the controller reports the head (machine coordinates).
 pub fn head_add_capture(app: &mut DarkBurn, img: RgbaImage, head: Point) -> usize {
+    let head = laser_to_design(app, head);
     app.vision.mosaic.push(MosaicCapture { head_pos: head, image: img });
     app.vision.mosaic.len()
 }
@@ -1885,6 +1891,42 @@ mod tests {
         let c = o.img.get_pixel((100.0 * ppm) as u32, ((o.covers.height - 100.0) * ppm) as u32);
         assert_eq!(c.0[3], 255);
         assert_eq!(o.img.get_pixel(1, 1).0[3], 0);
+    }
+
+    /// The head position is what the controller reports. On a machine with its origin at the back
+    /// right that is not the design position: the stitched picture still lands where the head was
+    /// over the design, not mirrored to the other side of the bed.
+    #[test]
+    fn head_camera_captures_land_under_the_head_on_a_machine_with_its_origin_at_the_back() {
+        let mut app = app();
+        app.machine.devices.active_mut().unwrap().origin = darkburn_job::origin::Corner::TopRight;
+        let b = bed(&app);
+        // The head stands over the design point (60, 50); the controller reports it from the far corner.
+        let design_head = Point::new(60.0, 50.0);
+        let reported = machine_affine(&app) * design_head;
+        assert!((reported - design_head).hypot() > 1.0, "this machine counts from another corner");
+        // 8 px/mm, picture x right = design x right, picture y down = design y down
+        let marks: Vec<HeadMark> = [(40.0, 30.0), (280.0, 30.0), (280.0, 210.0), (40.0, 210.0), (160.0, 120.0)]
+            .iter()
+            .map(|&(px, py)| HeadMark {
+                image: Point::new(px, py),
+                head_pos: reported,
+                bed: Point::new(design_head.x + (px - 160.0) / 8.0, design_head.y - (py - 120.0) / 8.0),
+            })
+            .collect();
+        let r = head_solve(&mut app, marks, (320, 240)).unwrap();
+        assert!(r["rms_mm"].as_f64().unwrap() < 1e-6);
+        // A capture with the head somewhere else: 40 mm to the right in the design.
+        let second = Point::new(100.0, 50.0);
+        let reported = machine_affine(&app) * second;
+        head_add_capture(&mut app, RgbaImage::from_pixel(320, 240, Rgba([200, 50, 50, 255])), reported);
+        head_stitch(&mut app).unwrap();
+        let o = app.vision.overlay.as_ref().unwrap();
+        let ppm = o.img.width() as f64 / o.covers.width;
+        let at = |p: Point| o.img.get_pixel((p.x * ppm) as u32, ((o.covers.height - p.y) * ppm) as u32).0[3];
+        assert_eq!(at(second), 255, "the capture is not where the head was over the design");
+        let mirrored = Point::new(b.width - second.x, b.height - second.y);
+        assert_eq!(at(mirrored), 0, "the capture landed mirrored");
     }
 
     /// The head camera wizard shows the lens-corrected picture; the clicks made in it must not be

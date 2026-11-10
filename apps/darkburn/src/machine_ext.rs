@@ -391,7 +391,9 @@ pub fn galvo_start(app: &mut DarkBurn, send_only: bool) -> Result<Value, String>
     if !armed {
         return Err("Arm the laser first (Arm in the Laser panel). The laser is never enabled without it.".into());
     }
-    match app.machine.begin_start(req)? {
+    let outcome = app.machine.begin_start(req)?;
+    app.job_run.from_project = true;
+    match outcome {
         crate::machine_ui::StartOutcome::Started => Ok(json!({ "ok": true, "warnings": warnings })),
         crate::machine_ui::StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
     }

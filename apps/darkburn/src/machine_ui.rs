@@ -739,7 +739,10 @@ fn run_gcode_file(app: &mut DarkBurn, a: &Value, src: Source) -> Result<Value, S
             offset.x, offset.y
         ));
     }
-    match app.machine.begin_start(job)? {
+    let outcome = app.machine.begin_start(job)?;
+    // A file run as it is: nothing of the project was burnt.
+    app.job_run.from_project = false;
+    match outcome {
         StartOutcome::Started => Ok(json!({ "ok": true })),
         StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
     }

@@ -710,7 +710,8 @@ fn additional_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::row(ui, "Z speed", |ui| {
         ui_kit::number_field(ui, &mut a.z_speed, 0.1..=500.0, 0.1, " mm/s");
     });
-    if app.machine.handle.is_connected() {
+    // Only for the device that is connected: the numbers of one machine are not another's.
+    if app.machine.handle.is_connected() && app.machine.devices.active == Some(d.id) {
         // Read-only: takes the numbers from the settings already read from the controller.
         if ui_kit::button(ui, "Read from the controller", ui_kit::Button::Small).clicked() {
             match crate::motion_read::from_snapshot(app.machine.handle.snapshot(), d.settings.additional) {

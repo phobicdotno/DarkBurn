@@ -727,6 +727,17 @@ pub fn font_label(font: &str) -> String {
     }
 }
 
+/// The sections of the font drop-down for the search text `query`: favourites, recent fonts,
+/// the single-line fonts and all installed fonts. A single-line font is found by the name the
+/// list shows, and it can be a favourite or a recent font like any other.
+fn picker_sections(prefs: &FontPrefs, installed: &[String], shx: &[String], query: &str) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    let q = query.to_lowercase();
+    let found = |f: &String| q.is_empty() || font_label(f).to_lowercase().contains(&q);
+    let known = |f: &String| installed.iter().chain(shx).any(|i| i.eq_ignore_ascii_case(f));
+    let pick = |list: &[String]| list.iter().filter(|f| known(f) && found(f)).cloned().collect::<Vec<_>>();
+    (pick(&prefs.favourites), pick(&prefs.recent), pick(shx), pick(installed))
+}
+
 /// A font drop-down with search, favourites, recent fonts and a live preview. Returns the
 /// font picked this frame.
 pub fn font_picker(
@@ -760,14 +771,7 @@ pub fn font_picker(
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
             ui.painter().rect_filled(rect, t.radius_sm, t.control_fill);
             paint_preview(ui.painter(), rect.shrink(6.0), &preview_lines(&shown_font, &sample), t.text);
-            let (favs, recent, all) = {
-                let lib = render::lib();
-                let installed = darkburn_text::list_families(&lib);
-                let l = prefs.listing(&installed, &query, false);
-                (l.favourites, l.recent, l.all)
-            };
-            let shx_list: Vec<String> =
-                shx.iter().filter(|s| query.is_empty() || font_label(s).to_lowercase().contains(&query.to_lowercase())).cloned().collect();
+            let (favs, recent, shx_list, all) = picker_sections(prefs, &darkburn_text::list_families(&render::lib()), shx, &query);
             let mut new_hover = None;
             let mut toggle = None;
             egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -1247,10 +1251,8 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
     let title = if q.editing.is_some() { "Edit Code" } else { "Create QR Code" };
     let args = q.args();
     let (payload_len, error, matrix) = qr_preview(&q);
-    let (closed, action) = ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(
-        ctx,
-        error.is_none() || q.barcode,
-        |ui| {
+    let (closed, action) =
+        ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(ctx, error.is_none(), |ui| {
             if q.editing.is_none() {
                 let mut i = q.barcode as usize;
                 if ui_kit::segmented(ui, &mut i, &["QR code", "Barcode"], ui_kit::Segments::default()) {
@@ -1320,8 +1322,7 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
             let (rect, _) = ui.allocate_exact_size(vec2(160.0, 160.0), Sense::hover());
             ui.painter().rect_filled(rect, tk.radius_sm, Color32::WHITE);
             paint_matrix(ui.painter(), rect.shrink(6.0), &matrix);
-        },
-    );
+        });
     match action {
         ui_kit::Action::Ok => {
             let cmd = match (q.barcode, q.editing) {
@@ -1360,6 +1361,10 @@ type Matrix = Vec<Vec<bool>>;
 fn qr_preview(q: &QrDialog) -> (usize, Option<String>, Matrix) {
     if q.barcode {
         let kind = BARCODES[q.code.min(BARCODES.len() - 1)].1;
+        if q.variable {
+            // Tokens turn into something else when the code is made: do not judge the data here.
+            return (q.data.len(), None, Vec::new());
+        }
         let spec = darkburn_text::BarcodeSpec { kind, data: q.data.clone(), ..Default::default() };
         return match spec.generate() {
             Ok(r) => {
@@ -1486,9 +1491,11 @@ pub fn variable_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui_kit::hint_field(ui, &mut p, "No file");
     });
     let mut header = v.merge.header;
-    if ui_kit::checkbox(ui, "First row holds column names", &mut header).changed() && !path.is_empty() {
-        run_cmd(app, "variable.csv_load", &json!({ "path": path, "header": header }));
-    } else if header != v.merge.header {
+    let ticked = ui_kit::checkbox(ui, "First row holds column names", &mut header).changed();
+    // Read the file again when it is still there; the rows kept in the project otherwise.
+    let read_again =
+        ticked && !path.is_empty() && crate::api::execute_headless(app, "variable.csv_load", &json!({ "path": path, "header": header })).is_ok();
+    if !read_again && header != v.merge.header {
         app.editor.edit("CSV header", |d, _| {
             d.variables.merge.header = header;
             true
@@ -1568,6 +1575,28 @@ pub fn settings_section(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single-line (SHX) font that is starred or was used shows under Favourites and Recent
+    /// like any other font; the list used to drop it there because it is not an installed font.
+    #[test]
+    fn single_line_fonts_can_be_favourites_and_recent_fonts() {
+        let installed = vec!["Arial".to_string(), "IBM Plex Sans".to_string()];
+        let shx = vec![format!("{}C:/fonts/romans.shx", render::SHX_PREFIX)];
+        let mut prefs = FontPrefs::default();
+        prefs.toggle_favourite(&shx[0]);
+        prefs.toggle_favourite("Arial");
+        prefs.touch(&shx[0]);
+        prefs.touch("Gone Font");
+        let (favs, recent, single, all) = picker_sections(&prefs, &installed, &shx, "");
+        assert_eq!(favs, [shx[0].clone(), "Arial".to_string()], "the starred single-line font is missing");
+        assert_eq!(recent, [shx[0].clone()], "a font that is no longer there is left out, a single-line font is not");
+        assert_eq!((single, all), (shx.clone(), installed.clone()));
+        // Search goes by the name the list shows, not by the folder the file is in.
+        let (favs, _, single, all) = picker_sections(&prefs, &installed, &shx, "roman");
+        assert_eq!((favs, single, all.len()), (shx.clone(), shx.clone(), 0));
+        let (favs, _, single, _) = picker_sections(&prefs, &installed, &shx, "fonts");
+        assert!(favs.is_empty() && single.is_empty(), "the folder name is not the font's name");
+    }
 
     /// Typing a text away to nothing takes the text out; it does not stay as a shape nobody can see.
     #[test]

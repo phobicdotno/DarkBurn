@@ -45,6 +45,39 @@ pub fn from_file_text(text: &str) -> Result<Prefs, String> {
     Ok(Prefs::from_json(&obj.to_string()))
 }
 
+/// The settings to write when another DarkBurn window may have written its own since this one
+/// last read or wrote them (`base`). `ours` is what this window has now, `theirs` what is
+/// stored. A setting this window changed is ours; one it left alone takes the stored value, so
+/// two windows do not undo each other's changes. Text that is not preferences gives `ours`.
+pub fn merge_stored(base: &str, ours: &str, theirs: &str) -> String {
+    use serde_json::Value;
+    fn merge(base: Option<&Value>, ours: &Value, theirs: Option<&Value>) -> Value {
+        let Some(theirs) = theirs else { return ours.clone() };
+        if base == Some(ours) {
+            return theirs.clone();
+        }
+        match (ours, theirs) {
+            (Value::Object(o), Value::Object(t)) => {
+                let mut out = serde_json::Map::new();
+                for (key, value) in o {
+                    out.insert(key.clone(), merge(base.and_then(|b| b.get(key)), value, t.get(key)));
+                }
+                // What only the other window has (a panel, a key) and this one never had.
+                for (key, value) in t {
+                    if !o.contains_key(key) && base.and_then(|b| b.get(key)).is_none() {
+                        out.insert(key.clone(), value.clone());
+                    }
+                }
+                Value::Object(out)
+            }
+            _ => ours.clone(),
+        }
+    }
+    let parse = |t: &str| serde_json::from_str::<Value>(t).ok().filter(Value::is_object);
+    let (Some(b), Some(o), Some(t)) = (parse(base), parse(ours), parse(theirs)) else { return ours.to_string() };
+    Prefs::from_json(&merge(Some(&b), &o, Some(&t)).to_string()).to_json()
+}
+
 /// Writes the preferences to `path`.
 pub fn export(prefs: &Prefs, path: &Path) -> Result<(), String> {
     std::fs::write(path, to_file_text(prefs)).map_err(|e| e.to_string())
@@ -167,6 +200,35 @@ mod tests {
         assert_eq!(b.recent, vec!["mine.dbrn".to_string()], "recent projects belong to the machine");
         assert_eq!(list_backups(&d.join("settings")).len(), 1, "the old settings were backed up first");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Two windows: each keeps what it changed and takes over what the other changed.
+    #[test]
+    fn merging_keeps_both_windows_changes() {
+        let base = Prefs::default();
+        let mut ours = base.clone();
+        ours.theme = "light".into();
+        ours.opts.nudge = 2.0;
+        ours.panels.get_mut("move").unwrap().visible = true;
+        let mut theirs = base.clone();
+        theirs.invert_wheel = true;
+        theirs.opts.nudge_shift = 50.0;
+        theirs.opts.nudge = 7.0;
+        theirs.panels.get_mut("cuts").unwrap().visible = false;
+        theirs.hotkeys.insert("file.new".into(), "Ctrl+Alt+F9".into());
+        let merged = Prefs::from_json(&merge_stored(&base.to_json(), &ours.to_json(), &theirs.to_json()));
+        assert_eq!((merged.theme.as_str(), merged.invert_wheel), ("light", true));
+        assert_eq!(
+            (merged.opts.nudge, merged.opts.nudge_shift),
+            (2.0, 50.0),
+            "changed by both: this window's; changed by the other only: the other's"
+        );
+        assert!(merged.panel("move").visible && !merged.panel("cuts").visible);
+        assert_eq!(merged.hotkeys.get("file.new").map(String::as_str), Some("Ctrl+Alt+F9"));
+        // Nothing stored by another window, or nothing readable: ours.
+        assert_eq!(merge_stored(&base.to_json(), &ours.to_json(), &base.to_json()), ours.to_json());
+        assert_eq!(merge_stored("a", "b", "c"), "b");
+        assert_eq!(merge_stored(&base.to_json(), &ours.to_json(), "{ damaged"), ours.to_json());
     }
 
     #[test]

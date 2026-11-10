@@ -111,6 +111,7 @@ mod shape_ui;
 mod shell;
 mod sounds;
 mod startup;
+mod tab_focus;
 mod text_cmds;
 mod text_render;
 #[cfg(test)]
@@ -124,6 +125,8 @@ mod ui_bug_tests;
 mod ui_harness;
 #[cfg(test)]
 mod ui_hunt2_tests;
+#[cfg(test)]
+mod ui_hunt3_tests;
 #[cfg(test)]
 mod ui_hunt_tests;
 #[cfg(test)]
@@ -200,22 +203,53 @@ impl PrefsWriter {
         due
     }
 
+    #[cfg(test)]
     fn store(&mut self, storage: &mut dyn eframe::Storage, prefs: String, now: std::time::Instant) -> Option<std::time::Duration> {
+        self.store_beside(storage, prefs, now, || None).0
+    }
+
+    /// [`Self::store`] with a second DarkBurn window in mind: `on_disk` reads the settings as
+    /// they are stored now. When another window wrote since this one last did, the settings it
+    /// changed are kept (see `prefs_files::merge_stored`); the second value is then what was
+    /// written, for this window to take over.
+    fn store_beside(
+        &mut self,
+        storage: &mut dyn eframe::Storage,
+        prefs: String,
+        now: std::time::Instant,
+        on_disk: impl FnOnce() -> Option<String>,
+    ) -> (Option<std::time::Duration>, Option<String>) {
         if self.written.as_deref() == Some(prefs.as_str()) {
             self.pending_until = None;
-            return None;
+            return (None, None);
         }
         if let Some(wait) = self.last_write.map(|at| Self::INTERVAL.saturating_sub(now.saturating_duration_since(at))).filter(|w| !w.is_zero()) {
             self.pending_until = Some(now + wait);
-            return Some(wait);
+            return (Some(wait), None);
         }
-        storage.set_string(STORAGE_KEY, prefs.clone());
+        let merged = self.beside(&prefs, on_disk());
+        storage.set_string(STORAGE_KEY, merged.clone().unwrap_or_else(|| prefs.clone()));
         storage.flush();
-        self.written = Some(prefs);
+        self.written = Some(merged.clone().unwrap_or(prefs));
         self.last_write = Some(now);
         self.pending_until = None;
-        None
+        (None, merged)
     }
+
+    /// `prefs` with what another window stored since this one last wrote; None when nothing did.
+    fn beside(&self, prefs: &str, on_disk: Option<String>) -> Option<String> {
+        let (base, theirs) = (self.written.as_deref()?, on_disk?);
+        if theirs == base {
+            return None;
+        }
+        Some(prefs_files::merge_stored(base, prefs, &theirs)).filter(|m| m != prefs)
+    }
+}
+
+/// The preferences as the settings file in `dir` holds them right now.
+fn stored_prefs(dir: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("app.ron")).ok()?;
+    ron::from_str::<std::collections::HashMap<String, String>>(&text).ok()?.remove(STORAGE_KEY)
 }
 
 /// Input that can change a setting: a click, a key, typed text, a wheel or a pinch.
@@ -269,9 +303,16 @@ impl eframe::App for App {
         let now = std::time::Instant::now();
         if self.writer.due(input, now)
             && let Some(storage) = frame.storage_mut()
-            && let Some(wait) = self.writer.store(storage, app.prefs.to_json(), now)
         {
-            ctx.request_repaint_after(wait);
+            let dir = app.settings_dir.clone();
+            let (wait, merged) = self.writer.store_beside(storage, app.prefs.to_json(), now, || dir.as_deref().and_then(stored_prefs));
+            if let Some(merged) = merged {
+                // Another window changed settings meanwhile: this one shows them from now on.
+                app.prefs = Prefs::from_json(&merged);
+            }
+            if let Some(wait) = wait {
+                ctx.request_repaint_after(wait);
+            }
         }
     }
 
@@ -283,7 +324,12 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let app = self.app.borrow();
         if !app.safe_mode {
-            storage.set_string(STORAGE_KEY, app.prefs.to_json());
+            // On the way out too, another window's settings are not written over.
+            let prefs = app.prefs.to_json();
+            let merged = self.writer.beside(&prefs, app.settings_dir.as_deref().and_then(stored_prefs));
+            let text = merged.unwrap_or(prefs);
+            self.writer.written = Some(text.clone());
+            storage.set_string(STORAGE_KEY, text);
         }
     }
 
@@ -439,6 +485,40 @@ mod tests {
         assert!(w.due(false, start + std::time::Duration::from_millis(1300)));
         assert_eq!(w.store(&mut disk, "c".into(), start + std::time::Duration::from_millis(1300)), None);
         assert_eq!((disk.0.get(STORAGE_KEY).map(String::as_str), disk.1), (Some("c"), 2));
+    }
+
+    /// Two windows on one settings file: a setting changed in one is not put back by the other
+    /// when that one stores a change of its own, and the other takes it over.
+    #[test]
+    fn two_windows_do_not_undo_each_others_settings() {
+        let start = std::time::Instant::now();
+        let mut disk = Disk::default();
+        let stored = |d: &Disk| d.0.get(STORAGE_KEY).cloned();
+        let first = Prefs::default();
+        disk.0.insert(STORAGE_KEY.into(), first.to_json());
+        let (mut a, mut b) = (PrefsWriter::read(first.to_json()), PrefsWriter::read(first.to_json()));
+        // Window A changes the theme.
+        let mut pa = first.clone();
+        pa.theme = "light".into();
+        let on_disk = stored(&disk);
+        assert_eq!(a.store_beside(&mut disk, pa.to_json(), start, || on_disk), (None, None), "nobody else wrote: stored as it is");
+        // Window B, which still has the old theme, changes the nudge distance.
+        let mut pb = first.clone();
+        pb.opts.nudge = 2.0;
+        let on_disk = stored(&disk);
+        let (_, merged) = b.store_beside(&mut disk, pb.to_json(), start, || on_disk);
+        let on_disk_now = Prefs::from_json(&stored(&disk).unwrap());
+        assert_eq!((on_disk_now.theme.as_str(), on_disk_now.opts.nudge), ("light", 2.0), "window B put the old theme back");
+        assert_eq!(merged.map(|m| Prefs::from_json(&m)), Some(on_disk_now.clone()), "and B shows A's theme from now on");
+        // B stores nothing more for the same settings; A's next change keeps B's.
+        let later = start + std::time::Duration::from_secs(5);
+        let on_disk = stored(&disk);
+        assert_eq!(b.store_beside(&mut disk, on_disk_now.to_json(), later, || on_disk), (None, None));
+        pa.invert_wheel = true;
+        let on_disk = stored(&disk);
+        a.store_beside(&mut disk, pa.to_json(), later, || on_disk);
+        let end = Prefs::from_json(&stored(&disk).unwrap());
+        assert_eq!((end.theme.as_str(), end.opts.nudge, end.invert_wheel), ("light", 2.0, true));
     }
 
     #[test]

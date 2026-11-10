@@ -47,32 +47,35 @@ impl Default for SerialConfig {
 }
 
 impl SerialConfig {
+    /// Current value, limits and step in 128 bits: sums and spans of whole numbers at the far
+    /// ends of the i64 range do not fit an i64.
+    fn wide(&self) -> (i128, i128, i128, i128) {
+        (i128::from(self.current), i128::from(self.start.min(self.end)), i128::from(self.start.max(self.end)), i128::from(self.advance_by))
+    }
     fn wrap_next(&self) -> i64 {
-        let c = self.current.saturating_add(self.advance_by);
-        let (lo, hi) = (self.start.min(self.end), self.start.max(self.end));
-        if self.advance_by >= 0 {
+        let (current, lo, hi, step) = self.wide();
+        let c = current + step;
+        let next = if step >= 0 {
             if c > hi { lo } else { c }
         } else if c < lo {
             hi
         } else {
             c
-        }
+        };
+        i64::try_from(next).unwrap_or(self.current)
     }
     fn wrap_prev(&self) -> i64 {
-        let c = self.current.saturating_sub(self.advance_by);
-        let (lo, hi) = (self.start.min(self.end), self.start.max(self.end));
-        if self.advance_by > 0 {
-            if c < lo {
-                // Last value reachable from start in whole steps.
-                lo + (hi - lo) / self.advance_by * self.advance_by
-            } else {
-                c
-            }
-        } else if self.advance_by < 0 {
-            if c > hi { hi + (lo - hi) / self.advance_by * self.advance_by } else { c }
+        let (current, lo, hi, step) = self.wide();
+        let c = current - step;
+        let previous = if step > 0 && c < lo {
+            // Last value reachable from start in whole steps.
+            lo + (hi - lo) / step * step
+        } else if step < 0 && c > hi {
+            hi + (lo - hi) / step * step
         } else {
             c
-        }
+        };
+        i64::try_from(previous).unwrap_or(self.current)
     }
 }
 
@@ -236,37 +239,63 @@ pub fn format_time(now: &NaiveDateTime, fmt: &str) -> String {
     if items.iter().any(|i| matches!(i, Item::Error)) {
         return fmt.to_string();
     }
-    now.format_with_items(items.into_iter()).to_string()
+    // A code that needs a time zone (%z, %Z, %+) cannot be filled in from a local clock
+    // reading: formatting then fails, and `to_string` would panic on it.
+    let mut out = String::new();
+    match std::fmt::Write::write_fmt(&mut out, format_args!("{}", now.format_with_items(items.into_iter()))) {
+        Ok(()) => out,
+        Err(_) => fmt.to_string(),
+    }
 }
 
 impl VariableState {
     // ---- index navigation (all pure: return the new state) ----
 
+    /// One step forward, in place.
+    fn step_next(&mut self) {
+        self.serial.current = self.serial.wrap_next();
+        let n = self.merge.row_count();
+        if n > 0 {
+            self.merge.current_row = (self.merge.current_row % n + 1) % n;
+        }
+    }
+
+    /// One step back, in place.
+    fn step_previous(&mut self) {
+        self.serial.current = self.serial.wrap_prev();
+        let n = self.merge.row_count();
+        if n > 0 {
+            self.merge.current_row = (self.merge.current_row % n + n - 1) % n;
+        }
+    }
+
     /// "Next": serial and merge row advance by one step, wrapping at the end.
     pub fn next(&self) -> VariableState {
         let mut s = self.clone();
-        s.serial.current = self.serial.wrap_next();
-        let n = self.merge.row_count();
-        if n > 0 {
-            s.merge.current_row = (self.merge.current_row + 1) % n;
-        }
+        s.step_next();
         s
     }
 
     /// "Previous".
     pub fn previous(&self) -> VariableState {
         let mut s = self.clone();
-        s.serial.current = self.serial.wrap_prev();
-        let n = self.merge.row_count();
-        if n > 0 {
-            s.merge.current_row = (self.merge.current_row + n - 1) % n;
-        }
+        s.step_previous();
         s
     }
 
     /// Advance `n` times (copy `n` of an array; also used by virtual arrays).
     pub fn advanced(&self, n: usize) -> VariableState {
-        (0..n).fold(self.clone(), |s, _| s.next())
+        self.stepped(i64::try_from(n).unwrap_or(i64::MAX))
+    }
+
+    /// `steps` times Next (or Previous when negative). The rows of the CSV file are copied
+    /// once, not once a step.
+    pub fn stepped(&self, steps: i64) -> VariableState {
+        let mut s = self.clone();
+        for _ in 0..steps.unsigned_abs() {
+            if steps > 0 { s.step_next() } else { s.step_previous() }
+        }
+        s
     }
 
     /// "Reset": back to the start values and the first row.

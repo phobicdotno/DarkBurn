@@ -246,6 +246,10 @@ fn tabs_add(e: &mut Editor, a: &Value) -> R {
         .min_by(|a, b| a.2.distance.total_cmp(&b.2.distance))
         .ok_or("the shape has no outline")?;
     let local = leaf.transform.inverse() * hit.point;
+    if !(local.x.is_finite() && local.y.is_finite()) {
+        // A shape squashed to a line or a point has no place on its outline to name.
+        return Err("the shape has no size: it cannot carry a tab".into());
+    }
     let done = e.edit("Add tab", |d, sel| {
         sel.set([id]);
         match leaf_mut(d, id, n) {

@@ -184,7 +184,10 @@ pub fn set_shape_path(doc: &mut Document, id: ShapeId, path: BezPath) -> bool {
 }
 
 fn tol_arg(a: &Value) -> f64 {
-    num(a, "tolerance", TOL).clamp(1e-6, 100.0)
+    // Nothing or nonsense (zero, below zero, not a number) is the usual tolerance, and the finest
+    // one is a tenth of a micrometre: finer makes outlines of millions of points for nothing.
+    let t = num(a, "tolerance", TOL);
+    if t > 0.0 { t.clamp(1e-4, 100.0) } else { TOL }
 }
 
 fn bbox_of_ids(doc: &Document, ids: &[ShapeId]) -> Option<Rect> {
@@ -900,7 +903,8 @@ fn two_point(e: &mut Editor, a: &Value) -> R {
     let (Some(fa), Some(fb), Some(ta), Some(tb)) = (fa, fb, ta, tb) else {
         return Err("from_a, from_b, to_a and to_b are all needed ([x, y])".into());
     };
-    let m = gxf::two_point_rotate_scale(fa, fb, ta, tb, flag(a, "uniform", true)).ok_or("the two source points are the same")?;
+    let m = gxf::two_point_rotate_scale(fa, fb, ta, tb, flag(a, "uniform", true))
+        .ok_or("the two source points are the same, or the two target points are")?;
     let done = e.edit("Two-point rotate and scale", |d, _| arrange::transform(d, &ids, m));
     ok(done, &ids)
 }

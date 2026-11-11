@@ -250,7 +250,8 @@ fn load_within(bytes: &[u8], max_unpacked: u64) -> Result<Loaded, ProjectError> 
         );
     }
     let mut shapes = json.shapes;
-    // A damaged or hand-edited file: layers that do not exist, ids used twice or too large to count on from.
+    // A damaged or hand-edited file: layers that do not exist, ids used twice, missing (0 stands for
+    // "no shape") or too large to count on from.
     let mut ids = Vec::new();
     for s in &mut shapes {
         tidy(s, &mut ids);
@@ -258,7 +259,7 @@ fn load_within(bytes: &[u8], max_unpacked: u64) -> Result<Loaded, ProjectError> 
     let count = ids.len();
     ids.sort_unstable();
     ids.dedup();
-    let renumber = ids.len() != count || ids.last().is_some_and(|id| *id >= MAX_ID);
+    let renumber = ids.len() != count || ids.first() == Some(&0) || ids.last().is_some_and(|id| *id >= MAX_ID);
     if renumber {
         for s in &mut shapes {
             doc.renumber(s);
@@ -493,6 +494,29 @@ mod tests {
         let new = doc.add(Shape::rect(kurbo::Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 0));
         assert!(doc.get(new).is_some());
         save(&doc, "t", None).unwrap();
+    }
+
+    /// A shape without an id in the file (a hand-edited or damaged one) does not come in with id
+    /// 0, the number that stands for "no shape": the shapes are numbered again.
+    #[test]
+    fn a_shape_without_an_id_in_the_file_gets_one() {
+        let json = r#"{ "format": "darkburn-project", "version": 3, "next_id": 4,
+          "shapes": [
+            { "kind": { "type": "rect", "width": 2.0, "height": 1.0, "radius": 0.0 }, "layer": 1 },
+            { "id": 2, "kind": { "type": "group", "children": [ { "id": 3, "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 2 } ] } }
+          ] }"#;
+        let doc = load(&zipped(json)).unwrap().doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter() {
+            assert!(s.id.0 != 0 && s.id.0 < doc.next_id(), "shape id {} with next id {}", s.id.0, doc.next_id());
+        }
+        let child = r#"{ "format": "darkburn-project", "version": 3, "next_id": 4,
+          "shapes": [
+            { "id": 2, "kind": { "type": "group", "children": [ { "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 2 } ] } }
+          ] }"#;
+        let doc = load(&zipped(child)).unwrap().doc;
+        let ShapeKind::Group { children } = &doc.iter().next().unwrap().kind else { panic!("not a group") };
+        assert!(children[0].id.0 != 0, "a child of a group came in with id 0");
     }
 
     /// A small file that unpacks to something enormous is refused instead of filling the memory.

@@ -300,6 +300,16 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
     }))
 }
 
+/// The largest module (one square or the narrowest bar) of a QR code or barcode, in mm.
+const MAX_CODE_MODULE_MM: f64 = 1_000.0;
+/// The largest QR code side or barcode height, in mm.
+const MAX_CODE_SIZE_MM: f64 = 100_000.0;
+
+/// A size of a code: above zero and no larger than `max` (which also refuses "not a number").
+fn code_size(what: &str, v: f64, max: f64) -> Result<f64, String> {
+    if v > 0.0 && v <= max { Ok(v) } else { Err(format!("{what} must be above zero and at most {max} mm")) }
+}
+
 fn apply_qr_args(doc: &Document, layer: usize, c: &mut CodeShape, a: &Value) -> Result<(), String> {
     let CodeSpec::Qr(q) = &mut c.spec else { return Err("not a QR code".into()) };
     if let Some(content) = qr_content(a, Some(&q.content))? {
@@ -315,19 +325,13 @@ fn apply_qr_args(doc: &Document, layer: usize, c: &mut CodeShape, a: &Value) -> 
         };
     }
     if let Some(m) = num(a, "module") {
-        if m <= 0.0 {
-            return Err("module must be above zero".into());
-        }
-        q.module_mm = m;
+        q.module_mm = code_size("module", m, MAX_CODE_MODULE_MM)?;
     }
     if let Some(v) = flag(a, "variable") {
         c.variable = v;
     }
     if let Some(size) = num(a, "size") {
-        if size <= 0.0 {
-            return Err("size must be above zero".into());
-        }
-        render::set_code_size(doc, layer, c, size);
+        render::set_code_size(doc, layer, c, code_size("size", size, MAX_CODE_SIZE_MM)?);
     }
     Ok(())
 }
@@ -353,13 +357,10 @@ fn apply_barcode_args(c: &mut CodeShape, a: &Value) -> Result<(), String> {
         b.data = d.to_string();
     }
     if let Some(m) = num(a, "module") {
-        if m <= 0.0 {
-            return Err("module must be above zero".into());
-        }
-        b.module_mm = m;
+        b.module_mm = code_size("module", m, MAX_CODE_MODULE_MM)?;
     }
     if let Some(h) = num(a, "height") {
-        b.height_mm = h.max(0.1);
+        b.height_mm = code_size("height", h.max(0.1), MAX_CODE_SIZE_MM)?;
     }
     if let Some(v) = flag(a, "variable") {
         c.variable = v;

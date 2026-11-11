@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.489 (build 6)
+## v0.0.502 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -73,6 +73,19 @@
 - Fix: Ruida: Fire and Start are refused while a frame is on its way or running
 - Fix: A device with the Fire button switched off refuses to fire in the driver too
 - Fix: A frame with the laser on is refused in the driver unless the device allows it
+- Fix: Convert to Bitmap no longer puts the picture on a layer that does not exist
+- Fix: An ellipse or rounded rectangle with an absurd size no longer eats all the memory
+- Fix: A picture placed absurdly far off the page no longer crashes the job
+- Fix: A command that changes nothing no longer leaves an empty undo step or marks the project as changed
+- Fix: Shapes blown up to kilometres on a fill layer no longer crash the program, they are left out of the job with a warning
+- Fix: Cut Shapes on a few hundred shapes takes a moment instead of most of a minute
+- Fix: A shape can no longer be moved or sized out of this world (past a thousand kilometres), which put "infinity" into the job
+- Fix: A QR code or barcode of an absurd size is refused instead of crashing
+- Fix: An ellipse with a size near the largest number there is no longer takes all the memory
+- Fix: Adding a tab to a shape that has no size is refused instead of quietly breaking undo
+- Fix: Two-Point Rotate / Scale onto one and the same target point no longer shrinks the shape to a dot
+- Fix: Offset with a tolerance below zero no longer takes minutes
+- Fix: A damaged project file with a shape that has no number opens with the shapes numbered again
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

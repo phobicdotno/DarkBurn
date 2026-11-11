@@ -8,3 +8,4 @@ Fix: On Marlin, a jog, move or frame after Set origin no longer runs past the en
 Fix: On the Gweike, a jog key held down no longer keeps the head moving once the card asks for a restart
 Fix: On a Ruida controller, a jog, move, home or frame now ends the Fire button first
 Fix: After a lost connection the app no longer shows the laser as firing
+Fix: A job or frame started while the head still jogs is refused, instead of losing its first lines

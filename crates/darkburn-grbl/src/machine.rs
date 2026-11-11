@@ -1210,6 +1210,10 @@ struct Pending {
     text: String,
 }
 
+fn is_jog_line(text: &str) -> bool {
+    text.get(..3).is_some_and(|t| t.eq_ignore_ascii_case("$J="))
+}
+
 struct ActiveJob {
     kind: JobKind,
     lines: Box<dyn Iterator<Item = String> + Send>,
@@ -1310,6 +1314,9 @@ struct Worker {
     queue: VecDeque<Outgoing>,
     job: Option<ActiveJob>,
     motion_pending: bool,
+    /// When the last jog line went out, until a status report asked for after it shows the
+    /// machine out of the jog. A jogging controller answers G-code with an error and drops it.
+    jog_sent: Option<Instant>,
     /// The spindle stop byte was sent in this pause (it is a toggle: once per hold).
     hold_laser_stopped: bool,
     poll_sent: Option<Instant>,
@@ -1350,6 +1357,7 @@ impl Worker {
             queue: VecDeque::new(),
             job: None,
             motion_pending: false,
+            jog_sent: None,
             hold_laser_stopped: false,
             poll_sent: None,
             last_poll: now,
@@ -1658,9 +1666,19 @@ impl Worker {
         }
     }
 
+    /// A jog is waiting to be sent, is on its way or runs.
+    fn jogging(&self) -> bool {
+        self.jog_sent.is_some() || self.snap.status.state == MachineState::Jog || self.queue.iter().any(|o| is_jog_line(&o.text))
+    }
+
     fn start_job(&mut self, job: Job, kind: JobKind) -> Result<(), String> {
         if self.job.is_some() || self.stop.is_some() {
             self.reject("A job is already running.");
+            return Ok(());
+        }
+        if self.jogging() {
+            // The controller would answer the first lines with an error and run the rest.
+            self.reject("The machine is still jogging; wait until it stands still, then start again.");
             return Ok(());
         }
         if self.snap.alarm_locked || self.snap.status.state.is_alarm() {
@@ -1904,6 +1922,9 @@ impl Worker {
         if (!up.starts_with('$') || up.starts_with("$J=")) && o.origin != Origin::Internal(Tag::Sync) {
             self.motion_pending = true;
         }
+        if up.starts_with("$J=") {
+            self.jog_sent = Some(Instant::now());
+        }
         if o.origin == Origin::Internal(Tag::Home) {
             self.home_alarm_count = self.alarm_count;
         }
@@ -2017,6 +2038,10 @@ impl Worker {
         };
         self.in_flight_bytes -= p.len;
         let user = matches!(p.origin, Origin::Console | Origin::Macro);
+        if error.is_some() && is_jog_line(&p.text) && !self.in_flight.iter().any(|q| is_jog_line(&q.text)) {
+            // The controller refused the jog: nothing moves.
+            self.jog_sent = None;
+        }
         if let Some((code, msg)) = &error {
             self.received(&format!("{line} ({msg})"));
             match &p.origin {
@@ -2134,6 +2159,7 @@ impl Worker {
         self.in_flight.clear();
         self.in_flight_bytes = 0;
         self.motion_pending = false;
+        self.jog_sent = None;
         self.settings_collect.clear();
         self.fire_until = None;
         self.snap.status.overrides = Overrides::default();
@@ -2234,6 +2260,13 @@ impl Worker {
         st.updated = Some(Instant::now());
         let changed = st.state != r.state;
         st.state = r.state.clone();
+        if let (Some(jog), Some(asked)) = (self.jog_sent, poll_time)
+            && asked > jog
+            && r.state != MachineState::Jog
+            && !self.in_flight.iter().any(|p| is_jog_line(&p.text))
+        {
+            self.jog_sent = None;
+        }
         if r.state.is_alarm() {
             self.snap.alarm_locked = true;
         } else if r.state != MachineState::Unknown {
@@ -2282,6 +2315,7 @@ impl Worker {
                     self.in_flight.clear();
                     self.in_flight_bytes = 0;
                     self.motion_pending = false;
+                    self.jog_sent = None;
                     self.finish_stop();
                 }
                 StopPhase::Reset => {}

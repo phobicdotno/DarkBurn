@@ -1,0 +1,3 @@
+- Fix: the Preview window keeps its size instead of growing as wide as the whole app, Shade by power, Show travel moves and Invert are there to click again, and a narrow Preview puts its boxes and buttons on more rows instead of squeezing them
+- Fix: the hint under the layer list in the Cut Settings Editor is no longer cut off
+- Fix: the Cut Settings Editor shows its settings all the way down to the bottom of the window, and is no longer as tall as the whole app with its lower part empty

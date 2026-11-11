@@ -20,6 +20,9 @@ inputs:
   cargo-about:
     description: Set to true to install cargo-about, which writes the third-party licence list of a package.
     default: "false"
+  cargo-about-version:
+    description: The cargo-about version of every package. This is the one place to change it.
+    default: "0.9.3"
 
 runs:
   using: composite
@@ -72,6 +75,10 @@ runs:
         RUST_TARGET: ${{ inputs.target }}
       run: |
         set -euo pipefail
+        # Most jobs ask for no component or no target, and an empty variable may not reach a
+        # script on Windows at all.
+        RUST_COMPONENTS=${RUST_COMPONENTS:-}
+        RUST_TARGET=${RUST_TARGET:-}
         if ! command -v rustup >/dev/null 2>&1; then
           curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs |
             sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
@@ -86,21 +93,35 @@ runs:
         rustc -vV
         cargo --version
 
-    # Saved from main and from runs started by hand. Pull requests and tags only read it.
+    # Saved from main, and from a run started by hand on a branch: a system that is being
+    # brought up there does not start from nothing on every try. Pull requests and tags only
+    # read it. A job that failed saves too, so the next try has the libraries already built.
     - name: Restore the build cache
       if: inputs.cache-key != ''
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
         key: ${{ inputs.cache-key }}
-        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+        save-if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.ref_type != 'tag') }}
+        cache-on-failure: true
 
-    # After the cache, which brings the program back when an earlier run has built it.
+    # One fixed version, like Rust above: the licence list of a package must not depend on
+    # which version was the newest on the day a cache was filled. After the cache, which brings
+    # the program back when an earlier run has built it. Another version is replaced.
     - name: Install cargo-about
       if: inputs.cargo-about == 'true'
       shell: bash
+      env:
+        CARGO_ABOUT_VERSION: ${{ inputs.cargo-about-version }}
       run: |
         set -euo pipefail
-        if ! command -v cargo-about >/dev/null 2>&1; then
-          cargo install cargo-about --locked --features cli
+        want="cargo-about $CARGO_ABOUT_VERSION"
+        have=$(cargo about --version 2>/dev/null | tr -d '\r' || true)
+        if [ "$have" != "$want" ]; then
+          cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked --features cli --force
+          have=$(cargo about --version | tr -d '\r')
         fi
-        cargo about --version
+        if [ "$have" != "$want" ]; then
+          echo "::error::expected $want, but cargo about --version says: $have"
+          exit 1
+        fi
+        echo "$have"

@@ -24,6 +24,9 @@
 #   --require-licences   Stop when cargo-about is not installed. Without this option the
 #                        third-party licence list is left out, with a message. The release
 #                        workflow uses it, so a release always has the list.
+#   --require-start      Stop when this computer cannot start the packed programs. Without
+#                        this option they are then packed unstarted, with a message. The
+#                        release workflow uses it, so a release was always started once.
 #   --help               Show the help text.
 #
 # Environment
@@ -56,7 +59,7 @@ Makes the DarkBurn package for Linux or macOS:
 
 Usage
   scripts/package-unix.sh [--target <triple>] [--skip-build] [--bin-dir <folder>]
-                          [--require-licences] [--help]
+                          [--require-licences] [--require-start] [--help]
 
   (nothing)            Build for this computer, then package.
   --target <triple>    Build for this Rust target, then package. One of
@@ -66,6 +69,8 @@ Usage
   --bin-dir <folder>   Package the programs darkburn and darkburn-mcp in this folder.
   --require-licences   Stop when cargo-about is not installed, instead of leaving the
                        third-party licence list out.
+  --require-start      Stop when this computer cannot start the packed programs, instead
+                       of packing them unstarted.
   A bare argument works too: a folder means --bin-dir, anything else means --target.
 
 Environment
@@ -183,9 +188,11 @@ run_limited() {
 }
 
 # The newest glibc version the Linux program $1 asks for (for example 2.35), or nothing.
+# Weak references (a "w" in the second column) do not count: the program starts without them.
 glibc_needed() {
     has objdump || return 0
     objdump -T "$1" 2>/dev/null | awk '
+        $2 == "w" { next }
         {
             for (i = 1; i <= NF; i++) {
                 word = $i
@@ -211,6 +218,17 @@ macos_needed() {
     ' || true
 }
 
+# Stops unless the darkburn-mcp program $1 starts here and is of the version in Cargo.toml.
+# $2 names the program in the message. scripts/install.sh starts darkburn-mcp like this
+# before it installs a release.
+same_version() {
+    version_says=$("$1" --version 2>&1) || die "$2 does not start here: $version_says"
+    [ "$version_says" = "darkburn-mcp $VERSION" ] ||
+        die "$2 says \"$version_says\", but the version in Cargo.toml is $VERSION.
+$VERSION_HINT"
+    say "    $version_says"
+}
+
 # ---------------------------------------------------------------------------------------------
 # Arguments and settings
 # ---------------------------------------------------------------------------------------------
@@ -221,6 +239,7 @@ TRIPLE=
 BIN_DIR=
 SKIP_BUILD=
 REQUIRE_LICENCES=
+REQUIRE_START=
 while [ $# -gt 0 ]; do
     case "$1" in
         -h | --help)
@@ -229,6 +248,7 @@ while [ $# -gt 0 ]; do
             ;;
         --skip-build) SKIP_BUILD=1 ;;
         --require-licences) REQUIRE_LICENCES=1 ;;
+        --require-start) REQUIRE_START=1 ;;
         --target)
             [ $# -ge 2 ] || die "--target needs a Rust target after it."
             TRIPLE=$2
@@ -250,6 +270,14 @@ while [ $# -gt 0 ]; do
 done
 # Programs that are handed over are packaged as they are.
 [ -z "$BIN_DIR" ] || SKIP_BUILD=1
+# What to say when the programs turn out to be of another version.
+if [ -n "$BIN_DIR" ]; then
+    VERSION_HINT="The programs in $BIN_DIR were built from another version: hand over programs of this version."
+elif [ -n "$SKIP_BUILD" ]; then
+    VERSION_HINT='The programs were built from another version: build again, or drop --skip-build.'
+else
+    VERSION_HINT='The build did not give programs of this version: the lines above may say why.'
+fi
 
 # The version lives in one place: [workspace.package] version in the root Cargo.toml.
 VERSION=$(toml_value "$ROOT/Cargo.toml" workspace.package version)
@@ -286,6 +314,15 @@ has gzip || die "gzip is not installed."
 [ -n "$(sha256_of "$ROOT/Cargo.toml")" ] || die "no sha256sum, shasum or openssl here to write the checksum with."
 
 say "DarkBurn $VERSION for $OS_NAME $ARCH ($TRIPLE)"
+
+# Asked before the build, which takes a while.
+if [ -n "$REQUIRE_START" ] && ! can_run_here; then
+    hint=
+    [ "$OS/$ARCH" != macos/x86_64 ] || [ "$(uname -s)" != Darwin ] ||
+        hint='
+On an Apple silicon Mac, Rosetta starts them: softwareupdate --install-rosetta --agree-to-license'
+    die "this computer cannot start $OS_NAME $ARCH programs, and --require-start asks for that.$hint"
+fi
 
 # ---------------------------------------------------------------------------------------------
 # The programs
@@ -327,11 +364,21 @@ if has file; then
     done
 fi
 
+# The package is named after the version, so the programs must be of that version. Asked
+# here, before anything is copied or packed.
+if can_run_here; then
+    same_version "$BIN_DIR/darkburn-mcp" "$BIN_DIR/darkburn-mcp"
+fi
+
 # ---------------------------------------------------------------------------------------------
 # The folder that goes into the archive
 # ---------------------------------------------------------------------------------------------
 
 step "Collecting the files"
+# The work folder goes away however this script ends, so a stop on the way leaves nothing big
+# behind.
+trap 'rm -rf "$WORK"' EXIT
+trap 'exit 130' HUP INT TERM
 rm -rf "$WORK"
 mkdir -p "$STAGE/licenses" "$CHECK"
 cp "$BIN_DIR/darkburn" "$BIN_DIR/darkburn-mcp" "$STAGE/"
@@ -467,9 +514,18 @@ find "$STAGE" -type f ! -name darkburn ! -name darkburn-mcp -exec chmod 644 {} +
 
 # One time stamp for everything: SOURCE_DATE_EPOCH, else the last commit, else now.
 EPOCH=${SOURCE_DATE_EPOCH:-}
-[ -n "$EPOCH" ] || EPOCH=$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || true)
+epoch_from='SOURCE_DATE_EPOCH is'
+if [ -z "$EPOCH" ]; then
+    # Git's answer, or what it says when it has none.
+    EPOCH=$(git -C "$ROOT" log -1 --format=%ct 2>&1 || true)
+    epoch_from='git said'
+fi
 case "$EPOCH" in
-    '' | *[!0-9]*) EPOCH=$(date +%s) ;;
+    '' | *[!0-9]*)
+        warn "the time of the last commit is not known, so the packed files get the time of now.
+This archive differs from the next one made from the same input. $epoch_from: ${EPOCH:-nothing}"
+        EPOCH=$(date +%s)
+        ;;
 esac
 # The date of macOS and the BSDs takes the seconds as -r N, GNU date as -d @N.
 case "$(uname -s)" in
@@ -528,13 +584,7 @@ done
 [ -f "$CHECK/$NAME/darkburn-256.png" ] || die "darkburn-256.png is missing from the unpacked archive."
 
 if can_run_here; then
-    # scripts/install.sh starts darkburn-mcp like this before it installs a release.
-    mcp_says=$("$CHECK/$NAME/darkburn-mcp" --version 2>&1) ||
-        die "the packed darkburn-mcp does not start here: $mcp_says"
-    [ "$mcp_says" = "darkburn-mcp $VERSION" ] ||
-        die "the packed darkburn-mcp says \"$mcp_says\", but the version in Cargo.toml is $VERSION.
-The programs were built from another version: build again, or drop --skip-build."
-    say "    $mcp_says"
+    same_version "$CHECK/$NAME/darkburn-mcp" 'the packed darkburn-mcp'
     # The app without a window: it serves MCP on its input and stops when the input ends.
     if run_limited 60 "$CHECK/$NAME/darkburn" --mcp-headless; then
         say "    darkburn --mcp-headless starts and stops"
@@ -542,6 +592,8 @@ The programs were built from another version: build again, or drop --skip-build.
         cat "$RUN_LOG" >&2 || true
         die "the packed darkburn does not start here (darkburn --mcp-headless, exit code $run_status)."
     fi
+elif [ -n "$REQUIRE_START" ]; then
+    die "this computer cannot start $OS_NAME $ARCH programs, and --require-start asks for that."
 else
     say "    not started: this computer cannot run $OS_NAME $ARCH programs"
 fi

@@ -10,12 +10,22 @@
 #     the tests run as well. When they and all the builds have passed, the files are attached
 #     to a DRAFT release. Nothing is published until a person reviews the draft and presses
 #     Publish (see docs/RELEASING.md).
+#
+# While the repository is private, a push to main builds nothing here. A private repository has
+# a small monthly allowance of runner time and of room for artifacts, and five builds on every
+# push use it up. A tag and a run by hand build as always. The workflow reads this from GitHub
+# itself: once the repository is public, every push to main builds the packages.
 name: release
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # A version: v0.0.24, or v0.0.24-rc1. The first job stops a tag that is not the
+    # workspace version.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
+    # For pushes to main, as in ci.yml: not when only the front page or the documents changed.
+    # GitHub does not look at paths for a tag, so a tag always runs.
+    paths: ["**", "!README.md", "!docs/**", "docs/PARITY-CHECKLIST.md"]
   workflow_dispatch:
     inputs:
       only:
@@ -27,36 +37,140 @@ on:
 # Nothing by default. Each job asks for what it needs.
 permissions: {}
 
-# A newer push to main replaces the build that is under way; a run started by hand does not
-# get in the way of one started by a push. A tag build is never cancelled.
+# A newer push to main replaces the build that is under way. A run started by hand does not get
+# in the way of one started by a push, and two runs by hand for different systems do not get in
+# each other's way. A tag build is never cancelled.
 concurrency:
-  group: release-${{ github.ref }}-${{ github.event_name }}
+  group: release-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only || 'all' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # How many days the files stay with the run.
-  ARTIFACT_DAYS: ${{ startsWith(github.ref, 'refs/tags/') && '30' || '7' }}
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  # A few seconds, before anything else. It reads the version, stops a tag that does not match
+  # it, and says which of the jobs below this run needs. Every other job waits for it.
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      windows: ${{ steps.plan.outputs.windows }}
+      linux: ${{ steps.plan.outputs.linux }}
+      macos: ${{ steps.plan.outputs.macos }}
+      draft: ${{ steps.plan.outputs.draft }}
+      days: ${{ steps.plan.outputs.days }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Decide what this run does
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          ONLY: ${{ inputs.only || 'all' }}
+          PRIVATE: ${{ github.event.repository.private }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(awk -F'"' '
+            /^\[/ { inside = ($0 ~ /^\[workspace\.package\]/) }
+            inside && /^version[ \t]*=/ { print $2; exit }
+          ' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error file=Cargo.toml::could not read [workspace.package] version"
+            exit 1
+          fi
+          # A tag is a release, and a release is named after the version it holds.
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$version" ]; then
+            echo "::error::the tag $REF_NAME does not match the workspace version v$version"
+            exit 1
+          fi
+
+          # A tag and a run by hand always build. A push to main does not build in two cases.
+          build=true
+          why=
+          if [ "$EVENT" = push ] && [ "$REF_TYPE" != tag ]; then
+            if [ "$PRIVATE" = true ]; then
+              build=false
+              why="The repository is private, so a push to main builds no packages. Push a tag, or start this workflow by hand with Actions, release, Run workflow."
+            else
+              # A release pushes main and its tag together, and the run for the tag builds this
+              # same commit. When the question cannot be answered, the packages are built.
+              tagged=$(gh api "repos/$GH_REPO/commits/tags/v$version" --jq .sha 2>/dev/null || true)
+              if [ "$tagged" = "$GITHUB_SHA" ]; then
+                build=false
+                why="This commit is tagged v$version. The run for the tag builds its packages."
+              fi
+            fi
+          fi
+
+          # A draft release needs a tag and the packages of all three systems.
+          draft=false
+          if [ "$REF_TYPE" = tag ] && [ "$ONLY" = all ]; then draft=true; fi
+
+          # How many days the files stay with the run. The files of a tag are on the draft
+          # release, so the run keeps them only for running a failed job again. A private
+          # repository has little room for artifacts.
+          days=7
+          if [ "$REF_TYPE" = tag ]; then days=5; elif [ "$PRIVATE" = true ]; then days=1; fi
+
+          built=
+          {
+            echo "version=$version"
+            echo "draft=$draft"
+            echo "days=$days"
+            for system in windows linux macos; do
+              if [ "$build" = true ] && { [ "$ONLY" = all ] || [ "$ONLY" = "$system" ]; }; then
+                echo "$system=true"
+                built="$built $system"
+              else
+                echo "$system=false"
+              fi
+            done
+          } >>"$GITHUB_OUTPUT"
+
+          if [ -n "$why" ]; then echo "::notice title=No packages in this run::$why"; fi
+          {
+            echo "### DarkBurn $version"
+            echo
+            echo "- Packages:${built:- none. $why}"
+            if [ "$draft" = true ]; then
+              echo "- Tests, then a draft release for $REF_NAME."
+            elif [ "$REF_TYPE" = tag ]; then
+              echo "- No draft release: that needs a run for all systems."
+            else
+              echo "- No draft release: that needs a tag."
+            fi
+            if [ -n "$built" ]; then echo "- The files stay with this run for $days days."; fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
   # A tag must not release code that fails its tests: ci.yml's jobs (format, clippy and the
   # tests on all three systems) run here for the tagged commit, and the draft release waits
   # for them. Builds of main do not wait: ci.yml runs for those pushes by itself.
   tests:
     name: Tests
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: plan
+    if: needs.plan.outputs.draft == 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
 
   windows:
     name: Windows x64
-    if: contains(fromJSON('["all", "windows"]'), inputs.only || 'all')
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
     runs-on: windows-2025
     timeout-minutes: 90
     permissions:
@@ -66,9 +180,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # No cache for a tag: a release is built from nothing, so it holds nothing that an
+      # earlier run left behind.
       - uses: ./.github/actions/prepare
         with:
-          cache-key: release-windows
+          cache-key: ${{ github.ref_type != 'tag' && 'release-windows' || '' }}
           cargo-about: true
 
       - name: Install WiX and its extensions
@@ -95,7 +211,7 @@ jobs:
           path: dist/*.msi
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
       - name: Keep the installer's checksum
         uses: actions/upload-artifact@v7
@@ -103,7 +219,7 @@ jobs:
           path: dist/*.msi.sha256
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
       - name: Keep the portable zip
         uses: actions/upload-artifact@v7
@@ -111,7 +227,7 @@ jobs:
           path: dist/*.zip
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
       - name: Keep the portable zip's checksum
         uses: actions/upload-artifact@v7
@@ -119,11 +235,12 @@ jobs:
           path: dist/*.zip.sha256
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
   linux:
     name: Linux ${{ matrix.arch }}
-    if: contains(fromJSON('["all", "linux"]'), inputs.only || 'all')
+    needs: plan
+    if: needs.plan.outputs.linux == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -145,27 +262,35 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       # git before the checkout, so that it is a real git checkout. libclang: the camera crate
-      # makes its Linux bindings with it while building.
+      # makes its Linux bindings with it while building. zstd: the build cache is packed with
+      # it, smaller and faster than with gzip.
       - name: Install the build tools
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential libclang-dev file
+            ca-certificates curl git build-essential libclang-dev file zstd
 
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      # The job is root in here and the checkout belongs to the runner's user. Git refuses to
+      # read such a folder until it is told the folder is safe, and package-unix.sh asks git
+      # for the time of the last commit.
+      - name: Let git read the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      # No cache for a tag: a release is built from nothing.
       - uses: ./.github/actions/prepare
         with:
-          cache-key: release-linux-${{ matrix.arch }}
+          cache-key: ${{ github.ref_type != 'tag' && format('release-linux-{0}', matrix.arch) || '' }}
           cargo-about: true
 
       # Builds both programs, packs them and starts them once from the packed archive.
       - name: Build and package
         env:
           TARGET: ${{ matrix.arch }}-unknown-linux-gnu
-        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences
+        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences --require-start
 
       - name: Keep the archive
         uses: actions/upload-artifact@v7
@@ -173,7 +298,7 @@ jobs:
           path: dist/*.tar.gz
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
       - name: Keep the archive's checksum
         uses: actions/upload-artifact@v7
@@ -181,11 +306,12 @@ jobs:
           path: dist/*.tar.gz.sha256
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
   macos:
     name: macOS ${{ matrix.arch }}
-    if: contains(fromJSON('["all", "macos"]'), inputs.only || 'all')
+    needs: plan
+    if: needs.plan.outputs.macos == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -209,17 +335,25 @@ jobs:
         with:
           persist-credentials: false
 
+      # The Intel programs are started once after packing, and Apple silicon needs Rosetta
+      # for that. Nothing is installed when it is already there.
+      - name: Make sure Rosetta is there
+        if: matrix.arch == 'x86_64'
+        run: arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+
+      # No cache for a tag: a release is built from nothing.
       - uses: ./.github/actions/prepare
         with:
           target: ${{ matrix.target }}
-          cache-key: release-macos-${{ matrix.arch }}
+          cache-key: ${{ github.ref_type != 'tag' && format('release-macos-{0}', matrix.arch) || '' }}
           cargo-about: true
 
       # Builds both programs, packs them and starts them once from the packed archive.
+      # --require-start: a package whose programs could not be started here is not kept.
       - name: Build and package
         env:
           TARGET: ${{ matrix.target }}
-        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences
+        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences --require-start
 
       - name: Keep the archive
         uses: actions/upload-artifact@v7
@@ -227,7 +361,7 @@ jobs:
           path: dist/*.tar.gz
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
       - name: Keep the archive's checksum
         uses: actions/upload-artifact@v7
@@ -235,44 +369,27 @@ jobs:
           path: dist/*.tar.gz.sha256
           archive: false
           if-no-files-found: error
-          retention-days: ${{ env.ARTIFACT_DAYS }}
+          retention-days: ${{ needs.plan.outputs.days }}
 
   # Tags only, and only when the tests and every build passed: a run for one system, or with
   # a failed job, attaches nothing. This is the only job that may write to the repository.
   draft-release:
     name: Draft release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [tests, windows, linux, macos]
+    needs: [plan, tests, windows, linux, macos]
+    if: needs.plan.outputs.draft == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # One at a time for a tag. A run started by the push and one started by hand must not both
+    # make a draft, or replace each other's files half way.
+    concurrency:
+      group: draft-release-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
       TAG: ${{ github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: The tag matches the workspace version
-        id: version
-        run: |
-          version=$(awk -F'"' '
-            /^\[/ { inside = ($0 ~ /^\[workspace\.package\]/) }
-            inside && /^version[ \t]*=/ { print $2; exit }
-          ' Cargo.toml)
-          if [ -z "$version" ]; then
-            echo "::error file=Cargo.toml::could not read [workspace.package] version"
-            exit 1
-          fi
-          if [ "$TAG" != "v$version" ]; then
-            echo "::error::the tag $TAG does not match the workspace version v$version"
-            exit 1
-          fi
-          echo "version=$version" >>"$GITHUB_OUTPUT"
-
       # The files as the build jobs kept them. Not unpacked: one of them is a zip.
       - name: Collect the files
         uses: actions/download-artifact@v8
@@ -283,8 +400,6 @@ jobs:
           skip-decompress: true
 
       - name: Check the files
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           cd dist
           ls -l
@@ -311,22 +426,36 @@ jobs:
           fi
           sha256sum --check --strict -- *.sha256
 
-      # A draft is made when there is none. A release that is already published is left alone.
+      # The releases of this tag are looked up once, and a request that fails stops the step.
+      # No release: a draft is made, with the files. One draft: it gets the files. Anything
+      # else stops here: a release that is already published is never changed.
+      # This is the only step that holds the token that may write.
       - name: Attach to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]; then
-              echo "::error::the release $TAG is already published. It is not changed from here."
+          found=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate |
+            jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag) | if .draft then "draft" else "published" end')
+          case "$found" in
+            "")
+              gh release create "$TAG" --draft --verify-tag --title "DarkBurn $TAG" \
+                --notes "Draft. Fill in from CHANGELOG.md before publishing." dist/*
+              ;;
+            draft)
+              gh release upload "$TAG" dist/* --clobber
+              ;;
+            *)
+              echo "::error::the release $TAG is already published, or the tag has more than one release. Nothing was changed."
               exit 1
-            fi
-          else
-            gh release create "$TAG" --draft --verify-tag --title "DarkBurn $TAG" \
-              --notes "Draft. Fill in from CHANGELOG.md before publishing."
-          fi
-          gh release upload "$TAG" dist/* --clobber
+              ;;
+          esac
           {
             echo "### Draft release $TAG"
             echo
-            echo "The files are attached to a draft. Review it, paste the changelog lines and press Publish:"
+            echo "The files are attached to a draft. Review it, paste the changelog lines and press Publish."
+            echo
+            echo "Leave \"Set as a pre-release\" unticked and \"Set as the latest release\" ticked. The installers ask GitHub for the latest release, and that is never a draft or a pre-release. Until Publish is pressed they keep building from source."
+            echo
             gh release view "$TAG" --json url --jq .url
           } >>"$GITHUB_STEP_SUMMARY"

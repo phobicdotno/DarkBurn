@@ -517,8 +517,8 @@ fn machines() {
     parts(&mut g);
     // The Move panel in a dock of its own on the left, the Laser panel in the taller upper group
     // on the right and the console in the lower one: each panel then has the room to end on a
-    // whole row. The Move panel is 16 points taller than a dock is, so the cut palette is hidden
-    // for this picture, which gives the docks its 30 points.
+    // whole row. The Move panel is a few points taller than a dock is, so the cut palette is
+    // hidden for this picture, which gives the docks its 30 points.
     {
         use crate::panels::Area;
         let mut app = g.app();
@@ -552,20 +552,30 @@ fn machines() {
     g.exec("job.start", json!({}));
     g.frames(4);
     wait(&mut g, "a third of the job", &|s| s.job.as_ref().and_then(|j| j.fraction).is_some_and(|f| f >= 0.36));
-    park(&mut g);
-    // No row of a panel is cut through by the edge of its dock. (The console's list of lines
-    // scrolls, and may start part-way through a line: that is how a list looks.)
-    for area in ["Left", "RightTop", "RightBottom"] {
-        let dock = g.rect_of(&format!("panel:area:{area}")).unwrap_or_else(|| panic!("the {area} dock"));
-        eprintln!("PROBE dock {area} {dock:?}");
-        let cut: Vec<String> = g
-            .painted()
-            .into_iter()
-            .filter(|p| dock.contains(p.full.center()) && p.rect.height() < p.full.height() - 0.5)
-            .map(|p| { eprintln!("PROBE cut {:?} {:?} {:?}", p.text, p.full, p.rect); p.text })
-            .filter(|text| !(area == "RightBottom" && (text.starts_with("> ") || text == "ok" || text.starts_with('<'))))
-            .collect();
-        assert!(cut.is_empty(), "the {area} dock cuts through {cut:?}");
+    // No row of a panel may be cut through by the edge of its dock, and the console's list of
+    // lines, which scrolls, starts part-way through a line once it is full. So the list is
+    // emptied with its Clear button and the picture taken while the lines since then still fit.
+    let mut tries = 0;
+    loop {
+        g.click_label("Clear");
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while g.app().machine.handle.console().len() < 6 {
+            assert!(std::time::Instant::now() < end, "the console never showed the lines of the job");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            g.frames(1);
+        }
+        park(&mut g);
+        let mut cut = Vec::new();
+        for area in ["Left", "RightTop", "RightBottom"] {
+            let dock = g.rect_of(&format!("panel:area:{area}")).unwrap_or_else(|| panic!("the {area} dock"));
+            let texts = g.painted().into_iter().filter(|p| dock.contains(p.full.center()) && p.rect.height() < p.full.height() - 0.5);
+            cut.extend(texts.map(|p| format!("{area}: {:?}", p.text)));
+        }
+        if cut.is_empty() {
+            break;
+        }
+        tries += 1;
+        assert!(tries < 8, "a dock cuts through a row: {cut:?}");
     }
     for last in ["Rapid", "Rotary", "Macro 6"] {
         assert!(g.has_text(last), "{last}, the last row of a panel, shows: {:?}", g.visible_texts());

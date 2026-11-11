@@ -27,13 +27,17 @@
    git tag v0.0.24
    git push origin main v0.0.24
    ```
-5. `.github/workflows/release.yml` runs on the tag. It runs the tests and builds the packages for Windows,
-   Linux and macOS, each with a `.sha256` file beside it. When the tests and every build have passed it
-   checks that the tag equals `v<workspace version>` and attaches the files to a **draft** release.
-   Nothing is published by itself. A failed test or build means no draft: run the failed jobs again from
-   the run's page, or fix the cause and tag again.
+5. `.github/workflows/release.yml` runs on the tag. First it checks that the tag equals `v<workspace version>`;
+   a tag that does not match stops there, before anything is built. Then it runs the tests and builds the
+   packages for Windows, Linux and macOS, each with a `.sha256` file beside it. When the tests and every build
+   have passed it attaches the files to a **draft** release. Nothing is published by itself. A failed test or
+   build means no draft: run the failed jobs again from the run's page, or fix the cause and tag again.
+   The run keeps the packages of its other jobs for 5 days; after that, run all of its jobs again.
 6. Open the draft on GitHub, paste the changelog lines for the version into it, check the files, press Publish.
-   From then on `scripts/install.sh` and `scripts/install.ps1` install these files instead of building from source.
+   Leave "Set as a pre-release" unticked and "Set as the latest release" ticked. The installers ask GitHub for
+   the latest release, and that is never a draft or a pre-release. Until Publish is pressed, and after a
+   pre-release, `scripts/install.sh` and `scripts/install.ps1` keep building from source. After a full release
+   they install these files.
 
 ## What runs on GitHub
 
@@ -45,20 +49,37 @@ commit for the Windows installer, and a job stops when the two differ.
 - `.github/workflows/ci.yml` runs on every push to `main` and on every pull request: `cargo fmt -- --check`
   once, then `cargo clippy --workspace --all-targets --locked -- -D warnings` and
   `cargo test --workspace --locked` on Windows, Linux and macOS. On Linux the UI tests draw with a GPU in
-  software (`mesa-vulkan-drivers`); on macOS with the runner's own.
-- `.github/workflows/release.yml` runs on every push to `main` and on every `v*` tag. A push to `main` builds
-  the six packages and keeps them with the run as artifacts, for 7 days (30 for a tag). Each one can be
-  downloaded from the run's page and used as it is. Only a tag goes further, as described above: tests,
-  then the draft release. A release that is already published is never changed.
+  software (`mesa-vulkan-drivers`); on macOS with the runner's own. The tests are built in one step and run
+  in the next, which stops after 30 minutes, so a test that hangs does not hold a runner for long.
+- `.github/workflows/release.yml` runs on every push to `main` and on every version tag (`v0.0.24`). Its first
+  job, Plan, reads the version and says on the run's page what the run will do. A push to `main` builds the
+  six packages and keeps them with the run as artifacts for 7 days. Each one can be downloaded from the run's
+  page and used as it is. Only a tag goes further, as described above: tests, then the draft release. The
+  packages of a tag are built without the build cache, and the run keeps them for 5 days; they are on the
+  draft by then. A release that is already published is never changed.
+- A push to `main` that changes only `README.md` or files under `docs/` starts neither workflow: nothing that
+  is built or tested reads them. The one exception is `docs/PARITY-CHECKLIST.md`, which is built into
+  `darkburn-mcp`. Pull requests and tags always run. A release push (`main` and its tag together) builds the
+  packages once, in the run for the tag.
+- While the repository is private, the workflows do less by themselves, because a private repository has a
+  small monthly allowance of runner time and of room for artifacts:
+  a push to `main` builds no packages, a push or a pull request runs no macOS tests, and artifacts are kept
+  for 1 day. A tag and a run by hand do everything. The workflows read from GitHub whether the repository is
+  private, so nothing has to be changed on the day it becomes public.
 - Both can be started by hand: Actions, the workflow, Run workflow. The choice `only` runs one system alone
   (`windows`, `linux` or `macos`). From a terminal, for a branch: `gh workflow run ci.yml --ref <branch> -f only=linux`.
-  A run by hand of `release.yml` publishes nothing unless it is started on a tag.
+  Runs by hand for different systems do not stop each other. A run by hand of `release.yml` publishes nothing,
+  and it drafts a release only when it is started on a tag for all systems.
 - `.github/actions/prepare` holds the steps both share: the SolidCraft checkout, the Rust toolchain, the build
   cache and cargo-about. The Rust version is fixed there (input `rust`), so a new Rust release with new lints
-  cannot turn a green build red by itself. Raise it there when you move to a newer Rust.
+  cannot turn a green build red by itself. Raise it there when you move to a newer Rust. The cargo-about
+  version is fixed there too (input `cargo-about-version`).
 - The Linux packages are built inside Ubuntu 22.04, so they start on systems with glibc 2.35 or newer.
-  Both macOS packages are built on an Apple silicon runner; the Intel one is cross-compiled.
+  Both macOS packages are built on an Apple silicon runner; the Intel one is cross-compiled and started
+  with Rosetta. A package whose programs could not be started on the runner is not kept.
 - The macOS jobs are new. Until they have been seen green, expect to fix things after their first runs.
+  Prove a system by hand before the first tag, the tests first and then the packages:
+  `gh workflow run ci.yml --ref <branch> -f only=macos`, then `gh workflow run release.yml --ref <branch> -f only=macos`.
 - GitHub's own actions are used by major version (`actions/checkout@v7`). The one action from elsewhere, the
   build cache, is pinned to a commit.
 
@@ -79,7 +100,7 @@ On Windows all of these install per user and need no admin rights.
 | Tool | Install |
 |---|---|
 | Rust (MSVC) | https://rustup.rs |
-| cargo-about (third-party licence list) | `cargo install cargo-about --locked --features cli` |
+| cargo-about (third-party licence list) | `cargo install cargo-about --locked --features cli` (the workflows use version 0.9.3: add `--version 0.9.3` for the same list) |
 | .NET SDK 6 or newer (for the WiX tool) | `winget install Microsoft.DotNet.SDK.8`, or without admin: `dotnet-install.ps1 -Channel 8.0` from https://dot.net/v1/dotnet-install.ps1 |
 | WiX Toolset 5 | `dotnet tool install --global wix --version 5.0.2` |
 | WiX extensions | `wix extension add -g WixToolset.UI.wixext/5.0.2` and `wix extension add -g WixToolset.Util.wixext/5.0.2` |
@@ -107,7 +128,10 @@ Every build needs a SolidCraft checkout next to this one (`../solidcraft`), at t
   the list is left out with a message; `--require-licences`, which the workflow uses, stops instead.
   The debug line tables are taken out of the packed programs. Before it finishes, the script unpacks the
   archive, as the installer does, and starts both programs from it (`darkburn-mcp --version`,
-  `darkburn --mcp-headless`) when the computer can run them. The same input gives the same archive.
+  `darkburn --mcp-headless`) when the computer can run them. When it cannot, they are packed unstarted with
+  a message; `--require-start`, which the workflow uses, stops instead. The same input gives the same archive:
+  the packed files carry the time of the last commit, read from git. When git cannot give it, the script
+  says so and uses the time of now.
 
 ## About the MSI
 

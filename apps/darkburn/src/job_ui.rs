@@ -226,7 +226,7 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
     // The picture takes the room the buttons under it leave. In a narrow window they wrap to more
     // rows, so the room they need is what they took in the last frame (40 points before there is
     // one), and two points to spare. With 40 points whatever the rows, two rows of buttons made
-    // the window taller every frame, and one row left it 13 points shorter than its own size, so
+    // the window taller every frame, and one row left it 16 points shorter than its own size, so
     // the corner jumped away from the pointer that took hold of it.
     let footer_id = Id::unique("db_preview_footer_height");
     let reserve = match ui.data(|d| d.get_temp::<f32>(footer_id)) {

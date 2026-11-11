@@ -2,11 +2,22 @@
 # pull request. It can also be started by hand (Actions > ci > Run workflow), for all systems
 # or for one. release.yml runs these same jobs before it drafts a release for a tag.
 # Nothing is published from here.
+#
+# While the repository is private, a push or a pull request leaves macOS out. A private
+# repository has a small monthly allowance of runner time, and macOS uses it up fastest.
+# A run by hand and the tests of a tag still run macOS. The workflow reads this from GitHub
+# itself: once the repository is public, every run has all three systems.
 name: ci
 
 on:
   push:
     branches: [main]
+    # Not for a push that changes only the front page or the documents: nothing that is built
+    # or tested reads them. The one exception is docs/PARITY-CHECKLIST.md, which is built into
+    # darkburn-mcp. Other .md files stay in, because some are built in or packaged.
+    paths: ["**", "!README.md", "!docs/**", "docs/PARITY-CHECKLIST.md"]
+  # No paths here. A check that is required for merging must report on every pull request,
+  # and one that is filtered away never does.
   pull_request:
   workflow_dispatch:
     inputs:
@@ -20,11 +31,12 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same branch or pull request replaces the run that is under way; a run
-# started by hand does not get in the way of one started by a push. The tests of a tag
-# (started by release.yml) are never cancelled.
+# A newer push to the same branch or pull request replaces the run that is under way. A run
+# started by hand does not get in the way of one started by a push, and two runs by hand for
+# different systems do not get in each other's way. The tests of a tag (started by
+# release.yml) are never cancelled.
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only || 'all' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
@@ -43,6 +55,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      # The same test as in the matrix of the job below.
+      - name: Say that macOS is left out
+        if: github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
+        run: echo "::notice title=No macOS in this run::The repository is private, so a push or a pull request does not run the macOS tests. Start them by hand with Actions, ci, Run workflow, only macos."
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -60,8 +77,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pushes and pull requests run all three systems. A run by hand can pick one.
-        system: ${{ fromJSON((inputs.only || 'all') == 'all' && '["windows", "linux", "macos"]' || format('["{0}"]', inputs.only)) }}
+        # The one system a run by hand asks for, else all three. While the repository is
+        # private, a push or a pull request leaves macOS out (see the top of this file).
+        system: ${{ fromJSON((inputs.only || 'all') != 'all' && format('["{0}"]', inputs.only) || (github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag') && '["windows", "linux"]' || '["windows", "linux", "macos"]') }}
     # macOS is an Apple silicon runner: its GPU (Metal) draws the UI tests. This job is new.
     # macOS has never been built or tested before and this job has not been seen green yet,
     # so expect to fix things after its first runs. It is not allowed to fail quietly.
@@ -92,7 +110,15 @@ jobs:
         id: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      # The tests run when clippy has something to say too, so one run shows both.
-      - name: Tests
+      # The tests are built and run when clippy has something to say too, so one run shows both.
+      - name: Build the tests
+        id: build-tests
         if: ${{ !cancelled() && steps.clippy.conclusion != 'skipped' }}
+        run: cargo test --workspace --locked --no-run
+
+      # Everything is built by now, so this step is the tests alone and takes a few minutes.
+      # A test that hangs is stopped here, long before the limit of the whole job.
+      - name: Tests
+        if: ${{ !cancelled() && steps.build-tests.conclusion == 'success' }}
+        timeout-minutes: 30
         run: cargo test --workspace --locked

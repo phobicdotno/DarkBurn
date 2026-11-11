@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.505 (build 6)
+## v0.0.509 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -89,6 +89,10 @@
 - Fix: A job that was paused when the cable dropped no longer shows as paused afterwards
 - Fix: Disconnecting or closing in the middle of a jog now stops the move first
 - Fix: A machine that reports an alarm now always ends the running job, also when its alarm message never arrived
+- Fix: Pressing Fire right after Home on a GRBL laser no longer switches the laser on after homing and leaves it on
+- Fix: Opening the door on a GRBL laser ends the Fire button, so closing the door and pressing Resume no longer lights the laser again
+- Fix: A GRBL job or frame that the door has stopped, and a paused frame, now show Resume instead of Pause
+- Fix: A Smoothieware or custom machine that halts in the middle of a job no longer goes on with the job after Unlock
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

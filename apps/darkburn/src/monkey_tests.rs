@@ -1228,9 +1228,9 @@ fn monkey_in_the_window() {
     }
 }
 
-const MILD_STEPS: usize = 150;
-const WILD_STEPS: usize = 150;
-const WINDOW_STEPS: usize = 80;
+const MILD_STEPS: usize = 400;
+const WILD_STEPS: usize = 400;
+const WINDOW_STEPS: usize = 150;
 
 // ----- Regression tests for what the monkey found --------------------------------------------------
 

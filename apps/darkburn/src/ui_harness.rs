@@ -367,6 +367,23 @@ impl Gui {
         self.h.event(Event::PointerButton { pos: p, button, pressed, modifiers: m });
     }
 
+    /// Press the primary button at a screen point and keep it down (one frame is drawn).
+    pub fn press_pos(&mut self, p: Pos2) -> &mut Self {
+        self.last = format!("press at {p:?}");
+        self.h.event(Event::PointerMoved(p));
+        self.h.step();
+        self.after_frame();
+        self.button(p, PointerButton::Primary, true, Modifiers::NONE);
+        self.frames(1)
+    }
+
+    /// Let the primary button go at a screen point (one frame is drawn).
+    pub fn release_pos(&mut self, p: Pos2) -> &mut Self {
+        self.last = format!("release at {p:?}");
+        self.button(p, PointerButton::Primary, false, Modifiers::NONE);
+        self.frames(1)
+    }
+
     /// Click at a screen point (points, not pixels).
     pub fn click_pos(&mut self, p: Pos2) -> &mut Self {
         self.click_button(p, PointerButton::Primary, Modifiers::NONE)

@@ -1722,6 +1722,8 @@ impl DriverAdapter for RuidaAdapter {
                         b.x0, b.x1, b.y0, b.y1
                     )));
                 }
+                // Never a job under a Pulse key the Fire button still holds down.
+                self.release_fire();
                 self.job_estimated = req.estimated;
                 self.job_name = req.name.clone();
                 let options = ruida::SendOptions { auto_increment: req.auto_increment_name, start_immediately: req.start_immediately };
@@ -1877,6 +1879,7 @@ impl DriverAdapter for RuidaAdapter {
             C::ListFiles => self.req(R::ListFiles, Op::Other("list")),
             C::RunFile(i) => {
                 busy(working)?;
+                self.release_fire();
                 self.job_started = Some(Instant::now());
                 self.saw_running = false;
                 self.out.push(MachineEvent::JobStarted);

@@ -712,3 +712,14 @@ fn stop_while_firing_lets_the_pulse_key_go() {
     assert!(!pulse_is_down(&emu), "Stop left the Pulse key held down");
     assert!(!h.snapshot().fire_on);
 }
+
+#[test]
+fn a_job_does_not_start_under_a_held_pulse_key() {
+    let (mut h, emu, _server) = firing();
+    let r = h.start_job(simulator_square(Family::Ruida, 30.0));
+    let end = Instant::now() + Duration::from_secs(2);
+    while pulse_is_down(&emu) && Instant::now() < end {
+        h.wait_for(Duration::from_millis(20), |_, _| false);
+    }
+    assert!(r.is_err() || !pulse_is_down(&emu), "a job was started with the Pulse key still held down");
+}

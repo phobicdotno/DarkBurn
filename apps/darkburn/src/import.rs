@@ -189,12 +189,31 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
         .get_or_init(|| {
             let mut db = usvg::fontdb::Database::new();
             db.load_system_fonts();
-            db.set_serif_family("Times New Roman");
-            db.set_sans_serif_family("Arial");
-            db.set_monospace_family("Courier New");
+            // The generic families of an SVG ("sans-serif") must name fonts this computer
+            // has, or its text is silently left out: Arial and its kin are not on every Linux.
+            let serif = installed_family(&db, &["Times New Roman", "Liberation Serif", "DejaVu Serif", "Noto Serif", "Times", "FreeSerif"]);
+            let sans = installed_family(&db, &["Arial", "Liberation Sans", "Helvetica", "DejaVu Sans", "Noto Sans", "FreeSans"]);
+            let mono = installed_family(&db, &["Courier New", "Liberation Mono", "DejaVu Sans Mono", "Menlo", "Noto Sans Mono", "Courier"]);
+            db.set_serif_family(serif.clone());
+            db.set_sans_serif_family(sans.clone());
+            db.set_monospace_family(mono);
+            db.set_cursive_family(sans.clone());
+            db.set_fantasy_family(sans);
             Arc::new(db)
         })
         .clone()
+}
+
+/// The first of `wanted` that is installed; failing all of them, any installed family.
+fn installed_family(db: &usvg::fontdb::Database, wanted: &[&str]) -> String {
+    let has = |name: &str| db.faces().any(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)));
+    wanted
+        .iter()
+        .copied()
+        .find(|n| has(n))
+        .map(str::to_owned)
+        .or_else(|| db.faces().find_map(|f| f.families.first().map(|(n, _)| n.clone())))
+        .unwrap_or_else(|| wanted[0].to_owned())
 }
 
 fn affine(t: usvg::Transform) -> Affine {

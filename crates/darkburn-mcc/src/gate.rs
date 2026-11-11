@@ -347,10 +347,13 @@ impl SafetyGate {
             let why = self.machine_fault.clone().unwrap_or_else(|| "alarm".into());
             self.arming.disarm(&format!("alarm: {why}"));
             actions.push(GateAction::Stop(why));
-        } else if status.restart_required() && self.fifo_running {
-            // A card that wants a restart is not one to keep streaming to: stop like an alarm.
+        } else if status.restart_required() && (self.fifo_running || !self.leases.is_empty()) {
+            // A card that wants a restart is not one to keep streaming to, nor one to keep a
+            // held jog running on: stop like an alarm. The jog's lease ends here, so a key that
+            // is still down does not keep it alive.
             let why = self.machine_fault.clone().unwrap_or_else(|| "card restart required".into());
             self.arming.disarm(&format!("restart required: {why}"));
+            self.leases.clear();
             actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;

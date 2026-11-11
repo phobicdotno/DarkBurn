@@ -900,7 +900,8 @@ fn two_point(e: &mut Editor, a: &Value) -> R {
     let (Some(fa), Some(fb), Some(ta), Some(tb)) = (fa, fb, ta, tb) else {
         return Err("from_a, from_b, to_a and to_b are all needed ([x, y])".into());
     };
-    let m = gxf::two_point_rotate_scale(fa, fb, ta, tb, flag(a, "uniform", true)).ok_or("the two source points are the same")?;
+    let m = gxf::two_point_rotate_scale(fa, fb, ta, tb, flag(a, "uniform", true))
+        .ok_or("the two source points are the same, or the two target points are")?;
     let done = e.edit("Two-point rotate and scale", |d, _| arrange::transform(d, &ids, m));
     ok(done, &ids)
 }

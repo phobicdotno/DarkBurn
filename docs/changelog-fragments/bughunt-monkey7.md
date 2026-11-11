@@ -8,3 +8,4 @@ Fix: A shape can no longer be moved or sized out of this world (past a thousand 
 Fix: A QR code or barcode of an absurd size is refused instead of crashing
 Fix: An ellipse with a size near the largest number there is no longer takes all the memory
 Fix: Adding a tab to a shape that has no size is refused instead of quietly breaking undo
+Fix: Two-Point Rotate / Scale onto one and the same target point no longer shrinks the shape to a dot

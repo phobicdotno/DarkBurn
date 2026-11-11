@@ -259,7 +259,9 @@ pub fn mirror_path(path: &BezPath, a: Point, b: Point) -> BezPath {
 
 /// Two-point rotate and scale: maps `from_a` onto `to_a` and `from_b` onto `to_b`.
 /// With `uniform` the shape scales equally in both directions; otherwise it stretches
-/// only along the `from_a`→`from_b` direction. `None` when `from_a == from_b`.
+/// only along the `from_a`→`from_b` direction. `None` when `from_a == from_b`, and when the
+/// result would squash the shape to nothing or is not a number at all (`to_a == to_b`, points
+/// too far apart to measure).
 pub fn two_point_rotate_scale(from_a: Point, from_b: Point, to_a: Point, to_b: Point, uniform: bool) -> Option<Affine> {
     let v1 = from_b - from_a;
     let v2 = to_b - to_a;
@@ -268,6 +270,9 @@ pub fn two_point_rotate_scale(from_a: Point, from_b: Point, to_a: Point, to_b: P
         return None;
     }
     let s = v2.hypot() / l1;
+    if !(s.is_finite() && s >= 1e-12) {
+        return None;
+    }
     let angle = v2.atan2() - v1.atan2();
     let scale = if uniform {
         Affine::scale(s)
@@ -276,7 +281,8 @@ pub fn two_point_rotate_scale(from_a: Point, from_b: Point, to_a: Point, to_b: P
         let k = s - 1.0;
         Affine::new([1.0 + k * u.x * u.x, k * u.x * u.y, k * u.x * u.y, 1.0 + k * u.y * u.y, 0.0, 0.0])
     };
-    Some(Affine::translate(to_a.to_vec2()) * Affine::rotate(angle) * scale * Affine::translate(-from_a.to_vec2()))
+    let m = Affine::translate(to_a.to_vec2()) * Affine::rotate(angle) * scale * Affine::translate(-from_a.to_vec2());
+    m.as_coeffs().iter().all(|c| c.is_finite()).then_some(m)
 }
 
 /// Rotation about `pivot` that turns the direction to `from` into the direction to `to`.
@@ -432,6 +438,18 @@ mod tests {
         let p = mirror_path(&rect(0.0, 0.0, 2.0, 1.0), Point::new(0.0, 0.0), Point::new(0.0, 1.0));
         assert!(close(bounding_box(&p).unwrap().origin(), Point::new(-2.0, 0.0), 1e-12));
         assert!(signed_area(&p) < 0.0);
+    }
+
+    #[test]
+    fn two_point_never_squashes_to_nothing() {
+        // Found by the monkey (seed 102, step 24): source points 1.7e308 apart gave a scale of
+        // zero, and the shape became a point for good. The same with one target point twice.
+        let (a, b) = (Point::new(1.0, 1.0), Point::new(3.0, 1.0));
+        for uniform in [true, false] {
+            assert!(two_point_rotate_scale(Point::new(-1.7e308, 24.0), Point::new(5.7, -1.7e308), a, b, uniform).is_none());
+            assert!(two_point_rotate_scale(a, b, Point::new(5.0, 5.0), Point::new(5.0, 5.0), uniform).is_none());
+            assert!(two_point_rotate_scale(a, b, Point::new(-1.7e308, 0.0), Point::new(1.7e308, 0.0), uniform).is_none());
+        }
     }
 
     #[test]

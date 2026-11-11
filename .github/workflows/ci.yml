@@ -26,7 +26,13 @@ on:
         type: choice
         options: [all, windows, linux, macos]
         default: all
+  # release.yml starts these jobs for a tag, for all systems.
   workflow_call:
+    inputs:
+      only:
+        description: Run the lints and tests on one system only (all, windows, linux or macos)
+        type: string
+        default: all
 
 permissions:
   contents: read
@@ -57,7 +63,7 @@ jobs:
     steps:
       # The same test as in the matrix of the job below.
       - name: Say that macOS is left out
-        if: github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
+        if: (inputs.only || 'all') == 'all' && github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
         run: echo "::notice title=No macOS in this run::The repository is private, so a push or a pull request does not run the macOS tests. Start them by hand with Actions, ci, Run workflow, only macos."
 
       - uses: actions/checkout@v7

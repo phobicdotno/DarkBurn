@@ -1,0 +1,69 @@
+# TEMPORARY, for this branch only. Starts ci.yml or release.yml when .github/prove.txt changes.
+# The session that wrote these workflows could not press "Run workflow", so this stands in for
+# that button while the workflows are proven on GitHub's runners.
+# Delete this file and .github/prove.txt before the branch is merged.
+#
+# .github/prove.txt holds one line: the workflow (ci or release) and the system (all, windows,
+# linux or macos). Anything after that is a note.
+name: prove
+
+on:
+  push:
+    branches: [claude/takeover-continue-5fw6dt]
+    paths: [.github/prove.txt]
+
+permissions: {}
+
+jobs:
+  read:
+    name: Read what to run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      workflow: ${{ steps.read.outputs.workflow }}
+      only: ${{ steps.read.outputs.only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Read .github/prove.txt
+        id: read
+        shell: bash
+        run: |
+          read -r workflow only _ <.github/prove.txt || true
+          case "$workflow" in
+            ci | release) ;;
+            *) echo "::error file=.github/prove.txt::the first word must be ci or release, found '$workflow'"; exit 1 ;;
+          esac
+          case "$only" in
+            all | windows | linux | macos) ;;
+            *) echo "::error file=.github/prove.txt::the second word must be all, windows, linux or macos, found '$only'"; exit 1 ;;
+          esac
+          echo "workflow=$workflow" >>"$GITHUB_OUTPUT"
+          echo "only=$only" >>"$GITHUB_OUTPUT"
+
+  ci:
+    name: ci
+    needs: read
+    if: needs.read.outputs.workflow == 'ci'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      only: ${{ needs.read.outputs.only }}
+
+  release:
+    name: release
+    needs: read
+    if: needs.read.outputs.workflow == 'release'
+    # release.yml has a job that may write (the draft release of a tag). It does not run here,
+    # but a calling workflow has to allow everything the called one names.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      only: ${{ needs.read.outputs.only }}
+      by_hand: true

@@ -33,6 +33,17 @@ on:
         type: choice
         options: [all, windows, linux, macos]
         default: all
+  # Another workflow may start this one. With by_hand it builds as a run by hand does.
+  workflow_call:
+    inputs:
+      only:
+        description: Build for one system only (all, windows, linux or macos)
+        type: string
+        default: all
+      by_hand:
+        description: Build the packages as a run by hand does, whatever started the calling workflow
+        type: boolean
+        default: false
 
 # Nothing by default. Each job asks for what it needs.
 permissions: {}
@@ -80,6 +91,7 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           ONLY: ${{ inputs.only || 'all' }}
+          BY_HAND: ${{ github.event_name == 'workflow_dispatch' || inputs.by_hand == true }}
           PRIVATE: ${{ github.event.repository.private }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -101,7 +113,7 @@ jobs:
           # A tag and a run by hand always build. A push to main does not build in two cases.
           build=true
           why=
-          if [ "$EVENT" = push ] && [ "$REF_TYPE" != tag ]; then
+          if [ "$EVENT" = push ] && [ "$REF_TYPE" != tag ] && [ "$BY_HAND" != true ]; then
             if [ "$PRIVATE" = true ]; then
               build=false
               why="The repository is private, so a push to main builds no packages. Push a tag, or start this workflow by hand with Actions, release, Run workflow."

@@ -4,3 +4,4 @@ Fix: With the Fire button switched off in Device Settings, the fire command no l
 Fix: "Hide Start" for a DSP device now also holds the Start shortcut and menu, not only the button
 Fix: A move typed in machine coordinates is refused when it lies outside the machine (Smoothieware)
 Fix: With a work origin set, a move to a position is still checked against the machine (Marlin, Smoothieware and custom devices)
+Fix: With a work origin set, a frame is still checked against the machine (Marlin, Smoothieware and custom devices)

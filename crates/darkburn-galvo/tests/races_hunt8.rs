@@ -156,3 +156,18 @@ fn a_disconnect_that_follows_a_start_at_once_means_the_laser_is_never_enabled() 
     assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after the disconnect had been asked for");
     r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
 }
+
+#[test]
+fn a_job_does_not_start_on_an_old_reading_of_a_door_that_has_opened_since() {
+    let dev = with_door();
+    let mut r = rig_with(dev.clone(), slow_emu(), no_routine_poll());
+    r.emu(|e| e.set_input_bit(DOOR_BIT, false)); // the door opens after the last reading
+    r.m.arm().unwrap();
+    let _ = r.m.start_job(small_job(&dev), StartOptions::default());
+    r.settle();
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled with the door open: {:?}", r.events);
+    r.emu(|e| assert!(!e.ever_emitted() && !e.mo_open()));
+    assert!(r.has(|e| matches!(e, Event::Rejected(m) if m.contains("door"))), "{:?}", r.events);
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+    assert!(r.m.snapshot().inputs.door_open, "the refusal leaves the fresh reading in the snapshot");
+}

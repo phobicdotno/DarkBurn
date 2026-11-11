@@ -760,6 +760,18 @@ impl Worker {
         self.link.settings.ports.door_bit.is_some() && self.sh.snapshot.lock().expect("snapshot").inputs.door_open
     }
 
+    /// Reads the door now and puts the reading in the snapshot. The snapshot alone can be as old
+    /// as the poll interval, and older after a long transaction (a lens table upload); nothing
+    /// that can lead to a mark is decided on that.
+    fn door_open_now(&mut self) -> io::Result<bool> {
+        if self.link.settings.ports.door_bit.is_none() {
+            return Ok(false);
+        }
+        let inputs = self.link.inputs()?;
+        self.sh.update(|s| s.inputs = inputs);
+        Ok(inputs.door_open)
+    }
+
     fn idle_snapshot(&self) {
         self.sh.update(|s| {
             s.activity = Activity::Idle;
@@ -905,7 +917,7 @@ impl Worker {
             reject(self, "Frame the job with the red light before starting it.");
             return Ok(());
         }
-        if self.door_open() {
+        if self.door_open_now()? {
             reject(self, "The door is open.");
             return Ok(());
         }

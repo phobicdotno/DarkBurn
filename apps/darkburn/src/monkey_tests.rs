@@ -1170,3 +1170,30 @@ fn monkey_explore() {
         }
     }
 }
+
+// ----- Regression tests for what the monkey found --------------------------------------------------
+
+/// Monkey seed 3013, step 128: `qr.add` with a module of 1.7e308 mm panicked inside the outline
+/// code. A QR code or barcode of an absurd size is refused.
+#[test]
+fn a_code_of_an_absurd_size_is_refused() {
+    let dir = temp_dir("code");
+    let mut h = headless(&dir);
+    let app = &mut h.app;
+    for (id, args) in [
+        ("qr.add", json!({ "text": "a", "module": 1.7e308 })),
+        ("qr.add", json!({ "text": "a", "size": 1.7e308 })),
+        ("qr.add", json!({ "text": "a", "module": 1e9 })),
+        ("barcode.add", json!({ "data": "12345", "module": 1.7e308 })),
+        ("barcode.add", json!({ "data": "12345", "height": 1.7e308 })),
+    ] {
+        let before = app.editor.doc.shapes.len();
+        let r = crate::api::execute_headless(app, id, &args);
+        assert!(r.is_err(), "{id} {args} was accepted: {r:?}");
+        assert_eq!(app.editor.doc.shapes.len(), before, "{id} {args} was refused but left a shape");
+    }
+    // Sizes a person would use still work.
+    assert!(crate::api::execute_headless(app, "qr.add", &json!({ "text": "a", "module": 2.0 })).is_ok());
+    assert!(crate::api::execute_headless(app, "barcode.add", &json!({ "data": "12345", "module": 0.5, "height": 20 })).is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
+}

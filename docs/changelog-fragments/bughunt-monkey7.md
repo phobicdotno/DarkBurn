@@ -5,3 +5,4 @@ Fix: A command that changes nothing no longer leaves an empty undo step or marks
 Fix: Shapes blown up to kilometres on a fill layer no longer crash the program, they are left out of the job with a warning
 Fix: Cut Shapes on a few hundred shapes takes a moment instead of most of a minute
 Fix: A shape can no longer be moved or sized out of this world (past a thousand kilometres), which put "infinity" into the job
+Fix: A QR code or barcode of an absurd size is refused instead of crashing

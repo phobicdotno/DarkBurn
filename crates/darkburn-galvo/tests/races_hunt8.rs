@@ -184,3 +184,30 @@ fn a_frame_does_not_start_on_an_old_reading_of_a_door_that_has_opened_since() {
     assert!(r.has(|e| matches!(e, Event::Rejected(m) if m.contains("door"))), "{:?}", r.events);
     assert_eq!(r.m.snapshot().activity, Activity::Idle);
 }
+
+#[test]
+fn a_paused_job_does_not_resume_on_an_old_reading_of_a_door_that_has_opened_since() {
+    let dev = with_door();
+    let mut r = rig_with(dev.clone(), slow_emu(), no_routine_poll());
+    r.m.arm().unwrap();
+    r.m.start_job(long_job(&dev), StartOptions::default()).unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 5)), "{:?}", r.events);
+    r.m.pause().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::Paused))), "{:?}", r.events);
+    let marks = r.emu(|e| {
+        e.set_input_bit(DOOR_BIT, false); // the door opens while the job is paused
+        e.emitting_marks()
+    });
+    let _ = r.m.resume();
+    r.settle();
+    assert!(!r.has(|e| matches!(e, Event::Resumed)), "the job went on with the door open: {:?}", r.events);
+    r.emu(|e| {
+        assert_eq!(e.emitting_marks(), marks);
+        assert!(!e.mo_open() && e.is_paused());
+    });
+    assert!(r.has(|e| matches!(e, Event::Rejected(m) if m.contains("door"))), "{:?}", r.events);
+    // With the door closed again the same job goes on and finishes.
+    r.emu(|e| e.set_input_bit(DOOR_BIT, true));
+    assert!(r.wait(|r| r.m.resume().is_ok() && r.has(|e| matches!(e, Event::Resumed))), "{:?}", r.events);
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobFinished { .. }))), "{:?}", r.events);
+}

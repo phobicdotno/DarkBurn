@@ -818,7 +818,10 @@ impl Worker {
     }
 
     fn do_resume(&mut self) -> io::Result<()> {
-        if self.door_open() {
+        if matches!(self.state, State::Idle) {
+            return Ok(());
+        }
+        if self.door_open_now()? {
             self.reject("The door is open.");
             return Ok(());
         }

@@ -10,3 +10,4 @@ Fix: An ellipse with a size near the largest number there is no longer takes all
 Fix: Adding a tab to a shape that has no size is refused instead of quietly breaking undo
 Fix: Two-Point Rotate / Scale onto one and the same target point no longer shrinks the shape to a dot
 Fix: Offset with a tolerance below zero no longer takes minutes
+Fix: A damaged project file with a shape that has no number opens with the shapes numbered again

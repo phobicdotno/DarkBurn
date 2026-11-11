@@ -18,7 +18,10 @@
   Uninstall removes what the installer put there and leaves the user's settings folder
   (%AppData%\DarkBurn). `msiexec /x darkburn.msi REMOVE_SETTINGS=1` removes that too.
 
-  Wizard shape adapted from SolidCraft's installer (MIT OR Apache-2.0, see ATTRIBUTION.md).
+  Adapted from SolidCraft's installer (assets/platforms/windows/solidcraft.wxs), which is itself
+  adapted from PhotoCraft's packaging. Those parts are under Apache-2.0 (see ATTRIBUTION.md).
+  Changed for DarkBurn: per-user or all-users install with the WixUI_Advanced wizard, DarkBurn's
+  file types, a desktop shortcut, the settings folder removed on request, the licences folder.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
@@ -45,7 +48,9 @@
     <Property Id="WixAppFolder" Value="WixPerUserFolder" />
 
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="APPLICATIONFOLDER" Name="DarkBurn" />
+      <Directory Id="APPLICATIONFOLDER" Name="DarkBurn">
+        <Directory Id="LicenceTextsFolder" Name="licenses" />
+      </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
@@ -63,6 +68,7 @@
     <Feature Id="Main" Title="DarkBurn" Description="The program, the MCP server and the licences." Level="1" AllowAbsent="no">
       <ComponentGroupRef Id="DarkBurnFiles" />
       <ComponentGroupRef Id="DarkBurnFileTypes" />
+      <ComponentGroupRef Id="DarkBurnLicenceTexts" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
     <Feature Id="DesktopShortcutFeature" Title="Desktop shortcut" Description="A DarkBurn shortcut on the desktop." Level="1" AllowAbsent="yes">
@@ -90,6 +96,25 @@
         <File Id="Attribution" Source="$(var.BinDir)\ATTRIBUTION.md" />
         <File Id="ThirdParty" Source="$(var.BinDir)\THIRD-PARTY-LICENSES.txt" />
         <File Id="ReadmeFile" Source="$(var.BinDir)\README.md" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- The licence texts and notices that ATTRIBUTION.md points to: every file of licenses/.
+         scripts/package-common.ps1 stops the build when a file of that folder is not named here. -->
+    <ComponentGroup Id="DarkBurnLicenceTexts" Directory="LicenceTextsFolder">
+      <Component Id="LicenceTexts" Guid="2175A067-759F-4547-BF47-1CB7C63BF534">
+        <File Id="LicenceText_CADCraft_LICENSE_MIT" Source="$(var.BinDir)\licenses\CADCraft-LICENSE-MIT" KeyPath="yes" />
+        <File Id="LicenceText_GridCraft_LICENSE_MIT" Source="$(var.BinDir)\licenses\GridCraft-LICENSE-MIT" />
+        <File Id="LicenceText_Hack_LICENSE" Source="$(var.BinDir)\licenses\Hack-LICENSE" />
+        <File Id="LicenceText_IBM_Plex_OFL" Source="$(var.BinDir)\licenses\IBM-Plex-OFL" />
+        <File Id="LicenceText_MeerK40t_LICENSE_MIT" Source="$(var.BinDir)\licenses\MeerK40t-LICENSE-MIT" />
+        <File Id="LicenceText_PhotoCraft_NOTICE" Source="$(var.BinDir)\licenses\PhotoCraft-NOTICE" />
+        <File Id="LicenceText_SolidCraft_LICENSE_MIT" Source="$(var.BinDir)\licenses\SolidCraft-LICENSE-MIT" />
+        <File Id="LicenceText_SolidCraft_NOTICE" Source="$(var.BinDir)\licenses\SolidCraft-NOTICE" />
+        <File Id="LicenceText_Ubuntu_Font_Licence_1.0" Source="$(var.BinDir)\licenses\Ubuntu-Font-Licence-1.0" />
+        <File Id="LicenceText_VectorCraft_LICENSE_MIT" Source="$(var.BinDir)\licenses\VectorCraft-LICENSE-MIT" />
+        <File Id="LicenceText_emoji_icon_font_LICENSE_MIT" Source="$(var.BinDir)\licenses\emoji-icon-font-LICENSE-MIT" />
+        <File Id="LicenceText_ruida_pa_LICENSE_MIT" Source="$(var.BinDir)\licenses\ruida-pa-LICENSE-MIT" />
       </Component>
     </ComponentGroup>
 

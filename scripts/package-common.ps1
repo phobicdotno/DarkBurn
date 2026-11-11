@@ -4,10 +4,15 @@
 
   Provides: $Root, $Version, $Target, $Dist, $Stage, and Initialize-Stage, which builds the
   release binaries (unless -SkipBuild) and fills $Stage with the files both packages contain:
-  darkburn.exe, darkburn-mcp.exe, LICENSE-MIT, LICENSE-APACHE, ATTRIBUTION.md, README.md and
-  THIRD-PARTY-LICENSES.txt.
+  darkburn.exe, darkburn-mcp.exe, LICENSE-MIT, LICENSE-APACHE, ATTRIBUTION.md, README.md,
+  THIRD-PARTY-LICENSES.txt and the licences folder (licenses\) that ATTRIBUTION.md points to.
 
   The binaries link the C runtime statically (+crt-static), so nothing else needs installing.
+
+  The build and package steps are adapted from SolidCraft's packaging\windows\package.ps1, which
+  is itself adapted from PhotoCraft's packaging (Apache-2.0, see ATTRIBUTION.md). Changed for
+  DarkBurn: split into these shared steps and two package scripts, two programs, x64 only, the
+  third-party licence list written by cargo about.
 #>
 $ErrorActionPreference = 'Stop'
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -93,6 +98,16 @@ function Initialize-Stage([switch] $SkipBuild) {
   New-Item -ItemType Directory -Force -Path $Stage | Out-Null
   Copy-Item (Join-Path $Bin 'darkburn.exe'), (Join-Path $Bin 'darkburn-mcp.exe') $Stage
   foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'ATTRIBUTION.md', 'README.md') { Copy-Item (Join-Path $Root $f) $Stage }
+  # The licence texts and notices that ATTRIBUTION.md points to.
+  Copy-Item (Join-Path $Root 'licenses') (Join-Path $Stage 'licenses') -Recurse
+  # The MSI names each of them. A text added to licenses\ and not named in the .wxs would be
+  # left out of the installer without a word, so that stops here.
+  $wxs = Get-Content -Raw (Join-Path $Root 'packaging\windows\darkburn.wxs')
+  foreach ($f in Get-ChildItem (Join-Path $Stage 'licenses') -File) {
+    if (-not $wxs.Contains("\licenses\$($f.Name)`"")) {
+      throw "licenses\$($f.Name) is not listed in packaging\windows\darkburn.wxs (component LicenceTexts)"
+    }
+  }
   New-ThirdPartyLicences (Join-Path $Stage 'THIRD-PARTY-LICENSES.txt')
   New-Item -ItemType Directory -Force -Path $Dist | Out-Null
 }

@@ -278,8 +278,10 @@ cargo about generate --locked --workspace --config packaging/about.toml packagin
 - The Windows installer and the portable zip carry it (`scripts/package-common.ps1`).
 - The Linux and macOS archives carry it when `cargo-about` is installed
   (`scripts/package-unix.sh`). Without `cargo-about` the script leaves the list out and says so;
-  with `--require-licences`, which the release workflow uses, it stops instead. These archives
-  also carry the `licenses/` folder.
+  with `--require-licences`, which the release workflow uses, it stops instead.
+- Every package also carries this file and the `licenses/` folder. The Windows installer names
+  each file of that folder (`packaging/windows/darkburn.wxs`), and packaging stops when one is
+  not named there.
 - The list is made for one target. `packaging/about.toml` names the Windows target;
   `scripts/package-unix.sh` adds `--target` with the target of its own package.
 - The list leaves out libraries that are used only to build or to test.

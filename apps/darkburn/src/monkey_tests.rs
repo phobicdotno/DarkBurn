@@ -1282,6 +1282,9 @@ fn a_tab_never_lands_on_not_a_number() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[path = "mcp_monkey_tests.rs"]
+mod mcp;
+
 /// Monkey seed 4004, step 73: `tools.offset` with a tolerance of -3.8 took 50 s (and 735 s on
 /// the document of all kinds of objects, against 5 ms with the usual tolerance): a tolerance
 /// below zero was read as the finest one there is, a millionth of a millimetre.

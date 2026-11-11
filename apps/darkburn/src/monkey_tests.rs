@@ -1196,7 +1196,7 @@ const EXCEPTIONS: &str = "\
 #[allow(dead_code)]
 const EXPLORED: &str = "\
 Mild (arguments mostly in range): seeds 1000..1029 x 500 steps, 2006..2029 x 300 steps. \
-Full (huge numbers, wrong kinds, missing fields): seeds 3000..3045 x 200..300 steps. \
+Full (huge numbers, wrong kinds, missing fields): seeds 3000..3045 x 200..300 steps, 4000..4029 x 300 steps. \
 Run more with MONKEY_SEEDS=a..b or a,b,c, MONKEY_STEPS=n, MONKEY_MILD=1 and the test \
 monkey_explore; MONKEY_TRACE=1 prints every command.";
 
@@ -1279,5 +1279,28 @@ fn a_tab_never_lands_on_not_a_number() {
     assert!(tabs.iter().all(|t| t[0].is_finite() && t[1].is_finite()), "tabs {tabs:?} after {r:?}");
     assert!(r.is_err(), "{r:?}");
     assert_eq!(app.editor.history.len(), before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Monkey seed 4004, step 73: `tools.offset` with a tolerance of -3.8 took 50 s (and 735 s on
+/// the document of all kinds of objects, against 5 ms with the usual tolerance): a tolerance
+/// below zero was read as the finest one there is, a millionth of a millimetre.
+#[test]
+fn an_offset_with_a_tolerance_below_zero_does_not_take_minutes() {
+    let dir = temp_dir("off");
+    let mut h = headless(&dir);
+    let app = &mut h.app;
+    seed_document(app);
+    crate::api::execute_headless(app, "edit.select_all", &json!({})).unwrap();
+    let t = Instant::now();
+    let r = crate::api::execute_headless(app, "tools.offset", &json!({ "distance": 5.0, "tolerance": -3.8, "side": "outward" }));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(t.elapsed() < Duration::from_secs(5), "the offset took {:?}", t.elapsed());
+    // And the finest tolerance that can be asked for is still quick.
+    crate::api::execute_headless(app, "edit.undo", &json!({})).unwrap();
+    let t = Instant::now();
+    let r = crate::api::execute_headless(app, "tools.offset", &json!({ "distance": 5.0, "tolerance": 1e-9, "side": "outward" }));
+    assert!(r.is_ok(), "{r:?}");
+    assert!(t.elapsed() < Duration::from_secs(5), "the finest offset took {:?}", t.elapsed());
     let _ = std::fs::remove_dir_all(&dir);
 }

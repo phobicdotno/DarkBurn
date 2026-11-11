@@ -190,6 +190,57 @@ fn a_limit_alarm_under_the_fire_button_ends_the_fire() {
     m.disconnect();
 }
 
+/// The controller's `ALARM:` line is lost on the wire; only its status reports say Alarm.
+#[test]
+fn an_alarm_seen_only_in_the_status_report_ends_a_streaming_job() {
+    let (m, emu) = rig();
+    m.start_job(long_job()).unwrap();
+    wait_emu(&emu, "burning", |e| e.laser_on() && e.machine_position()[0] > 12.0);
+    emu.with(|e| {
+        e.trigger_hard_limit('x');
+        let _ = e.take_output();
+    });
+    let end = Instant::now() + Duration::from_secs(4);
+    while m.snapshot().activity != Activity::Idle && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let s = m.snapshot();
+    assert!(s.alarm_locked, "{:?}", s.status);
+    assert_eq!(s.activity, Activity::Idle, "the job still shows as running on a machine in alarm");
+    emu.with(|e| assert!(!e.laser_on()));
+    m.disconnect();
+}
+
+#[test]
+fn an_alarm_seen_only_in_the_status_report_ends_a_paused_job_and_the_fire_button() {
+    let (m, emu) = rig();
+    m.start_job(Job::from_text(BURN)).unwrap();
+    wait_emu(&emu, "burning", |e| e.laser_on() && e.machine_position()[0] > 5.0);
+    m.pause().unwrap();
+    assert!(m.wait_until(T, |s| s.status.state == MachineState::Hold(0) && s.paused), "{:?}", m.snapshot().status);
+    emu.with(|e| {
+        e.trigger_hard_limit('x');
+        let _ = e.take_output();
+    });
+    assert!(m.wait_until(Duration::from_secs(4), |s| s.alarm_locked));
+    std::thread::sleep(Duration::from_millis(300));
+    let s = m.snapshot();
+    assert_eq!(s.activity, Activity::Idle, "the paused job still shows on a machine in alarm");
+    assert!(!s.paused);
+    m.disconnect();
+
+    let (m, emu) = rig();
+    m.fire(1.0, Duration::from_secs(8)).unwrap();
+    wait_emu(&emu, "firing", |e| e.laser_on());
+    emu.with(|e| {
+        e.trigger_hard_limit('x');
+        let _ = e.take_output();
+    });
+    assert!(m.wait_until(Duration::from_secs(4), |s| s.alarm_locked));
+    assert!(m.wait_until(Duration::from_secs(1), |s| !s.fire_on), "the fire flag stays on a machine in alarm");
+    m.disconnect();
+}
+
 // ----- the door -----
 
 // ----- stop and disconnect right after start -----

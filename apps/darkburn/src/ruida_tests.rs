@@ -700,3 +700,15 @@ fn disconnecting_while_firing_lets_the_pulse_key_go() {
     h.disconnect();
     assert!(!pulse_is_down(&emu), "the controller was left with its Pulse key held down");
 }
+
+#[test]
+fn stop_while_firing_lets_the_pulse_key_go() {
+    let (mut h, emu, _server) = firing();
+    h.stop().unwrap();
+    let end = Instant::now() + Duration::from_secs(2);
+    while pulse_is_down(&emu) && Instant::now() < end {
+        h.wait_for(Duration::from_millis(20), |_, _| false);
+    }
+    assert!(!pulse_is_down(&emu), "Stop left the Pulse key held down");
+    assert!(!h.snapshot().fire_on);
+}

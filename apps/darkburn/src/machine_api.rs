@@ -1748,6 +1748,7 @@ impl DriverAdapter for RuidaAdapter {
                 let had_job = self.job_started.take().is_some() || working;
                 self.framing_until = None;
                 self.snap.job = None;
+                self.release_fire();
                 if had_job {
                     self.out.push(MachineEvent::JobAborted("stopped".into()));
                 }
@@ -1909,7 +1910,10 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
-            C::EmergencyStop => self.req(R::Stop, Op::Other("stop")),
+            C::EmergencyStop => {
+                self.release_fire();
+                self.req(R::Stop, Op::Other("stop"))
+            }
             C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
                 Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
             }

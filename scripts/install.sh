@@ -10,10 +10,12 @@
 #      (darkburn-<version>-<linux|macos>-<arch>.tar.gz). No release has one yet, so today this
 #      step finds nothing and step 2 runs.
 #   2. Builds from source: fetches DarkBurn and SolidCraft (its small UI crates are path
-#      dependencies) side by side and runs `cargo build --release`. This takes several minutes.
+#      dependencies) side by side and runs `cargo build --release`. The first build takes ten
+#      minutes or more and about 3.5 GB of disk.
 #   3. Installs for the current user: the programs `darkburn` and `darkburn-mcp` in ~/.local/bin,
 #      plus a menu entry and icon on Linux, or DarkBurn.app in ~/Applications on macOS.
-#   It never uses sudo and writes nothing outside your home folder. Run it again to update.
+#   It never uses sudo and installs nothing outside your home folder (a temporary folder is
+#   used and removed). Run it again to update.
 #
 # Arguments (through the pipe: curl ... | sh -s -- --uninstall)
 #   --help             Show the help text.
@@ -30,9 +32,11 @@
 #   DARKBURN_FROM_SOURCE=1   Build from source even when a ready-made build exists
 #   DARKBURN_INSTALL_RUST=1  Install Rust with rustup when it is missing or too old
 #
-# The whole script is functions; `main` on the last line starts it, so a download that was cut
-# off runs nothing.
-
+# The whole script is one group in braces that closes on the last line. A shell reads such a
+# group to its end before it runs any of it, so a download that was cut off runs nothing.
+# The lines inside are not indented: the SOLIDCRAFT_PIN line below is read by other tools and
+# has to start at the left edge.
+{
 set -eu
 
 # The SolidCraft commit this version of DarkBurn builds against. Keep this line in this exact
@@ -93,7 +97,7 @@ What it does
   1. Looks in the latest GitHub release for a ready-made build for this computer.
      No release has one yet, so today it goes straight to step 2.
   2. Builds from source with cargo. Needs git, Rust and a C compiler (on Linux also libclang).
-     Takes several minutes and a few GB of disk.
+     The first build takes ten minutes or more and about 3.5 GB of disk.
   3. Installs for the current user only. No sudo.
        Linux   <prefix>/bin/darkburn and darkburn-mcp, a menu entry and an icon
        macOS   ~/Applications/DarkBurn.app, with links in <prefix>/bin
@@ -332,15 +336,36 @@ settings() {
 # Downloads
 # ---------------------------------------------------------------------------------------------
 
-# Fetches the https address $1 into the file $2. Quiet; fails on an HTTP error.
+# Fetches the https address $1 into the file $2. Quiet; fails on an HTTP error. Gives up when
+# the server cannot be reached in 20 seconds, or sends nothing for 30 (wget) or 60 (curl).
 download() {
     if has curl; then
-        curl -fsSL --proto '=https' --tlsv1.2 --retry 2 -o "$2" "$1"
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --connect-timeout 20 \
+            --speed-limit 1 --speed-time 60 -o "$2" "$1"
     elif has wget; then
-        wget -q -O "$2" "$1"
+        wget -q -T 30 -O "$2" "$1"
     else
         return 127
     fi
+}
+
+# Asks the GitHub API address $1 for a release and writes the reply into the file $2. Sets
+# RELEASE_STATUS to the HTTP status of the reply (200, 404, ...), to 000 when there was no
+# reply within a minute, and to "none" when neither curl nor wget is installed.
+fetch_release() {
+    RELEASE_STATUS=none
+    if has curl; then
+        RELEASE_STATUS=$(curl -sSL --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 60 \
+            -o "$2" -w '%{http_code}' "$1" 2>/dev/null) || RELEASE_STATUS=000
+    elif has wget; then
+        # With -S wget prints the status line of every reply; the last one is the answer.
+        RELEASE_STATUS=$(wget -q -S -T 30 -O "$2" "$1" 2>&1 |
+            awk '$1 ~ /^HTTP\// { code = $2 } END { print code }') || RELEASE_STATUS=000
+    fi
+    case "$RELEASE_STATUS" in
+        none | [1-5][0-9][0-9]) ;;
+        *) RELEASE_STATUS=000 ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -375,24 +400,62 @@ wants_prebuilt() {
 }
 
 # Returns 0 with PAYLOAD_DIR, ICON_FILE and VERSION set when a ready-made build was fetched and
-# runs here. Returns 1, without a word, when there is none. Stops only on a wrong checksum.
+# runs here. Returns 1 when there is none, with the reason in PREBUILT_WHY (empty when no
+# release was asked for, or when a warning has already said why). Stops only on a wrong checksum.
 try_prebuilt() {
+    PREBUILT_WHY=
     wants_prebuilt || return 1
-    [ -n "$ARCH" ] || return 1
-    has tar || return 1
+    if [ -z "$ARCH" ]; then
+        PREBUILT_WHY="There are no ready-made builds for $MACHINE processors."
+        return 1
+    fi
+    if ! has tar; then
+        PREBUILT_WHY='tar is not installed, so a ready-made build could not be unpacked.'
+        return 1
+    fi
     if [ -z "$REF" ]; then
         release_api="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
     else
         release_api="https://api.github.com/repos/$GITHUB_REPO/releases/tags/$REF"
     fi
 
-    download "$release_api" "$TMP_DIR/release.json" 2>/dev/null || return 1
+    step 'Looking for a ready-made build in the GitHub releases'
+    fetch_release "$release_api" "$TMP_DIR/release.json"
+    case "$RELEASE_STATUS" in
+        200) ;;
+        404)
+            if [ -z "$REF" ]; then
+                PREBUILT_WHY='No release has been published yet.'
+            else
+                PREBUILT_WHY="There is no release $REF."
+            fi
+            return 1
+            ;;
+        000)
+            PREBUILT_WHY='The GitHub release list did not answer.'
+            return 1
+            ;;
+        none)
+            PREBUILT_WHY='Neither curl nor wget is installed, so the release list was not read.'
+            return 1
+            ;;
+        *)
+            PREBUILT_WHY="GitHub answered the release lookup with HTTP $RELEASE_STATUS, so it could not be read."
+            return 1
+            ;;
+    esac
     release_tag=$(json_string tag_name "$TMP_DIR/release.json")
-    is_version "${release_tag#v}" || return 1
+    if ! is_version "${release_tag#v}"; then
+        PREBUILT_WHY='The reply from the GitHub release list could not be read.'
+        return 1
+    fi
     VERSION=${release_tag#v}
     release_asset=$(asset_name "$VERSION" "$OS" "$ARCH")
     release_url=$(json_asset_url "$TMP_DIR/release.json" "$release_asset")
-    [ -n "$release_url" ] || return 1
+    if [ -z "$release_url" ]; then
+        PREBUILT_WHY="Release $release_tag has no ready-made build for $OS $MACHINE."
+        return 1
+    fi
 
     step "Downloading $release_asset"
     if ! download "$release_url" "$TMP_DIR/$release_asset"; then
@@ -614,46 +677,63 @@ Set DARKBURN_BUILD_DIR to an empty or new folder."
 
 # Brings the checkout in folder $2 to ref $4 of repository $3 ($1 is the name for messages).
 # Shallow when the server allows it (GitHub does, also for a commit id), full history otherwise.
+#
+# Every git call names the checkout outright (--git-dir and --work-tree). With `git -C` git
+# would look for a repository by itself, and when the checkout is not one (an init that was cut
+# off) it would find the one around it, for example a home folder kept in git, and check
+# DarkBurn out over that.
 sync_repo() {
+    # A checkout that is not a repository is made again. It is inside the marked build folder.
+    if [ -e "$2" ] && ! git --git-dir="$2/.git" rev-parse --git-dir >/dev/null 2>&1; then
+        rm -rf "$2" || die "could not remove $2."
+    fi
     if [ ! -d "$2/.git" ]; then
         mkdir -p "$2" || die "could not make $2."
-        git -C "$2" init -q || die "git init failed in $2."
+        git --git-dir="$2/.git" --work-tree="$2" init -q || die "git init failed in $2."
     fi
     step "Fetching $1 ($4)"
-    if GIT_TERMINAL_PROMPT=0 git -C "$2" fetch --depth 1 "$3" "$4"; then
-        git -C "$2" checkout -q -f --detach FETCH_HEAD || die "could not check out $1 $4."
+    if GIT_TERMINAL_PROMPT=0 git --git-dir="$2/.git" --work-tree="$2" fetch --depth 1 "$3" "$4"; then
+        git --git-dir="$2/.git" --work-tree="$2" checkout -q -f --detach FETCH_HEAD ||
+            die "could not check out $1 $4.
+If it keeps happening, delete $2 and run the installer again."
         return 0
     fi
     # No shallow fetch of that ref (a short commit id, or a server that refuses): take it all.
     # The depth is git's "everything", which also completes a checkout that was shallow before.
     say "    $4 cannot be fetched on its own. Fetching the full history."
-    if ! GIT_TERMINAL_PROMPT=0 git -C "$2" fetch --depth 2147483647 --tags "$3" '+refs/heads/*:refs/remotes/origin/*'; then
+    if ! GIT_TERMINAL_PROMPT=0 git --git-dir="$2/.git" --work-tree="$2" fetch --depth 2147483647 --tags "$3" '+refs/heads/*:refs/remotes/origin/*'; then
         die "could not fetch $1 from $3.
-Check the network. If the repository is private or has moved, point ${5:-the repository setting} at a copy you can reach."
+Check the network. If the repository is private or has moved, point ${5:-the repository setting} at a copy you can reach.
+If the lines above name a lock file or a broken repository, delete $2 and run the installer again."
     fi
     for sync_try in "refs/remotes/origin/$4" "refs/tags/$4" "$4"; do
-        if sync_commit=$(git -C "$2" rev-parse -q --verify "$sync_try^{commit}" 2>/dev/null); then
-            git -C "$2" checkout -q -f --detach "$sync_commit" || die "could not check out $1 $4."
+        if sync_commit=$(git --git-dir="$2/.git" --work-tree="$2" rev-parse -q --verify "$sync_try^{commit}" 2>/dev/null); then
+            git --git-dir="$2/.git" --work-tree="$2" checkout -q -f --detach "$sync_commit" ||
+                die "could not check out $1 $4.
+If it keeps happening, delete $2 and run the installer again."
             return 0
         fi
     done
     die "$1 has no branch, tag or commit named $4."
 }
 
-# Warns when the build folder's disk is nearly full. A release build needs a few GB.
+# Warns when the build folder's disk is nearly full. A release build needs about 3.5 GB.
 check_disk_space() {
     disk_free_kb=$(df -Pk "$BUILD_DIR" 2>/dev/null | awk 'NR == 2 { print $4 }')
     case "$disk_free_kb" in
         '' | *[!0-9]*) return 0 ;;
     esac
     if [ "$disk_free_kb" -lt 4194304 ]; then
-        warn "only $((disk_free_kb / 1024)) MB free in $BUILD_DIR. The build needs a few GB and may run out of space."
+        warn "only $((disk_free_kb / 1024)) MB free in $BUILD_DIR. The build needs about 3.5 GB and may run out of space."
     fi
 }
 
 build_from_source() {
     check_build_tools
     prepare_build_dir
+    # Git settings of the calling shell must not point the git calls at another repository.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
+        GIT_COMMON_DIR GIT_NAMESPACE
 
     SOURCE_DIR="$BUILD_DIR/DarkBurn"
     sync_repo DarkBurn "$SOURCE_DIR" "$DARKBURN_URL" "${REF:-main}" DARKBURN_REPO
@@ -667,7 +747,7 @@ build_from_source() {
     sync_repo SolidCraft "$BUILD_DIR/solidcraft" "$SOLIDCRAFT_URL" "$solidcraft_ref" SOLIDCRAFT_REPO
 
     check_disk_space
-    step "Building DarkBurn (cargo build --release). This takes several minutes."
+    step "Building DarkBurn (cargo build --release). The first build takes ten minutes or more."
     # One fixed place for the output, whatever CARGO_TARGET_DIR says elsewhere.
     if ! (cd "$SOURCE_DIR" && CARGO_TARGET_DIR="$BUILD_DIR/target" \
         cargo build --release --locked -p darkburn -p darkburn-mcp); then
@@ -689,7 +769,7 @@ so running the installer again continues from there."
     VERSION=$(toml_value "$SOURCE_DIR/Cargo.toml" workspace.package version)
     ICON_FILE=
     [ ! -f "$SOURCE_DIR/assets/icons/app/darkburn-256.png" ] || ICON_FILE="$SOURCE_DIR/assets/icons/app/darkburn-256.png"
-    SOURCE_NOTE="built from ${REF:-main} at $(git -C "$SOURCE_DIR" rev-parse --short HEAD 2>/dev/null || say '?')"
+    SOURCE_NOTE="built from ${REF:-main} at $(git --git-dir="$SOURCE_DIR/.git" rev-parse --short HEAD 2>/dev/null || say '?')"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -765,11 +845,17 @@ make_icns() {
     iconutil -c icns -o "$2" "$icns_set" >/dev/null 2>&1 || return 1
 }
 
-install_macos() {
+# Stops when there is a DarkBurn.app that this installer did not make. Asked before the build,
+# so nobody waits for a build that cannot be installed, and again before the app is written.
+check_app_dir() {
     if [ -e "$APP_DIR" ] && [ ! -f "$APP_DIR/Contents/$APP_MARKER" ]; then
         die "$APP_DIR exists and was not made by this installer.
 Move it away and run the installer again."
     fi
+}
+
+install_macos() {
+    check_app_dir
     mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources" "$BIN_DIR" ||
         die "could not make $APP_DIR."
     say "Made by the DarkBurn installer (scripts/install.sh)." >"$APP_DIR/Contents/$APP_MARKER" ||
@@ -818,6 +904,50 @@ EOF
     ln -sf "$APP_DIR/Contents/MacOS/darkburn-mcp" "$BIN_DIR/darkburn-mcp" || die "could not link $BIN_DIR/darkburn-mcp."
 }
 
+# True when libxkbcommon-x11 is installed. DarkBurn loads it when it starts in an X11 session
+# and stops without it; `ldd` does not show it, because it is loaded while the program runs.
+have_xkb_x11() {
+    for xkb_tool in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+        xkb_list=$("$xkb_tool" -p 2>/dev/null) || continue
+        case "$xkb_list" in
+            *libxkbcommon-x11.so*) return 0 ;;
+        esac
+    done
+    # Not in the library cache, or no cache to ask (musl has none): look in the usual folders.
+    for xkb_lib in /usr/lib*/libxkbcommon-x11.so* /usr/lib*/*/libxkbcommon-x11.so* \
+        /lib*/libxkbcommon-x11.so* /lib*/*/libxkbcommon-x11.so* /usr/local/lib*/libxkbcommon-x11.so*; do
+        [ -e "$xkb_lib" ] && return 0
+    done
+    return 1
+}
+
+# The package that holds libxkbcommon-x11 on this kind of Linux.
+xkb_x11_hint() {
+    if has apt-get; then
+        say "    sudo apt install libxkbcommon-x11-0"
+    elif has dnf; then
+        say "    sudo dnf install libxkbcommon-x11"
+    elif has pacman; then
+        say "    sudo pacman -S --needed libxkbcommon-x11"
+    elif has zypper; then
+        say "    sudo zypper install libxkbcommon-x11-0"
+    elif has apk; then
+        say "    apk add libxkbcommon-x11"
+    else
+        say "    libxkbcommon-x11, from your distribution's packages"
+    fi
+}
+
+# The file a new terminal reads, for the PATH line. A name to show, so the tilde stays as it is.
+profile_name() {
+    # shellcheck disable=SC2088
+    case "${SHELL:-}" in
+        */zsh) if [ "$OS" = macos ]; then say '~/.zprofile'; else say '~/.zshrc'; fi ;;
+        */bash) if [ "$OS" = macos ]; then say '~/.bash_profile'; else say '~/.profile'; fi ;;
+        *) say '~/.profile' ;;
+    esac
+}
+
 finish() {
     installed_version=$("$BIN_DIR/darkburn-mcp" --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)
     say ""
@@ -848,10 +978,16 @@ finish() {
         *)
             say ""
             say "$BIN_DIR is not on your PATH. Until it is, start DarkBurn with the full path"
-            say "$BIN_DIR/darkburn, or add this line to ~/.profile (or the file your shell reads):"
+            say "$BIN_DIR/darkburn, or add this line to $(profile_name) (or the file your shell reads):"
             say "    export PATH=\"$BIN_DIR:\$PATH\""
             ;;
     esac
+    if [ "$OS" = linux ] && ! have_xkb_x11; then
+        say ""
+        warn "libxkbcommon-x11 was not found. In an X11 session DarkBurn stops at start without it
+(under Wayland it is not needed). Install it with:
+$(xkb_x11_hint)"
+    fi
     if [ -n "$BUILT_HERE" ]; then
         say ""
         say "The source and the build stay in $BUILD_DIR"
@@ -874,13 +1010,41 @@ remove_file() {
     fi
 }
 
-# Only for the two folders this installer makes and marks: the build folder and DarkBurn.app.
+# Only for folders this installer makes: DarkBurn.app (marked), and the three it makes inside
+# the marked build folder.
 remove_folder() {
     if [ -d "$1" ]; then
         rm -rf "$1" || die "could not remove $1."
         say "  removed $1"
         REMOVED=1
     fi
+}
+
+# The build folder: the two checkouts, the build output and the marker go. The folder itself
+# goes only when nothing else is in it, so files of your own that ended up there are kept.
+remove_build_dir() {
+    [ -e "$BUILD_DIR" ] || return 0
+    if [ ! -f "$BUILD_DIR/$BUILD_MARKER" ]; then
+        say "  kept $BUILD_DIR (it was not made by this installer)"
+        return 0
+    fi
+    remove_folder "$BUILD_DIR/DarkBurn"
+    remove_folder "$BUILD_DIR/solidcraft"
+    remove_folder "$BUILD_DIR/target"
+    rm -f "$BUILD_DIR/$BUILD_MARKER" || die "could not remove $BUILD_DIR/$BUILD_MARKER."
+    if rmdir "$BUILD_DIR" 2>/dev/null; then
+        say "  removed $BUILD_DIR"
+        REMOVED=1
+    else
+        say "  kept $BUILD_DIR (it holds other files)"
+    fi
+}
+
+# Removes the folders in the arguments that are empty, in the order given. Never anything else.
+remove_empty_folders() {
+    for empty_dir in "$@"; do
+        rmdir "$empty_dir" 2>/dev/null || true
+    done
 }
 
 uninstall() {
@@ -899,19 +1063,29 @@ uninstall() {
         remove_file "$ICON_DEST"
         remove_file "$MIME_FILE"
         refresh_desktop_caches
+        # The folders the installer made for those files, when nothing else is in them.
+        remove_empty_folders "$DATA_DIR/icons/hicolor/256x256/apps" "$DATA_DIR/icons/hicolor/256x256" \
+            "$DATA_DIR/icons/hicolor" "$DATA_DIR/icons" "$DATA_DIR/mime/packages" "$DATA_DIR/mime" "$DATA_DIR/applications"
     fi
-    if [ -e "$BUILD_DIR" ] && [ ! -f "$BUILD_DIR/$BUILD_MARKER" ]; then
-        say "  kept $BUILD_DIR (it was not made by this installer)"
-    else
-        remove_folder "$BUILD_DIR"
-    fi
+    remove_empty_folders "$BIN_DIR"
+    remove_build_dir
     [ -n "$REMOVED" ] || say "  nothing found to remove (was it installed with another DARKBURN_PREFIX or DARKBURN_BUILD_DIR?)"
+    if [ "$OS" = linux ] && [ -n "$REMOVED" ]; then
+        if [ -e "$DATA_DIR/mime/mime.cache" ] || [ -e "$DATA_DIR/applications/mimeinfo.cache" ]; then
+            say "  The desktop's lookup tables under $DATA_DIR/mime and"
+            say "  $DATA_DIR/applications stay: other programs share them."
+        fi
+    fi
     say ""
     if [ -d "$SETTINGS_DIR" ]; then
         say "Your settings are kept in $SETTINGS_DIR"
         say "Delete that folder too if you want them gone."
     else
         say "Settings would be in $SETTINGS_DIR; there are none."
+    fi
+    if [ "$OS" = linux ] && [ -d "$DATA_DIR/$APP_ID" ]; then
+        say "A start with --safe-mode leaves a folder of its own, which is kept too:"
+        say "  $DATA_DIR/$APP_ID"
     fi
     say "Rust and the system packages are left as they are."
 }
@@ -943,10 +1117,13 @@ main() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
+    # Before a long build, not after it.
+    if [ "$OS" = macos ]; then check_app_dir; fi
+
     BUILT_HERE=
     if ! try_prebuilt; then
-        if wants_prebuilt; then
-            step "No ready-made build for $OS $MACHINE yet. Building from source."
+        if [ -n "$PREBUILT_WHY" ]; then
+            step "$PREBUILT_WHY Building from source."
         else
             step "Building from source."
         fi
@@ -959,6 +1136,6 @@ main() {
     finish
 }
 
-# In braces, so that a last line cut off in the middle is a syntax error and not a run of main
-# without its arguments.
-{ main "$@"; }
+main "$@"
+# The closing brace of the group that opens above `set -eu`. Nothing may come after it.
+}

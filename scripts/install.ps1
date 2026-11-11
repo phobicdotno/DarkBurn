@@ -16,8 +16,8 @@
      in the release is checked when there is one.
   2. With no release (today's case) it builds from source: fetches DarkBurn and SolidCraft side
      by side, runs cargo, and copies darkburn.exe and darkburn-mcp.exe into place. This needs
-     Git, Rust (MSVC) and the Visual Studio Build Tools, and takes several minutes. When one
-     of them is missing the script says what to install and stops.
+     Git, Rust (MSVC) and the Visual Studio Build Tools, and can take ten minutes or more.
+     When one of them is missing the script says what to install and stops.
   The programs go to %LocalAppData%\Apps\DarkBurn, with a DarkBurn entry in the Start menu.
   Run it again to update.
 
@@ -42,6 +42,9 @@
 #>
 
 function Install-DarkBurn {
+    # With `irm | iex` this runs in your own PowerShell session. A strict mode set there (some
+    # profiles do) would stop this script at the first variable or property that is not set.
+    Set-StrictMode -Off
     $ErrorActionPreference = 'Stop'
     # The progress bar makes downloads in Windows PowerShell 5.1 many times slower.
     $ProgressPreference = 'SilentlyContinue'
@@ -84,13 +87,23 @@ function Install-DarkBurn {
 
     # Environment variables changed for the build are put back at the end: with `irm | iex`
     # this runs in your own PowerShell session, and it should leave it as it found it.
+    # An empty value means "not set". The variable is removed, never set to an empty string:
+    # PowerShell 7.5 and newer keep an empty variable as an empty variable, and git and cargo
+    # both stop on an empty GIT_DIR, GIT_OBJECT_DIRECTORY or CARGO_TARGET_DIR.
     $savedEnv = @{}
+    function Set-EnvOrRemove([string] $Name, [string] $Value) {
+        if ([string]::IsNullOrEmpty($Value)) {
+            Remove-Item -LiteralPath "Env:\$Name" -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($Name, $Value)
+        }
+    }
     function Set-TempEnv([string] $Name, [string] $Value) {
         if (-not $savedEnv.ContainsKey($Name)) { $savedEnv[$Name] = [Environment]::GetEnvironmentVariable($Name) }
-        [Environment]::SetEnvironmentVariable($Name, $Value)
+        Set-EnvOrRemove $Name $Value
     }
     function Restore-Env {
-        foreach ($name in @($savedEnv.Keys)) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
+        foreach ($name in @($savedEnv.Keys)) { Set-EnvOrRemove $name $savedEnv[$name] }
     }
 
     # Runs a program and stops when it fails. git and cargo write their progress to the error
@@ -165,10 +178,18 @@ function Install-DarkBurn {
         return $null
     }
 
+    # Windows does not let a running program be replaced. Asked at the start, and once more
+    # just before the files are written: a build takes long enough for DarkBurn to be started.
     function Assert-NotRunning {
         if (Get-Process -Name 'darkburn', 'darkburn-mcp' -ErrorAction SilentlyContinue) {
             throw 'DarkBurn (or its MCP server, darkburn-mcp) is running. Close it and run the installer again.'
         }
+    }
+
+    # A folder setting as a full path. A relative path is taken from PowerShell's current
+    # folder, which is not always the folder Windows has for the process.
+    function Resolve-Folder([string] $Path) {
+        return [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
     }
 
     function Get-StartMenuLink {
@@ -192,14 +213,26 @@ function Install-DarkBurn {
     # Step A: a release
     # ---------------------------------------------------------------------------------------
 
-    # The release to install as an object, or $null when there is none (GitHub answers 404).
+    # Looks up the release to install. Returns a table with Release (the release as an object,
+    # or $null) and Why (when there is none: a sentence that says why). GitHub answers 404 when
+    # no release exists, 403 or 429 when this address has asked too often.
     function Get-Release([string] $Tag) {
         if ($Tag) { $api = "https://api.github.com/repos/$GitHubRepo/releases/tags/$Tag" }
         else { $api = "https://api.github.com/repos/$GitHubRepo/releases/latest" }
         try {
-            return (Invoke-RestMethod -UseBasicParsing -Uri $api -Headers @{ 'User-Agent' = 'darkburn-install'; 'Accept' = 'application/vnd.github+json' })
+            $release = Invoke-RestMethod -UseBasicParsing -TimeoutSec 30 -Uri $api -Headers @{ 'User-Agent' = 'darkburn-install'; 'Accept' = 'application/vnd.github+json' }
+            return @{ Release = $release; Why = '' }
         } catch {
-            return $null
+            $status = 0
+            try { if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode } } catch { $status = 0 }
+            if ($status -eq 404) {
+                if ($Tag) { $why = "There is no release $Tag." } else { $why = 'No release has been published yet.' }
+            } elseif ($status -gt 0) {
+                $why = "GitHub answered the release lookup with HTTP $status, so it could not be read."
+            } else {
+                $why = 'The GitHub release list did not answer.'
+            }
+            return @{ Release = $null; Why = $why }
         }
     }
 
@@ -300,29 +333,54 @@ function Install-DarkBurn {
         Add-CargoToPath
     }
 
+    # True when the folder $Dir is a git checkout of its own (not merely inside one).
+    function Test-Checkout([string] $Dir) {
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = 0
+        try { & git "--git-dir=$(Join-Path $Dir '.git')" rev-parse --git-dir 2>$null | Out-Null } catch { return $false }
+        return ($LASTEXITCODE -eq 0)
+    }
+
     # Brings the checkout in $Dir to $Ref of the repository $Url. Shallow when the server allows
     # it (GitHub does, also for a commit id), full history otherwise.
+    #
+    # Every git call names the checkout outright (--git-dir and --work-tree). With `git -C` git
+    # would look for a repository by itself, and when the checkout is not one (an init that was
+    # cut off) it would find the one around it, for example a user folder kept in git, and check
+    # DarkBurn out over that.
     function Sync-Repo([string] $Name, [string] $Dir, [string] $Url, [string] $Ref, [string] $Setting) {
-        if (-not (Test-Path (Join-Path $Dir '.git'))) {
+        $gitDir = "--git-dir=$(Join-Path $Dir '.git')"
+        $workTree = "--work-tree=$Dir"
+        # A checkout that is not a repository is made again. It is inside the marked build folder.
+        if ((Test-Path -LiteralPath $Dir) -and -not (Test-Checkout $Dir)) {
+            Remove-Item -LiteralPath $Dir -Recurse -Force
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $Dir '.git'))) {
             New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-            Invoke-Tool "git init ($Name)" { git -C $Dir init -q }
+            Invoke-Tool "git init ($Name)" { git $gitDir $workTree init -q }
         }
         Step "Fetching $Name ($Ref)"
-        if (Test-ToolRun { git -C $Dir -c core.longpaths=true fetch --depth 1 $Url $Ref }) {
-            Invoke-Tool "git checkout ($Name)" { git -C $Dir -c core.longpaths=true checkout -q -f --detach FETCH_HEAD }
+        $retry = "If it keeps happening, delete $Dir and run the installer again."
+        if (Test-ToolRun { git $gitDir $workTree -c core.longpaths=true fetch --depth 1 $Url $Ref }) {
+            if (-not (Test-ToolRun { git $gitDir $workTree -c core.longpaths=true checkout -q -f --detach FETCH_HEAD })) {
+                throw "Could not check out $Name $Ref.`n$retry"
+            }
             return
         }
         # No shallow fetch of that ref (a short commit id, or a server that refuses): take it all.
         # The depth is git's "everything", which also completes a checkout that was shallow before.
         Say "    $Ref cannot be fetched on its own. Fetching the full history."
-        if (-not (Test-ToolRun { git -C $Dir -c core.longpaths=true fetch --depth 2147483647 --tags $Url '+refs/heads/*:refs/remotes/origin/*' })) {
+        if (-not (Test-ToolRun { git $gitDir $workTree -c core.longpaths=true fetch --depth 2147483647 --tags $Url '+refs/heads/*:refs/remotes/origin/*' })) {
             throw ("Could not fetch $Name from $Url.`n" +
-                "Check the network. If the repository is private or has moved, point $Setting at a copy you can reach.")
+                "Check the network. If the repository is private or has moved, point $Setting at a copy you can reach.`n" +
+                "If the lines above name a lock file or a broken repository, delete $Dir and run the installer again.")
         }
         foreach ($candidate in @("refs/remotes/origin/$Ref", "refs/tags/$Ref", $Ref)) {
-            $commit = ([string](Get-ToolOutput { git -C $Dir rev-parse -q --verify "$candidate^{commit}" })).Trim()
+            $commit = ([string](Get-ToolOutput { git $gitDir $workTree rev-parse -q --verify "$candidate^{commit}" })).Trim()
             if ($commit -match '^[0-9a-f]{40,64}$') {
-                Invoke-Tool "git checkout ($Name)" { git -C $Dir -c core.longpaths=true checkout -q -f --detach $commit }
+                if (-not (Test-ToolRun { git $gitDir $workTree -c core.longpaths=true checkout -q -f --detach $commit })) {
+                    throw "Could not check out $Name $Ref.`n$retry"
+                }
                 return
             }
         }
@@ -375,6 +433,11 @@ function Install-DarkBurn {
         # Never wait for a password: a repository that cannot be read should fail at once.
         Set-TempEnv 'GIT_TERMINAL_PROMPT' '0'
         Set-TempEnv 'GCM_INTERACTIVE' 'never'
+        # Git settings of this PowerShell session must not point the git calls at another
+        # repository. Cleared here, put back at the end with the rest.
+        foreach ($name in 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE') {
+            Set-TempEnv $name ''
+        }
 
         $source = Join-Path $BuildDir 'DarkBurn'
         $darkBurnUrl = Resolve-RepoSource (Get-Setting 'DARKBURN_REPO' $DefaultDarkBurnRepo)
@@ -427,7 +490,7 @@ function Install-DarkBurn {
         $targetDir = Join-Path $BuildDir 'target'
         Set-TempEnv 'CARGO_TARGET_DIR' $targetDir
         Set-TempEnv ('CARGO_TARGET_' + ($hostTriple.ToUpper() -replace '-', '_') + '_RUSTFLAGS') '-C target-feature=+crt-static'
-        Step 'Building DarkBurn (cargo build --release). This takes several minutes.'
+        Step 'Building DarkBurn (cargo build --release). The first build can take ten minutes or more.'
         Push-Location -LiteralPath $source
         try {
             if (-not (Test-ToolRun { cargo build --release --locked -p darkburn -p darkburn-mcp --target $hostTriple })) {
@@ -490,11 +553,28 @@ function Install-DarkBurn {
             $removed = $true
         }
 
+        # The build folder: the two checkouts, the build output and the marker go. The folder
+        # itself goes only when nothing else is in it, so files of your own that ended up there
+        # are kept.
         if (Test-Path -LiteralPath $BuildDir) {
-            if (Test-Path -LiteralPath (Join-Path $BuildDir $BuildMarker)) {
-                Remove-Item -LiteralPath $BuildDir -Recurse -Force
-                Say "  removed $BuildDir"
-                $removed = $true
+            $marker = Join-Path $BuildDir $BuildMarker
+            if (Test-Path -LiteralPath $marker) {
+                foreach ($name in 'DarkBurn', 'solidcraft', 'target') {
+                    $folder = Join-Path $BuildDir $name
+                    if (Test-Path -LiteralPath $folder) {
+                        Remove-Item -LiteralPath $folder -Recurse -Force
+                        Say "  removed $folder"
+                        $removed = $true
+                    }
+                }
+                Remove-Item -LiteralPath $marker -Force
+                if (@(Get-ChildItem -LiteralPath $BuildDir -Force).Count -eq 0) {
+                    Remove-Item -LiteralPath $BuildDir -Force
+                    Say "  removed $BuildDir"
+                    $removed = $true
+                } else {
+                    Say "  kept $BuildDir (it holds other files)"
+                }
             } else {
                 Say "  kept $BuildDir (it was not made by this installer)"
             }
@@ -528,8 +608,8 @@ function Install-DarkBurn {
     } catch { }
 
     $customDir = -not [string]::IsNullOrEmpty($env:DARKBURN_PREFIX)
-    $installDir = [IO.Path]::GetFullPath((Get-Setting 'DARKBURN_PREFIX' (Join-Path $env:LOCALAPPDATA 'Apps\DarkBurn')))
-    $buildDir = [IO.Path]::GetFullPath((Get-Setting 'DARKBURN_BUILD_DIR' (Join-Path $env:LOCALAPPDATA 'darkburn-build')))
+    $installDir = Resolve-Folder (Get-Setting 'DARKBURN_PREFIX' (Join-Path $env:LOCALAPPDATA 'Apps\DarkBurn'))
+    $buildDir = Resolve-Folder (Get-Setting 'DARKBURN_BUILD_DIR' (Join-Path $env:LOCALAPPDATA 'darkburn-build'))
 
     if ($env:DARKBURN_UNINSTALL -eq '1') {
         # One shot: cleared first, so that the next run in this window installs again.
@@ -562,8 +642,14 @@ function Install-DarkBurn {
     New-Item -ItemType Directory -Force -Path $work | Out-Null
     try {
         $done = $null
+        $builtHere = $false
+        # Why no release was installed, for the screen. Empty when none was asked for.
+        $why = ''
         if ($wantRelease) {
-            $release = Get-Release $ref
+            Step 'Looking for a release on GitHub'
+            $found = Get-Release $ref
+            $release = $found.Release
+            $why = $found.Why
             $version = $null
             if ($release -and $release.tag_name) { $version = ([string]$release.tag_name) -replace '^v', '' }
             if ($version -and (Test-Version $version)) {
@@ -579,24 +665,30 @@ function Install-DarkBurn {
                         if (Get-MsiProduct 'HKCU:') {
                             throw 'DarkBurn is installed from an MSI, and this release has only a zip. Uninstall first (DARKBURN_UNINSTALL=1), then run the installer again.'
                         }
+                        Assert-NotRunning
                         Install-Portable $zip $work $installDir
                         $done = "release v$version, portable zip"
+                    } else {
+                        $why = "Release v$version has no MSI and no portable zip."
                     }
                 }
+            } elseif ($release) {
+                $why = 'The reply from the GitHub release list could not be read.'
             }
         }
 
         if (-not $done) {
-            if ($wantRelease) { Step 'No release to download yet. Building from source.' } else { Step 'Building from source.' }
+            if ($why) { Step "$why Building from source." } else { Step 'Building from source.' }
             if (Get-MsiProduct 'HKCU:') {
                 throw 'DarkBurn is installed from an MSI. Uninstall it first (DARKBURN_UNINSTALL=1), then run the installer again to build from source.'
             }
             $sourceRef = $ref
             if (-not $sourceRef) { $sourceRef = 'main' }
             $bin = Build-FromSource $work $buildDir $sourceRef
+            Assert-NotRunning
             Step "Installing into $installDir"
             Install-Files @((Join-Path $bin 'darkburn.exe'), (Join-Path $bin 'darkburn-mcp.exe')) $installDir
-            $commit = Get-ToolOutput { git -C (Join-Path $buildDir 'DarkBurn') rev-parse --short HEAD }
+            $commit = Get-ToolOutput { git "--git-dir=$(Join-Path $buildDir 'DarkBurn\.git')" rev-parse --short HEAD }
             $done = "built from $sourceRef at $commit"
             $builtHere = $true
         }

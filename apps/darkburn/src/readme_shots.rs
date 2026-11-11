@@ -2,8 +2,9 @@
 //!
 //! Each test drives the app in the headless UI harness (`ui_harness.rs`, docs/UI-TESTING.md),
 //! builds a scene with commands, clicks and drags, and writes one PNG into `docs/img/`.
-//! Nothing is drawn by hand and no picture file is read: the "photo" is computed here.
-//! The machine in the pictures is the built-in GRBL simulator; no real port is ever opened.
+//! Nothing is drawn by hand and no picture file is read: the landscape that gets engraved is
+//! computed here. The machine in the pictures is the built-in GRBL simulator; no real port is
+//! ever opened.
 //!
 //! The tests are ignored, so CI never runs them. To make the pictures again:
 //!
@@ -11,25 +12,42 @@
 //! cargo test -p darkburn readme_shots -- --ignored --test-threads=1
 //! ```
 //!
-//! One thread, because the theme is one setting for the whole process.
+//! One thread, because the theme is one setting for the whole process. The version in the title
+//! bar and the date on the asset plate are today's, so make the pictures again after a version
+//! bump, and look at every one before it goes into the README.
+//!
+//! There is no picture of the Preview window. Left open, that window gets 18 points wider with
+//! every frame until it is wider than the main window, and its three check boxes (Shade by
+//! power, Show travel moves, Invert) are never seen: in `job_ui.rs`, `preview_body` puts the
+//! speed list, which takes the whole width, and the check boxes on one row. A picture of it
+//! could only be staged. When that row is fixed, add a `preview` test here: Show travel moves
+//! on, the clock at about 85 % of the job, the window inside the main window.
 
 use std::path::PathBuf;
 
-use egui::{Pos2, Rect, pos2, vec2};
+use egui::{Pos2, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::ui_harness::{Gui, outside};
 
-/// The window in points and the pixels per point: every picture is 2880 x 1800 pixels.
-const WINDOW: (f32, f32) = (1440.0, 900.0);
+/// The window in points and the pixels per point: every picture is 2880 x 1920 pixels.
+const WINDOW: (f32, f32) = (1440.0, 960.0);
 const SCALE: f32 = 2.0;
+/// The colour of the frame drawn round every picture.
+const FRAME: [u8; 3] = [0x30, 0x36, 0x3d];
 
-// The layers of the sign, by palette number.
+// The layers of the designs, by palette number.
 const ENGRAVE: usize = 0;
 const CUT: usize = 1;
 const SCORE: usize = 2;
+const MARK: usize = 3;
 const HOLES: usize = 5;
 const LIGHT: usize = 9;
+
+/// Where the pictures put the top of a dialog: under the app bar, so the buttons of the bar
+/// show. A dialog too tall for the room there is kept inside the window by the app, a little
+/// higher up.
+const DIALOG_TOP: f32 = crate::shell::APP_BAR_HEIGHT + 6.0;
 
 fn gui() -> Gui {
     Gui::new(WINDOW.0, WINDOW.1, SCALE)
@@ -53,8 +71,16 @@ fn save(g: &mut Gui, name: &str) {
     for r in g.dialog_windows() {
         assert!(!outside(screen, r), "{name}: the window {r:?} is not inside {screen:?}");
     }
-    let rgb = image::DynamicImage::ImageRgba8(g.render_image()).to_rgb8();
+    let mut rgb = image::DynamicImage::ImageRgba8(g.render_image()).to_rgb8();
     assert_eq!(rgb.dimensions(), ((WINDOW.0 * SCALE) as u32, (WINDOW.1 * SCALE) as u32));
+    // A thin grey frame, one point wide. The window is nearly as dark as a dark web page, and
+    // without the frame the picture has no edge there.
+    let (w, h, edge) = (rgb.width(), rgb.height(), SCALE as u32);
+    for (x, y, pixel) in rgb.enumerate_pixels_mut() {
+        if x < edge || y < edge || x >= w - edge || y >= h - edge {
+            *pixel = image::Rgb(FRAME);
+        }
+    }
     let dir = out_dir();
     std::fs::create_dir_all(&dir).expect("docs/img");
     let file = std::io::BufWriter::new(std::fs::File::create(dir.join(format!("{name}.png"))).expect("create the picture"));
@@ -119,13 +145,6 @@ fn move_dialog(g: &mut Gui, to: Pos2) {
     let grip = pos2(r.center().x, r.top() + 20.0);
     g.drag(grip, grip + (to - r.min));
     g.frames(2);
-}
-
-/// Press at `from`, move to `to` and let go, in four frames.
-fn quick_drag(g: &mut Gui, from: Pos2, to: Pos2) {
-    g.press_pos(from);
-    g.hover_pos(to);
-    g.release_pos(to);
 }
 
 /// The outline of a gear wheel as SVG path data.
@@ -212,84 +231,6 @@ fn light() {
     shot(&mut g, "light");
 }
 
-/// The picture area of the Preview window.
-fn preview_picture(g: &Gui) -> Rect {
-    let nodes = g.a11y();
-    let readout = nodes.iter().find(|n| n.role == "Label" && n.value.as_deref().is_some_and(|v| v.contains("Operation "))).expect("the readout line");
-    // The picture is the unnamed area that starts one row gap below the readout.
-    let top = readout.rect.bottom() + 4.0;
-    nodes
-        .iter()
-        .find(|n| n.role == "Unknown" && n.label.is_none() && (n.rect.top() - top).abs() < 3.0 && (n.rect.left() - readout.rect.left()).abs() < 3.0)
-        .map(|n| n.rect)
-        .expect("the picture of the Preview window")
-}
-
-/// The Preview window half-way through the job.
-#[test]
-#[ignore = "writes a README picture: cargo test -p darkburn readme_shots -- --ignored --test-threads=1"]
-fn preview() {
-    let mut g = gui();
-    sign(&mut g);
-    g.run_command("window.preview");
-    // The job is planned on a worker thread. Wait for it without drawing frames: the window
-    // grows with every frame it is drawn (see the note at the end of this test).
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while g.app().job.pending.as_mut().is_some_and(|(task, _)| task.poll().is_none()) {
-        assert!(std::time::Instant::now() < end, "the job was never planned");
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    g.frames(2);
-    assert!(g.app().job.preview.data.is_some(), "the Preview has its job: {:?}", g.app().job.preview.error);
-    // Put the window under the ribbon and make it taller: drag its title bar, then its bottom edge.
-    let window = |g: &Gui| g.find_a11y(Some("Window"), "Preview").last().expect("the Preview window").rect;
-    let canvas = g.canvas_rect();
-    let at = window(&g);
-    let grip = pos2(at.left() + 200.0, at.top() + 18.0);
-    quick_drag(&mut g, grip, grip + (pos2(canvas.left() + 10.0, canvas.top() - 20.0) - at.min));
-    let edge = g.find_a11y(Some("Splitter"), "Resize window bottom edge").last().expect("the window's bottom edge").rect.center();
-    quick_drag(&mut g, edge, pos2(edge.x, canvas.bottom()));
-    g.hover_pos(pos2(-200.0, -200.0));
-    // The window gets wider with every frame it is drawn (see the note at the end). Let it,
-    // until it hides the panels on the right: what is drawn is two steps ahead of this
-    // rectangle, and has to stay inside the main window. Stop if it ever stops growing.
-    const RIGHT: f32 = 1378.0;
-    assert!(window(&g).right() < RIGHT, "the Preview window is already {:?}", window(&g));
-    let mut growth = 0.0;
-    for _ in 0..80 {
-        let before = window(&g).right();
-        if before >= RIGHT {
-            break;
-        }
-        g.frames(1);
-        growth = window(&g).right() - before;
-        if growth <= 0.0 {
-            break;
-        }
-    }
-    // Zoom to the drawing and stop the clock part-way through the engraving. The frame drawn
-    // next is `growth` wider than this one.
-    let area = preview_picture(&g);
-    let (w, h) = (area.width() + growth, area.height());
-    let (design, page_height) = (darkburn_core::kurbo::Rect::new(24.0, 86.0, 376.0, 336.0), f64::from(g.app().prefs.page_height));
-    let zoom = (f64::from(w) / design.width()).min(f64::from(h) / design.height());
-    {
-        let mut app = g.app();
-        let p = &mut app.job.preview;
-        p.zoom = zoom as f32;
-        p.pan = vec2(w / 2.0 - (design.center().x * zoom) as f32, h / 2.0 - ((page_height - design.center().y) * zoom) as f32);
-        p.fitted = true;
-        p.t = p.data.as_ref().map_or(0.0, |d| d.stats.seconds) * 0.5;
-    }
-    g.frames(1);
-    assert!(g.has_text("Estimated time"), "{:?}", g.visible_texts());
-    save(&mut g, "preview");
-    // Note: the Preview window is 18 points wider every frame it is drawn (the speed list takes
-    // all the width, and the three check boxes after it push the window out), so this picture
-    // is taken at a chosen width. Left alone, the window ends up wider than the main window and
-    // the check boxes are never seen.
-}
-
 /// A grey picture that looks like a photo: a low sun behind mountain ridges and their
 /// reflection in a lake. Computed, so the repository holds no photo and nobody's picture is used.
 fn landscape(w: u32, h: u32) -> image::GrayImage {
@@ -368,13 +309,13 @@ fn landscape(w: u32, h: u32) -> image::GrayImage {
     })
 }
 
-/// A photo set up for engraving: dithered on the canvas, with Adjust Image open.
+/// A picture set up for engraving: dithered on the canvas, with Adjust Image open.
 #[test]
 #[ignore = "writes a README picture: cargo test -p darkburn readme_shots -- --ignored --test-threads=1"]
 fn image_engraving() {
     let mut g = gui();
     let file = g.temp("landscape.png");
-    landscape(900, 600).save(&file).expect("write the photo");
+    landscape(900, 600).save(&file).expect("write the picture");
     let r = g.exec("project.import", json!({ "paths": [file.to_string_lossy()], "x": 200, "y": 200 }));
     assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
     layer(&mut g, 0, "Photo", "image", 250.0, 35.0, 0.0);
@@ -383,7 +324,7 @@ fn image_engraving() {
         g.exec("image.preset_save", json!({ "name": name }));
     }
     g.app().editor.mark_saved();
-    // The photo is 90 x 60 mm about (200, 200). Zoom in on it and keep it on the left, where
+    // The picture is 90 x 60 mm about (200, 200). Zoom in on it and keep it on the left, where
     // the window will not cover it.
     let zoom = 6.2;
     let canvas = g.canvas_rect();
@@ -395,7 +336,7 @@ fn image_engraving() {
     assert!(g.window_titles().contains(&"Adjust Image".to_string()), "{:?}", g.window_titles());
     let size = g.dialog_windows().last().expect("the Adjust Image window").size();
     let screen = g.screen();
-    move_dialog(&mut g, pos2(screen.right() - size.x - 6.0, 0.0));
+    move_dialog(&mut g, pos2(screen.right() - size.x - 6.0, DIALOG_TOP));
     // The dots on the canvas and in the window are worked out on worker threads.
     for _ in 0..40 {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -404,26 +345,83 @@ fn image_engraving() {
     shot(&mut g, "image-engraving");
 }
 
-/// The Cut Settings Editor of the engraving layer, opened by a double click on its row.
+/// The Cut Settings Editor beside a material test grid: one layer for every square, opened by a
+/// double click on a layer's row.
 #[test]
 #[ignore = "writes a README picture: cargo test -p darkburn readme_shots -- --ignored --test-threads=1"]
 fn cut_settings() {
     let mut g = gui();
-    sign(&mut g);
-    g.double_click_label("00");
+    // Five speeds by four powers, filled squares, with the labels the generator adds.
+    let r = g.exec(
+        "job.material_test",
+        json!({
+            "columns": 5, "rows": 4, "x_min": 100, "x_max": 500, "y_min": 10, "y_max": 40,
+            "cell_width": 24, "cell_height": 24, "gap": 6, "x": 40, "y": 120, "fill": true, "label_height": 6
+        }),
+    );
+    // Twenty layers for the squares and one for the labels.
+    assert_eq!(r["layers"].as_array().map(Vec::len), Some(21), "{r}");
+    assert_eq!(r["warnings"].as_array().map(Vec::len), Some(0), "{r}");
+    let mut bounds: Vec<f64> = r["bounds"].as_array().expect("bounds").iter().map(|v| v.as_f64().expect("a number")).collect();
+    // The unit of the columns ("mm/s") is written to the right of the grid, outside its bounds.
+    bounds[2] += 36.0;
+    g.exec("selection.clear", json!({}));
+    g.app().editor.mark_saved();
+    g.frames(2);
+    // The square at 300 mm/s and 20 %: the third of the second row.
+    const LAYER: usize = 7;
+    g.double_click_label(&format!("{LAYER:02}"));
     g.settle();
-    assert_eq!(g.app().cut_settings_open, Some(ENGRAVE));
+    assert_eq!(g.app().cut_settings_open, Some(LAYER));
     let size = g.dialog_windows().last().expect("the Cut Settings Editor").size();
     let screen = g.screen();
     let left = screen.right() - size.x - 6.0;
-    move_dialog(&mut g, pos2(left, 0.0));
-    // Show the whole sign in the part of the canvas the window leaves free.
+    move_dialog(&mut g, pos2(left, DIALOG_TOP));
+    // Show the whole grid in the part of the canvas the window leaves free.
     let canvas = g.canvas_rect();
-    let (zoom, page_height) = (1.72, g.app().prefs.page_height);
-    g.app().prefs.view.zoom = zoom;
-    g.app().prefs.view.offset = vec2((left - canvas.left()) / 2.0 - 200.0 * zoom, canvas.height() / 2.0 - (page_height - 212.0) * zoom);
+    let (free, page_height) = (left - canvas.left(), f64::from(g.app().prefs.page_height));
+    let (width, height) = (bounds[2] - bounds[0], bounds[3] - bounds[1]);
+    let zoom = (f64::from(free - 70.0) / width).min(f64::from(canvas.height() - 120.0) / height);
+    let (cx, cy) = ((bounds[0] + bounds[2]) / 2.0, page_height - (bounds[1] + bounds[3]) / 2.0);
+    g.app().prefs.view.zoom = zoom as f32;
+    g.app().prefs.view.offset = vec2(free / 2.0 - (cx * zoom) as f32, canvas.height() / 2.0 - (cy * zoom) as f32);
     g.frames(2);
     shot(&mut g, "cut-settings");
+}
+
+/// The design of two pictures: a coaster (a circular array with an offset rim), a bottle opener
+/// made with booleans, a honeycomb (a grid array) and a curve. Returns the id of the curve.
+fn parts(g: &mut Gui) -> u64 {
+    // A coaster: one petal copied round a centre, a rim, and the rim offset outwards.
+    let petal = "M100,269 C113,284.4 113,302 100,313 C87,302 87,284.4 100,269 Z";
+    add(g, "shape.add_path", json!({ "svg_path": petal, "layer": SCORE }));
+    g.exec("arrange.circular_array", json!({ "cx": 100, "cy": 255, "count": 12, "rotate_items": true, "virtual": true }));
+    circle(g, 100.0, 255.0, 128.0, CUT);
+    g.exec("tools.offset", json!({ "distance": 5, "side": "outward" }));
+    // A bottle opener: handle and head joined, two holes taken out, then an outline round it.
+    let handle = add(g, "shape.add_rect", json!({ "x": 195, "y": 233, "width": 130, "height": 44, "radius": 22, "layer": CUT }));
+    let head = circle(g, 335.0, 255.0, 90.0, CUT);
+    g.exec("selection.set", json!({ "ids": [handle, head] }));
+    let body = add(g, "tools.union", json!({}));
+    let holes = [circle(g, 335.0, 255.0, 48.0, CUT), circle(g, 216.0, 255.0, 16.0, CUT)];
+    g.exec("selection.set", json!({ "ids": [body, holes[0], holes[1]] }));
+    let opener = add(g, "tools.difference", json!({}));
+    g.exec("selection.set", json!({ "ids": [opener] }));
+    g.exec("tools.offset", json!({ "distance": 4, "side": "outward" }));
+    // A honeycomb: one hexagon in a grid array, every other row shifted.
+    add(g, "shape.add_polygon", json!({ "cx": 250, "cy": 132, "sides": 6, "radius": 13, "layer": MARK }));
+    g.exec("arrange.grid_array", json!({ "rows": 3, "cols": 5, "dx": 3, "dy": 3, "shift": "hex", "virtual": true }));
+    // A curve.
+    let curve = add(g, "shape.add_path", json!({ "svg_path": "M30,95 C55,150 95,60 125,105 S180,150 215,90", "layer": HOLES }));
+    for (l, name, speed, power) in
+        [(CUT, "Cut", 12.0, 70.0), (SCORE, "Score", 120.0, 12.0), (MARK, "Mark", 200.0, 18.0), (HOLES, "Sketch", 150.0, 10.0)]
+    {
+        layer(g, l, name, "line", speed, power, power - 5.0);
+    }
+    g.exec("selection.clear", json!({}));
+    g.exec("layer.select", json!({ "layer": HOLES }));
+    g.app().editor.mark_saved();
+    curve
 }
 
 /// Shape tools: a circular array with an offset rim, a part made with booleans, a grid array
@@ -432,34 +430,10 @@ fn cut_settings() {
 #[ignore = "writes a README picture: cargo test -p darkburn readme_shots -- --ignored --test-threads=1"]
 fn geometry() {
     let mut g = gui();
-    // A coaster: one petal copied round a centre, a rim, and the rim offset outwards.
-    let petal = "M100,269 C113,284.4 113,302 100,313 C87,302 87,284.4 100,269 Z";
-    add(&mut g, "shape.add_path", json!({ "svg_path": petal, "layer": SCORE }));
-    g.exec("arrange.circular_array", json!({ "cx": 100, "cy": 255, "count": 12, "rotate_items": true, "virtual": true }));
-    circle(&mut g, 100.0, 255.0, 128.0, CUT);
-    g.exec("tools.offset", json!({ "distance": 5, "side": "outward" }));
-    // A bottle opener: handle and head joined, two holes taken out, then an outline round it.
-    let handle = add(&mut g, "shape.add_rect", json!({ "x": 195, "y": 233, "width": 130, "height": 44, "radius": 22, "layer": CUT }));
-    let head = circle(&mut g, 335.0, 255.0, 90.0, CUT);
-    g.exec("selection.set", json!({ "ids": [handle, head] }));
-    let body = add(&mut g, "tools.union", json!({}));
-    let holes = [circle(&mut g, 335.0, 255.0, 48.0, CUT), circle(&mut g, 216.0, 255.0, 16.0, CUT)];
-    g.exec("selection.set", json!({ "ids": [body, holes[0], holes[1]] }));
-    let opener = add(&mut g, "tools.difference", json!({}));
-    g.exec("selection.set", json!({ "ids": [opener] }));
-    g.exec("tools.offset", json!({ "distance": 4, "side": "outward" }));
-    // A honeycomb: one hexagon in a grid array, every other row shifted.
-    add(&mut g, "shape.add_polygon", json!({ "cx": 250, "cy": 132, "sides": 6, "radius": 13, "layer": 3 }));
-    g.exec("arrange.grid_array", json!({ "rows": 3, "cols": 5, "dx": 3, "dy": 3, "shift": "hex", "virtual": true }));
-    // A curve, opened in the node editor with one node picked so its handles show.
-    let curve = add(&mut g, "shape.add_path", json!({ "svg_path": "M30,95 C55,150 95,60 125,105 S180,150 215,90", "layer": HOLES }));
-    for (l, name, speed, power) in [(CUT, "Cut", 12.0, 70.0), (SCORE, "Score", 120.0, 12.0), (3, "Mark", 200.0, 18.0), (HOLES, "Sketch", 150.0, 10.0)]
-    {
-        layer(&mut g, l, name, "line", speed, power, power - 5.0);
-    }
-    g.app().editor.mark_saved();
+    let curve = parts(&mut g);
     frame(&mut g, 45.0, 75.0, 365.0, 315.0);
     g.click_id("ribbon:tab:modify");
+    // The curve in the node editor, with one node picked so its handles show.
     g.exec("selection.set", json!({ "ids": [curve] }));
     g.run_command("tools.nodes");
     // The node at (125, 105): the canvas takes page millimetres, Y down.
@@ -474,7 +448,7 @@ fn geometry() {
 fn machines() {
     use crate::machine_api::LaserState;
     let mut g = gui();
-    sign(&mut g);
+    parts(&mut g);
     // The Move panel in a dock of its own on the left.
     {
         let mut app = g.app();
@@ -499,13 +473,9 @@ fn machines() {
     g.exec("machine.console", json!({ "line": "$I" }));
     g.exec("machine.show_all", json!({ "on": true }));
     g.frames(4);
-    frame(&mut g, 45.0, 105.0, 355.0, 320.0);
-    // Cut the parts out: only the shapes of the cutting layer, so the job is a short one.
-    g.exec("layer.select_shapes", json!({ "layer": CUT }));
-    g.exec("job.set_origin", json!({ "cut_selected": true }));
+    frame(&mut g, 28.0, 80.0, 388.0, 330.0);
     g.exec("job.start", json!({}));
     g.frames(4);
-    g.exec("selection.clear", json!({}));
     wait(&mut g, "a third of the job", &|s| s.job.as_ref().and_then(|j| j.fraction).is_some_and(|f| f >= 0.36));
     shot(&mut g, "machines");
     g.exec("job.stop", json!({}));

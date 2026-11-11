@@ -192,11 +192,6 @@ fn a_limit_alarm_under_the_fire_button_ends_the_fire() {
 
 // ----- the door -----
 
-fn no_line(emu: &EmulatorHandle, what: &str, bad: impl Fn(&str) -> bool) {
-    std::thread::sleep(Duration::from_millis(400));
-    emu.with(|e| assert!(!e.stats().lines.iter().any(|l| bad(l)), "{what}: {:?}", e.stats().lines));
-}
-
 // ----- stop and disconnect right after start -----
 
 #[test]
@@ -207,9 +202,17 @@ fn a_stop_right_after_start_leaves_nothing_burning() {
     until(&m, |e| matches!(e, Event::Stopped));
     assert!(m.wait_until(T, |s| s.activity == Activity::Idle));
     std::thread::sleep(Duration::from_millis(300));
+    let pos = emu.with(|e| {
+        assert!(!e.laser_on());
+        assert!(!matches!(e.state_name().as_str(), "Run" | "Jog"), "{}", e.state_name());
+        e.machine_position()
+    });
+    // Nothing of the job is left to run on.
+    m.resume().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
     emu.with(|e| {
         assert!(!e.laser_on());
-        assert_eq!(e.stats().laser_switch_ons, 0, "{:?}", e.stats().lines);
+        assert_eq!(e.machine_position(), pos);
     });
     m.disconnect();
 }

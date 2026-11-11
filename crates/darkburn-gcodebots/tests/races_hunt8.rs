@@ -154,3 +154,55 @@ fn clearing_the_origin_on_a_marlin_ends_the_shift() {
     assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
     m.disconnect();
 }
+
+// SETTINGS
+/// Every live kind of the library profile, on its emulator, with the profile changed by `f`.
+fn each_kind(f: impl Fn(&mut DeviceProfile), check: impl Fn(&dyn GcodeMachine, DeviceKind)) {
+    for kind in [DeviceKind::Grbl, DeviceKind::Marlin, DeviceKind::Smoothie, DeviceKind::Snapmaker] {
+        let mut p = DeviceProfile::for_kind(kind);
+        p.width_mm = 300.0;
+        p.height_mm = 200.0;
+        f(&mut p);
+        let m = match kind {
+            DeviceKind::Grbl => {
+                let emu = darkburn_grbl::EmulatorHandle::new(darkburn_grbl::GrblEmulator::new(darkburn_grbl::EmulatorConfig::atomstack()));
+                p.connect(Box::new(emu.transport())).expect("connect")
+            }
+            DeviceKind::Smoothie => {
+                p.connect(Box::new(LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Smoothie)).transport())).expect("connect")
+            }
+            _ => p.connect(Box::new(LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin)).transport())).expect("connect"),
+        };
+        let start = std::time::Instant::now();
+        let mut up = false;
+        while !up && start.elapsed() < T {
+            up = m.poll_events().iter().any(|e| matches!(e, MachineEvent::Connected(_)));
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(up, "{kind:?}: no handshake");
+        assert!(m.as_ref().wait_until(T, |s| s.state == darkburn_grbl::MachineState::Idle), "{kind:?}: {:?}", m.snapshot());
+        check(m.as_ref(), kind);
+        m.disconnect();
+    }
+}
+
+#[test]
+fn a_profile_with_the_fire_button_switched_off_does_not_fire() {
+    each_kind(
+        |p| p.gcode.fire_button = false,
+        |m, kind| {
+            let r = m.fire(1.0, Duration::from_millis(200));
+            assert!(r.is_err(), "{kind:?}: the laser was fired although the profile has the fire button off");
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(!m.snapshot().fire_on, "{kind:?}");
+        },
+    );
+    // Switched on (the default), the button still works.
+    each_kind(
+        |_| {},
+        |m, kind| {
+            m.fire(1.0, Duration::from_millis(200)).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+            m.fire_off().unwrap();
+        },
+    );
+}

@@ -11,3 +11,4 @@ Fix: After a lost connection the app no longer shows the laser as firing
 Fix: A job or frame started while the head still jogs is refused, instead of losing its first lines
 Fix: DSP controllers: Fire, moves and a second Start are refused right after Start too, not only once the job shows as running
 Fix: Ruida: Fire and Start are refused while a frame is on its way or running
+Fix: A device with the Fire button switched off refuses to fire in the driver too

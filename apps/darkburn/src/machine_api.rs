@@ -784,6 +784,10 @@ impl MachineHandle {
                 self.snapshot.link = LinkState::Disconnected;
             }
             self.snapshot.job = None;
+            // Nothing of the old link is still on: a flag left set would be shown as a laser
+            // that fires, and be met again by the next connection.
+            self.snapshot.fire_on = false;
+            self.snapshot.air_on = false;
         }
         events
     }

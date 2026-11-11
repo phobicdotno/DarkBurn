@@ -110,6 +110,8 @@ mod polish_tests;
 mod prefs;
 mod prefs_files;
 mod preview;
+#[cfg(test)]
+mod races_hunt8_tests;
 
 mod rd_import;
 mod render;

@@ -1716,7 +1716,11 @@ impl DriverAdapter for RuidaAdapter {
         // A job that was asked for counts from that moment, not from the first status report
         // that shows it: until then the controller would be sent a second job, a move or the
         // Pulse key on top of it.
-        let working = self.snap.state.is_working() || self.job_started.is_some() || self.pending.values().any(|o| matches!(o, Op::Job));
+        // The same for a frame: it runs from the request on.
+        let working = self.snap.state.is_working()
+            || self.job_started.is_some()
+            || self.framing_until.is_some_and(|t| Instant::now() < t)
+            || self.pending.values().any(|o| matches!(o, Op::Job | Op::Other("frame")));
         let busy = |w: bool| if w { Err(MachineError::Busy) } else { Ok(()) };
         match cmd {
             C::StartJob(req) => {

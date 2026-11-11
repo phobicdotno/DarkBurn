@@ -793,3 +793,30 @@ fn nothing_else_is_accepted_while_a_job_is_on_its_way_to_the_controller() {
     }
     assert!(accepted.is_empty(), "accepted while a job was on its way: {accepted:?}");
 }
+
+/// Pass 8, races: "laser on while framing". A frame that was just asked for counts as running
+/// before the first status report shows the head moving.
+#[test]
+fn the_pulse_key_is_not_pressed_on_top_of_a_frame_that_was_just_asked_for() {
+    type Ask = (&'static str, fn(&mut MachineHandle) -> Result<(), MachineError>);
+    let frames: [Ask; 2] = [
+        ("frame", |h| h.frame_rect(darkburn_core::kurbo::Rect::new(10.0, 10.0, 200.0, 200.0), FrameSpec::default())),
+        ("frame outline", |h| {
+            let p = darkburn_core::kurbo::Point::new;
+            h.frame_outline(vec![p(10.0, 10.0), p(200.0, 10.0), p(200.0, 200.0)], FrameSpec::default())
+        }),
+    ];
+    for (name, frame) in frames {
+        let emu = emulator(Default::default());
+        let server = ruida::UdpEmulatorServer::start(emu.clone()).expect("two loopback sockets");
+        let mut h = MachineHandle::new();
+        attach(&mut h, Box::new(server.transport().unwrap()), &emu);
+        frame(&mut h).unwrap();
+        let fire = h.fire(5.0, 5.0);
+        let start = h.start_job(simulator_square(Family::Ruida, 30.0));
+        h.wait_for(Duration::from_millis(300), |_, _| pulse_is_down(&emu));
+        assert!(fire.is_err() && !pulse_is_down(&emu), "{name}: fired on top of the frame ({fire:?})");
+        assert!(start.is_err(), "{name}: a job was started on top of the frame");
+        h.disconnect();
+    }
+}

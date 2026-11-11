@@ -1,7 +1,7 @@
 # Reusing SolidCraft's UI crates in DarkBurn (Rust + egui)
 
-Source: `C:\Users\kk\solidcraft`, version 0.40.0-rc.3, HEAD `be6e43955`, which sits on upstream `419bbcda0`. Rust edition 2024, rust-version 1.95, egui/eframe 0.37. I only read the repo; nothing in it was modified.
-Screenshot of the running app: `C:\Users\kk\AppData\Local\Temp\claude\b66be70eda9554f1\e846ba18-a1db-462b-80d4-b843627ceb1a\scratchpad\solidcraft-window.png` (installed v0.40.0-rc.3, 5120x2088).
+Source: a local checkout of SolidCraft, version 0.40.0-rc.3, HEAD `be6e43955`, which sits on upstream `419bbcda0`. Rust edition 2024, rust-version 1.95, egui/eframe 0.37. I only read the repo; nothing in it was modified.
+Section 7 describes the look from a screenshot of the running app (installed v0.40.0-rc.3). The screenshot is not kept in this repository.
 
 ## TL;DR
 
@@ -448,7 +448,7 @@ These come from `ui-egui/src/fonts.rs`: `base_font_definitions()`, `setup_bundle
 | ureq | 3.4 | — |
 | rustls | 0.23 | — |
 
-### Recommended `C:\Users\kk\DarkBurn\Cargo.toml`
+### Recommended `Cargo.toml` for DarkBurn
 
 ```toml
 [workspace]
@@ -524,19 +524,19 @@ Default host: x86_64-pc-windows-msvc; toolchain stable-x86_64-pc-windows-msvc (o
 - There is no `rust-toolchain.toml` in the repo. 1.99.1 is above the required 1.95.
 - MSVC Build Tools are present (per the earlier session notes).
 
-**What is in `target\` (26 GB):**
-- `release\solidcraft-cli.exe` (161 MB), built 2026-11-08 15:12. This proves the toolchain works for the full engine.
-- No `solidcraft.exe` GUI build. The running app is the installed `C:\Program Files\SolidCraft\solidcraft.exe`.
+**What is in `target\`:**
+- `release\solidcraft-cli.exe` (161 MB). This proves the toolchain works for the full engine.
+- No `solidcraft.exe` GUI build. The running app is the installed copy.
 - `debug\` has fingerprints for theme, ui-text, ui-registry, color and ui-egui, from a test build.
 
 **Rough build times, read from fingerprint timestamps:**
 
-| Build | Window | Units | Duration |
-|---|---|---|---|
-| Release `solidcraft-cli` from clean (CACHEDIR.TAG created 15:02:48) | 15:02:49 → 15:12:00 | 271 | about 9 min |
-| Debug build of ui-egui and tests | 18:46 → 19:05 | 625 | about 19 min |
+| Build | Units | Duration |
+|---|---|---|
+| Release `solidcraft-cli` from clean | 271 | about 9 min |
+| Debug build of ui-egui and tests | 625 | about 19 min |
 
-Expect a release build of `apps/solidcraft` to take about 10–15 min on this Ryzen 9 7950X.
+Expect a release build of `apps/solidcraft` to take about 10–15 min on the same PC, a 16-core desktop.
 
 DarkBurn depends only on the four small crates, egui/eframe/wgpu and tiny-skia, so a clean build should be a few minutes.
 
@@ -551,12 +551,12 @@ DarkBurn depends only on the four small crates, egui/eframe/wgpu and tiny-skia, 
 
 ## 7. The look, from the screenshot of the running app
 
-Screenshot: `solidcraft-window.png` in the scratchpad, 5120x2088, dark theme, Inspect tab active.
+The screenshot showed the dark theme with the Inspect tab active. The picture itself is not kept in this repository.
 
 - **Chrome.** No OS frame. A single very dark (#1C1F26) app bar about 34 pt tall runs the full width. From left to right it holds:
   - the small blue isometric logo and "SolidCraft"
   - a home icon, a "File" text menu, then Save, Undo and Redo
-  - a document tab ("Sweepy 80mm Dust Boot •", slightly lifted surface, close ×) and a "+"
+  - a document tab (the document's name, slightly lifted surface, close ×) and a "+"
   - on the right: small status and settings icons, a "Report a bug" pill, the version "v0.40.0-rc.3"
   - flat minimize, maximize and close glyphs, Windows-style
 - **Ribbon.** Below the app bar sits a mid-dark (#272B34) band:
@@ -566,7 +566,7 @@ Screenshot: `solidcraft-window.png` in the scratchpad, 5120x2088, dark theme, In
   - Each group is captioned underneath in small dim text with a dropdown chevron: "Measure ▾", "Section ▾", "Check ▾", "Surface Quality ▾", "History ▾".
   - A "Search commands" field sits at the top right.
 - **Panels.**
-  - Left: a "Browser" card about 150 pt wide with a header ("Browser · 9 bodies ▾"). It holds a dense tree, about 15 pt per row, with disclosure triangles, small blue and grey icons, eye toggles in a right-hand column, and folders for Bodies, Sketches and Features.
+  - Left: a "Browser" card about 150 pt wide with a header ("Browser · N bodies ▾"). It holds a dense tree, about 15 pt per row, with disclosure triangles, small blue and grey icons, eye toggles in a right-hand column, and folders for Bodies, Sketches and Features.
   - Right: an "Assistant" card with a header, dropdown rows, chat bubbles, "done" status lines with green checks, and a prompt field with a round blue send button.
   - Bottom: a full-width "History" strip with transport controls (|◀ ◀ ▶ ▶|), an "All components" chip and a long row of small feature icons.
   - Floating over the viewport: a compact "Measure" card with a pencil icon, a title, a × close, an "Items | 1 selected" blue chip field, a result line and a "Close" button.

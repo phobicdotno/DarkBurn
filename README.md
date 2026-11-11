@@ -12,7 +12,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/status-pre--release-d9a400" alt="Status: pre-release">
   <img src="https://img.shields.io/badge/licence-MIT%20or%20Apache--2.0-4c6a92" alt="Licence: MIT or Apache-2.0">
-  <img src="https://img.shields.io/badge/Rust-1.95%2B-8a5a2b" alt="Rust 1.95 or newer">
 </p>
 
 ![DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.](docs/img/hero.png)
@@ -39,160 +38,27 @@ It has built-in machine simulators, so a whole job can be run with no laser atta
 > [!WARNING]
 > **Status: pre-release. DarkBurn has not yet burned a job on a real machine.**
 >
-> The machine drivers were written from documents and have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under [What is not there yet](#what-is-not-there-yet).
+> The machine drivers have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under [What is not there yet](#what-is-not-there-yet).
 
 ## Install
 
-No release is out yet, so today both lines build DarkBurn from source. That needs Rust 1.95 or newer and a C toolchain, about 3.5 GB of disk, and time: the first build took 13 minutes on a four-core computer. The script names what is missing and stops. It installs for you alone, with no admin rights and no `sudo`.
+**Windows.** Download the `.msi` from [Releases](https://github.com/phobicdotno/DarkBurn/releases/latest) and open it.
 
-**Linux and macOS**
+**Linux and macOS.**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh
 ```
 
-**macOS is untested.** Neither DarkBurn nor this installer has been tried on a Mac yet, and the script says so when it starts.
-
-**Windows**, in PowerShell (Windows PowerShell 5.1 or PowerShell 7)
+**Windows without the MSI,** in PowerShell.
 
 ```powershell
 irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
 ```
 
-**The Windows script has not been run yet.** It has been read line by line, but no PowerShell has parsed or run it.
+No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source. That needs Rust 1.95 or newer and about 3.5 GB of disk, and the first build took 13 minutes on a four-core computer. macOS is untested, and the Windows script has been parsed by PowerShell 7.7 with no errors but has not been run on Windows yet.
 
-Run the same line again to update. If a line trips, [building from source](#building-from-source) by hand is six commands, and please [say what happened](https://github.com/phobicdotno/DarkBurn/issues).
-
-<details>
-<summary><b>More one-liners and settings:</b> uninstall, a version of your choice, Rust included</summary>
-
-Linux and macOS:
-
-```sh
-# let the script install Rust with rustup when it is missing or too old
-curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | DARKBURN_INSTALL_RUST=1 sh
-
-# install a branch, tag or commit of your choice (here: the main branch)
-curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh -s -- --version main
-
-# build from source even when a release exists
-curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | DARKBURN_FROM_SOURCE=1 sh
-
-# remove DarkBurn and what the installer built (your settings are kept)
-curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh -s -- --uninstall
-```
-
-Windows, in PowerShell:
-
-```powershell
-# let the script install Rust with rustup when it is missing or too old
-$env:DARKBURN_INSTALL_RUST = '1'; irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
-
-# install a branch, tag or commit of your choice (here: the main branch)
-$env:DARKBURN_REF = 'main'; irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
-
-# build from source even when a release exists
-$env:DARKBURN_FROM_SOURCE = '1'; irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
-
-# remove DarkBurn and what the installer built (your settings are kept)
-$env:DARKBURN_UNINSTALL = '1'; irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
-```
-
-The settings are environment variables. On Linux and macOS they go in front of `sh`; on Windows they are set first, and stay for that PowerShell window, except `DARKBURN_UNINSTALL`, which the script clears.
-
-- `DARKBURN_REF`: the branch, tag or commit to install. A bare version number means its tag. Left out, it is the latest release when that has a file for this computer, else `main`.
-- `DARKBURN_FROM_SOURCE=1`: build from source even when a release exists.
-- `DARKBURN_INSTALL_RUST=1`: install Rust with rustup when it is missing or too old.
-- `DARKBURN_PREFIX`: where the programs go. `<prefix>/bin` on Linux and macOS (`~/.local` when left out), the folder itself on Windows (`%LocalAppData%\Apps\DarkBurn`).
-- `DARKBURN_BUILD_DIR`: where the source is kept and built (`~/.cache/darkburn-build`, `%LocalAppData%\darkburn-build`).
-- `DARKBURN_REPO`, `SOLIDCRAFT_REPO`: the git address or local path of another copy of either repository.
-- `SOLIDCRAFT_REF`: the SolidCraft branch, tag or commit to build against. Left out, it is the commit DarkBurn is pinned to.
-- `DARKBURN_UNINSTALL=1`: Windows only, remove DarkBurn.
-
-`install.sh` also takes `--help`, `--uninstall` and `--version <ref>`. When a release publishes a `.sha256` file beside a download, the scripts check it and stop on a mismatch.
-
-</details>
-
-<details>
-<summary><b>What gets installed, what it needs, and where each platform stands</b></summary>
-
-Once a release is out, each script installs its ready-made file when the release has one for your computer, and builds from source when it has not. Until then every install is a build: the script fetches DarkBurn and SolidCraft (its small UI crates are path dependencies), checks that the build tools are there, and runs `cargo build --release`.
-
-**Linux**
-
-- **Installs** `darkburn` and `darkburn-mcp` into `~/.local/bin`, with a menu entry, an icon and the `.dbrn` project file type. It never calls `sudo` and installs nothing outside your home folder. A build from source carries line tables for crash reports, so the two programs take about 300 MB.
-- **Building needs** git, a C compiler, libclang and Rust 1.95 or newer. When something is missing, the script prints the line that installs it (for apt, dnf, pacman, zypper or apk) and stops. It installs no system packages itself.
-- **Running needs** a desktop session (X11 or Wayland), a Vulkan or OpenGL ES graphics driver, and libxkbcommon with its X11 part. An ordinary desktop install has all of these. A minimal system may not: on Debian and Ubuntu `sudo apt install libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers` covers it (`libegl1` in place of the Vulkan pair for OpenGL ES). Without libxkbcommon-x11, DarkBurn stops at start in an X11 session with `Library libxkbcommon-x11.so could not be loaded`; the installer warns when it does not find that library.
-- **The build** stays in `~/.cache/darkburn-build` (about 3 GB), so the next update has less to do. Uninstalling removes it.
-- **Settings** live in `~/.local/share/darkburn`. Uninstalling keeps them. While MCP control is switched on, the channel's port and token are in `~/.config/DarkBurn/control.json`.
-
-**macOS** (untested)
-
-- **Installs** `DarkBurn.app` into `~/Applications`, with links to `darkburn` and `darkburn-mcp` in `~/.local/bin`. No `sudo`.
-- **Building needs** the Xcode command line tools (`xcode-select --install`) and Rust 1.95 or newer.
-- **Settings** live in `~/Library/Application Support/DarkBurn`. Uninstalling keeps them.
-
-**Windows**
-
-- **Installs** `darkburn.exe` and `darkburn-mcp.exe` into `%LocalAppData%\Apps\DarkBurn`, with a DarkBurn entry in the Start menu. The folder is not put on your PATH.
-- **Looks for a release first.** With an MSI in the latest release it installs that, silently and for you alone. With only a portable zip it unpacks that. With no release, which is today's case, it builds from source.
-- **Building needs** Git, Rust with the MSVC toolchain, and the Visual Studio Build Tools with the "Desktop development with C++" workload. When something is missing, the script lists it with its download address and `winget` line, and stops.
-- **File types:** the MSI makes `.dbrn` projects open with DarkBurn. A build from source does not.
-- **Settings** live in `%AppData%\DarkBurn`. Uninstalling keeps them.
-
-**Where each platform stands**
-
-| Platform | Today |
-|---|---|
-| **Windows** | The platform DarkBurn is developed on. The repository has a CI workflow and a [release workflow](.github/workflows/release.yml) that builds an MSI and a portable zip. Neither has had a green run yet, and no package has been published. |
-| **Linux** | Builds from source, and the test suite runs there. No package has been published. |
-| **macOS** | Untested: never built, never run. |
-
-Both install scripts are new.
-
-- `install.sh` was run on Linux (Ubuntu 24.04, x86_64) from start to finish: the real build, a second run as an update, and the uninstall. It has had fixes since, and those were run with only the compile step replaced by a stand-in.
-- Its macOS half has been run only against stand-ins for the macOS tools, and its ready-made-build path only against a stand-in release, because no release exists.
-- `install.ps1` has been read line by line but not yet run in PowerShell.
-
-**Windows packages: MSI and portable zip**
-
-No release has been published yet. The release workflow builds two Windows files, and `scripts/build-installer.ps1` and `scripts/build-portable.ps1` make them locally (the tools they need are listed in [docs/RELEASING.md](docs/RELEASING.md)).
-
-- **MSI** (`darkburn-<version>-windows-x64.msi`): installs for you alone, without admin rights. Choose "Anyone who uses this computer" in the wizard, or run `msiexec /i darkburn-<version>-windows-x64.msi ALLUSERS=1`, to install for everyone. It adds Start menu and desktop shortcuts and opens `.dbrn` projects (and `.dbdev`, `.dbclb`, `.dbart` and `.dbhk` files) with DarkBurn. A newer MSI updates in place. Uninstalling keeps your settings; add `REMOVE_SETTINGS=1` to `msiexec /x` to remove them as well. The MSI is not code-signed, so SmartScreen may warn.
-- **Portable zip** (`darkburn-<version>-windows-x64-portable.zip`): unzip anywhere and run `darkburn.exe`. The `portable.txt` file beside it keeps the settings in a `settings` folder next to the program.
-- Both hold `darkburn-mcp.exe`, the MCP server for [AI agents](#ai-agents).
-
-</details>
-
-<details>
-<summary><b>Read the script first</b></summary>
-
-Piping a download into a shell is a matter of trust. Both scripts are plain text in this repository: [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1).
-
-A download that is cut off runs nothing. `install.sh` is one group in braces, and a shell runs none of such a group before it has read all of it; this was tried at every cut-off point in dash, bash and busybox sh. `install.ps1` is one function, called on its last line.
-
-To read before you run:
-
-```sh
-curl -fsSLO https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh
-less install.sh
-sh install.sh --help    # prints the options and installs nothing
-sh install.sh
-```
-
-```powershell
-irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 -OutFile install.ps1
-notepad install.ps1
-Get-Content -Raw install.ps1 | iex
-```
-
-</details>
-
-### First start
-
-Start DarkBurn from the applications menu or the Start menu. A fresh install is set to the built-in GRBL simulator, so you can connect and run a job with no laser attached.
-
-On Linux and macOS you can also run `darkburn` (when `~/.local/bin` is on your PATH). On Windows the programs are in `%LocalAppData%\Apps\DarkBurn`, which is not on your PATH: where this page types `darkburn` or `darkburn-mcp` as a command, type the full path there.
+Everything else (options, uninstall, what gets installed, building by hand): [docs/INSTALL.md](docs/INSTALL.md).
 
 ## A look around
 
@@ -207,8 +73,13 @@ On Linux and macOS you can also run `darkburn` (when `~/.local/bin` is on your P
 </p>
 
 <p align="center">
+  <img src="docs/img/preview.png" width="100%" alt="The Preview window over the main window: the job drawn on a white bed, part of it already traced, the travel moves shown, and an estimated time.">
+  <br><b>The Preview</b> plays the job before anything burns and gives the time.
+</p>
+
+<p align="center">
   <img src="docs/img/machines.png" width="100%" alt="DarkBurn connected to the GRBL simulator while a job with a coaster and a bottle opener runs. The Move panel on the left shows jog arrows and the head position, the Console on the right lists G-code lines as they are sent, and the Laser panel shows Busy, a progress bar about a third full, and elapsed and remaining time.">
-  <br><b>Running a job.</b> A job on the built-in GRBL simulator: the console lists what is sent, the Move panel shows where the head is, and the Laser panel shows the progress. No hardware is attached.
+  <br><b>Running a job.</b> A job on the built-in GRBL simulator: the console lists what is sent, the Move panel shows where the head is, and the Laser panel shows the progress.
 </p>
 
 <details>
@@ -221,7 +92,7 @@ On Linux and macOS you can also run `darkburn` (when `~/.local/bin` is on your P
 </p>
 
 <p align="center">
-  <img src="docs/img/cut-settings.png" width="100%" alt="The Cut Settings Editor beside a material test grid of twenty coloured squares, five speeds by four powers. The editor lists one layer for every square and shows the settings of layer 07: mode Fill, speed 300 mm/s, max power 20 %, min power 10 %, passes, interval, lines per inch and scan angle.">
+  <img src="docs/img/cut-settings.png" width="100%" alt="The Cut Settings Editor beside a material test grid of twenty squares, one for each layer, five speeds by four powers. The editor lists one layer for every square and shows the settings of layer 07: mode Fill, speed 300 mm/s, max power 20 %, min power 10 %, passes, interval, lines per inch and scan angle.">
   <br><b>Cut settings and the material test.</b> A material test puts every speed and power on a layer of its own. Double-click a layer to set its mode, speed, power, passes and fill.
 </p>
 
@@ -232,11 +103,27 @@ On Linux and macOS you can also run `darkburn` (when `~/.local/bin` is on your P
 
 </details>
 
-Every screenshot on this page is DarkBurn drawing itself in its headless test harness, with the built-in GRBL simulator as the machine. `cargo test -p darkburn readme_shots -- --ignored --test-threads=1` makes them again. There is no picture of the Preview window yet: see [What is not there yet](#what-is-not-there-yet).
+Every screenshot on this page is DarkBurn drawing itself in its headless test harness, with the built-in GRBL simulator as the machine. `cargo test -p darkburn readme_shots -- --ignored --test-threads=1` makes them again.
 
 ## Features
 
-Everything in these lists is ticked as done on the [parity checklist](docs/PARITY-CHECKLIST.md). What is partly done or missing is under [What is not there yet](#what-is-not-there-yet). Machine control has run on the built-in simulators only.
+Everything in these lists is ticked as done on the [parity checklist](docs/PARITY-CHECKLIST.md). What is partly done or missing is under [What is not there yet](#what-is-not-there-yet).
+
+<details>
+<summary><b>Design and drawing.</b> Lines, curves, rectangles, ellipses and polygons on a canvas with rulers, a grid and snapping, placed by hand or by numbers.</summary>
+
+- Draw straight lines by clicking and curves by click-drag, with 45 degree snap and a length readout. New lines connect to and extend open shapes on the same layer.
+- Rectangles with a corner radius (inward corners too), ellipses, and polygons with any number of sides.
+- Select by click or by box (left to right encloses, right to left crosses), step through shapes with Tab, then move, size, rotate and shear with handles.
+- Type exact X, Y, width, height, scale and rotation, with a 9-point anchor, in mm or inches. Number fields take sums and unit suffixes.
+- Snap to the grid and to nodes, centres, midpoints and intersections, and along lines and curves.
+- Rulers, a grid that gets finer as you zoom in, a page outline sized from the device, wireframe or filled view.
+- Zoom with the wheel or keys, pan with space-drag or the middle mouse button, zoom to page, frame the selection.
+- Measure lengths, arc angles and lengths, areas, widths and heights.
+- Nudge with the arrow keys in three step sizes plus a fine step. Rotate and flip from the keyboard.
+- A Shape Properties panel for the selected shape, or for several shapes at once.
+
+</details>
 
 <details>
 <summary><b>Editing and arranging.</b> Node editing, boolean and offset tools, arrays, clean-up, align and distribute.</summary>
@@ -251,6 +138,36 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 - **Cutting order by hand:** choose where each shape starts cutting and which way it runs.
 - **Nest** the selected shapes, or make a rubber-band outline round them.
 - **Undo and clipboard:** undo, redo, cut, copy, paste in place, duplicate. Copy and paste also work between running copies and through the system clipboard.
+
+</details>
+
+<details>
+<summary><b>Text, barcodes and variable text.</b> Text with system and single-line fonts, text on a path, QR codes, barcodes, and text that changes from job to job.</summary>
+
+- Type text on the canvas: several lines, right-to-left and CJK input. Double-click to edit, or edit several text objects at once.
+- A font picker with recent and favourite fonts and a live preview. Single-line SHX fonts.
+- Height, bold, italic, upper case, distort, welded text, letter and line spacing, horizontal and vertical alignment.
+- Text on a path.
+- Text keeps a backup outline for when a font is missing.
+- QR codes with text, URL, Wi-Fi and contact editors and an error correction level, editable later.
+- Barcodes: Code 128, Code 39, EAN-13, UPC-A, ITF and Data Matrix.
+- Variable text: date and time with format codes, serial numbers, CSV merge, and cut setting values in text.
+- A Variable Text panel with start, end, current, advance by, previous and next, auto-advance after a job, test, reset and bake.
+- Serial numbers count up across arrays and work inside virtual arrays. QR codes follow the current number.
+
+</details>
+
+<details>
+<summary><b>Images and engraving.</b> Bring in pictures, adjust them, pick a dither mode and engrave, or trace them into cut lines.</summary>
+
+- **Import** PNG, JPG, BMP, GIF, TIFF and WebP. DPI is read from the file.
+- **Ten image modes:** threshold, ordered, Atkinson, dither, Stucki, Jarvis, newsprint, halftone, sketch, and grayscale with power modulation. Pass-through for pictures that are already dithered.
+- **Adjust Image:** brightness, contrast, gamma, sharpen with amount, radius and denoise, a before-and-after preview, and presets.
+- **Image layer settings:** line interval or DPI, scan angle (angled scans too), bi-directional, overscan, negative image, dot width correction, halftone cells and angle.
+- **Trace Image:** threshold, lower cutoff, ignore small, smoothness, optimize, sketch trace.
+- **Mask:** crop a picture with a shape, then flatten or remove the crop. Replace or refresh a picture.
+- **Bitmaps out:** convert shapes to a bitmap at a DPI you choose. Save the processed bitmap.
+- Pictures on one layer are merged into one scan. Transparent pictures work in trace, dither and mask.
 
 </details>
 
@@ -272,20 +189,6 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 </details>
 
 <details>
-<summary><b>Images and engraving.</b> Bring in pictures, adjust them, pick a dither mode and engrave, or trace them into cut lines.</summary>
-
-- **Import** PNG, JPG, BMP, GIF, TIFF and WebP. DPI is read from the file.
-- **Ten image modes:** threshold, ordered, Atkinson, dither, Stucki, Jarvis, newsprint, halftone, sketch, and grayscale with power modulation. Pass-through for pictures that are already dithered.
-- **Adjust Image:** brightness, contrast, gamma, sharpen with amount, radius and denoise, a before-and-after preview, and presets.
-- **Image layer settings:** line interval or DPI, scan angle (angled scans too), bi-directional, overscan, negative image, dot width correction, halftone cells and angle.
-- **Trace Image:** threshold, lower cutoff, ignore small, smoothness, optimize, sketch trace.
-- **Mask:** crop a picture with a shape, then flatten or remove the crop. Replace or refresh a picture.
-- **Bitmaps out:** convert shapes to a bitmap at a DPI you choose. Save the processed bitmap.
-- Pictures on one layer are merged into one scan. Transparent pictures work in trace, dither and mask.
-
-</details>
-
-<details>
 <summary><b>Preview and planning.</b> See the job before it runs, with a time estimate, and decide the cut order and where the job lands.</summary>
 
 - **Preview window:** play, pause, a time slider and playback speed, zoom and pan, with a layer and pass readout.
@@ -299,39 +202,7 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 </details>
 
 <details>
-<summary><b>Design and drawing.</b> Lines, curves, rectangles, ellipses and polygons on a canvas with rulers, a grid and snapping, placed by hand or by numbers.</summary>
-
-- Draw straight lines by clicking and curves by click-drag, with 45 degree snap and a length readout. New lines connect to and extend open shapes on the same layer.
-- Rectangles with a corner radius (inward corners too), ellipses, and polygons with any number of sides.
-- Select by click or by box (left to right encloses, right to left crosses), step through shapes with Tab, then move, size, rotate and shear with handles.
-- Type exact X, Y, width, height, scale and rotation, with a 9-point anchor, in mm or inches. Number fields take sums and unit suffixes.
-- Snap to the grid and to nodes, centres, midpoints and intersections, and along lines and curves.
-- Rulers, a grid that gets finer as you zoom in, a page outline sized from the device, wireframe or filled view.
-- Zoom with the wheel or keys, pan with space-drag or the middle mouse button, zoom to page, frame the selection.
-- Measure lengths, arc angles and lengths, areas, widths and heights.
-- Nudge with the arrow keys in three step sizes plus a fine step. Rotate and flip from the keyboard.
-- A Shape Properties panel for the selected shape, or for several shapes at once.
-
-</details>
-
-<details>
-<summary><b>Text, barcodes and variable text.</b> Text with system and single-line fonts, text on a path, QR codes, barcodes, and text that changes from job to job.</summary>
-
-- Type text on the canvas: several lines, right-to-left and CJK input. Double-click to edit, or edit several text objects at once.
-- A font picker with recent and favourite fonts and a live preview. Single-line SHX fonts.
-- Height, bold, italic, upper case, distort, welded text, letter and line spacing, horizontal and vertical alignment.
-- Text on a path.
-- Text keeps a backup outline for when a font is missing.
-- QR codes with text, URL, Wi-Fi and contact editors and an error correction level, editable later.
-- Barcodes: Code 128, Code 39, EAN-13, UPC-A, ITF and Data Matrix.
-- Variable text: date and time with format codes, serial numbers, CSV merge, and cut setting values in text.
-- A Variable Text panel with start, end, current, advance by, previous and next, auto-advance after a job, test, reset and bake.
-- Serial numbers count up across arrays and work inside virtual arrays. QR codes follow the current number.
-
-</details>
-
-<details>
-<summary><b>Running a job.</b> Connect, frame, start, pause and stop, jog the head and talk to the controller. All of it has run on the built-in simulators only.</summary>
+<summary><b>Running a job.</b> Connect, frame, start, pause and stop, jog the head and talk to the controller.</summary>
 
 - Start, pause and stop, with connection status and a progress bar with elapsed and remaining time.
 - Frame the job as a rectangle or as a rubber-band outline, with the laser on if you want.
@@ -348,7 +219,7 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 </details>
 
 <details>
-<summary><b>Camera, rotary and print and cut.</b> The wizards and settings are done. The live camera parts are not (see <a href="#what-is-not-there-yet">What is not there yet</a>), and none of this has met a real camera, a real rotary or a printed sheet.</summary>
+<summary><b>Camera, rotary and print and cut.</b> The wizards and settings are done. The live camera parts are not (see <a href="#what-is-not-there-yet">What is not there yet</a>).</summary>
 
 - A camera picture as an overlay on the canvas, with update, fade, show, width, height and shift.
 - Overhead or head-mounted camera type. Colour or black-and-white view.
@@ -390,7 +261,10 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 </details>
 
 <details>
-<summary><b>Safety guards.</b> Guards in the app. Most are checklist items; the badge, the Arm step, the cross-machine test and the <code>unsafe</code> rule come from the code and the changelog. None of them has been tried on a real machine.</summary>
+<summary><b>Safety guards.</b> Warnings, checks and switches between you and an accidental start. None of them has been tried on a real machine.</summary>
+<br>
+
+Most of these are checklist items. The badge, the Arm step, the cross-machine test and the `unsafe` rule come from the code and the changelog.
 
 - The Laser panel shows a SIMULATOR or REAL MACHINE badge, and connecting to a real machine asks first.
 - A pre-job checklist can be shown before every start.
@@ -410,18 +284,26 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 
 Everything in this list ran on DarkBurn's own simulators or on loopback links. Nothing in it has run on a real machine.
 
-- **GRBL family.** GRBL 1.1, older M3-only GRBL, GRBL-LPC, grblHAL and FluidNC. Streaming with buffer tracking, jogging, feed and power overrides while a job runs, a settings editor with backup, alarm and error codes in plain words, a fire button, and auto-detect of xTool, Ortur, Atomstack and Sculpfun lasers. **Limits:** no run on a real board yet.
-- **Other G-code.** Smoothieware, Marlin and a custom G-code device. LinuxCNC as file output only: there is no live link. **Limits:** Snapmaker is partly done.
-- **Ruida.** Over Ethernet: start, pause, stop, frame, home, jog, send a file, the file list on the controller, machine settings with backup, controller info, dual tube, U axis and rotary. RD files are saved and imported. **Limits:** USB works against the emulator only, and Fire needs Ethernet. Two boards (RDC6442S, RDC8445S) are recognised by card ID. Job start and end delays are missing. No real controller has confirmed any of it.
-- **Galvo (EZCad2-style boards).** Fibre, MOPA, UV and CO2 sources, lens correction, field calibration, frequency and Q-pulse, timing, wobble, red-light framing, repeat marking, drill mode and EZCad config import. **Limits:** simulator only: this build refuses a real galvo USB link. Door and foot switch inputs, the done-marking output, the rotary runner and 3D sliced images are partly done.
-- **Gweike M3 Ultra (fibre plus CO2 flatbed).** Files for the vendor's own software: a DXF with one layer per material and the craft file (`.chf`), with fibre cut settings for assist gas, pierce stages and follower height. A simulator of the controller card plans a job and gives a time. **Limits:** DarkBurn does not connect to this machine. The `.nc` export is partly done. The direct Ethernet link waits for a read-only capture on the real controller card.
-- **Trocen / AWC, TopWisdom.** Not supported: the protocols and file formats are not public.
-
-And around them:
-
-- **Connections:** USB serial with a baud choice, TCP/IP, UDP, Bluetooth serial, and a UDP automation socket for start and status. Raw USB, FTDI packet USB, HTTP and the TCP relay through a network bridge are partly done.
+- **GRBL family:** GRBL 1.1, older M3-only GRBL, GRBL-LPC, grblHAL and FluidNC, with auto-detect of xTool, Ortur, Atomstack and Sculpfun lasers.
+- **Other G-code:** Smoothieware, Marlin and a custom G-code device. LinuxCNC as file output only. Snapmaker is partly done.
+- **Ruida:** over Ethernet. USB is partly done.
+- **Galvo (EZCad2-style boards):** fibre, MOPA, UV and CO2 sources. This build refuses a real galvo USB link.
+- **Gweike M3 Ultra (fibre plus CO2 flatbed):** files for the vendor's own software. DarkBurn does not connect to this machine.
+- **Trocen / AWC, TopWisdom:** not supported. The protocols and file formats are not public.
 - **Simulators:** a fresh install starts on the GRBL simulator. You can also add simulators for Ruida, Smoothieware, Marlin, Snapmaker, a custom G-code machine, a galvo board and the Gweike controller card, or a design-only device with no laser.
+
+<details>
+<summary><b>What each one can do, its limits, and connections</b></summary>
+
+- **GRBL family.** Streaming with buffer tracking, jogging, feed and power overrides while a job runs, a settings editor with backup, alarm and error codes in plain words, and a fire button.
+- **Other G-code.** LinuxCNC has no live link. **Limits:** Snapmaker is partly done. Snapmaker over the network, Emblaser 2 over Wi-Fi and Cubiio are listed in the wizard but wait for a capture from real hardware.
+- **Ruida.** Over Ethernet: start, pause, stop, frame, home, jog, send a file, the file list on the controller, machine settings with backup, controller info, dual tube, U axis and rotary. RD files are saved and imported. **Limits:** USB is partly done, and Fire needs Ethernet. Two boards (RDC6442S, RDC8445S) are recognised by card ID. Job start and end delays are missing.
+- **Galvo.** Lens correction, field calibration, frequency and Q-pulse, timing, wobble, red-light framing, repeat marking, drill mode and EZCad config import. **Limits:** door and foot switch inputs, the done-marking output, the rotary runner and 3D sliced images are partly done.
+- **Gweike M3 Ultra.** A DXF with one layer per material and the craft file (`.chf`), with fibre cut settings for assist gas, pierce stages and follower height. A simulator of the controller card plans a job and gives a time. **Limits:** nobody has yet checked that the exported files open in the vendor's software. The `.nc` export is partly done. The direct Ethernet link waits for a read-only capture on the real controller card. The safety item (the machine's height follower, piercing and gas logic stay in charge) stays partly done until there is a link to check it on.
+- **Connections:** USB serial with a baud choice, TCP/IP, UDP, Bluetooth serial, and a UDP automation socket for start and status. Raw USB, FTDI packet USB, HTTP and the TCP relay through a network bridge are partly done. "Find my laser" lists serial ports and USB devices but does not search the network.
 - **Devices:** a device list with import and export of profiles, a new device wizard, per-device work area, origin corner, start and end scripts and air assist commands, and a Machine Settings dialog with backup files.
+
+</details>
 
 ## Files
 
@@ -444,7 +326,7 @@ And around them:
 - **Agents cannot change these switches,** and every call goes into an audit log shown on the same settings page. A chip in the status bar shows connected agents and changes colour while machine control is allowed.
 - **Without a window:** `darkburn --mcp-headless` serves the same tools on simulators only.
 
-`darkburn-mcp --print-config` prints the lines that register it with Claude Code and Claude Desktop. The tools and the safety model are in [crates/darkburn-mcp/README.md](crates/darkburn-mcp/README.md); the agent guide is [crates/darkburn-mcp/skill/darkburn-agent-guide.md](crates/darkburn-mcp/skill/darkburn-agent-guide.md).
+`darkburn-mcp --print-config` prints the lines that register it with Claude Code and Claude Desktop. On Windows the install folder is not on your PATH, so type the full path there: see [first start](docs/INSTALL.md#first-start). The tools and the safety model are in [crates/darkburn-mcp/README.md](crates/darkburn-mcp/README.md); the agent guide is [crates/darkburn-mcp/skill/darkburn-agent-guide.md](crates/darkburn-mcp/skill/darkburn-agent-guide.md).
 
 Two things to know before you let an agent in. File writes are allowed by default, and with them an agent can save or export to any path and overwrite what is there. And the confirmation dialog and the window screenshot have not yet been checked by hand in the running app.
 
@@ -454,18 +336,14 @@ The full list, item by item, is the [parity checklist](docs/PARITY-CHECKLIST.md)
 
 **On real hardware**
 
-- No job has been burned on a real machine. The end-to-end runs on the three target machines (an Atomstack on GRBL, a Ruida laser and the Gweike M3 Ultra) are open, and none of the 151 boxes in the hardware check files is ticked. Those files are [docs/HARDWARE-CHECKS.md](docs/HARDWARE-CHECKS.md) and its sister files for [G-code machines](docs/hardware-checks-gcodebots.md), [galvo boards](docs/hardware-checks-galvo.md) and the [Gweike controller card](docs/hardware-checks-mcc.md). The checks are done by hand: if you connect a real laser, you are doing one of them.
-- Ruida: no real controller has confirmed any of it. USB is partly done, only two boards are recognised by card ID, and job start and end delays are missing.
-- Galvo: simulator only. This build refuses a real galvo USB link.
-- Gweike M3 Ultra: files only, and nobody has yet checked that the exported files open in the vendor's software. The `.nc` export is partly done. The safety item (the machine's height follower, piercing and gas logic stay in charge) stays partly done until there is a link to check it on.
-- Trocen / AWC and TopWisdom controllers are not supported, and UD5 and OUT files are not written.
-- Snapmaker is partly done. Snapmaker over the network, Emblaser 2 over Wi-Fi and Cubiio are listed in the wizard but wait for a capture from real hardware.
-- Raw USB, FTDI packet USB, HTTP and network bridges are partly done. "Find my laser" lists serial ports and USB devices but does not search the network.
+- No job has been burned on a real machine, and the camera, rotary and print and cut parts have not met a real camera, a real rotary or a printed sheet. The end-to-end runs on the three target machines (an Atomstack on GRBL, a Ruida laser and the Gweike M3 Ultra) are open, and none of the 151 boxes in the hardware check files is ticked. Those files are [docs/HARDWARE-CHECKS.md](docs/HARDWARE-CHECKS.md) and its sister files for [G-code machines](docs/hardware-checks-gcodebots.md), [galvo boards](docs/hardware-checks-galvo.md) and the [Gweike controller card](docs/hardware-checks-mcc.md). The checks are done by hand: if you connect a real laser, you are doing one of them.
+- What each kind of machine cannot do yet is in the folded list under [Machines](#machines).
+
+**Packages.** The CI workflow runs the lints and tests on Windows, Linux and macOS; the release workflow builds an MSI and a portable zip for Windows and a tar.gz for Linux and macOS; neither has had a green run yet and no package has been published.
 
 <details>
 <summary><b>Partly done in the program</b></summary>
 
-- Preview: the window keeps getting wider while it is open, until it is wider than the main window, and its Shade by power, Show travel moves and Invert boxes cannot be reached. That is why this page has no picture of it.
 - Camera: the camera picker with exposure and brightness, the live viewfinder, the capture settings, head-mounted camera stitching and trace from a camera capture.
 - Rotary: test rotation and the rotary jog arrows. Print and cut: setting the two targets.
 - Move panel: Focus Z and Set finish position.
@@ -487,7 +365,7 @@ The full list, item by item, is the [parity checklist](docs/PARITY-CHECKLIST.md)
 <summary><b>Open on the checklist</b></summary>
 
 - Languages other than English and Norwegian (22 are on the checklist), and translated machine error messages.
-- The Linux and macOS builds. Linux builds from source and its test suite runs there; macOS is untested. No package has been published for any platform.
+- The Linux and macOS builds. Linux builds from source and its test suite runs there; macOS is untested.
 - Explorer thumbnails for project files and recent files in the Windows jump list.
 - SignCut import, and import of LightBurn library, art, device and hotkey files.
 - Newer features marked "later" on the checklist: tangent circle generator, true nest and quick nest, the Pages window, multi-file trace, 3D model to depth map, taper warp, continuous framing and a REST API.
@@ -496,37 +374,14 @@ The full list, item by item, is the [parity checklist](docs/PARITY-CHECKLIST.md)
 
 ## Building from source
 
-You need:
+The six commands, what they need and how to run the tests are in [docs/INSTALL.md](docs/INSTALL.md#building-from-source). Rules for anyone who writes code here: [docs/BUILD-RULES.md](docs/BUILD-RULES.md).
 
-- Rust 1.95 or newer.
-- A checkout of [SolidCraft](https://github.com/phobicdotno/solidcraft) next to this repository, as `../solidcraft`. Its small UI crates are path dependencies. It has to be at the commit DarkBurn is pinned to, which is on SolidCraft's `params-resize` branch. SolidCraft's `main` branch does not have these crates.
-- On Linux: git, a C compiler and libclang (the camera crate generates its bindings while building). On Debian and Ubuntu that is `sudo apt install git build-essential libclang-dev`. To run the program you also need what is listed as "Running needs" under [Install](#install).
-- On Windows: Git, Rust with the MSVC toolchain, and the Visual Studio Build Tools with the C++ workload.
+## Written from scratch
 
-```sh
-git clone https://github.com/phobicdotno/DarkBurn
-git clone https://github.com/phobicdotno/solidcraft
-git -C solidcraft checkout ae7da14907e00a11ed04656385cc0c2db386dc55
-cd DarkBurn
-cargo build --release -p darkburn -p darkburn-mcp
-target/release/darkburn
-```
-
-- `cargo test --workspace` runs the tests. The UI tests draw the real app offscreen and need a graphics adapter; a software Vulkan driver such as lavapipe will do. See [docs/UI-TESTING.md](docs/UI-TESTING.md).
-- `darkburn --safe-mode` starts without your saved settings.
-- The Windows packages are made by `scripts/build-installer.ps1` and `scripts/build-portable.ps1`, with output in `dist/`. Release steps and version rules are in [docs/RELEASING.md](docs/RELEASING.md).
-- Rules for anyone who writes code here: [docs/BUILD-RULES.md](docs/BUILD-RULES.md).
-
-## Clean-room rule
-
-The rules everyone who writes DarkBurn code works by, in short:
-
-- Nothing is taken from LightBurn: no code, icons, artwork, images or help text. The parity checklist says what LightBurn does, not how it is built.
-- Code under MIT, Apache-2.0, BSD or zlib licences may be read and ported, with credit. The window, widgets, icons and themes are built on SolidCraft's UI kit. Every source is named in [ATTRIBUTION.md](ATTRIBUTION.md) and in the `ATTRIBUTION.md` of the crates that port code.
-- Code under GPL, LGPL or AGPL is never copied or ported. Only its documentation is read.
-- Controller protocols come from public documentation and from those open-source projects. The Gweike controller card is the exception: what DarkBurn knows about it comes from the owner's own analysis project, and none of it has been confirmed on the real card.
-
-DarkBurn is not affiliated with LightBurn Software. LightBurn and the other product names on this page are trademarks of their owners, and are used only to say what DarkBurn works with. The full rules are in [docs/BUILD-RULES.md](docs/BUILD-RULES.md).
+- No LightBurn code, icons, artwork, images or help text is in DarkBurn.
+- The people and agents who write DarkBurn's code work from the [parity checklist](docs/PARITY-CHECKLIST.md), a written list of what the program should do, and the [build rules](docs/BUILD-RULES.md) forbid opening LightBurn or its files.
+- No GPL, LGPL or AGPL code is copied. Code ported from MIT and Apache projects is credited in [ATTRIBUTION.md](ATTRIBUTION.md).
+- DarkBurn is not affiliated with LightBurn Software. The product names on this page are trademarks of their owners.
 
 ## Licence
 

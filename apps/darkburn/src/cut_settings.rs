@@ -256,10 +256,19 @@ fn listed_layers(app: &DarkBurn, s: &Session) -> Vec<usize> {
     v
 }
 
+/// The tallest the editor's two columns are, in points. A small main window gives them less.
+const BODY_HEIGHT: f32 = 720.0;
+/// The fields keep this much height however little room there is; the window scrolls then.
+const FIELDS_MIN_HEIGHT: f32 = 160.0;
+
 fn body(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let t = Tokens::get();
     let list_w = 130.0;
-    ui.horizontal_top(|ui| {
+    // The columns have a height of their own. The rule between them takes all the height it is
+    // offered: offered all a window may have, it made the editor as tall as the main window,
+    // whatever was in it.
+    let height = ui.available_height().min(BODY_HEIGHT);
+    ui.allocate_ui_with_layout(vec2(ui.available_width(), height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
         // Layer list.
         ui.allocate_ui_with_layout(vec2(list_w, ui.available_height().max(300.0)), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(list_w);
@@ -306,7 +315,7 @@ fn body(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
                 }
             }
             ui.add_space(t.space_6);
-            ui.label(RichText::new("Ctrl+click to change several layers at once.").size(t.font_micro).color(t.text_dim));
+            ui.add(egui::Label::new(RichText::new("Ctrl+click to change several layers at once.").size(t.font_micro).color(t.text_dim)).wrap());
         });
         ui.separator();
         ui.vertical(|ui| editor_side(ui, app, s));
@@ -399,7 +408,10 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let mut c = before.clone();
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
-    egui::ScrollArea::vertical().id_salt("cse_fields").max_height(460.0).auto_shrink([false, true]).show(ui, |ui| {
+    // The fields go down to the bottom of the columns, less the row of the button under them.
+    let under = if c.mode == Mode::Image && s.advanced { t.control_height + t.form_gap_y } else { 0.0 };
+    let room = (ui.available_height() - under).max(FIELDS_MIN_HEIGHT);
+    egui::ScrollArea::vertical().id_salt("cse_fields").max_height(room).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = t.form_gap_y;
         if s.advanced {
             advanced(ui, &mut c);

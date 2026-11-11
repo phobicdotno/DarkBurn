@@ -71,6 +71,9 @@ fn clock(t: f64) -> String {
     format_time(t)
 }
 
+/// The width of the Preview's speed list, in points: room for "500x" and the arrow.
+const SPEED_LIST_WIDTH: f32 = 84.0;
+
 fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     if !app.job.preview.open {
         return;
@@ -171,12 +174,20 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             }
             ui.label(format!("{} / {}", clock(p.t), clock(total)));
         });
-        ui.horizontal(|ui| {
-            let mut i = p.speed_index;
+        // The speed list has a width of its own: a plain `ui_kit::dropdown` takes all the width that
+        // is left, which left the check boxes after it none and pushed the row past the window's
+        // edge, so the window grew with every frame. In a narrow window the row wraps.
+        ui.horizontal_wrapped(|ui| {
+            // Every row as tall as the list, so the words sit level with it.
+            ui.set_row_height(ui_kit::row_height());
+            let mut i = p.speed_index.min(SPEEDS.len() - 1);
             let names: Vec<String> = SPEEDS.iter().map(|s| format!("{s}x")).collect();
-            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
             ui.label("Speed");
-            ui_kit::dropdown(ui, "preview_speed", &mut i, &refs);
+            ui_kit::bounded_dropdown_menu(ui, "preview_speed", &names[i], SPEED_LIST_WIDTH, |ui| {
+                for (index, name) in names.iter().enumerate() {
+                    ui.selectable_value(&mut i, index, name.as_str());
+                }
+            });
             p.speed_index = i;
             ui_kit::checkbox(ui, "Shade by power", &mut p.view.shade_by_power);
             ui_kit::checkbox(ui, "Show travel moves", &mut p.view.show_travel);
@@ -212,16 +223,27 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
         }
     }
 
-    // The picture.
+    // The picture takes the room the buttons under it leave. In a narrow window they wrap to more
+    // rows, so the room they need is what they took in the last frame (40 points before there is
+    // one), and two points to spare. With 40 points whatever the rows, two rows of buttons made
+    // the window taller every frame, and one row left it 13 points shorter than its own size, so
+    // the corner jumped away from the pointer that took hold of it.
+    let footer_id = Id::unique("db_preview_footer_height");
+    let reserve = match ui.data(|d| d.get_temp::<f32>(footer_id)) {
+        Some(footer) => footer + ui.spacing().item_spacing.y + 2.0,
+        None => 40.0,
+    };
     let avail = ui.available_size();
-    let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - 40.0).max(120.0)), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - reserve).max(120.0)), Sense::click_and_drag());
     draw_preview(ui, app, rect, &response, bed);
 
-    ui.horizontal_wrapped(|ui| {
+    let buttons = ui.horizontal_wrapped(|ui| {
         let have = app.job.preview.data.is_some();
         let op = app.job.preview.data.as_ref().and_then(|d| d.sim.state_at(app.job.preview.t)).map_or(0, |s| s.op_index);
         let file_kind = crate::machine_job::machine_file_kind(app.machine.active());
-        let b = |ui: &mut Ui, label: &str, on: bool| ui.add_enabled_ui(on, |ui| ui_kit::button(ui, label, ui_kit::Button::Small)).inner.clicked();
+        // Not `add_enabled_ui`: a button in a scope of its own sees only what is left of the row,
+        // and breaks its label there letter by letter instead of going to the next row.
+        let b = |ui: &mut Ui, label: &str, on: bool| ui.add_enabled(on, |ui: &mut Ui| ui_kit::button(ui, label, ui_kit::Button::Small)).clicked();
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
         }
@@ -261,6 +283,8 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             close = true;
         }
     });
+    let footer = buttons.response.rect.height();
+    ui.data_mut(|d| d.insert_temp(footer_id, footer));
     if save_image {
         let shift = ui.input(|i| i.modifiers.shift);
         if let Some(path) = rfd::FileDialog::new().add_filter("PNG image", &["png"]).set_file_name("preview.png").save_file() {

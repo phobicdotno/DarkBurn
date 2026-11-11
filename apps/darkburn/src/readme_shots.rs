@@ -16,12 +16,10 @@
 //! bar and the date on the asset plate are today's, so make the pictures again after a version
 //! bump, and look at every one before it goes into the README.
 //!
-//! There is no picture of the Preview window. Left open, that window gets 18 points wider with
-//! every frame until it is wider than the main window, and its three check boxes (Shade by
-//! power, Show travel moves, Invert) are never seen: in `job_ui.rs`, `preview_body` puts the
-//! speed list, which takes the whole width, and the check boxes on one row. A picture of it
-//! could only be staged. When that row is fixed, add a `preview` test here: Show travel moves
-//! on, the clock at about 85 % of the job, the window inside the main window.
+//! A window that floats over the main window opens at least [`DIALOG_TOP`] points down, clear of
+//! the application bar. Adjust Image is the exception: it is always as tall as the main window
+//! less 22 points (in `image_ui.rs` the rule between its two columns takes all the height a
+//! window may have), so the app can only put it at the very top.
 
 use std::path::PathBuf;
 
@@ -44,10 +42,10 @@ const MARK: usize = 3;
 const HOLES: usize = 5;
 const LIGHT: usize = 9;
 
-/// Where the pictures put the top of a dialog: under the app bar, so the buttons of the bar
-/// show. A dialog too tall for the room there is kept inside the window by the app, a little
-/// higher up.
-const DIALOG_TOP: f32 = crate::shell::APP_BAR_HEIGHT + 6.0;
+/// Where the pictures put the top of a window that floats over the main window: clear of the
+/// application bar, so the bar and its buttons show whole. A window too tall for the room there
+/// is kept inside the main window by the app, higher up.
+const DIALOG_TOP: f32 = 52.0;
 
 fn gui() -> Gui {
     Gui::new(WINDOW.0, WINDOW.1, SCALE)
@@ -231,6 +229,72 @@ fn light() {
     shot(&mut g, "light");
 }
 
+/// The Preview window's rectangle. It is a plain egui window, so it is not among
+/// `dialog_windows`; the accessibility tree has it.
+fn preview_rect(g: &Gui) -> egui::Rect {
+    g.find_a11y(Some("Window"), "Preview").last().unwrap_or_else(|| panic!("the Preview window is open: {:?}", g.window_titles())).rect
+}
+
+/// The job Preview of the sign: what the laser will do, in the order it does it, with the travel
+/// moves shown and the clock at about 85 % of the job.
+#[test]
+#[ignore = "writes a README picture: cargo test -p darkburn readme_shots -- --ignored --test-threads=1"]
+fn preview() {
+    let mut g = gui();
+    sign(&mut g);
+    g.run_command("window.preview");
+    g.wait_for_job_build();
+    g.frames(4);
+    assert!(g.app().job.preview.data.is_some(), "the preview has a job: {:?}", g.app().job.preview.error);
+    // Over the drawing area, with the ribbon above it and the panels beside it left free: move
+    // the window by its title bar, then size it by its bottom right corner.
+    let want = g.canvas_rect().shrink(10.0);
+    assert!(want.top() >= DIALOG_TOP, "{want:?}");
+    let r = preview_rect(&g);
+    let grip = pos2(r.center().x, r.top() + 14.0);
+    g.drag(grip, grip + (want.min - r.min));
+    let r = preview_rect(&g);
+    let corner = r.max - vec2(3.0, 3.0);
+    g.drag(corner, corner + (want.max - r.max));
+    g.click_a11y(Some("Button"), "Fit");
+    g.click_a11y(Some("CheckBox"), "Show travel moves");
+    assert!(g.app().job.preview.view.show_travel);
+    // Zoom in on the sign with the wheel, the pointer on the middle of the picture (the middle
+    // of the work area after Fit), then drag the sign, which lies 10 mm above it, to the middle.
+    let top = g.painted().into_iter().find(|p| p.text.contains("Operation ")).expect("the line that says where the job is").full.bottom();
+    let bottom = g.find_a11y(Some("Button"), "Start here").last().expect("the buttons under the picture").rect.top();
+    let middle = pos2(preview_rect(&g).center().x, (top + bottom) / 2.0);
+    let fitted = g.app().job.preview.zoom;
+    g.scroll(middle, vec2(0.0, 200.0));
+    g.frames(6);
+    let zoom = g.app().job.preview.zoom;
+    assert!((1.3..1.7).contains(&(zoom / fitted)), "the wheel zoomed in by {}", zoom / fitted);
+    g.drag(middle, middle + vec2(0.0, 10.0 * zoom));
+    // The clock: a click on the time slider, 85 % of the way along it.
+    let slider = g.find_a11y(Some("Slider"), "Time in the job").last().expect("the time slider").rect;
+    g.click_pos(pos2(slider.left() + 0.85 * slider.width(), slider.center().y));
+    let (t, total) = {
+        let app = g.app();
+        (app.job.preview.t, app.job.preview.data.as_ref().expect("the job").stats.seconds)
+    };
+    assert!(total > 60.0 && (0.82..=0.88).contains(&(t / total)), "the clock is at {t:.0} s of {total:.0} s");
+    park(&mut g);
+    // The window is where it was put, whole, and stays that size; its check boxes and the time
+    // estimate show.
+    let r = preview_rect(&g);
+    g.frames(30);
+    assert_eq!(preview_rect(&g), r, "the Preview window keeps its place and size");
+    assert!((r.min - want.min).length() < 3.0 && (r.max - want.max).length() < 3.0, "the Preview is at {r:?}, not {want:?}");
+    assert!(!outside(g.screen(), r) && r.top() >= DIALOG_TOP, "{r:?}");
+    for label in ["Shade by power", "Show travel moves", "Invert"] {
+        let c = g.find_a11y(Some("CheckBox"), label).last().unwrap_or_else(|| panic!("the check box {label}")).rect;
+        assert!(c.width() > 14.0 && r.contains_rect(c), "{label}: {c:?} in {r:?}");
+    }
+    let estimate = g.painted().into_iter().find(|p| p.text.contains("Estimated time")).expect("the time estimate");
+    assert!(r.contains_rect(estimate.full) && estimate.rect == estimate.full, "{estimate:?}");
+    save(&mut g, "preview");
+}
+
 /// A grey picture that looks like a photo: a low sun behind mountain ridges and their
 /// reflection in a lake. Computed, so the repository holds no photo and nobody's picture is used.
 fn landscape(w: u32, h: u32) -> image::GrayImage {
@@ -377,6 +441,8 @@ fn cut_settings() {
     let screen = g.screen();
     let left = screen.right() - size.x - 6.0;
     move_dialog(&mut g, pos2(left, DIALOG_TOP));
+    let window = *g.dialog_windows().last().expect("the Cut Settings Editor");
+    assert!(window.top() >= DIALOG_TOP - 1.0 && window.bottom() <= screen.bottom() - 6.0, "the editor is clear of the application bar: {window:?}");
     // Show the whole grid in the part of the canvas the window leaves free.
     let canvas = g.canvas_rect();
     let (free, page_height) = (left - canvas.left(), f64::from(g.app().prefs.page_height));
@@ -449,15 +515,24 @@ fn machines() {
     use crate::machine_api::LaserState;
     let mut g = gui();
     parts(&mut g);
-    // The Move panel in a dock of its own on the left.
+    // The Move panel in a dock of its own on the left, the Laser panel in the taller upper group
+    // on the right and the console in the lower one: each panel then has the room to end on a
+    // whole row. The Move panel is 16 points taller than a dock is, so the cut palette is hidden
+    // for this picture, which gives the docks its 30 points.
     {
+        use crate::panels::Area;
         let mut app = g.app();
-        let p = app.prefs.panels.get_mut("move").expect("the Move panel");
-        p.area = crate::panels::Area::Left;
-        p.visible = true;
+        for (panel, area) in [("move", Area::Left), ("laser", Area::RightTop), ("console", Area::RightBottom)] {
+            let p = app.prefs.panels.get_mut(panel).unwrap_or_else(|| panic!("the {panel} panel"));
+            p.area = area;
+            p.visible = true;
+        }
         app.prefs.dock_sizes.insert("left".into(), 330.0);
     }
+    g.run_command("toolbar.palette");
+    assert_eq!(g.app().prefs.toolbars.get("palette"), Some(&false));
     g.frames(3);
+    show_tab(&mut g, "laser");
     assert!(g.app().machine.active().is_simulator(), "the pictures only ever use a simulator");
     g.run_command("machine.connect");
     let wait = |g: &mut Gui, what: &str, done: &dyn Fn(&crate::machine_api::Snapshot) -> bool| {
@@ -477,7 +552,25 @@ fn machines() {
     g.exec("job.start", json!({}));
     g.frames(4);
     wait(&mut g, "a third of the job", &|s| s.job.as_ref().and_then(|j| j.fraction).is_some_and(|f| f >= 0.36));
-    shot(&mut g, "machines");
+    park(&mut g);
+    // No row of a panel is cut through by the edge of its dock. (The console's list of lines
+    // scrolls, and may start part-way through a line: that is how a list looks.)
+    for area in ["Left", "RightTop", "RightBottom"] {
+        let dock = g.rect_of(&format!("panel:area:{area}")).unwrap_or_else(|| panic!("the {area} dock"));
+        eprintln!("PROBE dock {area} {dock:?}");
+        let cut: Vec<String> = g
+            .painted()
+            .into_iter()
+            .filter(|p| dock.contains(p.full.center()) && p.rect.height() < p.full.height() - 0.5)
+            .map(|p| { eprintln!("PROBE cut {:?} {:?} {:?}", p.text, p.full, p.rect); p.text })
+            .filter(|text| !(area == "RightBottom" && (text.starts_with("> ") || text == "ok" || text.starts_with('<'))))
+            .collect();
+        assert!(cut.is_empty(), "the {area} dock cuts through {cut:?}");
+    }
+    for last in ["Rapid", "Rotary", "Macro 6"] {
+        assert!(g.has_text(last), "{last}, the last row of a panel, shows: {:?}", g.visible_texts());
+    }
+    save(&mut g, "machines");
     g.exec("job.stop", json!({}));
     g.frames(3);
 }

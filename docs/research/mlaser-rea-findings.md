@@ -2,13 +2,13 @@
 
 Handed over from the SolidCraft session, where the official MLaser download was fetched and inspected with REA (Reverse Engineer Anything, `rea-agents` 6.8.0). Static analysis only: PE import tables, strings, shipped config and log files. Nothing from the download was executed. No decompiled code was transcribed.
 
-Legend: **observed** = read directly from the shipped files (evidence ID given where REA retained one); **inferred** = my reading of observations; **unknown** = not established.
+Legend: **observed** = read directly from the shipped files (REA kept an evidence ID for some of them; the IDs and the file hashes are left out of this copy); **inferred** = my reading of observations; **unknown** = not established.
 
 ## Files
 
-- Download: `C:\Users\kk\Downloads\Gweike-M3-Ultra\Mlaser-v0.0.1.51_SP1.zip`, from the Gweike documentation page on gweikecloud.com (gweikelaser.com is parked). Manual: `Gweike-M-Series-User-Manual.zip` beside it.
-- Extracted tree: `C:\Users\kk\Downloads\Gweike-M3-Ultra\extracted\Mlaser-v0.0.1.51_SP1\Mlaser-v0.0.1.51_SP1\`
-- Prior full analysis of v0.0.0.52: `C:\Users\kk\src\phobicMlaserLinux\docs\analysis\` (00-overview, 01-hardware-config, 02-layer-params, 03-chf-format, 04-controller-protocol, 05-motion-pipeline, 06-ui-features, 07-exe-internals, 08-runtime-logs, 09-cad-libs, 10-wine-mlaser-prior-work, 11-static-findings, 99-gaps) and a Python protocol implementation in `src/nexcut/mcc/` (framing, crc, commands, registers, dissector).
+- Download: `Mlaser-v0.0.1.51_SP1.zip`, from the Gweike documentation page on gweikecloud.com (gweikelaser.com is parked). Manual: `Gweike-M-Series-User-Manual.zip`, from the same page.
+- Extracted tree: the folder `Mlaser-v0.0.1.51_SP1\Mlaser-v0.0.1.51_SP1\`, unpacked from that zip.
+- Prior full analysis of v0.0.0.52: the owner's phobicMlaserLinux project, `docs\analysis\` (00-overview, 01-hardware-config, 02-layer-params, 03-chf-format, 04-controller-protocol, 05-motion-pipeline, 06-ui-features, 07-exe-internals, 08-runtime-logs, 09-cad-libs, 10-wine-mlaser-prior-work, 11-static-findings, 99-gaps) and a Python protocol implementation in `src/nexcut/mcc/` (framing, crc, commands, registers, dissector).
 
 ## Layout (observed)
 
@@ -18,8 +18,8 @@ Same module layout as the v0.0.0.52 build analysed in phobicMlaserLinux. The .NE
 
 ## Import tables (REA `inspect_pe_imports`)
 
-### `Module\NCModule.dll` (observed, evidence `ev_0af1c4f66ac1631f0fff4f08c18dfe3d6780b9a5ee10678c5b6885a4280c5216`)
-- PE32 x86, 795,648 bytes, sha256 `e4120f83e6393a4a6f852167cebcfa0c758797df145cc08803f7beb800c2f2ba`, imphash `262dc72e6bc6053e3ffdedee31d57c08`.
+### `Module\NCModule.dll` (observed)
+- PE32 x86, 795,648 bytes.
 - Imports 8 DLLs, 363 functions, coverage complete.
 - `WS2_32.dll`: 18 functions, all by ordinal (19, 52, 8, 11, 111, 20, 17, 2, 115, 23, 9, 4, 21, 116, 3, 18, 151, 16). Inferred from the standard ws2_32 ordinal table: socket, sendto, recvfrom, bind, closesocket, select, setsockopt, ioctlsocket, WSAStartup/WSACleanup, WSAGetLastError, inet_addr, htons/ntohs, gethostbyname, connect, send, recv.
 - `KERNEL32.dll` serial API: `GetCommState`, `SetCommState`, `GetCommTimeouts`, `SetCommTimeouts`, `PurgeComm`, `CreateFileA/W`, `ReadFile`, `WriteFile`, `FlushFileBuffers`. Also `GetPrivateProfileStringA/IntA` (reads the INI below), `LoadLibraryW`/`GetProcAddress`, threads and events.
@@ -27,8 +27,8 @@ Same module layout as the v0.0.0.52 build analysed in phobicMlaserLinux. The .NE
 - `MSVCR100`/`MSVCP100`/`mfc100u` runtime, `SHELL32`, `SHLWAPI`.
 - Inferred: NCModule owns all machine I/O (UDP and serial). Matches the v0.0.0.52 finding.
 
-### `PHBX.dll` (observed, evidence `ev_daf18fdb35e9d3d6cd2527e089acf774d2d3786475ed516be2d9b645e3c51fa8`)
-- PE32 x86, 135,168 bytes, sha256 `0b663b42ce408d9e05c15baac34835ed31a615a6b2c779f42471fade2d21d1e5`, imphash `88c26082ced04520a8bf2b74dfc88d88`. 9 DLLs, 234 functions, complete.
+### `PHBX.dll` (observed)
+- PE32 x86, 135,168 bytes. 9 DLLs, 234 functions, complete.
 - `HID.DLL`: `HidD_GetHidGuid`, `HidD_GetAttributes`, `HidD_GetPreparsedData`, `HidP_GetCaps`, `HidD_GetFeature`, `HidD_SetFeature`. `SETUPAPI.dll`: `SetupDiGetClassDevsA`, `SetupDiEnumDeviceInterfaces`, `SetupDiGetDeviceInterfaceDetailA`, `SetupDiDestroyDeviceInfoList`. Plus `CreateThread`, `ReadFile`, `CancelIo`, registry read/write, old statically-linked MFC style imports (`GlobalAddAtomA`, `WinHelpA`).
 - No network imports.
 - Inferred: USB HID pendant driver (Chengdu XHC wireless handwheel). `xhcusb.txt` in the root is its log and is full of `Open HID error5` / `Get HID Error!1168` lines (observed), i.e. the pendant was not present on the vendor's packaging machine.
@@ -60,7 +60,7 @@ Endpoints (all defaults, the user can change them in the app):
 
 Timing and protocol limits (observed): `MaxItemPerFrame=60`, `MaxFillItem=2000`, `MCFifoTime=1600`, `MCTimeout=500`, `MCMaxSendTime=2`, `MCMaxRecvTime=3`, `MCSendInterval=1`, `FifoTimeout=600`, `FifoAlarmNum=30`, `MCCore=30`, `OfflineTimeout=5000`, `MaxZFDownItem=512`, `MaxAFDownItem=200`, `MaxECDownItem=200`.
 `[Soft]` (observed): `MinHardwareVer=20177` (matches firmware `MCC100_V201.77.mcf` in `Update\`, 102,912 bytes, encrypted per old docs), `OnBZFMinHardwareVer=311`, `NCZFMinHardwareVer=325`, `AFMinHardwareVer=133`, `EnableOvertime=1`, `FollowOvertime=20000`, `AccessType=1`, `EnableLog=0`, `AdvLaserWrite=1`, `CheckUserID=109`, `Custom=1234`.
-Correction to what I said earlier in the SolidCraft chat: this INI does contain the LaserIP, MonitorIP and `[Soft]` blocks.
+Correction to what I said earlier in that session: this INI does contain the LaserIP, MonitorIP and `[Soft]` blocks.
 
 ## Vendor log `Log\2026-09-16.log` (observed)
 

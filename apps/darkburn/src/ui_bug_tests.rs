@@ -489,6 +489,186 @@ fn a_tiny_window_draws_and_the_layout_recovers() {
     assert!(g.id_clashes_now().is_empty());
 }
 
+// ----- the Preview window -----
+
+const PREVIEW_CHECKS: [&str; 3] = ["Shade by power", "Show travel moves", "Invert"];
+
+/// The Preview window with the job of the sample design in it.
+fn open_preview(g: &mut Gui) {
+    g.sample_design();
+    g.run_command("window.preview");
+    g.wait_for_job_build();
+    g.frames(4);
+    assert!(g.app().job.preview.data.is_some(), "the preview has a job: {:?}", g.app().job.preview.error);
+}
+
+fn preview_window(g: &Gui) -> egui::Rect {
+    g.find_a11y(Some("Window"), "Preview").last().unwrap_or_else(|| panic!("the Preview window is open: {:?}", g.window_titles())).rect
+}
+
+fn preview_check(g: &Gui, label: &str) -> Option<bool> {
+    let view = g.app().job.preview.view;
+    [view.shade_by_power, view.show_travel, view.invert].get(PREVIEW_CHECKS.iter().position(|l| *l == label)?).copied()
+}
+
+/// What is wrong with the Preview's three check boxes: each must be drawn inside the window,
+/// wide enough for its box and its label.
+fn preview_check_problems(g: &Gui, what: &str) -> Vec<String> {
+    let window = preview_window(g);
+    let mut bad = Vec::new();
+    for label in PREVIEW_CHECKS {
+        let rect = g.find_a11y(Some("CheckBox"), label).last().map(|n| n.rect);
+        let text = g.find_text(label);
+        match (rect, text) {
+            (Some(r), Some(t)) if r.width() > 14.0 && r.height() > 0.0 && window.contains_rect(r) && window.contains_rect(t) => {}
+            _ => bad.push(format!("{what}: the check box {label:?} is at {rect:?}, its label at {text:?}, the window is {window:?}")),
+        }
+    }
+    bad
+}
+
+/// The Preview window keeps the size it opens at. It got 18 points wider with every frame, until
+/// it was as wide as the main window.
+#[test]
+fn the_preview_window_keeps_its_size() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    let first = preview_window(&g);
+    g.frames(60);
+    let later = preview_window(&g);
+    g.screenshot("uibugs-preview");
+    assert_eq!((first.width(), first.height()), (later.width(), later.height()), "60 frames later the window is {later:?}; it was {first:?}");
+    let screen = g.screen();
+    assert!(later.width() < screen.width() - 200.0, "the Preview {later:?} is narrower than the main window {screen:?}");
+    assert!(!crate::ui_harness::outside(screen, later), "the Preview {later:?} is inside the main window {screen:?}");
+    let problems = g.layout_problems();
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Shade by power, Show travel moves and Invert are on screen, and a click on each flips it.
+/// They were drawn zero points wide beside the speed list, which took the whole row.
+#[test]
+fn the_preview_check_boxes_can_be_seen_and_clicked() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    let problems = preview_check_problems(&g, "as opened");
+    assert!(problems.is_empty(), "{problems:#?}");
+    for label in PREVIEW_CHECKS {
+        let before = preview_check(&g, label).expect("a check box of the Preview");
+        g.click_a11y(Some("CheckBox"), label);
+        assert_eq!(preview_check(&g, label), Some(!before), "a click on {label:?} flips it");
+        g.click_label(label);
+        assert_eq!(preview_check(&g, label), Some(before), "a click on the words {label:?} flips it back");
+    }
+    // The speed list is still there, beside them, and no wider than it needs to be.
+    let speed = g.find_a11y(Some("ComboBox"), "10x").last().map(|n| n.rect).expect("the speed list");
+    assert!(speed.width() > 40.0 && speed.width() < 200.0, "the speed list is {speed:?}");
+    g.click_pos(speed.center());
+    g.click_label("500x");
+    assert_eq!(g.app().job.preview.speed_index, crate::job_cmds::SPEEDS.len() - 1);
+    let problems = preview_check_problems(&g, "after picking a speed");
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// Made as narrow as it goes, the Preview still shows its check boxes (on a row of their own if
+/// they must), and it does not grow back, wider or taller, while it is left alone.
+#[test]
+fn a_narrow_preview_window_keeps_its_size_and_its_check_boxes() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    let wide = preview_window(&g);
+    // Drag the right edge far to the left: the window stops at the narrowest its rows allow.
+    let grip = egui::pos2(wide.right() - 1.0, wide.center().y);
+    g.drag(grip, egui::pos2(wide.left() + 40.0, wide.center().y));
+    g.frames(4);
+    let narrow = preview_window(&g);
+    assert!(narrow.width() < wide.width() - 100.0, "the window got narrower: {narrow:?} from {wide:?}");
+    g.frames(60);
+    let later = preview_window(&g);
+    assert_eq!((narrow.width(), narrow.height()), (later.width(), later.height()), "60 frames later the window is {later:?}; it was {narrow:?}");
+    let mut problems = preview_check_problems(&g, "narrow");
+    problems.extend(g.layout_problems());
+    g.screenshot("uibugs-preview-narrow");
+    assert!(problems.is_empty(), "{problems:#?}");
+    for label in PREVIEW_CHECKS {
+        let before = preview_check(&g, label).expect("a check box of the Preview");
+        g.click_a11y(Some("CheckBox"), label);
+        assert_eq!(preview_check(&g, label), Some(!before), "narrow: a click on {label:?} flips it");
+    }
+}
+
+// ----- the Cut Settings Editor -----
+
+/// The Cut Settings Editor on a layer that fills, in a window of this size.
+fn open_cut_settings(width: f32, height: f32) -> Gui {
+    let mut g = Gui::new(width, height, 1.0);
+    g.sample_design();
+    g.exec("layer.set_mode", serde_json::json!({ "layer": 1, "mode": "fill" }));
+    g.app().cut_settings_open = Some(1);
+    g.frames(6);
+    assert_eq!(g.window_titles(), ["Cut Settings Editor"]);
+    g
+}
+
+/// The hint under the layer list is whole. It was cut off after "severa", on one row.
+#[test]
+fn the_hint_under_the_cut_settings_layer_list_is_not_cut_off() {
+    let g = open_cut_settings(1440.0, 960.0);
+    let hint = g.painted().into_iter().find(|p| p.text.starts_with("Ctrl+click")).expect("the hint under the layer list");
+    let layers = g.find_text("Layers").expect("the heading of the layer list");
+    assert!(hint.text.ends_with("layers at once."), "{:?}", hint.text);
+    assert!(hint.full.height() > 20.0, "the hint wraps to a second row: it is {:?}", hint.full);
+    assert!(hint.full.width() <= 130.0 && hint.full.left() >= layers.left() - 1.0, "the hint stays in the list's column: {:?}", hint.full);
+    assert_eq!(hint.rect, hint.full, "all of the hint shows");
+    assert!(!hint.broken_word, "no word of the hint is broken");
+    let problems = g.layout_problems();
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The fields of the Cut Settings Editor go down to the bottom of the window, so the rows of a
+/// fill layer down to Z offset show without scrolling in a window with the room. (They stopped
+/// 460 points down, with the lower third of the window empty.) And the window is no taller than
+/// its two columns: in a tall main window it leaves the application bar free.
+#[test]
+fn the_cut_settings_fields_go_down_to_the_bottom_of_the_window() {
+    let g = open_cut_settings(1440.0, 960.0);
+    let window = *g.dialog_windows().last().expect("the Cut Settings Editor");
+    for label in ["Bi-directional", "Cross-hatch", "Overscan", "Z offset", "Z step per pass"] {
+        let r = g.find_text(label).unwrap_or_else(|| panic!("{label} shows without scrolling; texts: {:?}", g.visible_texts()));
+        assert!(window.contains_rect(r), "{label} at {r:?} is inside the window {window:?}");
+    }
+    // Under the last row that shows there is the OK and Cancel row, not a third of a window.
+    let last = g.find_text("Z step per pass").expect("the last row").bottom();
+    let ok = g.find_text("OK").expect("the OK button").top();
+    assert!(ok - last < 140.0, "{:.0} points lie between the last row ({last}) and the OK button ({ok})", ok - last);
+    let room = g.screen().height() - crate::shell::APP_BAR_HEIGHT;
+    assert!(window.height() <= room - 12.0, "the window ({:.0} points tall) fits under the application bar ({room:.0} points)", window.height());
+    let problems = g.layout_problems();
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// In the smallest window the editor still fits, and its fields scroll.
+#[test]
+fn the_cut_settings_editor_fits_the_smallest_window() {
+    let mut g = open_cut_settings(960.0, 600.0);
+    let screen = g.screen();
+    let window = *g.dialog_windows().last().expect("the Cut Settings Editor");
+    assert!(!crate::ui_harness::outside(screen, window), "the window {window:?} is inside {screen:?}");
+    let problems = g.layout_problems();
+    assert!(problems.is_empty(), "{problems:#?}");
+    assert!(!g.has_text("Z offset"), "the last rows are below the fold here");
+    let at = g.find_text("Speed").expect("a row of the fields").center();
+    for _ in 0..12 {
+        if g.has_text("Z step per pass") {
+            break;
+        }
+        g.scroll(at, egui::vec2(0.0, -200.0));
+    }
+    let r = g.find_text("Z step per pass").expect("the fields scroll down to the last row");
+    assert!(window.contains_rect(r), "{r:?} is inside {window:?}");
+    assert_eq!(*g.dialog_windows().last().expect("the editor"), window, "scrolling the fields does not move or resize the window");
+}
+
 // ----- dialogs with a machine connected -----
 
 /// Machine Settings with the settings of a connected (simulated) GRBL machine listed: the window

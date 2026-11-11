@@ -198,11 +198,14 @@ impl Editor {
     }
 
     /// Make an undoable change: `f` changes the document and selection; nothing is recorded
-    /// when it returns false.
+    /// when it returns false, nor when it says it changed something and the document is the one
+    /// it was (the selection `f` made is kept then, and what could be redone still can).
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
         let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision };
         let changed = f(&mut self.doc, &mut self.selection);
-        if changed {
+        if changed && self.doc == before.doc {
+            // Nothing to undo: no step, and the document is no more "changed" than it was.
+        } else if changed {
             self.history.undo.push(before);
             self.history.redo.clear();
             self.revision += 1;
@@ -292,6 +295,31 @@ mod tests {
 
     fn square(x: f64) -> Shape {
         Shape::rect(Rect::new(x, 0.0, x + 10.0, 10.0), 0.0, 0)
+    }
+
+    #[test]
+    fn a_change_that_changes_nothing_is_not_an_undo_step() {
+        // Found by the monkey: commands that report success without changing anything (a 1 x 1
+        // grid array, "move to the lower left" when already there) each left an undo step that
+        // did nothing and marked the document as changed.
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.edit("Move", |d, _| {
+            d.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0)) * d.get(id).unwrap().transform;
+            true
+        });
+        e.undo();
+        e.mark_saved();
+        let steps = e.history.len();
+        let ok = e.edit("Nothing", |_, sel| {
+            sel.set([id]);
+            true
+        });
+        assert!(ok, "the caller still hears that its change went through");
+        assert_eq!(e.history.len(), steps, "no undo step");
+        assert!(!e.is_modified(), "the document is as it was saved");
+        assert_eq!(e.selection.ids(), &[id], "the selection the change made is kept");
+        assert!(e.redo(), "and what could be redone still can");
     }
 
     #[test]

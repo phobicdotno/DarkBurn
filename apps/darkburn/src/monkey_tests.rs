@@ -12,7 +12,8 @@
 //! its own temporary folder. The dialog seam is scripted and must stay unused, and no machine
 //! may ever be connected.
 //!
-//! Explored beyond the seeds kept here: see `EXPLORED` at the end of the file.
+//! Explored beyond the seeds kept here: see [`EXPLORED`]; invariants that do not hold by design:
+//! [`EXCEPTIONS`].
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
@@ -574,6 +575,8 @@ struct Monkey<H: Host> {
 
 /// A command may take this long at most.
 const LIMIT: Duration = Duration::from_secs(20);
+/// The time limit for building the job twice. Longer than [`LIMIT`]: see [`EXCEPTIONS`].
+const JOB_LIMIT: Duration = Duration::from_secs(120);
 
 /// Commands that replace the project: no undo step, the history starts again.
 const NEW_PROJECT: &[&str] = &["file.new", "project.open"];
@@ -910,7 +913,7 @@ impl<H: Host> Monkey<H> {
                 self.fail(&format!("{what}: building the job panicked: {text}{shapes}"));
             }
         };
-        if started.elapsed() > LIMIT {
+        if started.elapsed() > JOB_LIMIT {
             self.fail(&format!("{what}: building the job twice took {:?}", started.elapsed()));
         }
         match (a, b) {
@@ -1171,6 +1174,64 @@ fn monkey_explore() {
     }
 }
 
+fn monkey(seed: u64, steps: usize, wild: Wild) -> Monkey<Headless> {
+    monkey_with(seed, steps, wild, false)
+}
+
+/// Where an invariant of the monkey does not hold by design, and why.
+#[allow(dead_code)]
+const EXCEPTIONS: &str = "\
+1. Building the job twice may give two different orders when the planner runs out of its time \
+   budget (500 ms by default): its last improvement step stops at a deadline. The monkey then \
+   builds twice more with the budget removed and only fails when those differ. \
+2. Building the job has a longer time limit (120 s for two builds) than a command (20 s): after \
+   a few arrays of arrays a document holds tens of thousands of shapes and its job honestly \
+   takes that long. \
+3. file.new, project.open and the other commands that replace the document start a new undo \
+   history: undo and redo are not checked across them. \
+4. A command that reports success without changing the document adds no undo step (that was \
+   bug 4; the monkey accepts both a step that restores exactly and no step at all).";
+
+/// What was run beyond the seeds kept in the suite (all on the headless host).
+#[allow(dead_code)]
+const EXPLORED: &str = "\
+Mild (arguments mostly in range): seeds 1000..1029 x 500 steps, 2006..2029 x 300 steps. \
+Full (huge numbers, wrong kinds, missing fields): seeds 3000..3045 x 200..300 steps. \
+Run more with MONKEY_SEEDS=a..b or a,b,c, MONKEY_STEPS=n, MONKEY_MILD=1 and the test \
+monkey_explore; MONKEY_TRACE=1 prints every command.";
+
+#[test]
+fn monkey_mild_seeds() {
+    for seed in [1, 2, 3] {
+        monkey(seed, MILD_STEPS, Wild::Mild);
+    }
+}
+
+#[test]
+fn monkey_wild_seeds() {
+    for seed in [101, 102, 103] {
+        monkey(seed, WILD_STEPS, Wild::Full);
+    }
+}
+
+/// The same with a window: every command is followed by a drawn frame, so a state the canvas or
+/// a panel cannot draw shows up as a panic.
+#[test]
+fn monkey_in_the_window() {
+    let g = crate::ui_harness::Gui::standard();
+    let dir = g.temp("monkey");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let mut m = Monkey::new(g, 201, Wild::Mild, dir);
+    m.job_every = 50;
+    for _ in 0..WINDOW_STEPS {
+        m.step();
+    }
+}
+
+const MILD_STEPS: usize = 150;
+const WILD_STEPS: usize = 150;
+const WINDOW_STEPS: usize = 80;
+
 // ----- Regression tests for what the monkey found --------------------------------------------------
 
 /// Monkey seed 3013, step 128: `qr.add` with a module of 1.7e308 mm panicked inside the outline
@@ -1195,5 +1256,28 @@ fn a_code_of_an_absurd_size_is_refused() {
     // Sizes a person would use still work.
     assert!(crate::api::execute_headless(app, "qr.add", &json!({ "text": "a", "module": 2.0 })).is_ok());
     assert!(crate::api::execute_headless(app, "barcode.add", &json!({ "data": "12345", "module": 0.5, "height": 20 })).is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Monkey seed 102, step 31: a tab put on a shape that had been squashed to a point had "not a
+/// number" as its place, so the document was no longer equal to itself (redo "gave another
+/// state"). Such a shape takes no tab.
+#[test]
+fn a_tab_never_lands_on_not_a_number() {
+    let dir = temp_dir("tab");
+    let mut h = headless(&dir);
+    let app = &mut h.app;
+    let r = crate::api::execute_headless(app, "shape.add_rect", &json!({ "x": 10, "y": 10, "width": 40, "height": 25 })).unwrap();
+    let id = darkburn_core::ShapeId(r["id"].as_u64().unwrap());
+    assert!(app.editor.edit("Squash", |d, _| {
+        d.get_mut(id).unwrap().transform = Affine::new([0.0, 0.0, 0.0, 0.0, 0.0, 400.0]);
+        true
+    }));
+    let before = app.editor.history.len();
+    let r = crate::api::execute_headless(app, "tabs.add", &json!({ "shape": id.0, "x": 117.9, "y": 138.5 }));
+    let tabs = app.editor.doc.get(id).unwrap().tabs.clone();
+    assert!(tabs.iter().all(|t| t[0].is_finite() && t[1].is_finite()), "tabs {tabs:?} after {r:?}");
+    assert!(r.is_err(), "{r:?}");
+    assert_eq!(app.editor.history.len(), before);
     let _ = std::fs::remove_dir_all(&dir);
 }

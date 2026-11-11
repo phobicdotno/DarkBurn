@@ -33,7 +33,7 @@
 
 DarkBurn is a desktop program for laser cutters and engravers. You draw or import a design, give each layer a mode, a speed and a power, watch the preview, and send the job to the machine.
 
-It is built to a [parity checklist](docs/PARITY-CHECKLIST.md) of what LightBurn 1.4.04 does, 802 items long, and it opens and saves LightBurn projects.
+It is built to a [parity checklist](docs/PARITY-CHECKLIST.md) of 802 items. Most of them are what LightBurn 1.4.04 does; the rest are DarkBurn's own, such as the Gweike M3 Ultra and AI agents. It opens and saves LightBurn projects.
 
 It has built-in machine simulators, so a whole job can be run with no laser attached, and an MCP server, so an AI agent can work the program behind switches that you own.
 
@@ -51,7 +51,7 @@ One line per platform. Each one installs for the current user only, needs no adm
 
 No release has been published yet, so today all three lines build DarkBurn from source. They fetch DarkBurn and SolidCraft (its small UI crates are path dependencies), check that the build tools are there, and run `cargo build --release`. That takes several minutes.
 
-Once a release is out, the Windows line installs its MSI instead of building. The Linux and macOS script looks for a ready-made build too, but the release workflow makes Windows packages only, so there it goes on building from source.
+Once a release is out, the Windows line installs its MSI instead of building. The Linux and macOS script looks for a ready-made build too, but the release workflow makes Windows packages only, so those two go on building from source.
 
 ### Linux
 
@@ -151,10 +151,6 @@ Get-Content -Raw install.ps1 | iex
 
 Both install scripts are new. `install.sh` has been run on Linux from start to finish with only the compile step replaced by a stand-in. `install.ps1` has been read line by line but not yet run in PowerShell. If a one-liner trips, [building from source](#building-from-source) by hand is six commands.
 
-### First start
-
-Start DarkBurn from the applications menu or the Start menu, or run `darkburn`. A fresh install is set to the built-in GRBL simulator, so you can connect and run a job with no laser attached.
-
 <details>
 <summary><b>Installer settings</b></summary>
 
@@ -185,6 +181,10 @@ A release carries two files, built by the release workflow. None has been publis
 - Both hold `darkburn-mcp.exe`, the MCP server for [AI agents](#ai-agents).
 
 </details>
+
+### First start
+
+Start DarkBurn from the applications menu or the Start menu, or run `darkburn`. A fresh install is set to the built-in GRBL simulator, so you can connect and run a job with no laser attached.
 
 ## A look around
 
@@ -240,6 +240,8 @@ Every picture on this page is DarkBurn drawing itself in its headless test harne
 
 Everything in these lists is ticked as done on the [parity checklist](docs/PARITY-CHECKLIST.md). What is partly done or missing is under [What is not there yet](#what-is-not-there-yet). Machine control has run on the built-in simulators only.
 
+The first four groups are shown in full. The rest unfold with a click.
+
 ### Editing and arranging
 
 Node editing, boolean and offset tools, arrays, clean-up, align and distribute.
@@ -253,11 +255,11 @@ Node editing, boolean and offset tools, arrays, clean-up, align and distribute.
 - **Arrange:** align, distribute, make same width or height, dock against neighbours, move to one of 9 page positions, group, flip, mirror across a line, lock.
 - **Cutting order by hand:** choose where each shape starts cutting and which way it runs.
 - **Nest** the selected shapes, or make a rubber-band outline round them.
-- **Clipboard:** undo, redo, cut, copy, paste in place, duplicate. Copy and paste also work between running copies and through the system clipboard.
+- **Undo and clipboard:** undo, redo, cut, copy, paste in place, duplicate. Copy and paste also work between running copies and through the system clipboard.
 
 ### Layers and cut settings
 
-30 colour layers and 2 tool layers, five cut modes, sub-layers, and the settings for line, fill and image work.
+What each layer does to the material: its mode, its speed and power, and everything under them.
 
 - **Layers:** 30 colour layers and 2 tool layers that never output, with a palette button for each. Up to 11 sub-layers per layer, each with its own settings.
 - **Five modes:** Line, Fill, Fill + Line, Offset fill and Image.

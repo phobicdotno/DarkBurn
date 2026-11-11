@@ -864,6 +864,14 @@ impl<H: Host> Monkey<H> {
     }
 
     fn check_job(&mut self, what: &str) {
+        if self.trace {
+            // The document the job is built from, for a closer look when the build takes the
+            // whole process down.
+            let file = self.dir.join("before-job.dbrn");
+            let bytes = self.host.app(|app, _| project::save(&app.editor.doc, "monkey", None)).expect("save");
+            std::fs::write(&file, bytes).expect("write");
+            println!("TRACE seed {} job check ({what}), document in {}", self.seed, file.display());
+        }
         let started = Instant::now();
         let built = catch_unwind(AssertUnwindSafe(|| {
             self.host.app(|app, _| {

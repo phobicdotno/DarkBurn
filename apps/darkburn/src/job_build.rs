@@ -399,6 +399,19 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+/// The most scan lines the fill of one layer may have: 500 m of fill at 0.1 mm, far beyond any
+/// machine. Past it the layer's shapes are left out of the job with a warning.
+pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
+
+/// The finest line interval of the layer's fill settings, or None when it does not fill.
+fn fill_interval(l: &Layer) -> Option<f64> {
+    l.settings
+        .iter()
+        .filter(|s| s.enabled && matches!(s.mode, Mode::Fill | Mode::FillLine | Mode::OffsetFill))
+        .map(|s| s.interval.max(0.001))
+        .min_by(f64::total_cmp)
+}
+
 /// A built job.
 #[derive(Clone, Debug)]
 pub struct BuiltJob {
@@ -728,6 +741,35 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
         }
     }
+    // A fill is scanned line by line across everything on its layer. Shapes scaled up by
+    // accident to kilometres would be more lines than there is memory for, so a layer whose
+    // fill is that large is left out before any of it is worked out.
+    let mut fill_span: Vec<Option<Rect>> = vec![None; layer::LAYER_COUNT];
+    for top in &tops {
+        for leaf in top.leaves() {
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if l.outputs() && !leaf.is_image() && fill_interval(l).is_some() {
+                let b = leaf.bbox();
+                fill_span[li] = Some(fill_span[li].map_or(b, |r| r.union(b)));
+            }
+        }
+    }
+    let mut fill_too_big = [false; layer::LAYER_COUNT];
+    for li in 0..layer::LAYER_COUNT {
+        let (Some(span), Some(interval)) = (fill_span[li], fill_interval(doc.layer(li))) else { continue };
+        let rows = span.width().max(span.height()) / interval;
+        // (A size that is not a number is not let through either.)
+        if rows.is_nan() || rows > MAX_FILL_ROWS {
+            fill_too_big[li] = true;
+            warnings.push(format!(
+                "The shapes on layer {} were left out: the fill would be {:.0} million scan lines (the limit is {:.0} million). Check their size.",
+                layer::layer_label(li),
+                rows / 1e6,
+                MAX_FILL_ROWS / 1e6
+            ));
+        }
+    }
     let mut leaf_no = 0usize;
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
@@ -749,6 +791,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                         None => outline,
                     });
                 }
+                continue;
+            }
+            if fill_too_big[li] && !leaf.is_image() {
                 continue;
             }
             let bbox = leaf.bbox();
@@ -1477,6 +1522,27 @@ mod tests {
         let b = build_job_simple(&input(d)).unwrap();
         let burns = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)).count();
         assert!((9..=11).contains(&burns), "about 10 scan lines: {burns}");
+    }
+
+    #[test]
+    fn a_fill_far_too_big_to_scan_is_left_out_with_a_warning() {
+        // Found by the monkey (seed 2006): shapes scaled up by accident to thousands of
+        // kilometres on a fill layer took all the memory there is and the program with it.
+        let mut d = Document::new();
+        d.layer_mut(2).main_mut().mode = Mode::Fill;
+        d.layer_mut(2).main_mut().interval = 0.1;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 6e7, 6e7), 0.0, 2));
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0));
+        let b = build_job_simple(&input(d.clone())).unwrap();
+        assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("scan lines")), "{:?}", b.warnings);
+        assert!(b.toolpath.ops.len() < 100, "only the small square is cut: {} operations", b.toolpath.ops.len());
+        // A fill that fits a large machine is not touched by the limit.
+        d.layer_mut(2).main_mut().interval = 1.0;
+        let s = d.iter().next().unwrap().id;
+        d.get_mut(s).unwrap().kind = ShapeKind::Rect { width: 3000.0, height: 1500.0, radius: 0.0 };
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!(!b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
+        assert!(b.toolpath.ops.len() > 1500);
     }
 
     #[test]

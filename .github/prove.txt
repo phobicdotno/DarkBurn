@@ -1,1 +1,1 @@
-ci linux  first run on a real runner
+ci windows  first run on a real runner

@@ -139,7 +139,7 @@ fn the_head_is_not_jogged_and_the_fifo_not_cleared_under_a_running_stream() {
     // stopping is never refused, and after it the head may be moved again
     l.write(&command::fifo_stop().unwrap()).unwrap();
     l.write(&command::fifo_clear().unwrap()).unwrap();
-    l.gate.positions_word.insert(1, l.sim.axis_position(1) as i64);
+    l.gate.positions_word.insert(1, l.sim.axis_position(1));
     l.write(&command::jog_step(1, 5.0, &p()).unwrap()).unwrap();
 }
 
@@ -187,7 +187,7 @@ fn a_second_jog_is_not_checked_against_where_the_head_was_before_the_first() {
     l.write(&command::move_axis_absolute(0, 1365.0, &p()).unwrap()).unwrap();
     l.advance(ms(400));
     l.poll_status().unwrap();
-    l.gate.positions_word.insert(0, l.sim.axis_position(0) as i64);
+    l.gate.positions_word.insert(0, l.sim.axis_position(0));
     l.write(&command::jog_step(0, 5.0, &p()).unwrap()).unwrap();
     l.advance(ms(400));
     l.poll_status().unwrap();

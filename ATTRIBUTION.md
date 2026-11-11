@@ -139,9 +139,8 @@ This file is the newer one. Where they differ, this file holds. The known differ
   own. The emulators print the firmware's reply lines. See the first two rows of the same table.
 - `crates/darkburn-ruida/ATTRIBUTION.md` says that only the documentation of jnweiger/ruida-laser
   and LibLaserCut was read. The research notes list a source file of each. See the same table.
-- `crates/darkburn-mcc/ATTRIBUTION.md` gives a folder on the owner's computer in place of the
-  address of phobicMlaserLinux, and says that no file of the control program was opened for the
-  crate. The crate's facts come from the owner's analysis of that program, and the research
+- `crates/darkburn-mcc/ATTRIBUTION.md` says that no file of the control program was opened for
+  the crate. The crate's facts come from the owner's analysis of that program, and the research
   notes record a static inspection of it. See the list above and the Mlaser row of "Read for
   facts only".
 - `crates/darkburn-galvo/ATTRIBUTION.md` calls Balor's licence ambiguous. The paragraph above says

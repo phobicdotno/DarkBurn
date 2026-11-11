@@ -1,5 +1,8 @@
 # darkburn-job attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 No third-party source code is copied or ported into this crate. Everything here was written
 from scratch for DarkBurn.
 

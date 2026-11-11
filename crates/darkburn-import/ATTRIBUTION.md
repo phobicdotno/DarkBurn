@@ -1,5 +1,8 @@
 # darkburn-import attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 `darkburn-import` is part of DarkBurn and licensed MIT OR Apache-2.0. Nothing in it is taken from
 LightBurn: no code, sample files, icons or text. All test fixtures in `tests/data/` were written
 for this crate by `tests/gen_fixtures.py`.

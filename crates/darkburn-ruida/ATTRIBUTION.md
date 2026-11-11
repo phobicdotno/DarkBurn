@@ -1,5 +1,8 @@
 # darkburn-ruida: attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 This crate is written for DarkBurn and licensed MIT OR Apache-2.0. The Ruida protocol is not
 publicly documented by its maker; the facts used here (ports, swizzle maths, checksum, number
 encodings, opcodes and memory addresses) come from the public sources below. Byte values and

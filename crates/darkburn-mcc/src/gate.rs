@@ -388,6 +388,11 @@ impl SafetyGate {
             }
             return Err(GateRefusal::CommLoss);
         }
+        // Everything that moves, fires or switches an output on needs a status the gate has
+        // actually seen, and seen recently: an alarm it never read is an alarm it cannot honour.
+        if !matches!(policy, Policy::Always | Policy::Connect) && !self.comm_ok(now_ms) {
+            return Err(GateRefusal::CommLoss);
+        }
         if w.register() == REG_FIFO_CONTROL && words == [2] && self.card_fifo_has_laser && self.arming.state() != ArmState::LaserArmed {
             return Err(GateRefusal::LaserFramesQueued);
         }
@@ -529,6 +534,8 @@ mod tests {
         assert!(g.check_write(&command::stop_all(0, &MachineParams::default()).unwrap(), 0).is_ok());
         assert!(g.check_write(&command::connect_prologue().unwrap(), 0).is_ok());
         g.arming.arm_motion().unwrap();
+        assert_eq!(g.check_write(&jog(), 0), Err(GateRefusal::CommLoss), "no status seen yet");
+        g.observe_status(0, &status(0, 0, 0, 0));
         assert!(g.check_write(&jog(), 0).is_ok());
         let goto = command::go_to(10.0, 10.0, &MachineParams::default()).unwrap();
         assert_eq!(g.check_write(&goto, 0), Err(GateRefusal::NotHomed));
@@ -541,6 +548,7 @@ mod tests {
         let laser = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
         let mut g = SafetyGate::default();
         g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
         assert!(matches!(g.check_write(&laser, 0), Err(GateRefusal::NeedsArming { policy: Policy::Laser, .. })));
         let t = g.arming.begin_job().unwrap();
         g.arming.arm_laser(true, Some(&t)).unwrap();
@@ -629,6 +637,7 @@ mod tests {
     fn relative_jogs_are_checked_against_the_soft_limits() {
         let mut g = SafetyGate::default();
         g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
         g.homed = true;
         g.positions_word.insert(0, 1_370_000);
         let far = command::jog_step(0, 5.0, &MachineParams::default()).unwrap();

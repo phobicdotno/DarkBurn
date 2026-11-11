@@ -991,9 +991,12 @@ mod tests {
         l.write(&command::home_axis(1).unwrap()).unwrap();
         l.advance(ms(400));
         l.gate.homed = true;
+        // the gate wants a status no older than a second before anything moves
+        l.poll_status().unwrap();
         l.write(&command::go_to(430.178, 174.097, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!((l.sim.axis_position(0), l.sim.axis_position(1)), (430_178, 174_097));
+        l.poll_status().unwrap();
         l.write(&command::move_axis_absolute(0, 100.0, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!(l.sim.axis_position(0), 100_000);

@@ -2,6 +2,7 @@
 
 use darkburn_mcc::command::{self, MachineParams, SafeWrite};
 use darkburn_mcc::gate::GateRefusal;
+use darkburn_mcc::planner::{PathSegment, PlanConfig, dry_run};
 use darkburn_mcc::registers::{BLOCKS, alarm1};
 use darkburn_mcc::sim::{CardSimulator, LinkError, SimConfig, SimLink};
 use std::time::Duration;
@@ -80,4 +81,61 @@ fn a_block_does_not_claim_a_range_that_wraps_past_the_last_register() {
         assert!(!b.contains(b.start, u32::MAX), "{} claims a huge range", b.name);
         assert!(b.contains(b.start, b.count));
     }
+}
+
+/// A four second dry stream, started and running.
+fn running_job(cfg: SimConfig) -> SimLink {
+    let mut l = SimLink::new(CardSimulator::new(cfg));
+    l.gate.arming.arm_motion().unwrap();
+    l.poll_status().unwrap();
+    l.write(&command::fifo_clear().unwrap()).unwrap();
+    let plan = dry_run(&[PathSegment::cut(200.0, 0.0, 50.0)], &PlanConfig::default()).unwrap();
+    let mut feeder = plan.feeder();
+    let st = l.poll_status().unwrap();
+    for (id, frame) in feeder.fill(st.fifo_frame_id(), st.fifo_space_margin(), 50).frames {
+        l.write(&command::fifo_packed_frame(id, &frame).unwrap()).unwrap();
+    }
+    l.write(&command::fifo_start().unwrap()).unwrap();
+    l.advance(ms(100));
+    l.poll_status().unwrap();
+    assert!(l.sim.fifo_running(), "the stream runs");
+    l
+}
+
+#[test]
+fn a_card_that_asks_for_a_restart_stops_the_running_stream() {
+    let mut l = running_job(SimConfig { fifo_starvation_alarm: false, ..SimConfig::default() });
+    l.sim.set_param_status(1);
+    l.poll_status().unwrap();
+    assert!(!l.sim.fifo_running(), "the stream went on with a card that wants a restart");
+    // and it is sent once, not on every poll
+    let sent = l.sim.commands().len();
+    l.advance(ms(100));
+    l.poll_status().unwrap();
+    assert_eq!(l.sim.commands().len(), sent);
+}
+
+#[test]
+fn the_head_is_not_jogged_and_the_fifo_not_cleared_under_a_running_stream() {
+    // A card that does not answer "busy" by itself while it streams: the PC side has to refuse.
+    let mut l = running_job(SimConfig { fifo_starvation_alarm: false, busy_while_streaming: false, ..SimConfig::default() });
+    l.gate.homed = true;
+    let sent = l.sim.commands().len();
+    let depth = l.sim.fifo_depth();
+    for w in [
+        command::jog_step(1, 5.0, &p()).unwrap(),
+        command::jog_continuous(0, true, &p(), None).unwrap(),
+        command::home_axis(0).unwrap(),
+        command::go_to(10.0, 10.0, &p()).unwrap(),
+        command::move_axis_absolute(0, 5.0, &p()).unwrap(),
+        command::fifo_clear().unwrap(),
+    ] {
+        assert_eq!(l.write(&w), Err(LinkError::Refused(GateRefusal::StreamRunning)), "{}", w.name());
+    }
+    assert_eq!(l.sim.commands().len(), sent, "reached the card: {:?}", &l.sim.commands()[sent..]);
+    assert!(l.sim.fifo_running() && l.sim.fifo_depth() == depth, "the queue was thrown away under the running job");
+    // stopping is never refused, and after it the head may be moved again
+    l.write(&command::fifo_stop().unwrap()).unwrap();
+    l.write(&command::fifo_clear().unwrap()).unwrap();
+    l.write(&command::jog_step(1, 5.0, &p()).unwrap()).unwrap();
 }

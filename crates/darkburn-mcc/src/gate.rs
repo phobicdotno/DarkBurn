@@ -207,6 +207,8 @@ pub enum GateRefusal {
     SoftLimit(String),
     /// Streaming refused: the status poll is stale.
     CommLoss,
+    /// A jog, home, go-to or FIFO clear refused: the FIFO stream is running.
+    StreamRunning,
     /// `0x67 <- [2]` refused: frames queued while the laser was armed.
     LaserFramesQueued,
     /// The read is not allowed.
@@ -223,6 +225,7 @@ impl std::fmt::Display for GateRefusal {
             GateRefusal::MachineFault(s) => write!(f, "refused while {s}"),
             GateRefusal::SoftLimit(s) => write!(f, "{s}"),
             GateRefusal::CommLoss => write!(f, "status poll stale: no streaming"),
+            GateRefusal::StreamRunning => write!(f, "a job is streaming: stop it first"),
             GateRefusal::LaserFramesQueued => write!(f, "card FIFO holds frames queued while laser armed: clear it first"),
             GateRefusal::ReadNotAllowed(s) => write!(f, "{s}"),
         }
@@ -343,6 +346,11 @@ impl SafetyGate {
         } else if (a1 != 0 || a2 != 0) && (alarm != self.last_alarm || self.arming.state() != ArmState::Disarmed || self.fifo_running) {
             let why = self.machine_fault.clone().unwrap_or_else(|| "alarm".into());
             self.arming.disarm(&format!("alarm: {why}"));
+            actions.push(GateAction::Stop(why));
+        } else if status.restart_required() && self.fifo_running {
+            // A card that wants a restart is not one to keep streaming to: stop like an alarm.
+            let why = self.machine_fault.clone().unwrap_or_else(|| "card restart required".into());
+            self.arming.disarm(&format!("restart required: {why}"));
             actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;

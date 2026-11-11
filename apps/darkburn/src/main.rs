@@ -116,6 +116,8 @@ mod preview;
 mod races_hunt8_tests;
 
 mod rd_import;
+#[cfg(test)]
+mod readme_shots;
 mod render;
 mod ribbon;
 mod rotary_read;

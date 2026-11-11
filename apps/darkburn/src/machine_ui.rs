@@ -903,6 +903,12 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "machine.get_position" => mach(m.handle.get_position()),
         "machine.fire" => {
+            // The switch in Device Settings hides the button; it also holds the command, which
+            // scripts and agents reach without the button.
+            let d = m.active();
+            if d.family() == Family::Grbl && !d.settings.gcode.fire_button {
+                return Err("The Fire button is switched off for this device. Switch it on in Device Settings first.".into());
+            }
             let percent = num(a, "percent").unwrap_or(m.fire_percent);
             let secs = num(a, "secs").unwrap_or(m.fire_secs);
             mach(m.handle.fire(percent, secs))

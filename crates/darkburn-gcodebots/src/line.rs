@@ -261,6 +261,9 @@ pub struct LineMachine {
     /// Set when a job or frame has been handed to the worker and the snapshot does not show it
     /// yet, so a second start is refused at once.
     starting: Arc<AtomicBool>,
+    /// What `G92` has added to the machine position of a controller that reports one position
+    /// only (see [`Worker::note_origin_shift`]). Zero on all others.
+    origin_shift: Arc<Mutex<[f64; 3]>>,
     cfg: LineConfig,
     worker: Option<JoinHandle<()>>,
 }
@@ -283,9 +286,10 @@ impl LineMachine {
         };
         let shared = Arc::new(Mutex::new(snap.clone()));
         let starting = Arc::new(AtomicBool::new(false));
-        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), starting.clone(), cfg.clone(), snap);
+        let origin_shift = Arc::new(Mutex::new([0.0; 3]));
+        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), starting.clone(), origin_shift.clone(), cfg.clone(), snap);
         let handle = std::thread::Builder::new().name("darkburn-gcode".into()).spawn(move || worker.run()).expect("spawn G-code worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, starting, cfg, worker: Some(handle) }
+        Self { cmds: cmd_tx, events: ev_rx, shared, starting, origin_shift, cfg, worker: Some(handle) }
     }
 
     pub fn config(&self) -> &LineConfig {
@@ -346,6 +350,15 @@ impl LineMachine {
             let e = 1e-6;
             p.x >= t.xy.x0 - e && p.x <= t.xy.x1 + e && p.y >= t.xy.y0 - e && p.y <= t.xy.y1 + e
         })
+    }
+
+    /// Travel check of a point worked out from the reported position. A controller that reports
+    /// one position reports the work position once `G92` has been used (as the emulator does;
+    /// what a given real board does is a hardware check). The point must then lie on the machine
+    /// both as reported and with the `G92` shift added, so the check holds either way.
+    fn on_machine(&self, p: Point) -> bool {
+        let shift = *self.origin_shift.lock().unwrap_or_else(|p| p.into_inner());
+        self.in_travel(p) && ((shift[0] == 0.0 && shift[1] == 0.0) || self.in_travel(Point::new(p.x + shift[0], p.y + shift[1])))
     }
 
     fn lines_of(&self, template: &str, vars: &[(&str, String)]) -> Vec<String> {
@@ -437,7 +450,7 @@ impl GcodeMachine for LineMachine {
         // The frame is in work coordinates: on the machine it lies shifted by the work offset.
         let (ox, oy) = (s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
         for p in points.iter().chain(&opts.return_to) {
-            if !self.in_travel(Point::new(p.x + ox, p.y + oy)) {
+            if !self.on_machine(Point::new(p.x + ox, p.y + oy)) {
                 return Err(MachineError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", p.x, p.y)));
             }
         }
@@ -484,7 +497,7 @@ impl GcodeMachine for LineMachine {
         }
         if self.cfg.travel.is_some() {
             let target = Point::new(s.mpos[0] + step.dx, s.mpos[1] + step.dy);
-            if !self.in_travel(target) {
+            if !self.on_machine(target) {
                 return Err(MachineError::OutOfBounds("the jog goes past the machine's travel".into()));
             }
         }
@@ -514,7 +527,7 @@ impl GcodeMachine for LineMachine {
         // Where the work position lands on the machine: the offset is what the two reported
         // positions differ by.
         let probe = Point::new(probe.x + s.mpos[0] - s.wpos[0], probe.y + s.mpos[1] - s.wpos[1]);
-        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() {
+        if t.coords == darkburn_grbl::Coords::Work && !self.on_machine(probe) && self.cfg.travel.is_some() {
             return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} (machine) is outside the machine", probe.x, probe.y)));
         }
         if t.coords == darkburn_grbl::Coords::Machine && self.cfg.travel.is_some() {
@@ -540,7 +553,7 @@ impl GcodeMachine for LineMachine {
         let s = self.motion_ok()?;
         // Work X0 Y0 on the machine: the work offset is what the two reported positions differ by.
         let origin = Point::new(s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
-        if !self.in_travel(origin) {
+        if !self.on_machine(origin) {
             return Err(MachineError::OutOfBounds(format!("the origin is at X {:.1}, Y {:.1} (machine), outside the machine", origin.x, origin.y)));
         }
         if s.fire_on {
@@ -578,6 +591,10 @@ impl GcodeMachine for LineMachine {
         let lines = render_lines(&self.cfg.commands.set_origin, &[]);
         if lines.is_empty() {
             return Err(MachineError::Unsupported("setting the origin"));
+        }
+        if self.cfg.poll == PollMode::M114 {
+            // The shift is worked out from the last reported position: ask for a fresh one.
+            self.send(Cmd::Line { text: "M114".into(), tag: Tag::Poll })?;
         }
         self.send(Cmd::Lines { lines, tag: Tag::Plain })
     }
@@ -835,6 +852,7 @@ struct Worker {
     outbox: RefCell<Vec<MachineEvent>>,
     shared: Arc<Mutex<MachineSnapshot>>,
     starting: Arc<AtomicBool>,
+    origin_shift: Arc<Mutex<[f64; 3]>>,
     start_seen: bool,
     cfg: LineConfig,
     snap: MachineSnapshot,
@@ -867,6 +885,7 @@ impl Worker {
         events: Sender<MachineEvent>,
         shared: Arc<Mutex<MachineSnapshot>>,
         starting: Arc<AtomicBool>,
+        origin_shift: Arc<Mutex<[f64; 3]>>,
         cfg: LineConfig,
         snap: MachineSnapshot,
     ) -> Self {
@@ -878,6 +897,7 @@ impl Worker {
             outbox: RefCell::new(Vec::new()),
             shared,
             starting,
+            origin_shift,
             start_seen: false,
             phase: Phase::WaitBanner { deadline: now + cfg.banner_wait },
             cfg,
@@ -1292,6 +1312,38 @@ impl Worker {
         self.snap.wpos = pos;
     }
 
+    /// Follows `G92` on a controller that reports one position: from the `G92` on that is the
+    /// work position, and the travel checks need to know by how much the machine position
+    /// differs. Called when the line is acknowledged. `G92.1` ends the shift; homing does not
+    /// (whether a given firmware drops the shift on homing is not known here, and keeping it
+    /// only makes the checks stricter).
+    fn note_origin_shift(&mut self, text: &str) {
+        let Some(words) = parse_words(&strip_comment_simple(text)) else { return };
+        let g = |want: f64| words.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - want).abs() < 1e-9));
+        let mut shift = self.origin_shift.lock().unwrap_or_else(|p| p.into_inner());
+        if g(92.1) {
+            *shift = [0.0; 3];
+            return;
+        }
+        if !g(92.0) {
+            return;
+        }
+        let named = words.iter().any(|(l, _)| matches!(l, 'X' | 'Y' | 'Z'));
+        for (i, axis) in ['X', 'Y', 'Z'].iter().enumerate() {
+            let value = match words.iter().find(|(l, _)| l == axis) {
+                Some((_, v)) => v.parse::<f64>().ok(),
+                None if named => None,
+                None => Some(0.0),
+            };
+            if let Some(v) = value {
+                shift[i] += self.snap.wpos[i] - v;
+                // What the controller reports from here on, until its next report says so itself.
+                self.snap.mpos[i] = v;
+                self.snap.wpos[i] = v;
+            }
+        }
+    }
+
     fn ingest(&mut self, data: &[u8]) {
         for &b in data {
             if b == b'\n' || b == b'\r' {
@@ -1342,6 +1394,8 @@ impl Worker {
         if low == "start" && self.phase == Phase::Ready {
             self.console_in(line);
             self.note("The controller restarted.");
+            // A restarted controller has forgotten its `G92`.
+            *self.origin_shift.lock().unwrap_or_else(|p| p.into_inner()) = [0.0; 3];
             self.inflight.clear();
             self.inflight_bytes = 0;
             self.abort_job("The controller restarted");
@@ -1463,6 +1517,9 @@ impl Worker {
             return;
         };
         self.inflight_bytes = self.inflight_bytes.saturating_sub(sent.len);
+        if error.is_none() && self.cfg.poll == PollMode::M114 {
+            self.note_origin_shift(&sent.text);
+        }
         let err_text = error.clone();
         match sent.tag {
             Tag::Ident => self.finish_identify(),

@@ -7,7 +7,8 @@ use std::time::Duration;
 use darkburn_gcodebots::emu::{EmuConfig, EmuFlavor, LineEmuHandle};
 use darkburn_gcodebots::profile::{DeviceKind, DeviceProfile, TransferMode};
 use darkburn_gcodebots::{GcodeMachine, MachineError, MachineEvent};
-use darkburn_grbl::JogStep;
+use darkburn_grbl::{Coords, FrameOptions, JogStep, MoveTarget};
+use kurbo::Rect;
 
 const T: Duration = Duration::from_secs(8);
 
@@ -33,12 +34,31 @@ fn smoothie() -> (Box<dyn GcodeMachine>, LineEmuHandle) {
     rig(DeviceKind::Smoothie, EmuConfig::new(EmuFlavor::Smoothie))
 }
 
+fn marlin() -> (Box<dyn GcodeMachine>, LineEmuHandle) {
+    rig(DeviceKind::Marlin, EmuConfig::new(EmuFlavor::Marlin))
+}
+
 fn moves_sent(emu: &LineEmuHandle) -> usize {
     emu.with(|e| e.stats().arrived.iter().filter(|l| l.contains("G0") || l.contains("G1")).count())
 }
 
 fn jog(dx: f64) -> JogStep {
     JogStep { dx, dy: 0.0, dz: 0.0, feed: 6000.0 }
+}
+
+/// The head of a Marlin at machine X 100 with the work origin set there. The board reports one
+/// position, and after the `G92` that is the work position: X 0.
+fn marlin_with_origin_at_100() -> (Box<dyn GcodeMachine>, LineEmuHandle) {
+    let (m, emu) = marlin();
+    m.jog(jog(100.0)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 100.0).abs() < 1e-6), "{:?}", m.snapshot());
+    m.set_user_origin().unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.mpos[0].abs() < 1e-6 && s.wpos[0].abs() < 1e-6), "{:?}", m.snapshot());
+    assert!((emu.with(|e| e.machine_position()[0]) - 100.0).abs() < 1e-6);
+    // one more pass of the worker, so the answer to the G92 itself has been read
+    m.request_status().unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    (m, emu)
 }
 
 // ORIGIN
@@ -85,4 +105,52 @@ fn go_to_origin_switches_the_fire_button_off_first() {
         assert!(!m.snapshot().fire_on);
         m.disconnect();
     }
+}
+
+// MARLIN
+#[test]
+fn a_marlin_jog_after_set_origin_does_not_leave_the_machine() {
+    let (m, emu) = marlin_with_origin_at_100();
+    let before = moves_sent(&emu);
+    // Reported X 0 + 250 looks fine; the head is at machine X 100 and would go to 350 of 300.
+    let r = m.jog(jog(250.0));
+    assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(moves_sent(&emu), before);
+    // A jog that stays on the machine still runs.
+    m.jog(jog(150.0)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| (emu.with(|e| e.machine_position()[0]) - 250.0).abs() < 1e-6));
+    m.disconnect();
+}
+
+#[test]
+fn a_marlin_move_frame_and_go_to_origin_after_set_origin_are_checked_on_the_machine() {
+    let (m, emu) = marlin_with_origin_at_100();
+    let before = moves_sent(&emu);
+    let r = m.move_to(MoveTarget { x: Some(250.0), y: None, z: None, coords: Coords::Work, feed: 6000.0 });
+    assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
+    let r = m.frame_rect(Rect::new(0.0, 0.0, 250.0, 10.0), FrameOptions::default());
+    assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(moves_sent(&emu), before);
+    // Inside the machine: work X 150 is machine X 250.
+    m.move_to(MoveTarget { x: Some(150.0), y: None, z: None, coords: Coords::Work, feed: 6000.0 }).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| (emu.with(|e| e.machine_position()[0]) - 250.0).abs() < 1e-6));
+    m.go_to_origin().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| (emu.with(|e| e.machine_position()[0]) - 100.0).abs() < 1e-6));
+    m.disconnect();
+}
+
+#[test]
+fn clearing_the_origin_on_a_marlin_ends_the_shift() {
+    let (m, emu) = marlin_with_origin_at_100();
+    m.clear_user_origin().unwrap();
+    assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 100.0).abs() < 1e-6), "{:?}", m.snapshot());
+    m.request_status().unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    m.jog(jog(150.0)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 250.0).abs() < 1e-6 && (emu.with(|e| e.machine_position()[0]) - 250.0).abs() < 1e-6));
+    let r = m.jog(jog(100.0));
+    assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
+    m.disconnect();
 }

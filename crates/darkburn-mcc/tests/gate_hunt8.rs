@@ -180,3 +180,21 @@ fn a_homed_machine_is_not_jogged_from_a_place_the_gate_does_not_know() {
     l.gate.positions_word.insert(0, 1_370_000);
     l.write(&command::jog_step(0, -5.0, &p()).unwrap()).unwrap();
 }
+
+#[test]
+fn a_second_jog_is_not_checked_against_where_the_head_was_before_the_first() {
+    let mut l = near_the_x_limit();
+    l.write(&command::move_axis_absolute(0, 1365.0, &p()).unwrap()).unwrap();
+    l.advance(ms(400));
+    l.poll_status().unwrap();
+    l.gate.positions_word.insert(0, l.sim.axis_position(0) as i64);
+    l.write(&command::jog_step(0, 5.0, &p()).unwrap()).unwrap();
+    l.advance(ms(400));
+    l.poll_status().unwrap();
+    assert_eq!(l.sim.axis_position(0), 1_370_000);
+    // The gate still held 1365 mm, so 1365 + 5 looked fine again and the card went to 1375.
+    let r = l.write(&command::jog_step(0, 5.0, &p()).unwrap());
+    l.advance(ms(400));
+    assert!(matches!(r, Err(LinkError::Refused(GateRefusal::SoftLimit(_)))), "{r:?}");
+    assert_eq!(l.sim.axis_position(0), 1_370_000);
+}

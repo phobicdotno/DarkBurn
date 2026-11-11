@@ -421,6 +421,16 @@ impl SafetyGate {
     /// Update tracking after the card acknowledged `w`.
     pub fn after_send(&mut self, w: &SafeWrite, now_ms: u64) {
         let words = w.words();
+        // A position read before a move says nothing about where the head is after it.
+        match (w.register(), words.first()) {
+            (REG_COMMAND, Some(&crate::command::CMD_JOG)) => {
+                self.positions_word.remove(&(words.get(1).copied().unwrap_or(0) & 0x7FFF_FFFF));
+            }
+            (REG_COMMAND, Some(&(crate::command::CMD_HOME | crate::command::CMD_GOTO))) | (REG_FIFO_CONTROL, Some(&crate::command::FIFO_START)) => {
+                self.positions_word.clear();
+            }
+            _ => {}
+        }
         match w.register() {
             REG_FIFO_DATA => {
                 if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {

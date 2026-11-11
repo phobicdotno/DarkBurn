@@ -197,12 +197,14 @@ impl Editor {
         self.revision += 1;
     }
 
-    /// Make an undoable change: `f` changes the document and selection; nothing is recorded
+    /// Make an undoable change: `f` changes the document and selection. A change that leaves a
+    /// shape further out than [`MAX_COORD`], or with a position or size that is not a number,
+    /// is not made at all (false comes back, as if `f` had declined). Nothing is recorded
     /// when it returns false, nor when it says it changed something and the document is the one
     /// it was (the selection `f` made is kept then, and what could be redone still can).
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
         let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision };
-        let changed = f(&mut self.doc, &mut self.selection);
+        let changed = f(&mut self.doc, &mut self.selection) && within_reach(&self.doc, &before.doc);
         if changed && self.doc == before.doc {
             // Nothing to undo: no step, and the document is no more "changed" than it was.
         } else if changed {
@@ -287,6 +289,24 @@ impl Editor {
     }
 }
 
+/// The furthest from the origin a shape may reach, mm: a thousand kilometres, far beyond any
+/// machine and well inside the range where the arithmetic still holds. A typing slip or a
+/// script asking for 1e300 is refused instead of putting "infinity" into the job.
+pub const MAX_COORD: f64 = 1e9;
+
+/// Whether every shape that `doc` has and `before` had not (new or changed) lies within
+/// [`MAX_COORD`]. Shapes that were already there are left alone, so a document that came in
+/// with something far out can still be worked on.
+fn within_reach(doc: &Document, before: &Document) -> bool {
+    doc.shapes.iter().enumerate().all(|(i, s)| {
+        if before.shapes.get(i).is_some_and(|b| std::sync::Arc::ptr_eq(b, s)) {
+            return true;
+        }
+        let b = s.bbox();
+        s.transform.as_coeffs().iter().chain(&[b.x0, b.y0, b.x1, b.y1]).all(|c| c.is_finite() && c.abs() <= MAX_COORD)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,6 +340,42 @@ mod tests {
         assert!(!e.is_modified(), "the document is as it was saved");
         assert_eq!(e.selection.ids(), &[id], "the selection the change made is kept");
         assert!(e.redo(), "and what could be redone still can");
+    }
+
+    #[test]
+    fn a_change_that_puts_a_shape_out_of_this_world_is_refused() {
+        // Found by the monkey (seeds 3004, 3007, 3010): a shape placed at -1.7e308 mm had a
+        // bounding box reaching to infinity, and the job got "G0 X-inf".
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        let before = e.doc.clone();
+        for far in [1.7e308, -1e300, 1e13, f64::NAN, f64::INFINITY] {
+            let ok = e.edit("Move", |d, _| {
+                d.get_mut(id).unwrap().transform = kurbo::Affine::translate((far, 0.0));
+                true
+            });
+            assert!(!ok, "{far} was let through");
+            assert_eq!(e.doc, before);
+            assert_eq!(e.history.len(), 0);
+        }
+        let ok = e.edit("Size", |d, _| {
+            d.get_mut(id).unwrap().kind = crate::shape::ShapeKind::Rect { width: 1e300, height: 5.0, radius: 0.0 };
+            true
+        });
+        assert!(!ok, "a size of 1e300 was let through");
+        assert_eq!(e.doc, before);
+        // Anything a machine could ever reach is fine, and so is a shape that was already far
+        // out when the document was opened: other changes still go through.
+        assert!(e.edit("Move", |d, _| {
+            d.get_mut(id).unwrap().transform = kurbo::Affine::translate((5e6, -5e6));
+            true
+        }));
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((1e300, 0.0));
+        let other = e.doc.add(square(20.0));
+        assert!(e.edit("Move", |d, _| {
+            d.get_mut(other).unwrap().transform = kurbo::Affine::translate((1.0, 0.0));
+            true
+        }));
     }
 
     #[test]

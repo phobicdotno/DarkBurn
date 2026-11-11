@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.502 (build 6)
+## v0.0.505 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -86,6 +86,9 @@
 - Fix: Two-Point Rotate / Scale onto one and the same target point no longer shrinks the shape to a dot
 - Fix: Offset with a tolerance below zero no longer takes minutes
 - Fix: A damaged project file with a shape that has no number opens with the shapes numbered again
+- Fix: A job that was paused when the cable dropped no longer shows as paused afterwards
+- Fix: Disconnecting or closing in the middle of a jog now stops the move first
+- Fix: A machine that reports an alarm now always ends the running job, also when its alarm message never arrived
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

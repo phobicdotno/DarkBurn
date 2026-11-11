@@ -1502,6 +1502,7 @@ impl Worker {
         }
         self.fire_until = None;
         self.stop = None;
+        self.snap.paused = false;
         let was_connecting = self.snap.connection == ConnectionState::Connecting;
         self.snap.connection = ConnectionState::Disconnected;
         if was_connecting {
@@ -1514,7 +1515,12 @@ impl Worker {
 
     fn shutdown(&mut self) {
         if self.phase == Phase::Ready {
-            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some();
+            // A jog whose start no status report has shown yet still runs on the controller.
+            let jogging = self.jogging();
+            if jogging && self.stop.is_none() && self.snap.is_v11() {
+                let _ = self.write(&[rt::JOG_CANCEL]);
+            }
+            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some() || jogging;
             if busy && self.stop.is_none() {
                 let _ = self.begin_stop();
             }
@@ -1549,6 +1555,7 @@ impl Worker {
             }
         }
         self.fire_until = None;
+        self.snap.paused = false;
         self.snap.connection = ConnectionState::Disconnected;
         self.emit(Event::Disconnected(None));
         self.publish();
@@ -2269,6 +2276,13 @@ impl Worker {
         }
         if r.state.is_alarm() {
             self.snap.alarm_locked = true;
+            // The `ALARM:` line itself can be lost or never sent; a controller that reports the
+            // alarm state runs nothing, so nothing here may wait to go on once it is cleared.
+            if self.job.is_some() || self.fire_until.is_some() {
+                self.fire_until = None;
+                self.queue.retain(|o| o.origin != Origin::Internal(Tag::Fire));
+                self.abort_job("The machine is in alarm.");
+            }
         } else if r.state != MachineState::Unknown {
             self.snap.alarm_locked = false;
         }

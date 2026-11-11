@@ -1758,6 +1758,8 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::FrameRect(r, f) => {
                 busy(working)?;
+                // Nothing moves the head under a Pulse key the Fire button still holds down.
+                self.release_fire();
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
                 let light = f.laser_percent.is_some();
                 let request = match f.return_to {
@@ -1774,6 +1776,7 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::FrameOutline(mut points, f) => {
                 busy(working)?;
+                self.release_fire();
                 // The frame is a run of rapid moves: one more takes the head back.
                 points.extend(f.return_to);
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
@@ -1785,9 +1788,13 @@ impl DriverAdapter for RuidaAdapter {
                 "the controller's own Frame needs the Ethernet connection. Over USB, use Frame in DarkBurn or the Frame key on the controller."
                     .into(),
             )),
-            C::FrameOnController => self.req(R::FrameOnController, Op::Other("frame")),
+            C::FrameOnController => {
+                self.release_fire();
+                self.req(R::FrameOnController, Op::Other("frame"))
+            }
             C::JogStep(j) => {
                 busy(working)?;
+                self.release_fire();
                 for (axis, d) in [(Axis::X, j.dx), (Axis::Y, j.dy), (Axis::Z, j.dz), (Axis::U, j.du)] {
                     if d != 0.0 {
                         self.req(R::JogStep { axis, distance_mm: d }, Op::Other("jog"))?;
@@ -1797,6 +1804,7 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::JogStart { dir, .. } => {
                 busy(working)?;
+                self.release_fire();
                 for (axis, d) in [Axis::X, Axis::Y, Axis::Z, Axis::U].into_iter().zip(dir) {
                     if d != 0 {
                         self.req(R::JogStart { axis, positive: d > 0 }, Op::Other("jog"))?;
@@ -1813,15 +1821,18 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::Home => {
                 busy(working)?;
+                self.release_fire();
                 self.req(R::Home(ruida::HomeAxes::XY), Op::Other("home"))
             }
             C::Unlock => Ok(()),
             C::GoToOrigin => {
                 busy(working)?;
+                self.release_fire();
                 self.req(R::GoToOrigin, Op::Other("go to origin"))
             }
             C::MoveTo(t) => {
                 busy(working)?;
+                self.release_fire();
                 let cur = self.snap.machine_pos;
                 let to = Point::new(t.x.unwrap_or(cur[0]), t.y.unwrap_or(cur[1]));
                 if t.x.is_some() || t.y.is_some() {

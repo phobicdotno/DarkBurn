@@ -725,3 +725,37 @@ fn a_job_does_not_start_under_a_held_pulse_key() {
     }
     assert!(r.is_err() || !pulse_is_down(&emu), "a job was started with the Pulse key still held down");
 }
+
+/// Pass 8, races: every command that moves the head lets the Pulse key go first, as the G-code
+/// drivers switch their fire button off before a jog, a move or homing.
+#[test]
+fn no_move_runs_under_a_held_pulse_key() {
+    type Move = (&'static str, fn(&mut MachineHandle) -> Result<(), MachineError>);
+    let moves: [Move; 7] = [
+        ("jog step", |h| h.jog_step(JogSpec { dx: 5.0, feed: 3000.0, ..Default::default() })),
+        ("continuous jog", |h| h.jog_start([1, 0, 0, 0], 3000.0)),
+        ("home", |h| h.home()),
+        ("go to origin", |h| h.go_to_origin()),
+        ("move", |h| h.move_to(MoveSpec { x: Some(20.0), y: Some(20.0), feed: 6000.0, ..Default::default() })),
+        ("frame", |h| h.frame_rect(darkburn_core::kurbo::Rect::new(10.0, 10.0, 40.0, 40.0), FrameSpec::default())),
+        ("frame outline", |h| {
+            let p = darkburn_core::kurbo::Point::new;
+            h.frame_outline(vec![p(10.0, 10.0), p(40.0, 10.0), p(40.0, 40.0)], FrameSpec::default())
+        }),
+    ];
+    let mut held = Vec::new();
+    for (name, go) in moves {
+        let (mut h, emu, _server) = firing();
+        let r = go(&mut h);
+        let end = Instant::now() + Duration::from_secs(1);
+        while pulse_is_down(&emu) && Instant::now() < end {
+            h.wait_for(Duration::from_millis(20), |_, _| false);
+        }
+        if r.is_ok() && (pulse_is_down(&emu) || h.snapshot().fire_on) {
+            held.push(name);
+        }
+        let _ = h.jog_stop();
+        h.disconnect();
+    }
+    assert!(held.is_empty(), "the Pulse key stayed down for: {held:?}");
+}

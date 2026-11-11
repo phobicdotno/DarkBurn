@@ -235,3 +235,21 @@ fn the_next_list_of_a_job_is_not_opened_on_an_old_reading_of_the_door() {
     assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobFinished { .. }))), "{:?}", r.events);
     r.emu(|e| assert_eq!(e.emitting_marks(), marks));
 }
+
+#[test]
+fn a_job_that_waits_for_the_foot_switch_does_not_start_on_an_old_press() {
+    let dev = DeviceSettings::default();
+    let mut emu = slow_emu();
+    emu.set_input_bit(15, false); // pressed while connecting (active low)
+    let mut r = rig_with(dev.clone(), emu, no_routine_poll());
+    assert!(r.m.snapshot().inputs.foot_pressed);
+    r.emu(|e| e.set_input_bit(15, true)); // let go before the job is started
+    r.m.arm().unwrap();
+    r.m.start_job(small_job(&dev), StartOptions { wait_for_foot: true, ..Default::default() }).unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::WaitingForFoot))), "{:?}", r.events);
+    r.settle();
+    r.emu(|e| assert!(!e.ever_emitted() && !e.mo_open(), "the job started on a press from before it was asked to wait"));
+    assert_eq!(r.m.snapshot().activity, Activity::WaitingFoot);
+    r.m.stop().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))));
+}

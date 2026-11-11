@@ -1140,6 +1140,9 @@ impl Worker {
                 let first = matches!(j.phase, Phase::WaitFootFirst);
                 if !j.announced_wait {
                     j.announced_wait = true;
+                    // A press from before the wait began does not count: read the switch now.
+                    let inputs = self.link.inputs()?;
+                    self.sh.update(|s| s.inputs = inputs);
                     self.sh.update(|s| s.activity = Activity::WaitingFoot);
                     self.sh.emit(Event::WaitingForFoot);
                 }

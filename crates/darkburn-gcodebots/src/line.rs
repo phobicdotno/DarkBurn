@@ -424,7 +424,7 @@ impl GcodeMachine for LineMachine {
     }
 
     fn frame_outline(&self, points: &[Point], opts: FrameOptions) -> Result<(), MachineError> {
-        self.motion_ok()?;
+        let s = self.motion_ok()?;
         if points.is_empty() {
             return Err(MachineError::InvalidArgument("Nothing to frame.".into()));
         }
@@ -434,8 +434,10 @@ impl GcodeMachine for LineMachine {
         if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
             return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
+        // The frame is in work coordinates: on the machine it lies shifted by the work offset.
+        let (ox, oy) = (s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
         for p in points.iter().chain(&opts.return_to) {
-            if !self.in_travel(*p) {
+            if !self.in_travel(Point::new(p.x + ox, p.y + oy)) {
                 return Err(MachineError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", p.x, p.y)));
             }
         }
@@ -509,8 +511,17 @@ impl GcodeMachine for LineMachine {
         }
         let cur = s.wpos;
         let probe = Point::new(t.x.unwrap_or(cur[0]), t.y.unwrap_or(cur[1]));
-        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() && s.mpos == s.wpos {
-            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", probe.x, probe.y)));
+        // Where the work position lands on the machine: the offset is what the two reported
+        // positions differ by.
+        let probe = Point::new(probe.x + s.mpos[0] - s.wpos[0], probe.y + s.mpos[1] - s.wpos[1]);
+        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() {
+            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} (machine) is outside the machine", probe.x, probe.y)));
+        }
+        if t.coords == darkburn_grbl::Coords::Machine && self.cfg.travel.is_some() {
+            let m = Point::new(t.x.unwrap_or(s.mpos[0]), t.y.unwrap_or(s.mpos[1]));
+            if !self.in_travel(m) {
+                return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", m.x, m.y)));
+            }
         }
         let mut axes = String::new();
         for (l, v) in [('X', t.x), ('Y', t.y), ('Z', t.z)] {

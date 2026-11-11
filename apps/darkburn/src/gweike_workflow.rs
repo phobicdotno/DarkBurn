@@ -348,7 +348,16 @@ pub fn plan(doc: &Document, s: &GweikeSettings, bed: (f64, f64)) -> Result<(mcc:
     if segs.is_empty() {
         return Err("There is nothing to plan: no shapes on layers that cut.".into());
     }
-    let p = mcc::dry_run(&segs, &plan_config(s, bed)).map_err(|e| e.to_string())?;
+    plan_path(&segs, s, bed)
+}
+
+fn plan_path(segs: &[mcc::PathSegment], s: &GweikeSettings, bed: (f64, f64)) -> Result<(mcc::DryRunPlan, PlanSummary), String> {
+    // The same ceiling the card gate holds jogs and go-tos to.
+    let max_acc = f64::from(mcc::SafetyConfig::default().max_acc);
+    if s.accel_mm_s2.is_nan() || s.accel_mm_s2 > max_acc {
+        return Err(format!("The acceleration in the device settings ({} mm/s2) is above what the machine allows ({max_acc} mm/s2).", s.accel_mm_s2));
+    }
+    let p = mcc::dry_run(segs, &plan_config(s, bed)).map_err(|e| e.to_string())?;
     let sum = PlanSummary {
         ticks: p.tick_count,
         frames: p.frames.len(),
@@ -378,8 +387,20 @@ pub struct CardReport {
 /// Stream a plan into the in-memory card (`CardSimulator` behind the safety gate) and run it.
 /// Everything stays in this process: the "card" is a struct, not a device.
 pub fn run_on_card_simulator(plan: &mcc::DryRunPlan) -> Result<CardReport, String> {
-    use mcc::command;
     let mut link = mcc::SimLink::new(mcc::CardSimulator::new(mcc::SimConfig { fifo_starvation_alarm: false, ..mcc::SimConfig::default() }));
+    run_plan_on(&mut link, plan, 200_000)
+}
+
+/// Run `plan` on `link`, giving it at most `max_steps` quarter seconds of card time.
+/// However the run ends, the card is left stopped: the stop sequence goes out last.
+fn run_plan_on(link: &mut mcc::SimLink, plan: &mcc::DryRunPlan, max_steps: usize) -> Result<CardReport, String> {
+    let r = stream_plan_on(link, plan, max_steps);
+    link.stop_sequence(false);
+    r
+}
+
+fn stream_plan_on(link: &mut mcc::SimLink, plan: &mcc::DryRunPlan, max_steps: usize) -> Result<CardReport, String> {
+    use mcc::command;
     link.gate.arming.arm_motion().map_err(|e| format!("{e:?}"))?;
     let lerr = |e: mcc::sim::LinkError| format!("{e:?}");
     link.poll_status().map_err(lerr)?;
@@ -388,7 +409,8 @@ pub fn run_on_card_simulator(plan: &mcc::DryRunPlan) -> Result<CardReport, Strin
     let mut started = false;
     let mut elapsed = Duration::ZERO;
     let step = Duration::from_millis(250);
-    for _ in 0..200_000 {
+    let mut finished = false;
+    for _ in 0..max_steps {
         let st = link.poll_status().map_err(lerr)?;
         let r = feeder.fill(st.fifo_frame_id(), st.fifo_space_margin(), 50);
         for (id, frame) in r.frames {
@@ -399,10 +421,14 @@ pub fn run_on_card_simulator(plan: &mcc::DryRunPlan) -> Result<CardReport, Strin
             started = true;
         }
         if feeder.pending() == 0 && !link.sim.fifo_running() {
+            finished = true;
             break;
         }
         link.advance(step);
         elapsed += step;
+    }
+    if !finished {
+        return Err(format!("the simulated card was still running after {:.0} s of card time; stopped", elapsed.as_secs_f64()));
     }
     Ok(CardReport {
         frames_accepted: link.sim.frames_accepted(),
@@ -413,4 +439,44 @@ pub fn run_on_card_simulator(plan: &mcc::DryRunPlan) -> Result<CardReport, Strin
         laser_refusals: link.sim.laser_refusals(),
         sim_seconds: elapsed.as_secs_f64(),
     })
+}
+
+#[cfg(test)]
+mod hunt8_tests {
+    use super::*;
+
+    fn sim_link() -> mcc::SimLink {
+        mcc::SimLink::new(mcc::CardSimulator::new(mcc::SimConfig { fifo_starvation_alarm: false, ..mcc::SimConfig::default() }))
+    }
+
+    #[test]
+    fn a_simulated_run_that_runs_out_of_time_says_so_and_stops_the_card() {
+        // 200 mm at 50 mm/s is four seconds of card time; the run gets one.
+        let plan = mcc::dry_run(&[mcc::PathSegment::cut(200.0, 0.0, 50.0)], &mcc::PlanConfig::default()).unwrap();
+        let mut link = sim_link();
+        let r = run_plan_on(&mut link, &plan, 4);
+        assert!(r.is_err(), "reported as a finished run: {r:?}");
+        assert!(!link.sim.fifo_running(), "the stream was left running");
+        // with enough time the same plan finishes and is reported
+        let mut link = sim_link();
+        let done = run_plan_on(&mut link, &plan, 200_000).unwrap();
+        assert!(done.ticks_consumed > 0 && done.sim_seconds < 10.0, "{done:?}");
+        assert!(!link.sim.fifo_running());
+        assert_eq!(link.sim.outputs(), 0);
+    }
+
+    #[test]
+    fn a_plan_does_not_accelerate_harder_than_the_machine_allows() {
+        // The card's ceiling is 20000 mm/s2 (jogs and go-tos are held to it). A device file with
+        // a larger value planned a stream that jumps to full speed in one tick.
+        let segs = [mcc::PathSegment::cut(200.0, 0.0, 500.0)];
+        let bed = (1300.0, 900.0);
+        for accel in [20_000.1, 1.0e6, f64::INFINITY] {
+            let s = GweikeSettings { accel_mm_s2: accel, ..GweikeSettings::default() };
+            assert!(plan_path(&segs, &s, bed).is_err(), "planned with {accel} mm/s2");
+        }
+        let s = GweikeSettings { accel_mm_s2: 20_000.0, ..GweikeSettings::default() };
+        plan_path(&segs, &s, bed).unwrap();
+        plan_path(&segs, &GweikeSettings::default(), bed).unwrap();
+    }
 }

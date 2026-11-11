@@ -492,11 +492,22 @@ fn galvo_start(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
     crate::machine_ext::galvo_start(app, send)
 }
 
+/// "Hide Start (run from the controller)" in Device Settings holds every way to start, not
+/// only the button: the shortcut, the menu and the command. Sending the file stays allowed.
+fn start_switch_ok(app: &DarkBurn, action: &Action) -> Result<(), String> {
+    let dev = app.machine.active();
+    if matches!(action, Action::Start { .. }) && dev.family() == Family::Ruida && dev.settings.dsp.disable_start {
+        return Err("Start is off for this device. Send the job and start it from the controller.".into());
+    }
+    Ok(())
+}
+
 /// Window flow: build in the background, then act (progress and cancel come with the build).
 pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
     if !app.machine.handle.is_connected() {
         return Err("The laser is not connected. Press Connect in the Laser panel first.".into());
     }
+    start_switch_ok(app, &action)?;
     if app.machine.handle.snapshot().family == Family::Galvo {
         return galvo_start(app, action);
     }
@@ -507,6 +518,7 @@ pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> 
 /// Headless flow: build now and act.
 pub fn start_now(app: &mut DarkBurn, action: Action, allow_out_of_bounds: bool) -> Result<Value, String> {
     need_connection(app)?;
+    start_switch_ok(app, &action)?;
     if app.machine.handle.snapshot().family == Family::Galvo {
         return galvo_start(app, action);
     }

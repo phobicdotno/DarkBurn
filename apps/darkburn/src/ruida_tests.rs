@@ -672,3 +672,56 @@ fn trocen_and_topwisdom_are_refused_with_a_clear_reason() {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ----- Bug hunt, pass 8: the Fire button holds the controller's Pulse key down ------------------
+
+/// The last thing the controller heard about its Pulse key: down?
+fn pulse_is_down(emu: &Emu) -> bool {
+    let e = emu.lock().unwrap();
+    let last = e
+        .panel_received
+        .iter()
+        .rev()
+        .find(|c| matches!(c, ruida::PanelCommand::KeyDown(ruida::PanelKey::Pulse) | ruida::PanelCommand::KeyUp(ruida::PanelKey::Pulse)));
+    matches!(last, Some(ruida::PanelCommand::KeyDown(_)))
+}
+
+fn firing() -> (MachineHandle, Emu, ruida::UdpEmulatorServer) {
+    let emu = emulator(Default::default());
+    let server = ruida::UdpEmulatorServer::start(emu.clone()).expect("two loopback sockets");
+    let mut h = MachineHandle::new();
+    attach(&mut h, Box::new(server.transport().unwrap()), &emu);
+    h.fire(5.0, 9.0).unwrap();
+    assert!(h.wait_for(T, |_, _| pulse_is_down(&emu)), "the Pulse key went down");
+    (h, emu, server)
+}
+
+#[test]
+fn disconnecting_while_firing_lets_the_pulse_key_go() {
+    let (mut h, emu, _server) = firing();
+    h.disconnect();
+    assert!(!pulse_is_down(&emu), "the controller was left with its Pulse key held down");
+}
+
+#[test]
+fn stop_while_firing_lets_the_pulse_key_go() {
+    let (mut h, emu, _server) = firing();
+    h.stop().unwrap();
+    let end = Instant::now() + Duration::from_secs(2);
+    while pulse_is_down(&emu) && Instant::now() < end {
+        h.wait_for(Duration::from_millis(20), |_, _| false);
+    }
+    assert!(!pulse_is_down(&emu), "Stop left the Pulse key held down");
+    assert!(!h.snapshot().fire_on);
+}
+
+#[test]
+fn a_job_does_not_start_under_a_held_pulse_key() {
+    let (mut h, emu, _server) = firing();
+    let r = h.start_job(simulator_square(Family::Ruida, 30.0));
+    let end = Instant::now() + Duration::from_secs(2);
+    while pulse_is_down(&emu) && Instant::now() < end {
+        h.wait_for(Duration::from_millis(20), |_, _| false);
+    }
+    assert!(r.is_err() || !pulse_is_down(&emu), "a job was started with the Pulse key still held down");
+}

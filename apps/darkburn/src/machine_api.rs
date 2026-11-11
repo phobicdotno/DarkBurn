@@ -1450,6 +1450,14 @@ impl RuidaAdapter {
         }
     }
 
+    /// Let the controller's Pulse key go if the Fire button holds it down.
+    fn release_fire(&mut self) {
+        if self.fire.take().is_some() {
+            let _ = self.h.request(ruida::Request::PanelKey { key: ruida::PanelKey::Pulse, down: false });
+        }
+        self.snap.fire_on = false;
+    }
+
     fn req(&mut self, r: ruida::Request, op: Op) -> Result<(), MachineError> {
         if self.closed || !matches!(self.snap.link, LinkState::Connected) {
             return Err(MachineError::NotConnected);
@@ -1714,6 +1722,8 @@ impl DriverAdapter for RuidaAdapter {
                         b.x0, b.x1, b.y0, b.y1
                     )));
                 }
+                // Never a job under a Pulse key the Fire button still holds down.
+                self.release_fire();
                 self.job_estimated = req.estimated;
                 self.job_name = req.name.clone();
                 let options = ruida::SendOptions { auto_increment: req.auto_increment_name, start_immediately: req.start_immediately };
@@ -1740,6 +1750,7 @@ impl DriverAdapter for RuidaAdapter {
                 let had_job = self.job_started.take().is_some() || working;
                 self.framing_until = None;
                 self.snap.job = None;
+                self.release_fire();
                 if had_job {
                     self.out.push(MachineEvent::JobAborted("stopped".into()));
                 }
@@ -1868,6 +1879,7 @@ impl DriverAdapter for RuidaAdapter {
             C::ListFiles => self.req(R::ListFiles, Op::Other("list")),
             C::RunFile(i) => {
                 busy(working)?;
+                self.release_fire();
                 self.job_started = Some(Instant::now());
                 self.saw_running = false;
                 self.out.push(MachineEvent::JobStarted);
@@ -1901,7 +1913,10 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
-            C::EmergencyStop => self.req(R::Stop, Op::Other("stop")),
+            C::EmergencyStop => {
+                self.release_fire();
+                self.req(R::Stop, Op::Other("stop"))
+            }
             C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
                 Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
             }
@@ -1917,6 +1932,7 @@ impl DriverAdapter for RuidaAdapter {
         }
         self.closed = true;
         if self.snap.connected() {
+            self.release_fire();
             let _ = self.h.request(ruida::Request::Stop);
             let _ = self.h.request(ruida::Request::Disconnect);
         }

@@ -800,3 +800,54 @@ fn the_finish_position_is_kept_with_its_device() {
     machine_ui::adopt_device_state(&mut b);
     assert_eq!(b.machine.jog.finish, Some((120.0, 45.5)), "the finish position was forgotten at exit");
 }
+
+// ----- eighth bug hunt: the gates in front of the machine -----
+
+#[test]
+fn the_fire_command_obeys_the_fire_button_switch_in_device_settings() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    // "Fire button" off in Device Settings: the button is hidden, and the command behind it
+    // (which a script or an agent can call too) must not fire either.
+    a.machine.devices.active_mut().unwrap().settings.gcode.fire_button = false;
+    let r = run(&mut a, "machine.fire", json!({ "percent": 1.0, "secs": 1.0 }));
+    let end = Instant::now() + Duration::from_millis(400);
+    let mut fired = false;
+    while Instant::now() < end {
+        a.machine.tick();
+        fired |= a.machine.handle.snapshot().fire_on;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(r.is_err() && !fired, "fired with the switch off: {r:?}, laser on {fired}");
+    // switching off is never refused, and with the switch on it fires as before
+    run(&mut a, "machine.fire_off", json!({})).unwrap();
+    a.machine.devices.active_mut().unwrap().settings.gcode.fire_button = true;
+    run(&mut a, "machine.fire", json!({ "percent": 1.0, "secs": 1.0 })).unwrap();
+    wait(&mut a, "fire on", |a| a.machine.handle.snapshot().fire_on);
+    run(&mut a, "machine.fire_off", json!({})).unwrap();
+    wait(&mut a, "fire off", |a| !a.machine.handle.snapshot().fire_on);
+}
+
+#[test]
+fn start_is_refused_everywhere_when_the_device_says_start_is_off() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorRuida);
+    draw_square(&mut a);
+    // "Hide Start (run from the controller)": the panel says "Start is off for this device",
+    // but Alt+S, the menu and the command still ran the job.
+    a.machine.devices.active_mut().unwrap().settings.dsp.disable_start = true;
+    let api = run(&mut a, "machine.start", json!({}));
+    let ui = machine_ui::dispatch(&mut a, "job.start", &json!({}), Source::Ui).unwrap();
+    let end = Instant::now() + Duration::from_millis(500);
+    let mut ran = false;
+    while Instant::now() < end {
+        a.machine.tick();
+        ran |= a.machine.handle.snapshot().job.is_some() || state(&a) == LaserState::Busy;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(api.is_err() && ui.is_err() && !ran, "started with Start off: {api:?} {ui:?} ran {ran}");
+    // with the switch off again it starts as before
+    a.machine.devices.active_mut().unwrap().settings.dsp.disable_start = false;
+    run(&mut a, "machine.start", json!({})).unwrap();
+    wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+}

@@ -84,7 +84,7 @@ impl FifoItem {
         FifoItem { opcode: OP_BOUNDARY, payload: vec![] }
     }
 
-    /// A mode record.
+    /// A mode record. Only 4 and 5 pass the frame check; any other value is refused there.
     pub fn mode(mode: u32) -> FifoItem {
         FifoItem { opcode: OP_MODE, payload: vec![mode] }
     }
@@ -225,6 +225,10 @@ pub fn classify_frame(frame: &FifoFrame) -> Result<Policy, Forbidden> {
                 }
                 _ => return Err(Forbidden::FifoFrame(format!("9999 sub-record {sub} not allowed"))),
             }
+        }
+        // A mode record carries one word, and only the two values seen in a stream.
+        if item.opcode == OP_MODE && !matches!(item.payload[..], [4] | [5]) {
+            return Err(Forbidden::FifoFrame(format!("mode record {:?} not allowed (only 4 and 5)", item.payload)));
         }
         // Follower moves, follow and pierce records (103..=109, 118) and 2001 belong to the
         // vendor's height-follower and pierce logic. Like laser data they decode, so a simulator

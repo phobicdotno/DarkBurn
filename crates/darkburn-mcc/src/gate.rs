@@ -207,6 +207,8 @@ pub enum GateRefusal {
     SoftLimit(String),
     /// Streaming refused: the status poll is stale.
     CommLoss,
+    /// A jog, home, go-to or FIFO clear refused: the FIFO stream is running.
+    StreamRunning,
     /// `0x67 <- [2]` refused: frames queued while the laser was armed.
     LaserFramesQueued,
     /// The read is not allowed.
@@ -223,6 +225,7 @@ impl std::fmt::Display for GateRefusal {
             GateRefusal::MachineFault(s) => write!(f, "refused while {s}"),
             GateRefusal::SoftLimit(s) => write!(f, "{s}"),
             GateRefusal::CommLoss => write!(f, "status poll stale: no streaming"),
+            GateRefusal::StreamRunning => write!(f, "a job is streaming: stop it first"),
             GateRefusal::LaserFramesQueued => write!(f, "card FIFO holds frames queued while laser armed: clear it first"),
             GateRefusal::ReadNotAllowed(s) => write!(f, "{s}"),
         }
@@ -344,6 +347,11 @@ impl SafetyGate {
             let why = self.machine_fault.clone().unwrap_or_else(|| "alarm".into());
             self.arming.disarm(&format!("alarm: {why}"));
             actions.push(GateAction::Stop(why));
+        } else if status.restart_required() && self.fifo_running {
+            // A card that wants a restart is not one to keep streaming to: stop like an alarm.
+            let why = self.machine_fault.clone().unwrap_or_else(|| "card restart required".into());
+            self.arming.disarm(&format!("restart required: {why}"));
+            actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;
         actions
@@ -368,11 +376,22 @@ impl SafetyGate {
             return Err(GateRefusal::MachineFault(f.clone()));
         }
         let words = w.words();
+        // While the card runs the FIFO, the head belongs to the stream: no jog, home or go-to,
+        // and the queue is not thrown away under it. Stops stay `Always` and pass.
+        let moves_the_head = w.register() == REG_COMMAND
+            && matches!(words.first(), Some(&(crate::command::CMD_HOME | crate::command::CMD_JOG | crate::command::CMD_GOTO)));
+        let clears_the_queue = w.register() == REG_FIFO_CONTROL && words == [crate::command::FIFO_CLEAR];
+        if self.fifo_running && (moves_the_head || clears_the_queue) {
+            return Err(GateRefusal::StreamRunning);
+        }
         if w.register() == REG_COMMAND && words.len() == 6 && words[0] == 3 && words[1] & 0x8000_0000 == 0 {
             let idx = words[1];
-            if self.homed
-                && let Some(&pos) = self.positions_word.get(&idx)
-            {
+            if self.homed {
+                // Homed means the soft limits apply. A relative jog from a place the gate does
+                // not know cannot be checked against them, so it does not go out.
+                let Some(&pos) = self.positions_word.get(&idx) else {
+                    return Err(GateRefusal::SoftLimit(format!("position of axis {idx} unknown: relative jog cannot be checked")));
+                };
                 let target = pos + words[5] as i32 as i64;
                 if let Some(&(lo, hi)) = self.config.safety.soft_limits_word.get(idx as usize)
                     && (target < lo || target > hi)
@@ -388,6 +407,11 @@ impl SafetyGate {
             }
             return Err(GateRefusal::CommLoss);
         }
+        // Everything that moves, fires or switches an output on needs a status the gate has
+        // actually seen, and seen recently: an alarm it never read is an alarm it cannot honour.
+        if !matches!(policy, Policy::Always | Policy::Connect) && !self.comm_ok(now_ms) {
+            return Err(GateRefusal::CommLoss);
+        }
         if w.register() == REG_FIFO_CONTROL && words == [2] && self.card_fifo_has_laser && self.arming.state() != ArmState::LaserArmed {
             return Err(GateRefusal::LaserFramesQueued);
         }
@@ -397,6 +421,16 @@ impl SafetyGate {
     /// Update tracking after the card acknowledged `w`.
     pub fn after_send(&mut self, w: &SafeWrite, now_ms: u64) {
         let words = w.words();
+        // A position read before a move says nothing about where the head is after it.
+        match (w.register(), words.first()) {
+            (REG_COMMAND, Some(&crate::command::CMD_JOG)) => {
+                self.positions_word.remove(&(words.get(1).copied().unwrap_or(0) & 0x7FFF_FFFF));
+            }
+            (REG_COMMAND, Some(&(crate::command::CMD_HOME | crate::command::CMD_GOTO))) | (REG_FIFO_CONTROL, Some(&crate::command::FIFO_START)) => {
+                self.positions_word.clear();
+            }
+            _ => {}
+        }
         match w.register() {
             REG_FIFO_DATA => {
                 if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
@@ -529,6 +563,8 @@ mod tests {
         assert!(g.check_write(&command::stop_all(0, &MachineParams::default()).unwrap(), 0).is_ok());
         assert!(g.check_write(&command::connect_prologue().unwrap(), 0).is_ok());
         g.arming.arm_motion().unwrap();
+        assert_eq!(g.check_write(&jog(), 0), Err(GateRefusal::CommLoss), "no status seen yet");
+        g.observe_status(0, &status(0, 0, 0, 0));
         assert!(g.check_write(&jog(), 0).is_ok());
         let goto = command::go_to(10.0, 10.0, &MachineParams::default()).unwrap();
         assert_eq!(g.check_write(&goto, 0), Err(GateRefusal::NotHomed));
@@ -541,6 +577,7 @@ mod tests {
         let laser = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
         let mut g = SafetyGate::default();
         g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
         assert!(matches!(g.check_write(&laser, 0), Err(GateRefusal::NeedsArming { policy: Policy::Laser, .. })));
         let t = g.arming.begin_job().unwrap();
         g.arming.arm_laser(true, Some(&t)).unwrap();
@@ -629,6 +666,7 @@ mod tests {
     fn relative_jogs_are_checked_against_the_soft_limits() {
         let mut g = SafetyGate::default();
         g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
         g.homed = true;
         g.positions_word.insert(0, 1_370_000);
         let far = command::jog_step(0, 5.0, &MachineParams::default()).unwrap();

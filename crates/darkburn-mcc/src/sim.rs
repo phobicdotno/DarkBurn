@@ -991,9 +991,12 @@ mod tests {
         l.write(&command::home_axis(1).unwrap()).unwrap();
         l.advance(ms(400));
         l.gate.homed = true;
+        // the gate wants a status no older than a second before anything moves
+        l.poll_status().unwrap();
         l.write(&command::go_to(430.178, 174.097, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!((l.sim.axis_position(0), l.sim.axis_position(1)), (430_178, 174_097));
+        l.poll_status().unwrap();
         l.write(&command::move_axis_absolute(0, 100.0, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!(l.sim.axis_position(0), 100_000);
@@ -1065,8 +1068,12 @@ mod tests {
         assert_eq!(l.sim.ticks_consumed(), 100);
         assert_eq!(l.sim.pulse_position(), (200, -100));
         assert_eq!(l.sim.fifo_depth(), 150);
-        // and the busy rule while streaming
+        // the gate keeps a jog away from a running stream
+        assert_eq!(l.write(&command::jog_step(0, 1.0, &p()).unwrap()), Err(LinkError::Refused(GateRefusal::StreamRunning)));
+        // and the card's own busy rule while streaming, with the gate looking away
+        l.gate.fifo_running = false;
         assert_eq!(l.write(&command::jog_step(0, 1.0, &p()).unwrap()), Err(LinkError::Card { func: 0x40, code: EXC_BUSY }));
+        l.gate.fifo_running = true;
         l.advance(Duration::from_micros(250 * 200));
         assert_eq!(l.sim.ticks_consumed(), 250);
         assert_eq!(l.sim.pulse_position(), (500, -250));

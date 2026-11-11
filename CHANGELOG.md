@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.466 (build 6)
+## v0.0.474 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -50,6 +50,14 @@
 - Fix: A galvo job now says so when shapes on an Image layer are left out
 - Fix: A red-light frame that was nudged or scaled no longer counts as framing the job when framing is required
 - Fix: The saved preview image shows crossing burns the same way the preview window does
+- Fix: A simulated Gweike run that does not finish in time now says so instead of looking done
+- Fix: A Gweike plan no longer accepts an acceleration above what the machine allows
+- Fix: With the Fire button switched off in Device Settings, the fire command no longer fires either
+- Fix: "Hide Start" for a DSP device now also holds the Start shortcut and menu, not only the button
+- Fix: A move typed in machine coordinates is refused when it lies outside the machine (Smoothieware)
+- Fix: With a work origin set, a move to a position is still checked against the machine (Marlin, Smoothieware and custom devices)
+- Fix: With a work origin set, a frame is still checked against the machine (Marlin, Smoothieware and custom devices)
+- Fix: Disconnecting or pressing Stop while the Fire button is on now switches the laser off on a Ruida controller, and a job no longer starts with it still on
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

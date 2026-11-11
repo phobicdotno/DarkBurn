@@ -678,9 +678,11 @@ fn trocen_and_topwisdom_are_refused_with_a_clear_reason() {
 /// The last thing the controller heard about its Pulse key: down?
 fn pulse_is_down(emu: &Emu) -> bool {
     let e = emu.lock().unwrap();
-    let last = e.panel_received.iter().rev().find(|c| {
-        matches!(c, ruida::PanelCommand::KeyDown(ruida::PanelKey::Pulse) | ruida::PanelCommand::KeyUp(ruida::PanelKey::Pulse))
-    });
+    let last = e
+        .panel_received
+        .iter()
+        .rev()
+        .find(|c| matches!(c, ruida::PanelCommand::KeyDown(ruida::PanelKey::Pulse) | ruida::PanelCommand::KeyUp(ruida::PanelKey::Pulse)));
     matches!(last, Some(ruida::PanelCommand::KeyDown(_)))
 }
 

@@ -386,9 +386,12 @@ impl SafetyGate {
         }
         if w.register() == REG_COMMAND && words.len() == 6 && words[0] == 3 && words[1] & 0x8000_0000 == 0 {
             let idx = words[1];
-            if self.homed
-                && let Some(&pos) = self.positions_word.get(&idx)
-            {
+            if self.homed {
+                // Homed means the soft limits apply. A relative jog from a place the gate does
+                // not know cannot be checked against them, so it does not go out.
+                let Some(&pos) = self.positions_word.get(&idx) else {
+                    return Err(GateRefusal::SoftLimit(format!("position of axis {idx} unknown: relative jog cannot be checked")));
+                };
                 let target = pos + words[5] as i32 as i64;
                 if let Some(&(lo, hi)) = self.config.safety.soft_limits_word.get(idx as usize)
                     && (target < lo || target > hi)

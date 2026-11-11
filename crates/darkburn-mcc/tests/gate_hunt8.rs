@@ -61,6 +61,7 @@ fn nothing_moves_before_the_card_was_asked_how_it_is() {
 #[test]
 fn nothing_moves_on_a_status_that_is_seconds_old() {
     let mut l = homed();
+    l.gate.positions_word.insert(0, 0);
     l.advance(ms(5000));
     // An alarm came up since the last poll; the gate still holds the old, clean status.
     l.sim.inject_alarm(None, Some(1 << 3));
@@ -138,6 +139,7 @@ fn the_head_is_not_jogged_and_the_fifo_not_cleared_under_a_running_stream() {
     // stopping is never refused, and after it the head may be moved again
     l.write(&command::fifo_stop().unwrap()).unwrap();
     l.write(&command::fifo_clear().unwrap()).unwrap();
+    l.gate.positions_word.insert(1, l.sim.axis_position(1) as i64);
     l.write(&command::jog_step(1, 5.0, &p()).unwrap()).unwrap();
 }
 
@@ -153,4 +155,28 @@ fn a_mode_record_the_card_was_never_seen_to_take_does_not_reach_it() {
         l.write(&command::fifo_frame(mode - 3, &[FifoItem::boundary(), FifoItem::mode(mode), FifoItem::tick(1, 0)]).unwrap()).unwrap();
     }
     assert_eq!(l.sim.frames_accepted(), 2);
+}
+
+/// Homed, parked 1 mm inside the X soft limit (1371 mm), status fresh.
+fn near_the_x_limit() -> SimLink {
+    let mut l = homed();
+    l.write(&command::go_to(1370.0, 10.0, &p()).unwrap()).unwrap();
+    l.advance(ms(400));
+    l.poll_status().unwrap();
+    assert_eq!(l.sim.axis_position(0), 1_370_000);
+    l
+}
+
+#[test]
+fn a_homed_machine_is_not_jogged_from_a_place_the_gate_does_not_know() {
+    // Homed, so the soft limits mean something, but nobody told the gate where the head is.
+    // The jog went out unchecked and the card drove 4 mm past the limit.
+    let mut l = near_the_x_limit();
+    let r = l.write(&command::jog_step(0, 5.0, &p()).unwrap());
+    l.advance(ms(400));
+    assert!(matches!(r, Err(LinkError::Refused(GateRefusal::SoftLimit(_)))), "{r:?}");
+    assert_eq!(l.sim.axis_position(0), 1_370_000);
+    // with the position known, a jog that stays inside passes
+    l.gate.positions_word.insert(0, 1_370_000);
+    l.write(&command::jog_step(0, -5.0, &p()).unwrap()).unwrap();
 }

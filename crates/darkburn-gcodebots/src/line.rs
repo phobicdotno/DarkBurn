@@ -509,8 +509,11 @@ impl GcodeMachine for LineMachine {
         }
         let cur = s.wpos;
         let probe = Point::new(t.x.unwrap_or(cur[0]), t.y.unwrap_or(cur[1]));
-        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() && s.mpos == s.wpos {
-            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", probe.x, probe.y)));
+        // Where the work position lands on the machine: the offset is what the two reported
+        // positions differ by.
+        let probe = Point::new(probe.x + s.mpos[0] - s.wpos[0], probe.y + s.mpos[1] - s.wpos[1]);
+        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() {
+            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} (machine) is outside the machine", probe.x, probe.y)));
         }
         if t.coords == darkburn_grbl::Coords::Machine && self.cfg.travel.is_some() {
             let m = Point::new(t.x.unwrap_or(s.mpos[0]), t.y.unwrap_or(s.mpos[1]));

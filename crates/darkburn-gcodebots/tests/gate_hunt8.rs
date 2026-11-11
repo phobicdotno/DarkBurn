@@ -6,7 +6,7 @@ use std::time::Duration;
 use darkburn_gcodebots::emu::{EmuConfig, EmuFlavor, LineEmuHandle};
 use darkburn_gcodebots::profile::{DeviceKind, DeviceProfile, TransferMode};
 use darkburn_gcodebots::{GcodeMachine, MachineError, MachineEvent};
-use darkburn_grbl::{Coords, MoveTarget};
+use darkburn_grbl::{Coords, JogStep, MoveTarget};
 
 const T: Duration = Duration::from_secs(8);
 
@@ -40,5 +40,20 @@ fn a_move_in_machine_coordinates_does_not_leave_the_machine() {
     // A place inside the machine is still reached.
     m.move_to(MoveTarget { x: Some(50.0), y: Some(20.0), z: None, coords: Coords::Machine, feed: 6000.0 }).unwrap();
     assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 50.0).abs() < 1e-6));
+    m.disconnect();
+}
+
+#[test]
+fn a_move_in_work_coordinates_is_checked_with_the_work_offset() {
+    let (m, emu) = smoothie();
+    m.jog(JogStep { dx: 100.0, dy: 0.0, dz: 0.0, feed: 6000.0 }).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 100.0).abs() < 1e-6));
+    m.send_console("G92 X0 Y0").unwrap();
+    assert!(m.as_ref().wait_until(T, |s| (s.mpos[0] - 100.0).abs() < 1e-6 && s.wpos[0].abs() < 1e-6), "{:?}", m.snapshot());
+    let before = moves_sent(&emu);
+    // Work X 250 is machine X 350 on a 300 mm machine.
+    let r = m.move_to(MoveTarget { x: Some(250.0), y: None, z: None, coords: Coords::Work, feed: 6000.0 });
+    assert!(matches!(r, Err(MachineError::OutOfBounds(_))), "{r:?}");
+    assert_eq!(moves_sent(&emu), before);
     m.disconnect();
 }

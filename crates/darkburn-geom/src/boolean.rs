@@ -163,29 +163,70 @@ pub fn weld(paths: &[BezPath], rule: FillRule, tol: f64) -> BezPath {
 /// Cut shapes: splits all shapes by each other so that every resulting piece is a region
 /// covered by one fixed set of the inputs. Overlaps become their own pieces.
 pub fn cut_shapes(paths: &[BezPath], rule: FillRule, tol: f64) -> Vec<BezPath> {
-    let mut pieces: Vec<Vec<Ring>> = Vec::new();
-    let mut covered: Vec<Ring> = Vec::new();
+    // Each piece with its bounding box. A shape only cuts the pieces its box touches; the
+    // others stay as they are without being worked through again (with a few hundred shapes
+    // that is nearly all of them, and the difference between a moment and a minute).
+    let mut pieces: Vec<(Vec<Ring>, Bounds)> = Vec::new();
+    // What the shapes so far cover, each ring with its box.
+    let mut covered: Vec<(Ring, Bounds)> = Vec::new();
     for p in paths {
         let s = normalized_rings(std::slice::from_ref(p), rule, tol);
         if s.is_empty() {
             continue;
         }
-        let mut next: Vec<Vec<Ring>> = Vec::with_capacity(pieces.len() * 2 + 1);
-        for piece in &pieces {
+        let sb = bounds(&s);
+        let mut next: Vec<(Vec<Ring>, Bounds)> = Vec::with_capacity(pieces.len() * 2 + 1);
+        for (piece, pb) in pieces {
+            if !touch(pb, sb) {
+                next.push((piece, pb));
+                continue;
+            }
             for r in [OverlayRule::Intersect, OverlayRule::Difference] {
                 let shapes: Vec<IShape> = piece.overlay(&s, r, IFill::NonZero);
                 for sh in shapes {
-                    next.push(sh);
+                    let b = bounds(&sh);
+                    next.push((sh, b));
                 }
             }
         }
-        let fresh: Vec<IShape> = s.overlay(&covered, OverlayRule::Difference, IFill::NonZero);
-        next.extend(fresh);
-        covered.extend(s);
-        covered = covered.simplify_shape(IFill::NonZero).into_iter().flatten().collect();
+        // Rings of the covered area away from this shape's box do not change what is covered
+        // inside it.
+        let near: Vec<Ring> = covered.iter().filter(|(_, b)| touch(*b, sb)).map(|(r, _)| r.clone()).collect();
+        let fresh: Vec<IShape> = s.overlay(&near, OverlayRule::Difference, IFill::NonZero);
+        for sh in fresh {
+            let b = bounds(&sh);
+            next.push((sh, b));
+        }
+        // The new shape joins the covered area: only the rings near it can merge with it.
+        let (near, mut far): (Vec<_>, Vec<_>) = covered.into_iter().partition(|(_, b)| touch(*b, sb));
+        let mut merged: Vec<Ring> = near.into_iter().map(|(r, _)| r).collect();
+        merged.extend(s);
+        for ring in merged.simplify_shape(IFill::NonZero).into_iter().flatten() {
+            let b = bounds(std::slice::from_ref(&ring));
+            far.push((ring, b));
+        }
+        covered = far;
         pieces = next;
     }
-    pieces.iter().map(|s| shape_to_path(s)).filter(|p| !p.is_empty()).collect()
+    pieces.iter().map(|(s, _)| shape_to_path(s)).filter(|p| !p.is_empty()).collect()
+}
+
+/// Bounding box of rings: (x0, y0, x1, y1).
+type Bounds = (f64, f64, f64, f64);
+
+fn bounds(rings: &[Ring]) -> Bounds {
+    let mut b = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in rings.iter().flatten() {
+        b = (b.0.min(p[0]), b.1.min(p[1]), b.2.max(p[0]), b.3.max(p[1]));
+    }
+    b
+}
+
+/// Whether two boxes overlap or touch (with a hair to spare, so that shapes sharing an edge
+/// are still worked against each other).
+fn touch(a: Bounds, b: Bounds) -> bool {
+    const HAIR: f64 = 1e-6;
+    a.0 <= b.2 + HAIR && b.0 <= a.2 + HAIR && a.1 <= b.3 + HAIR && b.1 <= a.3 + HAIR
 }
 
 #[cfg(test)]
@@ -201,6 +242,27 @@ mod tests {
         ps.iter().map(signed_area).sum()
     }
     const T: f64 = 0.001;
+
+    #[test]
+    fn cut_shapes_of_many_separate_shapes_is_quick() {
+        // Found by the monkey (seeds 1015 and 2028): Cut Shapes on a few hundred shapes took
+        // 40 to 50 seconds, because every shape was worked against every piece so far, also
+        // the ones nowhere near it.
+        let mut shapes: Vec<BezPath> = Vec::new();
+        for i in 0..400 {
+            let c = Point::new(f64::from(i % 20) * 30.0, f64::from(i / 20) * 30.0);
+            shapes.push(Circle::new(c, 10.0).to_path(0.01));
+        }
+        // And a square inside the first circle, so there is something to cut.
+        shapes.push(rect(-5.0, -5.0, 5.0, 5.0));
+        let started = std::time::Instant::now();
+        let pieces = cut_shapes(&shapes, FillRule::EvenOdd, T);
+        let took = started.elapsed();
+        assert_eq!(pieces.len(), 401, "399 circles, the first circle around the square, and the square");
+        let area = 400.0 * std::f64::consts::PI * 100.0;
+        assert!((total_area(&pieces) - area).abs() < 10.0, "{} against {area}", total_area(&pieces));
+        assert!(took < std::time::Duration::from_secs(4), "took {took:?}");
+    }
 
     #[test]
     fn union_two_squares() {

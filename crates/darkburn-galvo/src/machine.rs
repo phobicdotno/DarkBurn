@@ -717,7 +717,11 @@ impl Worker {
     fn handle(&mut self, c: Cmd) -> io::Result<()> {
         match c {
             Cmd::Arm(on) => {
-                self.sh.armed.store(on, Ordering::SeqCst);
+                // The handle set the flag when it was asked. Setting it again here would give
+                // the arm back after a stop that was asked for in between and is still queued.
+                if !on {
+                    self.sh.armed.store(false, Ordering::SeqCst);
+                }
                 if !on && matches!(self.state, State::Idle) {
                     self.link.single(SingleCmd::DisableLaser)?;
                 }

@@ -537,7 +537,15 @@ impl GcodeMachine for LineMachine {
     }
 
     fn go_to_origin(&self) -> Result<(), MachineError> {
-        self.motion_ok()?;
+        let s = self.motion_ok()?;
+        // Work X0 Y0 on the machine: the work offset is what the two reported positions differ by.
+        let origin = Point::new(s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
+        if !self.in_travel(origin) {
+            return Err(MachineError::OutOfBounds(format!("the origin is at X {:.1}, Y {:.1} (machine), outside the machine", origin.x, origin.y)));
+        }
+        if s.fire_on {
+            self.send(Cmd::FireOff)?;
+        }
         self.send(Cmd::Lines { lines: vec!["G90".into(), "G0 X0 Y0".into()], tag: Tag::Plain })
     }
 

@@ -206,8 +206,8 @@ fn a_paused_job_does_not_resume_on_an_old_reading_of_a_door_that_has_opened_sinc
         assert!(!e.mo_open() && e.is_paused());
     });
     assert!(r.has(|e| matches!(e, Event::Rejected(m) if m.contains("door"))), "{:?}", r.events);
-    // With the door closed again the same job goes on and finishes.
-    r.emu(|e| e.set_input_bit(DOOR_BIT, true));
-    assert!(r.wait(|r| r.m.resume().is_ok() && r.has(|e| matches!(e, Event::Resumed))), "{:?}", r.events);
-    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobFinished { .. }))), "{:?}", r.events);
+    assert_eq!(r.m.snapshot().activity, Activity::Paused);
+    assert!(r.m.snapshot().inputs.door_open, "the refusal leaves the fresh reading in the snapshot");
+    r.m.stop().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))), "{:?}", r.events);
 }

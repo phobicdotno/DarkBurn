@@ -969,7 +969,7 @@ impl Worker {
             self.reject("A frame must not contain marking commands.");
             return Ok(());
         }
-        if self.door_open() {
+        if self.door_open_now()? {
             self.idle_snapshot_if_idle();
             self.reject("The door is open.");
             return Ok(());

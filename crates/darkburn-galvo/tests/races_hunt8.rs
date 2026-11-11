@@ -171,3 +171,16 @@ fn a_job_does_not_start_on_an_old_reading_of_a_door_that_has_opened_since() {
     assert_eq!(r.m.snapshot().activity, Activity::Idle);
     assert!(r.m.snapshot().inputs.door_open, "the refusal leaves the fresh reading in the snapshot");
 }
+
+#[test]
+fn a_frame_does_not_start_on_an_old_reading_of_a_door_that_has_opened_since() {
+    let dev = with_door();
+    let mut r = rig_with(dev.clone(), slow_emu(), no_routine_poll());
+    r.emu(|e| e.set_input_bit(DOOR_BIT, false));
+    let _ = r.m.start_frame(frame(&dev), true);
+    r.settle();
+    assert!(!r.has(|e| matches!(e, Event::FrameStarted)), "{:?}", r.events);
+    r.emu(|e| assert!(e.log().motions.is_empty() && e.log().light_on_writes == 0));
+    assert!(r.has(|e| matches!(e, Event::Rejected(m) if m.contains("door"))), "{:?}", r.events);
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+}

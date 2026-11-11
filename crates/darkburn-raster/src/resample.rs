@@ -69,10 +69,13 @@ impl ScanGrid {
         // A tiny tolerance keeps exact edges from adding an empty row or column.
         let eps = 1e-7;
         let col0 = (x0 / i + eps).floor() as i64;
-        let col1 = ((x1 / i - eps).ceil() as i64).max(col0 + 1);
+        // A position far outside any machine pins the lattice numbers at the ends of their
+        // range: the arithmetic below must not run over there.
+        let col1 = ((x1 / i - eps).ceil() as i64).max(col0.saturating_add(1));
         let row0 = (y0 / i + eps).floor() as i64;
-        let row1 = ((y1 / i - eps).ceil() as i64).max(row0 + 1);
-        Self { interval_mm: i, angle_deg, col0, row_top: row1 - 1, width: (col1 - col0) as u32, height: (row1 - row0) as u32 }
+        let row1 = ((y1 / i - eps).ceil() as i64).max(row0.saturating_add(1));
+        let count = |from: i64, to: i64| u32::try_from(to.saturating_sub(from)).unwrap_or(u32::MAX);
+        Self { interval_mm: i, angle_deg, col0, row_top: row1.saturating_sub(1), width: count(col0, col1), height: count(row0, row1) }
     }
 }
 
@@ -179,6 +182,19 @@ mod tests {
     use super::*;
     use crate::placement;
     use kurbo::Size;
+
+    #[test]
+    fn a_picture_placed_absurdly_far_away_still_gets_a_grid() {
+        // Found by the monkey (seed 1025): a picture at x = 5e299 mm overflowed the column count.
+        for far in [5e299, -5e299] {
+            let t = placement(320, 160, Point::new(far, far), Size::new(32.0, 16.0));
+            let g = ScanGrid::for_image(320, 160, t, 0.1, 0.0);
+            let src = GrayF::new(320, 160, 0.5);
+            let (out, coverage) = resample_to_grid(&src, t, &g, Resample::Area);
+            assert_eq!(coverage.len(), (g.width as usize) * (g.height as usize));
+            assert_eq!(out.data.len(), coverage.len());
+        }
+    }
 
     #[test]
     fn grid_matches_image_exactly_when_aligned() {

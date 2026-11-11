@@ -568,6 +568,8 @@ struct Monkey<H: Host> {
     /// Print every command before it runs (to find the one that takes the process down).
     trace: bool,
     findings: std::collections::BTreeMap<String, String>,
+    /// How often the planner's time budget made two builds of one document differ.
+    budget_hits: u32,
 }
 
 /// A command may take this long at most.
@@ -599,6 +601,7 @@ impl<H: Host> Monkey<H> {
             soft: false,
             trace: std::env::var("MONKEY_TRACE").is_ok(),
             findings: Default::default(),
+            budget_hits: 0,
         };
         m.check_state("the seed document");
         m.check_job("the seed document");
@@ -804,7 +807,7 @@ impl<H: Host> Monkey<H> {
             if l.index != i || l.settings.is_empty() || l.settings.len() > darkburn_core::MAX_SUB_LAYERS + 1 {
                 self.fail(&format!("{what}: layer {i} has index {} and {} settings", l.index, l.settings.len()));
             }
-            let text = format!("{l:?}");
+            let text = without_strings(&format!("{l:?}"));
             if text.contains("NaN") || text.contains("inf") {
                 self.fail(&format!("{what}: layer {i} holds a number that is not finite: {text}"));
             }
@@ -848,6 +851,18 @@ impl<H: Host> Monkey<H> {
     }
 
     /// The job builds, twice to the same output.
+    /// The job built twice with no time limit on the planner gives the same G-code.
+    fn same_without_time_budget(&mut self) -> bool {
+        self.host.app(|app, _| {
+            let mut input = crate::job_cmds::build_input(app);
+            input.settings.planner.time_budget_ms = 3_600_000;
+            let dev = DeviceGcodeSettings::default();
+            let a = crate::job_build::build_job_simple(&input).map(|j| gcode_text(&j, None, &dev)).map_err(|e| e.to_string());
+            let b = crate::job_build::build_job_simple(&input).map(|j| gcode_text(&j, None, &dev)).map_err(|e| e.to_string());
+            a == b
+        })
+    }
+
     fn check_job(&mut self, what: &str) {
         let started = Instant::now();
         let built = catch_unwind(AssertUnwindSafe(|| {
@@ -861,7 +876,30 @@ impl<H: Host> Monkey<H> {
             Ok(x) => x,
             Err(p) => {
                 let text = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
-                self.fail(&format!("{what}: building the job panicked: {text}"));
+                let shapes = self.host.app(|app, _| {
+                    fn leaves(s: &Shape, out: &mut Vec<String>, doc: &Document) {
+                        if let ShapeKind::Group { children } = &s.kind {
+                            children.iter().for_each(|c| leaves(c, out, doc));
+                        }
+                        if out.len() < 60 {
+                            let l = doc.layer(s.layer).main();
+                            out.push(format!(
+                                "\n  shape {} {} layer {} ({:?}, interval {}) transform {:?} {}",
+                                s.id.0,
+                                kind_name(s),
+                                s.layer,
+                                l.mode,
+                                l.interval,
+                                s.transform.as_coeffs(),
+                                if let ShapeKind::Image(i) = &s.kind { format!("{} x {}", i.width, i.height) } else { String::new() }
+                            ));
+                        }
+                    }
+                    let mut out = Vec::new();
+                    app.editor.doc.iter().for_each(|s| leaves(s, &mut out, &app.editor.doc));
+                    out.concat()
+                });
+                self.fail(&format!("{what}: building the job panicked: {text}{shapes}"));
             }
         };
         if started.elapsed() > LIMIT {
@@ -871,8 +909,19 @@ impl<H: Host> Monkey<H> {
             (Ok(a), Ok(b)) => {
                 let dev = DeviceGcodeSettings::default();
                 let (ga, gb) = (gcode_text(&a, None, &dev), gcode_text(&b, None, &dev));
-                if ga != gb {
-                    self.fail(&format!("{what}: the job built twice gives two different outputs"));
+                // The planner improves the cut order until its time budget (half a second) runs
+                // out, so a large job can come out in two orders: by design (see EXCEPTIONS).
+                // With the budget out of the way the same document has to give the same job.
+                if ga != gb && self.same_without_time_budget() {
+                    self.budget_hits += 1;
+                } else if ga != gb {
+                    let at = ga.lines().zip(gb.lines()).position(|(x, y)| x != y).unwrap_or(0);
+                    let (x, y) = (ga.lines().nth(at).unwrap_or(""), gb.lines().nth(at).unwrap_or(""));
+                    self.fail(&format!(
+                        "{what}: the job built twice gives two different outputs ({} and {} lines), line {at}: {x} / {y}",
+                        ga.lines().count(),
+                        gb.lines().count()
+                    ));
                 }
                 if ga.contains("NaN") || ga.contains("inf") {
                     let line = ga.lines().find(|l| l.contains("NaN") || l.contains("inf")).unwrap_or_default();
@@ -950,7 +999,7 @@ fn check_shape(doc: &Document, s: &Shape, problem: &mut Option<String>) {
             check_shape(doc, c, problem);
         }
     }
-    let text = format!("{:?} {:?} {:?} {:?}", s.tabs, s.start_point, s.extra_start_points, s.kind);
+    let text = without_strings(&format!("{:?} {:?} {:?} {:?}", s.tabs, s.start_point, s.extra_start_points, s.kind));
     if text.contains("NaN") || text.contains("inf,") || text.contains("inf)") || text.contains("inf ") {
         let at = text.find("NaN").or_else(|| text.find("inf")).unwrap_or(0);
         let from = at.saturating_sub(80);
@@ -960,6 +1009,29 @@ fn check_shape(doc: &Document, s: &Shape, problem: &mut Option<String>) {
     if problem.is_none() {
         *problem = found.into_iter().next();
     }
+}
+
+/// Debug text with every quoted string taken out, so only the numbers are searched for NaN.
+fn without_strings(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '"' {
+            out.push(c);
+            continue;
+        }
+        out.push_str("\"\"");
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => break,
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 fn kind_name(s: &Shape) -> &'static str {
@@ -1053,14 +1125,17 @@ fn the_command_set_leaves_out_everything_that_reaches_a_machine() {
 #[test]
 fn monkey_explore() {
     let Ok(range) = std::env::var("MONKEY_SEEDS") else { return };
-    let (a, b) = range.split_once("..").expect("MONKEY_SEEDS=from..to");
+    let seeds: Vec<u64> = match range.split_once("..") {
+        Some((a, b)) => (a.parse::<u64>().unwrap()..b.parse::<u64>().unwrap()).collect(),
+        None => range.split(',').map(|s| s.trim().parse::<u64>().expect("MONKEY_SEEDS=from..to or a,b,c")).collect(),
+    };
     let steps: usize = std::env::var("MONKEY_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1000);
     let wild = if std::env::var("MONKEY_MILD").is_ok() { Wild::Mild } else { Wild::Full };
     let mut tally: std::collections::BTreeMap<String, (u32, u32)> = Default::default();
     let soft = std::env::var("MONKEY_SOFT").is_ok();
     let mut findings: std::collections::BTreeMap<String, String> = Default::default();
     let mut failed = 0;
-    for seed in a.parse::<u64>().unwrap()..b.parse::<u64>().unwrap() {
+    for seed in seeds {
         let t = Instant::now();
         match catch_unwind(|| monkey_with(seed, steps, wild, soft)) {
             Ok(m) => {
@@ -1072,7 +1147,7 @@ fn monkey_explore() {
                 for (k, v) in m.findings {
                     findings.entry(k).or_insert(v);
                 }
-                println!("seed {seed}: {steps} steps in {:?}", t.elapsed());
+                println!("seed {seed}: {steps} steps in {:?}, planner time budget hit {} times", t.elapsed(), m.budget_hits);
             }
             Err(_) => failed += 1,
         }

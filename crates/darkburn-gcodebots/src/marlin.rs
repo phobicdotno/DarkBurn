@@ -76,6 +76,7 @@ pub fn config(p: &DeviceProfile) -> LineConfig {
         // The fire button is switched off in the device settings: the driver has no fire command.
         c.commands.fire_on.clear();
     }
+    c.laser_frames = g.laser_on_when_framing;
     c.power = frame_options(p);
     c
 }

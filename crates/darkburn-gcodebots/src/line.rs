@@ -168,6 +168,8 @@ pub struct LineConfig {
     pub reports_state: bool,
     /// A halt cannot be cleared without power-cycling (Marlin `M112`).
     pub halt_needs_power_cycle: bool,
+    /// Frames may run with the laser on ("laser on when framing" of the device settings).
+    pub laser_frames: bool,
 }
 
 impl LineConfig {
@@ -196,6 +198,7 @@ impl LineConfig {
             supports_g53: false,
             reports_state: false,
             halt_needs_power_cycle: false,
+            laser_frames: true,
         }
     }
 
@@ -457,6 +460,9 @@ impl GcodeMachine for LineMachine {
         let mut src = vec!["G21 G90".to_owned()];
         src.push(format!("G0 X{} Y{}", num(points[0].x), num(points[0].y)));
         if let Some(pct) = opts.laser_percent {
+            if !self.cfg.laser_frames {
+                return Err(MachineError::Unsupported("framing with the laser on (switched off in the device settings)"));
+            }
             self.s_value(pct)?;
             let s = pct * 10.0;
             src.push(format!("M3 S{}", num(s.round())));

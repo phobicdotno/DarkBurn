@@ -206,3 +206,22 @@ fn a_profile_with_the_fire_button_switched_off_does_not_fire() {
         },
     );
 }
+
+#[test]
+fn a_profile_with_laser_on_when_framing_off_frames_with_the_laser_off_only() {
+    let lit = FrameOptions { laser_percent: Some(1.0), ..FrameOptions::default() };
+    each_kind(
+        |p| assert!(!p.gcode.laser_on_when_framing, "off is the default"),
+        |m, kind| {
+            let r = m.frame_rect(Rect::new(0.0, 0.0, 20.0, 20.0), lit.clone());
+            assert!(r.is_err(), "{kind:?}: a frame with the laser on was accepted although the profile has it off");
+            // The same frame with the laser off runs.
+            m.frame_rect(Rect::new(0.0, 0.0, 20.0, 20.0), FrameOptions::default()).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+        },
+    );
+    // Switched on, the lit frame is accepted.
+    each_kind(
+        |p| p.gcode.laser_on_when_framing = true,
+        |m, kind| m.frame_rect(Rect::new(0.0, 0.0, 20.0, 20.0), lit.clone()).unwrap_or_else(|e| panic!("{kind:?}: {e}")),
+    );
+}

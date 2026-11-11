@@ -759,3 +759,37 @@ fn no_move_runs_under_a_held_pulse_key() {
     }
     assert!(held.is_empty(), "the Pulse key stayed down for: {held:?}");
 }
+
+/// Pass 8, races: from the moment a job is asked for until the controller is done with it,
+/// nothing else is accepted, also not in the short time before its first status shows the job.
+#[test]
+fn nothing_else_is_accepted_while_a_job_is_on_its_way_to_the_controller() {
+    type Ask = (&'static str, fn(&mut MachineHandle) -> Result<(), MachineError>);
+    let asks: [Ask; 8] = [
+        ("fire", |h| h.fire(5.0, 5.0)),
+        ("jog step", |h| h.jog_step(JogSpec { dx: 5.0, feed: 3000.0, ..Default::default() })),
+        ("continuous jog", |h| h.jog_start([1, 0, 0, 0], 3000.0)),
+        ("home", |h| h.home()),
+        ("go to origin", |h| h.go_to_origin()),
+        ("move", |h| h.move_to(MoveSpec { x: Some(20.0), y: Some(20.0), feed: 6000.0, ..Default::default() })),
+        ("frame", |h| h.frame_rect(darkburn_core::kurbo::Rect::new(10.0, 10.0, 40.0, 40.0), FrameSpec::default())),
+        ("a second start", |h| h.start_job(simulator_square(Family::Ruida, 30.0))),
+    ];
+    let mut accepted = Vec::new();
+    for (name, ask) in asks {
+        let emu = emulator(Default::default());
+        let server = ruida::UdpEmulatorServer::start(emu.clone()).expect("two loopback sockets");
+        let mut h = MachineHandle::new();
+        attach(&mut h, Box::new(server.transport().unwrap()), &emu);
+        h.start_job(simulator_square(Family::Ruida, 30.0)).unwrap();
+        // at once: no status has been read since the start
+        if ask(&mut h).is_ok() {
+            accepted.push(name);
+        }
+        assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_))), "{name}: the job still runs to its end");
+        assert!(!pulse_is_down(&emu), "{name}: the Pulse key is down");
+        assert_eq!(cuts(&emu), 4, "{name}: one square was cut, once");
+        h.disconnect();
+    }
+    assert!(accepted.is_empty(), "accepted while a job was on its way: {accepted:?}");
+}

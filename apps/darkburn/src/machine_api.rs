@@ -1713,7 +1713,10 @@ impl DriverAdapter for RuidaAdapter {
         if !self.snap.connected() && !always {
             return Err(MachineError::NotConnected);
         }
-        let working = self.snap.state.is_working();
+        // A job that was asked for counts from that moment, not from the first status report
+        // that shows it: until then the controller would be sent a second job, a move or the
+        // Pulse key on top of it.
+        let working = self.snap.state.is_working() || self.job_started.is_some() || self.pending.values().any(|o| matches!(o, Op::Job));
         let busy = |w: bool| if w { Err(MachineError::Busy) } else { Ok(()) };
         match cmd {
             C::StartJob(req) => {

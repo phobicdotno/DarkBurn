@@ -1,6 +1,7 @@
 //! Bug hunt pass 8: the gate in front of the card. Each test here failed on the code before its fix.
 
 use darkburn_mcc::command::{self, MachineParams, SafeWrite};
+use darkburn_mcc::fifo::FifoItem;
 use darkburn_mcc::gate::GateRefusal;
 use darkburn_mcc::planner::{PathSegment, PlanConfig, dry_run};
 use darkburn_mcc::registers::{BLOCKS, alarm1};
@@ -138,4 +139,18 @@ fn the_head_is_not_jogged_and_the_fifo_not_cleared_under_a_running_stream() {
     l.write(&command::fifo_stop().unwrap()).unwrap();
     l.write(&command::fifo_clear().unwrap()).unwrap();
     l.write(&command::jog_step(1, 5.0, &p()).unwrap()).unwrap();
+}
+
+#[test]
+fn a_mode_record_the_card_was_never_seen_to_take_does_not_reach_it() {
+    // Only 4 and 5 were ever seen in a stream. Any other word went to the card as dry motion.
+    for mode in [0, 1, 3, 6, 0xFFFF_FFFF] {
+        assert!(command::fifo_frame(1, &[FifoItem::boundary(), FifoItem::mode(mode), FifoItem::tick(1, 0)]).is_err(), "mode {mode}");
+        assert!(SafeWrite::try_from_raw(0x66, &[1, 0x0004_0BBA, mode]).is_err(), "raw mode {mode}");
+    }
+    let mut l = armed();
+    for mode in [4, 5] {
+        l.write(&command::fifo_frame(mode - 3, &[FifoItem::boundary(), FifoItem::mode(mode), FifoItem::tick(1, 0)]).unwrap()).unwrap();
+    }
+    assert_eq!(l.sim.frames_accepted(), 2);
 }

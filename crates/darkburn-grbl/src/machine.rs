@@ -1502,6 +1502,7 @@ impl Worker {
         }
         self.fire_until = None;
         self.stop = None;
+        self.snap.paused = false;
         let was_connecting = self.snap.connection == ConnectionState::Connecting;
         self.snap.connection = ConnectionState::Disconnected;
         if was_connecting {
@@ -1549,6 +1550,7 @@ impl Worker {
             }
         }
         self.fire_until = None;
+        self.snap.paused = false;
         self.snap.connection = ConnectionState::Disconnected;
         self.emit(Event::Disconnected(None));
         self.publish();

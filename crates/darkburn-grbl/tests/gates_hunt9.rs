@@ -298,6 +298,30 @@ fn a_job_a_frame_and_every_move_switch_the_fire_button_off_first() {
 
 // ----- a dropped link -----
 
+#[test]
+fn a_dropped_link_clears_the_job_the_pause_and_the_fire_flag() {
+    let (m, emu) = rig();
+    m.fire(1.0, Duration::from_secs(8)).unwrap();
+    assert!(m.wait_until(T, |s| s.fire_on));
+    emu.with(|e| e.unplug());
+    assert!(m.wait_until(T, |s| s.connection != ConnectionState::Connected), "{:?}", m.snapshot().connection);
+    let s = m.snapshot();
+    assert!(!s.fire_on && !s.paused && s.activity == Activity::Idle, "{s:?}");
+    assert!(m.fire(1.0, Duration::from_secs(1)).is_err());
+    assert!(m.start_job(Job::from_text(BURN)).is_err());
+
+    let (m, emu) = rig();
+    m.start_job(Job::from_text(BURN)).unwrap();
+    wait_emu(&emu, "burning", |e| e.laser_on() && e.machine_position()[0] > 5.0);
+    m.pause().unwrap();
+    assert!(m.wait_until(T, |s| s.paused));
+    emu.with(|e| e.unplug());
+    assert!(m.wait_until(T, |s| s.connection != ConnectionState::Connected));
+    let s = m.snapshot();
+    assert!(!s.fire_on && !s.paused && s.activity == Activity::Idle, "{s:?}");
+    assert!(m.resume().is_err());
+}
+
 // ----- a controller that restarts -----
 
 #[test]

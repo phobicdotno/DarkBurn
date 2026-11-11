@@ -131,3 +131,28 @@ fn a_stop_that_follows_a_start_at_once_means_the_laser_is_never_enabled() {
     let s = r.m.snapshot();
     assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
 }
+
+#[test]
+fn a_disconnect_that_follows_a_start_at_once_means_the_laser_is_never_enabled() {
+    let mut r = rig_with(DeviceSettings::default(), slow_emu(), polling());
+    let job = small_job(&DeviceSettings::default());
+    let handle = r.emu.clone();
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _held = handle.lock().unwrap();
+        held_tx.send(()).unwrap();
+        // released a moment after the test has queued its requests
+        go_rx.recv().unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+    });
+    held_rx.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(80));
+    r.m.arm().unwrap();
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    go_tx.send(()).unwrap();
+    r.m.disconnect();
+    holder.join().unwrap();
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after the disconnect had been asked for");
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+}

@@ -371,6 +371,8 @@ impl GalvoMachine {
     }
 
     pub fn disconnect(&mut self) {
+        // A start that is still queued in front of the shutdown finds the arm gone.
+        self.armed.store(false, Ordering::SeqCst);
         let _ = self.tx.send(Cmd::Shutdown);
         if let Some(h) = self.worker.take() {
             let _ = h.join();

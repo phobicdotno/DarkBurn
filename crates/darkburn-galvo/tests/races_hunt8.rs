@@ -211,3 +211,27 @@ fn a_paused_job_does_not_resume_on_an_old_reading_of_a_door_that_has_opened_sinc
     r.m.stop().unwrap();
     assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))), "{:?}", r.events);
 }
+
+#[test]
+fn the_next_list_of_a_job_is_not_opened_on_an_old_reading_of_the_door() {
+    let dev = with_door();
+    let emu = GalvoEmulator::new(EmulatorConfig { cmds_per_poll: 2, axis_polls: 150, ..Default::default() });
+    let mut r = rig_with(dev.clone(), emu, no_routine_poll());
+    let mut job = small_job(&dev);
+    let marks = job.list_commands().iter().filter(|c| matches!(c, ListCmd::MarkTo { .. })).count();
+    job.steps.insert(0, Step::MoveAxis { axis: 0, mm: 1.0 });
+    r.m.arm().unwrap();
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    // The door opens while the axis is still moving, before the list is prepared.
+    assert!(r.wait(|r| r.emu(|e| e.log().singles.iter().any(|s| matches!(s, SingleCmd::MoveAxisTo { .. })))), "{:?}", r.events);
+    let reads = r.emu(|e| {
+        e.set_input_bit(DOOR_BIT, false);
+        e.log().singles.iter().filter(|s| **s == SingleCmd::ReadPort).count()
+    });
+    // Either the driver looks at the door again before the list (and waits), or it marks.
+    assert!(r.wait(|r| r.emu(|e| e.ever_emitted() || e.log().singles.iter().filter(|s| **s == SingleCmd::ReadPort).count() >= reads + 5)));
+    r.emu(|e| assert!(!e.ever_emitted() && !e.mo_open(), "the list was opened and marked with the door open"));
+    r.emu(|e| e.set_input_bit(DOOR_BIT, true));
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobFinished { .. }))), "{:?}", r.events);
+    r.emu(|e| assert_eq!(e.emitting_marks(), marks));
+}

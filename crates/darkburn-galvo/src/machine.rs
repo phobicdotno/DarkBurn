@@ -1154,21 +1154,23 @@ impl Worker {
                 }
             }
             Phase::WaitDoor => {
+                let open = self.door_open_now()?;
                 if !j.announced_wait {
                     j.announced_wait = true;
                     self.sh.update(|s| s.activity = Activity::WaitingDoor);
-                    if self.door_open() {
+                    if open {
                         self.sh.emit(Event::WaitingForDoor);
                     }
                 }
-                if !self.door_open() {
+                if !open {
                     j.announced_wait = false;
                     self.sh.update(|s| s.activity = Activity::Job);
                     self.next_step(j);
                 }
             }
             Phase::Prep => {
-                if self.door_open() {
+                // The last look at the door before the source is opened is a fresh one.
+                if self.door_open_now()? {
                     return Ok(false);
                 }
                 self.link.single(SingleCmd::ResetList)?;

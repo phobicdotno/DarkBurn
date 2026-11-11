@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build the DarkBurn Windows installer: dist/darkburn-<version>-windows-x64.msi
+  Build the DarkBurn Windows installer: dist/darkburn-<version>-windows-x64.msi (and its .sha256)
 
 .DESCRIPTION
   Builds darkburn.exe and darkburn-mcp.exe in release (static C runtime), generates
@@ -50,5 +50,6 @@ Invoke-Native 'MSI validation (ICE)' {
   wix msi validate $Msi -intermediateFolder (Join-Path $Stage 'msi-validation')
 }
 
+Write-Sha256File $Msi
 Get-Item $Msi | Format-Table Name, Length
 Write-Output "MSI: $Msi"

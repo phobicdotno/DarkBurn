@@ -1,4 +1,7 @@
-# Format, lints and tests on Windows. Runs on pushes and pull requests; nothing is published.
+# Format, lints and tests on Windows, Linux and macOS. Runs on every push to main and on every
+# pull request. It can also be started by hand (Actions > ci > Run workflow), for all systems
+# or for one. release.yml runs these same jobs before it drafts a release for a tag.
+# Nothing is published from here.
 name: ci
 
 on:
@@ -6,52 +9,90 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      only:
+        description: Run the lints and tests on one system only
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
+  workflow_call:
 
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request replaces the run that is under way; a run
+# started by hand does not get in the way of one started by a push. The tests of a tag
+# (started by release.yml) are never cancelled.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # Test programs without debug information are many times smaller, and a runner's disk is small.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 60
+  format:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      # DarkBurn uses SolidCraft's small UI crates by path (../solidcraft). The repository is
-      # private, so the clone needs a token in the SOLIDCRAFT_TOKEN secret (read access).
-      - name: Check out SolidCraft next to this repository
-        shell: pwsh
-        env:
-          SOLIDCRAFT_TOKEN: ${{ secrets.SOLIDCRAFT_TOKEN }}
-          SOLIDCRAFT_REF: ${{ vars.SOLIDCRAFT_REF || 'main' }}
-        run: |
-          if (-not $env:SOLIDCRAFT_TOKEN) { throw 'The SOLIDCRAFT_TOKEN secret is not set.' }
-          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'solidcraft'
-          git clone --depth 1 --branch $env:SOLIDCRAFT_REF "https://x-access-token:$($env:SOLIDCRAFT_TOKEN)@github.com/phobicdotno/solidcraft.git" $dest
-          if ($LASTEXITCODE -ne 0) { throw 'could not clone SolidCraft' }
-
-      - name: Install Rust
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-          rustc --version
-
-      - uses: Swatinem/rust-cache@v2
+      # cargo fmt reads the workspace, and the workspace reaches for ../solidcraft.
+      - uses: ./.github/actions/prepare
+        with:
+          components: rustfmt
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt -- --check
+
+  test:
+    name: Clippy and tests (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pushes and pull requests run all three systems. A run by hand can pick one.
+        system: ${{ fromJSON((inputs.only || 'all') == 'all' && '["windows", "linux", "macos"]' || format('["{0}"]', inputs.only)) }}
+    # macOS is an Apple silicon runner: its GPU (Metal) draws the UI tests. This job is new.
+    # macOS has never been built or tested before and this job has not been seen green yet,
+    # so expect to fix things after its first runs. It is not allowed to fail quietly.
+    runs-on: ${{ matrix.system == 'windows' && 'windows-2025' || matrix.system == 'linux' && 'ubuntu-24.04' || 'macos-26' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # libclang: the camera crate makes its Linux bindings with it while building.
+      # mesa-vulkan-drivers: a GPU in software (lavapipe). The UI tests draw the real app
+      # offscreen and need a GPU; a runner has none. No display is needed.
+      # Fonts: a few tests read the system's fonts.
+      - name: Install what the Linux build and tests need
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
+
+      - uses: ./.github/actions/prepare
+        with:
+          components: clippy
+          cache-key: ci-${{ matrix.system }}
 
       - name: Clippy
+        id: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The tests run when clippy has something to say too, so one run shows both.
       - name: Tests
+        if: ${{ !cancelled() && steps.clippy.conclusion != 'skipped' }}
         run: cargo test --workspace --locked

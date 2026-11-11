@@ -471,10 +471,10 @@ impl McpMonkey {
         if started.elapsed() > LIMIT {
             self.fail(&format!("took {:?}", started.elapsed()));
         }
-        if let Some(r) = &reply {
-            if serde_json::from_str::<Value>(r).is_err() {
-                self.fail(&format!("the reply is not JSON: {}", short(r, 300)));
-            }
+        if let Some(r) = &reply
+            && serde_json::from_str::<Value>(r).is_err()
+        {
+            self.fail(&format!("the reply is not JSON: {}", short(r, 300)));
         }
         self.check();
     }
@@ -537,10 +537,10 @@ fn mcp_monkey(seed: u64, lines: usize, policy: McpPolicy) -> McpMonkey {
 fn policy_for(seed: u64, hardware: bool) -> McpPolicy {
     McpPolicy {
         allow_hardware: hardware,
-        allow_file_write: seed % 2 == 0,
+        allow_file_write: seed.is_multiple_of(2),
         // With machine control on, a job start always needs the click: that is the rule under test.
-        require_confirmation_for_job_start: hardware || seed % 3 != 0,
-        allow_gweike: !hardware && seed % 5 == 0,
+        require_confirmation_for_job_start: hardware || !seed.is_multiple_of(3),
+        allow_gweike: !hardware && seed.is_multiple_of(5),
     }
 }
 
@@ -558,6 +558,7 @@ fn mcp_monkey_with_machine_control_off() {
 /// With machine control on, a job start or a shot still needs the user's click, and a Gweike
 /// machine its own switch. (No machine command is run here either: see [`Tripwire`].)
 #[test]
+#[allow(clippy::single_element_loop)] // a list of seeds, with one entry for now
 fn mcp_monkey_with_machine_control_on_never_starts_a_job_by_itself() {
     for seed in [11] {
         let m = mcp_monkey(seed, MCP_LINES, policy_for(seed, true));

@@ -40,6 +40,16 @@ foreach ($p in @("$env:USERPROFILE\.cargo\bin", "$env:USERPROFILE\.dotnet", "$en
   if ((Test-Path $p) -and ($env:PATH -notlike "*$p*")) { $env:PATH = "$p;$env:PATH" }
 }
 
+# Writes <package>.sha256 beside a finished package: the SHA-256 in hex, two spaces, the file
+# name, and a plain line feed. The installers check a download against it, and `sha256sum -c`
+# reads it too.
+function Write-Sha256File([string] $Path) {
+  $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLower()
+  $name = Split-Path -Leaf $Path
+  Set-Content -LiteralPath "$Path.sha256" -Value "$hash  $name`n" -Encoding ascii -NoNewline
+  Write-Output "SHA-256: $hash  $name"
+}
+
 function Get-PeSubsystem([string] $Path) {
   $bytes = [System.IO.File]::ReadAllBytes($Path)
   $pe = [BitConverter]::ToInt32($bytes, 0x3C)

@@ -3,7 +3,8 @@
 ## Version rules
 
 - The version lives in one place: `[workspace.package] version` in the root `Cargo.toml`.
-  The installer, the zip, the executable's version resource and the update check all read it.
+  The installer, the zip, the Linux and macOS archives, the executable's version resource and the update
+  check all read it.
 - Every line in `CHANGELOG.md` bumps the patch version by one. Three new lines: `0.0.24` becomes `0.0.27`.
 - The build number goes up by one for each deploy (each tagged release), not for each commit.
   Headings in the changelog read `## v0.0.24 (build 5)`.
@@ -16,27 +17,64 @@
 
 1. Fold the fragments into `CHANGELOG.md` under a new heading, bump the workspace version, and
    tick the checklist (`docs/PARITY-CHECKLIST.md`) for what really works.
-2. `cargo fmt --all`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`.
-3. Build the packages locally if you want to look at them first:
-   `scripts/build-installer.ps1` and `scripts/build-portable.ps1` (see below). Output goes to `dist/`.
+2. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+   These are the checks `ci.yml` runs.
+3. Build the packages locally if you want to look at them first: `scripts/build-installer.ps1` and
+   `scripts/build-portable.ps1` on Windows, `scripts/package-unix.sh` on Linux and macOS (see below).
+   Output goes to `dist/`.
 4. Commit (`Release v0.0.24 (build 5)`), then tag with a `v` in front of the workspace version and push the tag:
    ```
    git tag v0.0.24
    git push origin main v0.0.24
    ```
-5. `.github/workflows/release.yml` runs on the tag. It checks that the tag equals `v<workspace version>`,
-   runs the tests, builds the MSI and the portable zip, uploads them as workflow artifacts and attaches
-   them to a **draft** release. Nothing is published by itself.
+5. `.github/workflows/release.yml` runs on the tag. It runs the tests and builds the packages for Windows,
+   Linux and macOS, each with a `.sha256` file beside it. When the tests and every build have passed it
+   checks that the tag equals `v<workspace version>` and attaches the files to a **draft** release.
+   Nothing is published by itself. A failed test or build means no draft: run the failed jobs again from
+   the run's page, or fix the cause and tag again.
 6. Open the draft on GitHub, paste the changelog lines for the version into it, check the files, press Publish.
+   From then on `scripts/install.sh` and `scripts/install.ps1` install these files instead of building from source.
 
-`.github/workflows/ci.yml` runs format, clippy and tests on Windows for every push to `main` and every pull
-request. Both workflows need a repository secret `SOLIDCRAFT_TOKEN` (read access to the SolidCraft
-repository, whose small UI crates are path dependencies); the optional repository variable
-`SOLIDCRAFT_REF` picks the branch or tag to use (default `main`).
+## What runs on GitHub
+
+Neither workflow needs a secret. SolidCraft, whose small UI crates are path dependencies, is public. Every job
+fetches it next to the checkout at the commit named in the `SOLIDCRAFT_PIN` line of `scripts/install.sh`.
+That line is the one place the commit is written for the workflows; `scripts/install.ps1` carries the same
+commit for the Windows installer, and a job stops when the two differ.
+
+- `.github/workflows/ci.yml` runs on every push to `main` and on every pull request: `cargo fmt -- --check`
+  once, then `cargo clippy --workspace --all-targets --locked -- -D warnings` and
+  `cargo test --workspace --locked` on Windows, Linux and macOS. On Linux the UI tests draw with a GPU in
+  software (`mesa-vulkan-drivers`); on macOS with the runner's own.
+- `.github/workflows/release.yml` runs on every push to `main` and on every `v*` tag. A push to `main` builds
+  the six packages and keeps them with the run as artifacts, for 7 days (30 for a tag). Each one can be
+  downloaded from the run's page and used as it is. Only a tag goes further, as described above: tests,
+  then the draft release. A release that is already published is never changed.
+- Both can be started by hand: Actions, the workflow, Run workflow. The choice `only` runs one system alone
+  (`windows`, `linux` or `macos`). From a terminal, for a branch: `gh workflow run ci.yml --ref <branch> -f only=linux`.
+  A run by hand of `release.yml` publishes nothing unless it is started on a tag.
+- `.github/actions/prepare` holds the steps both share: the SolidCraft checkout, the Rust toolchain, the build
+  cache and cargo-about. The Rust version is fixed there (input `rust`), so a new Rust release with new lints
+  cannot turn a green build red by itself. Raise it there when you move to a newer Rust.
+- The Linux packages are built inside Ubuntu 22.04, so they start on systems with glibc 2.35 or newer.
+  Both macOS packages are built on an Apple silicon runner; the Intel one is cross-compiled.
+- The macOS jobs are new. Until they have been seen green, expect to fix things after their first runs.
+- GitHub's own actions are used by major version (`actions/checkout@v7`). The one action from elsewhere, the
+  build cache, is pinned to a commit.
+
+Package names, as the installers look for them in a release:
+
+| System | File |
+|---|---|
+| Windows | `darkburn-<version>-windows-x64.msi`, `darkburn-<version>-windows-x64-portable.zip` |
+| Linux | `darkburn-<version>-linux-x86_64.tar.gz`, `darkburn-<version>-linux-aarch64.tar.gz` |
+| macOS | `darkburn-<version>-macos-arm64.tar.gz`, `darkburn-<version>-macos-x86_64.tar.gz` |
+
+Each has a `<file>.sha256` beside it: the SHA-256 in hex, two spaces, the file name. `sha256sum -c` reads it.
 
 ## What the scripts need
 
-All of these install per user and need no admin rights.
+On Windows all of these install per user and need no admin rights.
 
 | Tool | Install |
 |---|---|
@@ -45,7 +83,11 @@ All of these install per user and need no admin rights.
 | .NET SDK 6 or newer (for the WiX tool) | `winget install Microsoft.DotNet.SDK.8`, or without admin: `dotnet-install.ps1 -Channel 8.0` from https://dot.net/v1/dotnet-install.ps1 |
 | WiX Toolset 5 | `dotnet tool install --global wix --version 5.0.2` |
 | WiX extensions | `wix extension add -g WixToolset.UI.wixext/5.0.2` and `wix extension add -g WixToolset.Util.wixext/5.0.2` |
-| actionlint (optional, checks the workflow files) | `winget install rhysd.actionlint` |
+| actionlint (optional, checks the workflow files; with shellcheck installed it checks their scripts too) | `winget install rhysd.actionlint` |
+
+On Linux and macOS: Rust from https://rustup.rs, a C compiler (on Linux also libclang:
+`sudo apt install build-essential libclang-dev`; on macOS the Xcode command line tools), and cargo-about as above.
+Every build needs a SolidCraft checkout next to this one (`../solidcraft`), at the commit in `scripts/install.sh`.
 
 - `scripts/build-installer.ps1` builds `darkburn.exe` and `darkburn-mcp.exe` in release (static C runtime, so
   no Visual C++ redistributable is needed), writes `THIRD-PARTY-LICENSES.txt` with cargo-about
@@ -55,6 +97,17 @@ All of these install per user and need no admin rights.
 - `scripts/build-portable.ps1` makes `dist/darkburn-<version>-windows-x64-portable.zip`: the two programs, the
   licences and a `portable.txt` marker. With the marker beside `darkburn.exe`, DarkBurn keeps its settings in a
   `settings` folder next to it.
+- Both write `<package>.sha256` beside the package.
+- `scripts/package-unix.sh` makes `dist/darkburn-<version>-<linux|macos>-<arch>.tar.gz` and its `.sha256`.
+  It builds `darkburn` and `darkburn-mcp` in release for this computer, or for `--target <triple>`
+  (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin`).
+  `--skip-build` packages what is already built, `--bin-dir <folder>` the two programs in a folder.
+  The archive holds one folder with the programs, the icon, a short `README.txt`, the licences and
+  `THIRD-PARTY-LICENSES.txt` (the same accepted licences, for the package's own target). Without cargo-about
+  the list is left out with a message; `--require-licences`, which the workflow uses, stops instead.
+  The debug line tables are taken out of the packed programs. Before it finishes, the script unpacks the
+  archive, as the installer does, and starts both programs from it (`darkburn-mcp --version`,
+  `darkburn --mcp-headless`) when the computer can run them. The same input gives the same archive.
 
 ## About the MSI
 

@@ -1,68 +1,83 @@
-# Builds the Windows installer (MSI) and the portable zip when a version tag is pushed, and
-# attaches both to a DRAFT release. Nothing is published until a person reviews the draft and
-# presses Publish. Tag format: v<version> where <version> is the workspace version
-# (see docs/RELEASING.md).
+# Builds the run files for every system, each with a .sha256 file beside it:
+#   Windows   darkburn-<version>-windows-x64.msi and darkburn-<version>-windows-x64-portable.zip
+#   Linux     darkburn-<version>-linux-x86_64.tar.gz and darkburn-<version>-linux-aarch64.tar.gz
+#   macOS     darkburn-<version>-macos-arm64.tar.gz and darkburn-<version>-macos-x86_64.tar.gz
+# These are the names scripts/install.sh and scripts/install.ps1 look for in a release.
+#
+#   A push to main, or a run by hand (Actions > release > Run workflow, for all systems or one):
+#     the files are kept with the run as artifacts. Nothing is published.
+#   A push of a tag v<version>:
+#     the tests run as well. When they and all the builds have passed, the files are attached
+#     to a DRAFT release. Nothing is published until a person reviews the draft and presses
+#     Publish (see docs/RELEASING.md).
 name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      only:
+        description: Build for one system only
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
 
-permissions:
-  contents: write
+# Nothing by default. Each job asks for what it needs.
+permissions: {}
+
+# A newer push to main replaces the build that is under way; a run started by hand does not
+# get in the way of one started by a push. A tag build is never cancelled.
+concurrency:
+  group: release-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # How many days the files stay with the run.
+  ARTIFACT_DAYS: ${{ startsWith(github.ref, 'refs/tags/') && '30' || '7' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
+  # A tag must not release code that fails its tests: ci.yml's jobs (format, clippy and the
+  # tests on all three systems) run here for the tagged commit, and the draft release waits
+  # for them. Builds of main do not wait: ci.yml runs for those pushes by itself.
+  tests:
+    name: Tests
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
   windows:
-    runs-on: windows-latest
+    name: Windows x64
+    if: contains(fromJSON('["all", "windows"]'), inputs.only || 'all')
+    runs-on: windows-2025
     timeout-minutes: 90
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Check out SolidCraft next to this repository
-        shell: pwsh
-        env:
-          SOLIDCRAFT_TOKEN: ${{ secrets.SOLIDCRAFT_TOKEN }}
-          SOLIDCRAFT_REF: ${{ vars.SOLIDCRAFT_REF || 'main' }}
-        run: |
-          if (-not $env:SOLIDCRAFT_TOKEN) { throw 'The SOLIDCRAFT_TOKEN secret is not set.' }
-          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'solidcraft'
-          git clone --depth 1 --branch $env:SOLIDCRAFT_REF "https://x-access-token:$($env:SOLIDCRAFT_TOKEN)@github.com/phobicdotno/solidcraft.git" $dest
-          if ($LASTEXITCODE -ne 0) { throw 'could not clone SolidCraft' }
+      - uses: ./.github/actions/prepare
+        with:
+          cache-key: release-windows
+          cargo-about: true
 
-      - name: Install Rust
+      - name: Install WiX and its extensions
         shell: pwsh
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: The tag matches the workspace version
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          $inPkg = $false; $version = $null
-          foreach ($line in Get-Content Cargo.toml) {
-            if ($line -match '^\s*\[') { $inPkg = ($line.Trim() -eq '[workspace.package]'); continue }
-            if ($inPkg -and $line -match '^\s*version\s*=\s*"([^"]+)"') { $version = $Matches[1]; break }
-          }
-          $tag = '${{ github.ref_name }}'
-          if ($tag -ne "v$version") { throw "tag $tag does not match the workspace version v$version" }
-
-      - name: Install cargo-about, WiX and the WiX extensions
-        shell: pwsh
-        run: |
-          cargo install cargo-about --locked --features cli
           dotnet tool install --global wix --version 5.0.2
+          $env:PATH = "$env:USERPROFILE\.dotnet\tools;$env:PATH"
           wix extension add -g WixToolset.UI.wixext/5.0.2
           wix extension add -g WixToolset.Util.wixext/5.0.2
-
-      - name: Tests
-        run: cargo test --workspace --locked
 
       - name: Build the installer (MSI)
         shell: pwsh
@@ -72,25 +87,246 @@ jobs:
         shell: pwsh
         run: scripts/build-portable.ps1 -SkipBuild
 
-      - uses: actions/upload-artifact@v4
+      # Each file is kept as it is, under its own name, so it can be downloaded from the
+      # run's page and used directly.
+      - name: Keep the installer
+        uses: actions/upload-artifact@v7
         with:
-          name: darkburn-windows
-          path: |
-            dist/*.msi
-            dist/*.zip
+          path: dist/*.msi
+          archive: false
           if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
 
-      - name: Attach to a draft release
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Keep the installer's checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.msi.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+      - name: Keep the portable zip
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+      - name: Keep the portable zip's checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.zip.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    if: contains(fromJSON('["all", "linux"]'), inputs.only || 'all')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # A program built on a new Linux does not start on an older one: it asks for the C library
+    # (glibc) it was built with. So the build runs inside Ubuntu 22.04 (glibc 2.35), on a
+    # current runner. The runner label ubuntu-22.04 would do the same, but it is deprecated and
+    # goes away in April 2027. Inside the container the job is root and starts with no tools.
+    container: ubuntu:22.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      # git before the checkout, so that it is a real git checkout. libclang: the camera crate
+      # makes its Linux bindings with it while building.
+      - name: Install the build tools
         run: |
-          $tag = '${{ github.ref_name }}'
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --title "DarkBurn $tag" --notes "Draft. Fill in from CHANGELOG.md before publishing."
-            if ($LASTEXITCODE -ne 0) { throw 'could not create the draft release' }
-          }
-          gh release upload $tag (Get-ChildItem dist -Include *.msi, *.zip -Recurse).FullName --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'could not upload the files' }
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential libclang-dev file
+
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/prepare
+        with:
+          cache-key: release-linux-${{ matrix.arch }}
+          cargo-about: true
+
+      # Builds both programs, packs them and starts them once from the packed archive.
+      - name: Build and package
+        env:
+          TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences
+
+      - name: Keep the archive
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+      - name: Keep the archive's checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.tar.gz.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    if: contains(fromJSON('["all", "macos"]'), inputs.only || 'all')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    # Both are built on an Apple silicon runner. The Intel build is cross-compiled there, and
+    # Rosetta starts it for the check. This job is new: macOS has never been built before and
+    # this job has not been seen green yet.
+    runs-on: macos-26
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # The oldest macOS the programs start on.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/prepare
+        with:
+          target: ${{ matrix.target }}
+          cache-key: release-macos-${{ matrix.arch }}
+          cargo-about: true
+
+      # Builds both programs, packs them and starts them once from the packed archive.
+      - name: Build and package
+        env:
+          TARGET: ${{ matrix.target }}
+        run: sh scripts/package-unix.sh --target "$TARGET" --require-licences
+
+      - name: Keep the archive
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+      - name: Keep the archive's checksum
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/*.tar.gz.sha256
+          archive: false
+          if-no-files-found: error
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  # Tags only, and only when the tests and every build passed: a run for one system, or with
+  # a failed job, attaches nothing. This is the only job that may write to the repository.
+  draft-release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [tests, windows, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: The tag matches the workspace version
+        id: version
+        run: |
+          version=$(awk -F'"' '
+            /^\[/ { inside = ($0 ~ /^\[workspace\.package\]/) }
+            inside && /^version[ \t]*=/ { print $2; exit }
+          ' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error file=Cargo.toml::could not read [workspace.package] version"
+            exit 1
+          fi
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::the tag $TAG does not match the workspace version v$version"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      # The files as the build jobs kept them. Not unpacked: one of them is a zip.
+      - name: Collect the files
+        uses: actions/download-artifact@v8
+        with:
+          pattern: darkburn-*
+          path: dist
+          merge-multiple: true
+          skip-decompress: true
+
+      - name: Check the files
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd dist
+          ls -l
+          missing=0
+          for name in \
+            "darkburn-$VERSION-windows-x64.msi" \
+            "darkburn-$VERSION-windows-x64-portable.zip" \
+            "darkburn-$VERSION-linux-x86_64.tar.gz" \
+            "darkburn-$VERSION-linux-aarch64.tar.gz" \
+            "darkburn-$VERSION-macos-arm64.tar.gz" \
+            "darkburn-$VERSION-macos-x86_64.tar.gz"; do
+            for file in "$name" "$name.sha256"; do
+              if [ ! -f "$file" ]; then
+                echo "::error::$file is missing"
+                missing=1
+              fi
+            done
+          done
+          [ "$missing" = 0 ]
+          count=$(find . -type f | wc -l)
+          if [ "$count" -ne 12 ]; then
+            echo "::error::expected 12 files (6 packages and 6 checksums), found $count"
+            exit 1
+          fi
+          sha256sum --check --strict -- *.sha256
+
+      # A draft is made when there is none. A release that is already published is left alone.
+      - name: Attach to a draft release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]; then
+              echo "::error::the release $TAG is already published. It is not changed from here."
+              exit 1
+            fi
+          else
+            gh release create "$TAG" --draft --verify-tag --title "DarkBurn $TAG" \
+              --notes "Draft. Fill in from CHANGELOG.md before publishing."
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          {
+            echo "### Draft release $TAG"
+            echo
+            echo "The files are attached to a draft. Review it, paste the changelog lines and press Publish:"
+            gh release view "$TAG" --json url --jq .url
+          } >>"$GITHUB_STEP_SUMMARY"

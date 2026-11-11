@@ -162,7 +162,7 @@ mod vision_cmds;
 mod vision_state;
 mod vision_tools;
 mod vision_ui;
-#[cfg(any(target_os = "windows", test))]
+#[cfg(target_os = "windows")]
 mod window_fit;
 
 use prefs::{Prefs, STORAGE_KEY};

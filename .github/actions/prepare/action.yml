@@ -1,0 +1,106 @@
+# What every job needs before cargo can run, written once for Windows, Linux and macOS:
+# SolidCraft next to this repository, the Rust toolchain, the build cache and, for the jobs that
+# make packages, cargo-about. Used by ci.yml and release.yml after actions/checkout.
+name: Prepare the build
+description: SolidCraft next to this repository at the pinned commit, the Rust toolchain, the build cache.
+
+inputs:
+  rust:
+    description: The Rust version of every job. This is the one place to change it.
+    default: "1.99.1"
+  components:
+    description: Extra rustup components, with spaces between them (clippy, rustfmt).
+    default: ""
+  target:
+    description: A Rust target besides the runner's own (x86_64-apple-darwin on an Apple silicon runner).
+    default: ""
+  cache-key:
+    description: A name for this job's build cache. Empty means no cache.
+    default: ""
+  cargo-about:
+    description: Set to true to install cargo-about, which writes the third-party licence list of a package.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # DarkBurn uses SolidCraft's small UI crates by path (../solidcraft). The commit to use is
+    # written in one place, the SOLIDCRAFT_PIN line of scripts/install.sh, and read from there.
+    # SolidCraft is public, so the fetch needs no token.
+    - name: Check out SolidCraft next to this repository
+      shell: bash
+      env:
+        SOLIDCRAFT_URL: https://github.com/phobicdotno/solidcraft
+        GIT_TERMINAL_PROMPT: "0"
+      run: |
+        set -euo pipefail
+        pin=$(sed -n "s/^SOLIDCRAFT_PIN='\([0-9a-f]\{40\}\)'[[:space:]]*\$/\1/p" scripts/install.sh)
+        if [[ ! "$pin" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error file=scripts/install.sh::expected exactly one line SOLIDCRAFT_PIN='<40 hex digits>', found: '$pin'"
+          exit 1
+        fi
+        # The Windows installer carries the same commit in its own syntax. The two must agree.
+        other=$(sed -n "s/^[[:space:]]*[$]SolidCraftPin[[:space:]]*=[[:space:]]*'\([0-9a-f]\{40\}\)'[[:space:]]*\$/\1/p" scripts/install.ps1)
+        if [ "$other" != "$pin" ]; then
+          echo "::error file=scripts/install.ps1::install.ps1 pins SolidCraft to '$other' and install.sh to '$pin'. They must name the same commit."
+          exit 1
+        fi
+        if [ -d ../solidcraft/.git ] && [ "$(git -C ../solidcraft rev-parse HEAD 2>/dev/null || true)" = "$pin" ]; then
+          echo "SolidCraft is already at $pin"
+          exit 0
+        fi
+        rm -rf ../solidcraft
+        mkdir ../solidcraft
+        git -C ../solidcraft -c init.defaultBranch=main init -q
+        git -C ../solidcraft remote add origin "$SOLIDCRAFT_URL"
+        # One commit, by its id, without the history.
+        git -C ../solidcraft -c core.longpaths=true fetch -q --no-tags --depth 1 origin "$pin"
+        git -C ../solidcraft -c core.longpaths=true checkout -q --detach FETCH_HEAD
+        if [ "$(git -C ../solidcraft rev-parse HEAD)" != "$pin" ]; then
+          echo "::error::the SolidCraft checkout is not at $pin"
+          exit 1
+        fi
+        echo "SolidCraft is at $pin"
+
+    # One fixed version, so that a new Rust release with new lints cannot turn a green build
+    # red by itself. The hosted runners have rustup; a bare container does not.
+    - name: Install Rust
+      shell: bash
+      env:
+        RUST_VERSION: ${{ inputs.rust }}
+        RUST_COMPONENTS: ${{ inputs.components }}
+        RUST_TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+        if ! command -v rustup >/dev/null 2>&1; then
+          curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs |
+            sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+        fi
+        install=(toolchain install "$RUST_VERSION" --profile minimal --no-self-update)
+        for component in $RUST_COMPONENTS; do install+=(--component "$component"); done
+        for target in $RUST_TARGET; do install+=(--target "$target"); done
+        rustup "${install[@]}"
+        rustup default "$RUST_VERSION"
+        rustc -vV
+        cargo --version
+
+    # Saved from main and from runs started by hand. Pull requests and tags only read it.
+    - name: Restore the build cache
+      if: inputs.cache-key != ''
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+
+    # After the cache, which brings the program back when an earlier run has built it.
+    - name: Install cargo-about
+      if: inputs.cargo-about == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v cargo-about >/dev/null 2>&1; then
+          cargo install cargo-about --locked --features cli
+        fi
+        cargo about --version

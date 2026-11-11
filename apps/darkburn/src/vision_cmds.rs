@@ -282,8 +282,8 @@ pub fn overlay_flat(app: &DarkBurn) -> Result<(image::DynamicImage, camera::Over
     for p in img.pixels_mut() {
         if p.0[3] < 255 {
             let a = u16::from(p.0[3]);
-            for c in 0..3 {
-                p.0[c] = ((u16::from(p.0[c]) * a + 255 * (255 - a)) / 255) as u8;
+            for c in &mut p.0[..3] {
+                *c = ((u16::from(*c) * a + 255 * (255 - a)) / 255) as u8;
             }
             p.0[3] = 255;
         }

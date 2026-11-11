@@ -760,7 +760,7 @@ impl<H: Host> Monkey<H> {
             }
         }
         self.check_state(&what);
-        if self.trail.len() % self.job_every == 0 {
+        if self.trail.len().is_multiple_of(self.job_every) {
             self.check_job(&what);
         }
         result
@@ -967,7 +967,7 @@ fn check_shape(doc: &Document, s: &Shape, problem: &mut Option<String>) {
         bad(format!("power scale {}", s.power_scale));
     }
     for k in s.image_keys() {
-        if doc.images.get(&k).is_none() {
+        if !doc.images.contains_key(&k) {
             bad(format!("picture {k} is not in the project"));
         }
     }
@@ -990,10 +990,8 @@ fn check_shape(doc: &Document, s: &Shape, problem: &mut Option<String>) {
                 bad(format!("ellipse {rx} x {ry}"));
             }
         }
-        ShapeKind::Polygon { sides, radius } => {
-            if *sides < 3 || !radius.is_finite() {
-                bad(format!("polygon of {sides} sides, radius {radius}"));
-            }
+        ShapeKind::Polygon { sides, radius } if *sides < 3 || !radius.is_finite() => {
+            bad(format!("polygon of {sides} sides, radius {radius}"));
         }
         _ => {}
     }
@@ -1003,7 +1001,7 @@ fn check_shape(doc: &Document, s: &Shape, problem: &mut Option<String>) {
         }
         for c in &a.source {
             for k in c.image_keys() {
-                if doc.images.get(&k).is_none() {
+                if !doc.images.contains_key(&k) {
                     bad(format!("picture {k} of an array item is not in the project"));
                 }
             }

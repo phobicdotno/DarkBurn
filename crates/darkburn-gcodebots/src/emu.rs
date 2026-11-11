@@ -311,6 +311,22 @@ impl LineEmulator {
     pub fn laser_armed(&self) -> bool {
         self.power_now(true) > 0.0
     }
+    /// The kill button on the board (or a limit switch): the controller halts at once, drops
+    /// what it had planned and says so.
+    pub fn press_kill_button(&mut self) {
+        if self.cfg.flavor == EmuFlavor::Smoothie {
+            self.smoothie_reset();
+        } else {
+            self.planner.clear();
+            self.exec = None;
+            self.inbox.clear();
+            self.firing_now = false;
+            self.fire_pct = None;
+            self.laser_enabled = false;
+            self.halted = true;
+            self.say("Error:Printer halted. kill() called!");
+        }
+    }
     pub fn is_unplugged(&self) -> bool {
         self.unplugged
     }

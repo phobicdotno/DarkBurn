@@ -1440,6 +1440,12 @@ impl Worker {
 
     fn on_halt(&mut self, line: &str) {
         self.console_in(line);
+        self.halted(line);
+    }
+
+    /// The controller has halted: nothing of what ran or waited may go on once the halt is
+    /// cleared.
+    fn halted(&mut self, line: &str) {
         let first = self.snap.alarm.is_none();
         self.snap.alarm = Some(line.to_owned());
         self.snap.state = MachineState::Alarm(None);
@@ -1508,8 +1514,10 @@ impl Worker {
         }
         if state.is_alarm() {
             if self.snap.alarm.is_none() {
-                self.snap.alarm = Some("Alarm".to_owned());
-                self.emit(MachineEvent::Alarm("Alarm".to_owned()));
+                // The halt line itself can be lost or never sent. A controller that reports
+                // the alarm state has dropped its planner all the same, so the job, the pause
+                // and the fire button end here as they do on the line.
+                self.halted("Alarm");
             }
         } else if self.snap.alarm.is_some() && self.phase == Phase::Ready {
             // The controller says it is no longer in alarm.

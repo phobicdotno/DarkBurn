@@ -275,3 +275,75 @@ fn taking_the_arm_back_while_a_job_marks_stops_the_job() {
     });
     assert_eq!(r.m.snapshot().activity, Activity::Idle);
 }
+
+#[test]
+fn pause_stop_and_resume_in_one_breath_leave_the_job_stopped() {
+    let dev = DeviceSettings::default();
+    let mut r = rig_with(dev.clone(), slow_emu(), polling());
+    r.m.arm().unwrap();
+    r.m.start_job(long_job(&dev), StartOptions::default()).unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 5)), "{:?}", r.events);
+    let marks = {
+        let held = r.emu.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        r.m.pause().unwrap();
+        r.m.stop().unwrap();
+        r.m.resume().unwrap();
+        held.emitting_marks()
+    };
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))), "{:?}", r.events);
+    r.settle();
+    assert!(!r.has(|e| matches!(e, Event::Resumed)), "{:?}", r.events);
+    r.emu(|e| {
+        // at most the commands of the poll the worker was held in ran after the requests
+        assert!(e.emitting_marks() <= marks + 2, "{} marks before, {} after", marks, e.emitting_marks());
+        assert!(!e.laser_enabled() && !e.mo_open() && !e.laser_signal() && !e.is_executing() && !e.is_paused());
+        assert_eq!((e.port_out(), e.queued_commands()), (0, 0));
+    });
+    let s = r.m.snapshot();
+    assert!(!s.armed && s.activity == Activity::Idle && s.progress.is_none(), "{s:?}");
+}
+
+#[test]
+fn a_frame_and_a_second_job_are_refused_while_a_job_runs() {
+    let dev = DeviceSettings::default();
+    let mut r = rig_with(dev.clone(), slow_emu(), polling());
+    r.m.arm().unwrap();
+    {
+        // Both starts are asked for before the worker has seen the first.
+        let _held = r.emu.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        r.m.start_job(long_job(&dev), StartOptions::default()).unwrap();
+        assert_eq!(r.m.start_job(small_job(&dev), StartOptions::default()), Err(GalvoError::Busy));
+        assert_eq!(r.m.start_frame(frame(&dev), true), Err(GalvoError::Busy));
+        assert_eq!(r.m.move_axis(0, 1.0), Err(GalvoError::Busy));
+        assert_eq!(r.m.set_light(true), Err(GalvoError::Busy));
+    }
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 5)), "{:?}", r.events);
+    assert_eq!(r.m.start_frame(frame(&dev), true), Err(GalvoError::Busy));
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 1);
+    r.emu(|e| assert_eq!(e.log().light_on_writes, 0));
+    r.m.stop().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))));
+}
+
+#[test]
+fn a_link_that_drops_during_a_start_leaves_nothing_running_and_the_arm_spent() {
+    let dev = DeviceSettings::default();
+    let mut r = rig_with(dev.clone(), slow_emu(), polling());
+    r.m.arm().unwrap();
+    {
+        let mut held = r.emu.lock().unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        r.m.start_job(small_job(&dev), StartOptions::default()).unwrap();
+        held.disconnect();
+    }
+    assert!(r.wait(|r| matches!(r.m.snapshot().connection, ConnectionState::Failed(_))), "{:?}", r.m.snapshot());
+    r.settle();
+    let s = r.m.snapshot();
+    assert!(!s.armed && s.activity == Activity::Idle && s.progress.is_none(), "{s:?}");
+    assert!(!r.has(|e| matches!(e, Event::JobStarted)), "{:?}", r.events);
+    assert_eq!(r.m.start_job(small_job(&dev), StartOptions::default()), Err(GalvoError::NotConnected));
+    assert_eq!(r.m.arm(), Err(GalvoError::NotConnected));
+    r.emu(|e| assert!(!e.ever_emitted()));
+}

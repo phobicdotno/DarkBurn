@@ -1515,7 +1515,12 @@ impl Worker {
 
     fn shutdown(&mut self) {
         if self.phase == Phase::Ready {
-            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some();
+            // A jog whose start no status report has shown yet still runs on the controller.
+            let jogging = self.jogging();
+            if jogging && self.stop.is_none() && self.snap.is_v11() {
+                let _ = self.write(&[rt::JOG_CANCEL]);
+            }
+            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some() || jogging;
             if busy && self.stop.is_none() {
                 let _ = self.begin_stop();
             }

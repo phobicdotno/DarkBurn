@@ -236,6 +236,31 @@ fn a_disconnect_right_after_start_leaves_nothing_burning() {
     }
 }
 
+#[test]
+fn a_disconnect_in_the_middle_of_a_job_a_jog_or_a_fire_stops_it_first() {
+    // job
+    let (m, emu) = rig();
+    m.start_job(Job::from_text(BURN)).unwrap();
+    wait_emu(&emu, "burning", |e| e.laser_on() && e.machine_position()[0] > 5.0);
+    m.disconnect();
+    emu.with(|e| {
+        assert!(!e.laser_on());
+        assert!(!matches!(e.state_name().as_str(), "Run" | "Jog"), "{}", e.state_name());
+    });
+    // jog
+    let (m, emu) = rig();
+    m.jog(JogStep { dx: 300.0, feed: 1500.0, ..Default::default() }).unwrap();
+    wait_emu(&emu, "jogging", |e| e.machine_position()[0] > 2.0);
+    m.disconnect();
+    emu.with(|e| assert!(!matches!(e.state_name().as_str(), "Run" | "Jog"), "the jog ran on after the link closed: {}", e.state_name()));
+    // fire
+    let (m, emu) = rig();
+    m.fire(1.0, Duration::from_secs(8)).unwrap();
+    wait_emu(&emu, "firing", |e| e.laser_on());
+    m.disconnect();
+    emu.with(|e| assert!(!e.laser_on(), "the laser stayed on after the link closed"));
+}
+
 // ----- commands while a job is on its way -----
 
 #[test]

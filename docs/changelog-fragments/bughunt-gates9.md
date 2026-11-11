@@ -1,1 +1,2 @@
 Fix: A job that was paused when the cable dropped no longer shows as paused afterwards
+Fix: Disconnecting or closing in the middle of a jog now stops the move first

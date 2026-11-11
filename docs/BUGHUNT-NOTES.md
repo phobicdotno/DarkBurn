@@ -83,6 +83,6 @@ Known problems to fix in the final bug hunt. Remove a line when its fix is commi
 - [ ] Preview window draws travel moves in job order, the saved image draws them under all burns (`job_ui.rs` `draw_preview`, `preview.rs` `render_png`)
 - [ ] Galvo panel says "Framing is required and done" after any finished frame (`galvo_ui.rs`, `framed_key.is_some()`), also one of another job or a nudged one; the start is still refused by the driver
 - [ ] Gweike (`darkburn-mcc` `SafetyGate`): a relative jog is not checked against the soft limits while the machine is not homed (not proven wrong against a real card, emulator only)
-- [ ] Gweike (`darkburn-mcc`): jog, go-to and FIFO clear are not refused while the FIFO runs; `FifoItem::mode` takes any u32
+- [ ] Gweike (`darkburn-mcc`): `FifoItem::mode` takes any u32
 - [ ] Gweike (`gweike_workflow.rs` `run_on_card_simulator`): the run ends without a stop sequence and does not report when its loop budget runs out
 - [ ] Gweike: a device file with craft values outside the machine limits still loads as it is; storing a craft and exporting refuse them (`gweike_workflow.rs`, `set_craft`, `export_chf`), the editor shows the stored values

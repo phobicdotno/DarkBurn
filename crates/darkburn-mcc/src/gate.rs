@@ -376,6 +376,14 @@ impl SafetyGate {
             return Err(GateRefusal::MachineFault(f.clone()));
         }
         let words = w.words();
+        // While the card runs the FIFO, the head belongs to the stream: no jog, home or go-to,
+        // and the queue is not thrown away under it. Stops stay `Always` and pass.
+        let moves_the_head = w.register() == REG_COMMAND
+            && matches!(words.first(), Some(&(crate::command::CMD_HOME | crate::command::CMD_JOG | crate::command::CMD_GOTO)));
+        let clears_the_queue = w.register() == REG_FIFO_CONTROL && words == [crate::command::FIFO_CLEAR];
+        if self.fifo_running && (moves_the_head || clears_the_queue) {
+            return Err(GateRefusal::StreamRunning);
+        }
         if w.register() == REG_COMMAND && words.len() == 6 && words[0] == 3 && words[1] & 0x8000_0000 == 0 {
             let idx = words[1];
             if self.homed

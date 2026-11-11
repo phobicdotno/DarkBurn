@@ -512,6 +512,12 @@ impl GcodeMachine for LineMachine {
         if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() && s.mpos == s.wpos {
             return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", probe.x, probe.y)));
         }
+        if t.coords == darkburn_grbl::Coords::Machine && self.cfg.travel.is_some() {
+            let m = Point::new(t.x.unwrap_or(s.mpos[0]), t.y.unwrap_or(s.mpos[1]));
+            if !self.in_travel(m) {
+                return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", m.x, m.y)));
+            }
+        }
         let mut axes = String::new();
         for (l, v) in [('X', t.x), ('Y', t.y), ('Z', t.z)] {
             if let Some(v) = v {

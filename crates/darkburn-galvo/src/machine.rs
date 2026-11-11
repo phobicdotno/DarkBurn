@@ -724,8 +724,17 @@ impl Worker {
                 if !on {
                     self.sh.armed.store(false, Ordering::SeqCst);
                 }
-                if !on && matches!(self.state, State::Idle) {
-                    self.link.single(SingleCmd::DisableLaser)?;
+                if !on {
+                    match self.state {
+                        State::Idle => {
+                            self.link.single(SingleCmd::DisableLaser)?;
+                        }
+                        // "Not armed" means the laser cannot fire: a job that is marking ends
+                        // here, the same way Stop ends it.
+                        State::Job(_) => self.do_stop(),
+                        // A frame never fires; it goes on.
+                        State::Frame(_) => {}
+                    }
                 }
             }
             Cmd::Stop => self.do_stop(),
@@ -869,7 +878,7 @@ impl Worker {
             while let Ok(c) = self.cmds.try_recv() {
                 self.pending.push_back(c);
             }
-            if self.pending.iter().any(|c| matches!(c, Cmd::Stop | Cmd::Pause | Cmd::Shutdown)) {
+            if self.pending.iter().any(|c| matches!(c, Cmd::Stop | Cmd::Pause | Cmd::Shutdown | Cmd::Arm(false))) {
                 return Ok(false);
             }
             let left = end.saturating_duration_since(Instant::now());

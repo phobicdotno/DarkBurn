@@ -253,3 +253,25 @@ fn a_job_that_waits_for_the_foot_switch_does_not_start_on_an_old_press() {
     r.m.stop().unwrap();
     assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))));
 }
+
+#[test]
+fn taking_the_arm_back_while_a_job_marks_stops_the_job() {
+    let dev = DeviceSettings::default();
+    let mut r = rig_with(dev.clone(), slow_emu(), polling());
+    let job = long_job(&dev);
+    let total = job.list_commands().iter().filter(|c| matches!(c, ListCmd::MarkTo { .. })).count();
+    r.m.arm().unwrap();
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 5)), "{:?}", r.events);
+    r.m.disarm().unwrap();
+    assert!(!r.m.snapshot().armed);
+    // "Not armed: the laser cannot fire" must be true from here on.
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped | Event::JobFinished { .. }))), "{:?}", r.events);
+    assert!(r.has(|e| matches!(e, Event::JobStopped)), "the job went on marking without the arm: {:?}", r.events);
+    r.emu(|e| {
+        assert!(e.emitting_marks() < total);
+        assert!(!e.laser_enabled() && !e.mo_open() && !e.laser_signal() && !e.is_executing());
+        assert_eq!(e.port_out(), 0);
+    });
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+}

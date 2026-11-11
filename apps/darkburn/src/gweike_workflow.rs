@@ -348,7 +348,16 @@ pub fn plan(doc: &Document, s: &GweikeSettings, bed: (f64, f64)) -> Result<(mcc:
     if segs.is_empty() {
         return Err("There is nothing to plan: no shapes on layers that cut.".into());
     }
-    let p = mcc::dry_run(&segs, &plan_config(s, bed)).map_err(|e| e.to_string())?;
+    plan_path(&segs, s, bed)
+}
+
+fn plan_path(segs: &[mcc::PathSegment], s: &GweikeSettings, bed: (f64, f64)) -> Result<(mcc::DryRunPlan, PlanSummary), String> {
+    // The same ceiling the card gate holds jogs and go-tos to.
+    let max_acc = f64::from(mcc::SafetyConfig::default().max_acc);
+    if s.accel_mm_s2.is_nan() || s.accel_mm_s2 > max_acc {
+        return Err(format!("The acceleration in the device settings ({} mm/s2) is above what the machine allows ({max_acc} mm/s2).", s.accel_mm_s2));
+    }
+    let p = mcc::dry_run(segs, &plan_config(s, bed)).map_err(|e| e.to_string())?;
     let sum = PlanSummary {
         ticks: p.tick_count,
         frames: p.frames.len(),
@@ -454,5 +463,20 @@ mod hunt8_tests {
         assert!(done.ticks_consumed > 0 && done.sim_seconds < 10.0, "{done:?}");
         assert!(!link.sim.fifo_running());
         assert_eq!(link.sim.outputs(), 0);
+    }
+
+    #[test]
+    fn a_plan_does_not_accelerate_harder_than_the_machine_allows() {
+        // The card's ceiling is 20000 mm/s2 (jogs and go-tos are held to it). A device file with
+        // a larger value planned a stream that jumps to full speed in one tick.
+        let segs = [mcc::PathSegment::cut(200.0, 0.0, 500.0)];
+        let bed = (1300.0, 900.0);
+        for accel in [20_000.1, 1.0e6, f64::INFINITY] {
+            let s = GweikeSettings { accel_mm_s2: accel, ..GweikeSettings::default() };
+            assert!(plan_path(&segs, &s, bed).is_err(), "planned with {accel} mm/s2");
+        }
+        let s = GweikeSettings { accel_mm_s2: 20_000.0, ..GweikeSettings::default() };
+        plan_path(&segs, &s, bed).unwrap();
+        plan_path(&segs, &GweikeSettings::default(), bed).unwrap();
     }
 }

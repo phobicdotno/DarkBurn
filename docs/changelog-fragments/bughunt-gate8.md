@@ -5,3 +5,4 @@ Fix: "Hide Start" for a DSP device now also holds the Start shortcut and menu, n
 Fix: A move typed in machine coordinates is refused when it lies outside the machine (Smoothieware)
 Fix: With a work origin set, a move to a position is still checked against the machine (Marlin, Smoothieware and custom devices)
 Fix: With a work origin set, a frame is still checked against the machine (Marlin, Smoothieware and custom devices)
+Fix: Disconnecting or pressing Stop while the Fire button is on now switches the laser off on a Ruida controller, and a job no longer starts with it still on

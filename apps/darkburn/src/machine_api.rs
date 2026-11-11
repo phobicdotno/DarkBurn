@@ -1450,6 +1450,14 @@ impl RuidaAdapter {
         }
     }
 
+    /// Let the controller's Pulse key go if the Fire button holds it down.
+    fn release_fire(&mut self) {
+        if self.fire.take().is_some() {
+            let _ = self.h.request(ruida::Request::PanelKey { key: ruida::PanelKey::Pulse, down: false });
+        }
+        self.snap.fire_on = false;
+    }
+
     fn req(&mut self, r: ruida::Request, op: Op) -> Result<(), MachineError> {
         if self.closed || !matches!(self.snap.link, LinkState::Connected) {
             return Err(MachineError::NotConnected);
@@ -1917,6 +1925,7 @@ impl DriverAdapter for RuidaAdapter {
         }
         self.closed = true;
         if self.snap.connected() {
+            self.release_fire();
             let _ = self.h.request(ruida::Request::Stop);
             let _ = self.h.request(ruida::Request::Disconnect);
         }

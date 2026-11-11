@@ -369,6 +369,10 @@ fn ruida_home_jog_move_and_position() {
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::Error(m) if m.contains("outside"))), "the driver reports the bounds error");
     h.frame_rect(Rect::new(10.0, 10.0, 40.0, 30.0), FrameSpec::default()).unwrap();
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::FrameStarted)));
+    // The Pulse key is refused on top of the frame; it works once the frame is over.
+    assert!(matches!(h.fire(5.0, 0.2), Err(MachineError::Busy)));
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Framing));
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Ready));
     h.fire(5.0, 0.2).unwrap();
     assert!(h.wait_for(T, |s, _| s.fire_on));
     assert!(h.wait_for(T, |s, _| !s.fire_on));

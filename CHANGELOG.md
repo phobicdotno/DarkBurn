@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.474 (build 6)
+## v0.0.489 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -58,6 +58,21 @@
 - Fix: With a work origin set, a move to a position is still checked against the machine (Marlin, Smoothieware and custom devices)
 - Fix: With a work origin set, a frame is still checked against the machine (Marlin, Smoothieware and custom devices)
 - Fix: Disconnecting or pressing Stop while the Fire button is on now switches the laser off on a Ruida controller, and a job no longer starts with it still on
+- Fix: On a galvo, Stop pressed right after Start now always wins
+- Fix: A galvo job reads the door switch again at the moment it starts
+- Fix: Resume on a galvo reads the door switch again first
+- Fix: A galvo job that waits for the foot switch no longer starts on an old press
+- Fix: Disarming a galvo while a job is marking now stops the job
+- Fix: Go to origin on Smoothieware, Marlin and custom G-code machines no longer runs to an origin outside the machine
+- Fix: On Marlin, a jog, move or frame after Set origin no longer runs past the end of the machine
+- Fix: On the Gweike, a jog key held down no longer keeps the head moving once the card asks for a restart
+- Fix: On a Ruida controller, a jog, move, home or frame now ends the Fire button first
+- Fix: After a lost connection the app no longer shows the laser as firing
+- Fix: A job or frame started while the head still jogs is refused, instead of losing its first lines
+- Fix: DSP controllers: Fire, moves and a second Start are refused right after Start too, not only once the job shows as running
+- Fix: Ruida: Fire and Start are refused while a frame is on its way or running
+- Fix: A device with the Fire button switched off refuses to fire in the driver too
+- Fix: A frame with the laser on is refused in the driver unless the device allows it
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

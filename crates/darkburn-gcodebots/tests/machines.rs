@@ -315,7 +315,10 @@ fn smoothie_home_and_air_assist() {
 #[test]
 fn framing_draws_the_outline_with_the_laser_off_unless_asked() {
     let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Smoothie));
-    let (m, mut log) = connect(&smoothie_profile(), &emu);
+    // A lit frame needs "laser on when framing" in the profile (off by default).
+    let mut p = smoothie_profile();
+    p.gcode.laser_on_when_framing = true;
+    let (m, mut log) = connect(&p, &emu);
     m.frame_rect(Rect::new(10.0, 10.0, 60.0, 40.0), FrameOptions { feed: 6000.0, laser_percent: None, return_to: None }).unwrap();
     assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
     emu.with(|e| {

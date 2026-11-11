@@ -35,6 +35,8 @@ mod file_io;
 mod files;
 #[cfg(test)]
 mod files_hunt5_tests;
+#[cfg(test)]
+mod fire_hunt8_tests;
 mod formats;
 #[cfg(test)]
 mod galvo_hunt6_tests;
@@ -108,6 +110,9 @@ mod polish_tests;
 mod prefs;
 mod prefs_files;
 mod preview;
+#[cfg(test)]
+mod races_hunt8_tests;
+
 mod rd_import;
 mod render;
 mod ribbon;

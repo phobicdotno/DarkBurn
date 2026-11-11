@@ -371,6 +371,8 @@ impl GalvoMachine {
     }
 
     pub fn disconnect(&mut self) {
+        // A start that is still queued in front of the shutdown finds the arm gone.
+        self.armed.store(false, Ordering::SeqCst);
         let _ = self.tx.send(Cmd::Shutdown);
         if let Some(h) = self.worker.take() {
             let _ = h.join();
@@ -717,9 +719,22 @@ impl Worker {
     fn handle(&mut self, c: Cmd) -> io::Result<()> {
         match c {
             Cmd::Arm(on) => {
-                self.sh.armed.store(on, Ordering::SeqCst);
-                if !on && matches!(self.state, State::Idle) {
-                    self.link.single(SingleCmd::DisableLaser)?;
+                // The handle set the flag when it was asked. Setting it again here would give
+                // the arm back after a stop that was asked for in between and is still queued.
+                if !on {
+                    self.sh.armed.store(false, Ordering::SeqCst);
+                }
+                if !on {
+                    match self.state {
+                        State::Idle => {
+                            self.link.single(SingleCmd::DisableLaser)?;
+                        }
+                        // "Not armed" means the laser cannot fire: a job that is marking ends
+                        // here, the same way Stop ends it.
+                        State::Job(_) => self.do_stop(),
+                        // A frame never fires; it goes on.
+                        State::Frame(_) => {}
+                    }
                 }
             }
             Cmd::Stop => self.do_stop(),
@@ -750,8 +765,16 @@ impl Worker {
         Ok(())
     }
 
-    fn door_open(&self) -> bool {
-        self.link.settings.ports.door_bit.is_some() && self.sh.snapshot.lock().expect("snapshot").inputs.door_open
+    /// Reads the door now and puts the reading in the snapshot. The snapshot alone can be as old
+    /// as the poll interval, and older after a long transaction (a lens table upload); nothing
+    /// that can lead to a mark is decided on that.
+    fn door_open_now(&mut self) -> io::Result<bool> {
+        if self.link.settings.ports.door_bit.is_none() {
+            return Ok(false);
+        }
+        let inputs = self.link.inputs()?;
+        self.sh.update(|s| s.inputs = inputs);
+        Ok(inputs.door_open)
     }
 
     fn idle_snapshot(&self) {
@@ -800,7 +823,10 @@ impl Worker {
     }
 
     fn do_resume(&mut self) -> io::Result<()> {
-        if self.door_open() {
+        if matches!(self.state, State::Idle) {
+            return Ok(());
+        }
+        if self.door_open_now()? {
             self.reject("The door is open.");
             return Ok(());
         }
@@ -848,7 +874,7 @@ impl Worker {
             while let Ok(c) = self.cmds.try_recv() {
                 self.pending.push_back(c);
             }
-            if self.pending.iter().any(|c| matches!(c, Cmd::Stop | Cmd::Pause | Cmd::Shutdown)) {
+            if self.pending.iter().any(|c| matches!(c, Cmd::Stop | Cmd::Pause | Cmd::Shutdown | Cmd::Arm(false))) {
                 return Ok(false);
             }
             let left = end.saturating_duration_since(Instant::now());
@@ -899,7 +925,7 @@ impl Worker {
             reject(self, "Frame the job with the red light before starting it.");
             return Ok(());
         }
-        if self.door_open() {
+        if self.door_open_now()? {
             reject(self, "The door is open.");
             return Ok(());
         }
@@ -951,7 +977,7 @@ impl Worker {
             self.reject("A frame must not contain marking commands.");
             return Ok(());
         }
-        if self.door_open() {
+        if self.door_open_now()? {
             self.idle_snapshot_if_idle();
             self.reject("The door is open.");
             return Ok(());
@@ -1119,6 +1145,9 @@ impl Worker {
                 let first = matches!(j.phase, Phase::WaitFootFirst);
                 if !j.announced_wait {
                     j.announced_wait = true;
+                    // A press from before the wait began does not count: read the switch now.
+                    let inputs = self.link.inputs()?;
+                    self.sh.update(|s| s.inputs = inputs);
                     self.sh.update(|s| s.activity = Activity::WaitingFoot);
                     self.sh.emit(Event::WaitingForFoot);
                 }
@@ -1133,21 +1162,23 @@ impl Worker {
                 }
             }
             Phase::WaitDoor => {
+                let open = self.door_open_now()?;
                 if !j.announced_wait {
                     j.announced_wait = true;
                     self.sh.update(|s| s.activity = Activity::WaitingDoor);
-                    if self.door_open() {
+                    if open {
                         self.sh.emit(Event::WaitingForDoor);
                     }
                 }
-                if !self.door_open() {
+                if !open {
                     j.announced_wait = false;
                     self.sh.update(|s| s.activity = Activity::Job);
                     self.next_step(j);
                 }
             }
             Phase::Prep => {
-                if self.door_open() {
+                // The last look at the door before the source is opened is a fresh one.
+                if self.door_open_now()? {
                     return Ok(false);
                 }
                 self.link.single(SingleCmd::ResetList)?;

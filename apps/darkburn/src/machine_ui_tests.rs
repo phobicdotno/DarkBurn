@@ -527,6 +527,7 @@ fn a_full_ruida_job_runs_end_to_end_and_can_be_sent() {
     run(&mut a, "job.send", Value::Null).unwrap();
     wait(&mut a, "stored", |a| a.machine.handle.snapshot().ruida.files.as_ref().is_some_and(|f| !f.is_empty()));
     run(&mut a, "job.frame", Value::Null).unwrap();
+    wait(&mut a, "framing", |a| state(a) == LaserState::Framing);
     wait(&mut a, "framed", |a| state(a) == LaserState::Ready);
     run(&mut a, "job.home", Value::Null).unwrap();
     run(&mut a, "job.go_origin", Value::Null).unwrap();

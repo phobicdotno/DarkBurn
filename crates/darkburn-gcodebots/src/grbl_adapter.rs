@@ -19,6 +19,10 @@ pub struct GrblAdapter {
     machine: GrblMachine,
     air_on: String,
     air_off: String,
+    /// The fire button of the device settings; off, `fire` is refused.
+    fire_button: bool,
+    /// "Laser on when framing" of the device settings; off, a frame with the laser on is refused.
+    laser_frames: bool,
 }
 
 /// GRBL connect options for a profile (DS-11, DS-12, DS-13).
@@ -42,16 +46,25 @@ pub fn connect_options(p: &DeviceProfile) -> ConnectOptions {
 impl GrblAdapter {
     /// Connects with options derived from the profile.
     pub fn connect(transport: Box<dyn darkburn_grbl::Transport>, p: &DeviceProfile) -> Self {
-        Self::with_options(transport, connect_options(p), &p.gcode.air_assist.on, &p.gcode.air_assist.off)
+        let mut m = Self::with_options(transport, connect_options(p), &p.gcode.air_assist.on, &p.gcode.air_assist.off);
+        m.fire_button = p.gcode.fire_button;
+        m.laser_frames = p.gcode.laser_on_when_framing;
+        m
     }
 
     pub fn with_options(transport: Box<dyn darkburn_grbl::Transport>, opts: ConnectOptions, air_on: &str, air_off: &str) -> Self {
-        Self { machine: GrblMachine::connect(transport, opts), air_on: air_on.to_owned(), air_off: air_off.to_owned() }
+        Self {
+            machine: GrblMachine::connect(transport, opts),
+            air_on: air_on.to_owned(),
+            air_off: air_off.to_owned(),
+            fire_button: true,
+            laser_frames: true,
+        }
     }
 
     /// Wraps a machine that is already connected.
     pub fn from_machine(machine: GrblMachine) -> Self {
-        Self { machine, air_on: "M8".into(), air_off: "M9".into() }
+        Self { machine, air_on: "M8".into(), air_off: "M9".into(), fire_button: true, laser_frames: true }
     }
 
     /// The wrapped driver, for GRBL-only features (settings backups, show-all, ...).
@@ -140,7 +153,7 @@ impl GcodeMachine for GrblAdapter {
             read_settings: true,
             write_settings: true,
             air_assist: !self.air_on.trim().is_empty(),
-            fire: true,
+            fire: self.fire_button,
             home: true,
             user_origin: true,
         }
@@ -174,6 +187,9 @@ impl GcodeMachine for GrblAdapter {
         Ok(self.machine.soft_reset()?)
     }
     fn frame_outline(&self, points: &[Point], opts: FrameOptions) -> Result<(), MachineError> {
+        if opts.laser_percent.is_some() && !self.laser_frames {
+            return Err(MachineError::Unsupported("framing with the laser on (switched off in the device settings)"));
+        }
         Ok(self.machine.frame_outline(points, opts)?)
     }
     fn jog(&self, step: JogStep) -> Result<(), MachineError> {
@@ -204,6 +220,9 @@ impl GcodeMachine for GrblAdapter {
         Ok(self.machine.request_status()?)
     }
     fn fire(&self, percent: f64, duration: Duration) -> Result<(), MachineError> {
+        if !self.fire_button {
+            return Err(MachineError::Unsupported("the fire button (switched off in the device settings)"));
+        }
         Ok(self.machine.fire(percent, duration)?)
     }
     fn fire_off(&self) -> Result<(), MachineError> {

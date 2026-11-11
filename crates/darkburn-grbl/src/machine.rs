@@ -316,9 +316,12 @@ impl Snapshot {
         if self.alarm_locked || self.status.state.is_alarm() {
             return LaserStatus::Alarm;
         }
+        // A job or frame the controller holds (a pause, a hold of its own, the safety door) goes
+        // on with Resume only: it shows as paused whoever asked for the hold.
+        let held = self.paused || matches!(self.status.state, MachineState::Hold(_) | MachineState::Door(_));
         match self.activity {
+            Activity::Framing | Activity::Job if held => LaserStatus::Paused,
             Activity::Framing => LaserStatus::Framing,
-            Activity::Job if self.paused => LaserStatus::Paused,
             Activity::Job | Activity::Stopping => LaserStatus::Busy,
             Activity::Idle => match self.status.state {
                 MachineState::Hold(_) | MachineState::Door(_) => LaserStatus::Paused,
@@ -1657,6 +1660,10 @@ impl Worker {
     }
 
     fn fire_off(&mut self, timed_out: bool) {
+        // A fire line that still waits (behind homing, a full buffer) is dropped: the `M5`
+        // goes to the front of the queue, so the line would be sent after its own switch-off
+        // and nothing would end it.
+        self.queue.retain(|o| o.origin != Origin::Internal(Tag::Fire));
         if self.fire_until.take().is_some() || !timed_out {
             self.queue.push_front(Outgoing { text: "M5 S0".into(), origin: Origin::Internal(Tag::Plain), sync: false, needs_idle: false });
         }
@@ -2288,6 +2295,14 @@ impl Worker {
         }
         if changed {
             self.emit(Event::StateChanged(r.state.clone()));
+        }
+        // The safety door ends the fire button. The controller switches the laser off while the
+        // door is open and puts the spindle state back when it is closed and resumed: without
+        // the `M5` the laser would come on again there, under a press made before the door
+        // opened.
+        if matches!(r.state, MachineState::Door(_)) && self.fire_until.is_some() && self.job.is_none() {
+            self.fire_off(false);
+            self.emit(Event::FireOff);
         }
         // A feed hold stops the motion; without laser mode ($32) the laser output stays on.
         // GRBL 1.1 switches it off with the spindle stop byte, taken only once the hold is

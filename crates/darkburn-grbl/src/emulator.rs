@@ -854,6 +854,11 @@ impl GrblEmulator {
         self.reset_modal();
         self.wait_reset = false;
         self.state = if in_alarm { State::Alarm } else { State::Idle };
+        // GRBL 1.1 looks at the door switch after a reset and goes straight back into its door
+        // state while the door is open.
+        if !in_alarm && self.door_switch_open {
+            self.enter_door();
+        }
         self.reports = 0;
         self.wco_dirty = true;
         self.ov_dirty = true;

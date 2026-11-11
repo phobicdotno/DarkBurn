@@ -148,9 +148,12 @@ impl MachineSnapshot {
         if self.alarm.is_some() || self.state.is_alarm() {
             return LaserStatus::Alarm;
         }
+        // A job or frame the controller holds (a pause, a hold of its own, the safety door) goes
+        // on with Resume only: it shows as paused whoever asked for the hold.
+        let held = self.paused || matches!(self.state, MachineState::Hold(_) | MachineState::Door(_));
         match self.activity {
+            Activity::Framing | Activity::Job if held => LaserStatus::Paused,
             Activity::Framing => LaserStatus::Framing,
-            Activity::Job if self.paused => LaserStatus::Paused,
             Activity::Job | Activity::Stopping => LaserStatus::Busy,
             Activity::Idle => match self.state {
                 MachineState::Hold(_) | MachineState::Door(_) => LaserStatus::Paused,

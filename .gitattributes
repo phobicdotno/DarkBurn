@@ -1,7 +1,7 @@
-# The web page, the script that builds it and two files the script copies are read byte for
-# byte (by sh, and by the script's own checks), so they keep Unix line ends in every checkout,
-# also on Windows. In a checkout made before this file existed: delete these files and check
-# them out again.
+# The web page, the two scripts that build and upload it and two files the build copies are
+# read byte for byte (by sh, and by the build's own checks), so they keep Unix line ends in
+# every checkout, also on Windows. In a checkout made before this file existed: delete these
+# files and check them out again.
 /site/*.html text eol=lf
 /site/*.css text eol=lf
 /site/*.js text eol=lf

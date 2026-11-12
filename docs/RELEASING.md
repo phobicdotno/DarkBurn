@@ -59,7 +59,9 @@ commit for the Windows installer, and a job stops when the two differ.
   draft by then. A release that is already published is never changed.
 - A push to `main` that changes only `README.md` or files under `docs/` starts neither workflow: nothing that
   is built or tested reads them. The one exception is `docs/PARITY-CHECKLIST.md`, which is built into
-  `darkburn-mcp`. Pull requests and tags always run. A release push (`main` and its tag together) builds the
+  `darkburn-mcp`. The same holds for the web page (`site/`), which a third workflow,
+  `.github/workflows/site.yml`, builds and checks when the page or what it shows changes: the pictures in
+  `docs/img`, the fonts, the icon. It publishes nothing; see "The web page" in `CONTRIBUTING.md`. Pull requests and tags always run. A release push (`main` and its tag together) builds the
   packages once, in the run for the tag.
 - While the repository is private, the workflows do less by themselves, because a private repository has a
   small monthly allowance of runner time and of room for artifacts:

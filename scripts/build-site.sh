@@ -127,10 +127,11 @@ start='<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">'
 own="style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'"
+front="default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'"
 for page in "$out"/*.html; do
     name=${page##*/}
     case $name in
-        index.html) policy="default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'" ;;
+        index.html) policy=$front ;;
         *) policy="default-src 'none'; $own" ;;
     esac
     printf '%s\n<meta http-equiv="Content-Security-Policy" content="%s">\n' "$start" "$policy" >"$out/.head"
@@ -151,7 +152,8 @@ rm -f "$out/.head"
 
 # The rules for the host, .htaccess. The host sends the policy once more, as a header on every
 # file, with the one thing a line in a page cannot say: no other site may show the page in a
-# frame. The header is compared with the policy above, so the two cannot drift apart.
+# frame. The header is built from the policy of the front page above, so the two cannot drift
+# apart.
 #
 # The file can do far more than that. The host runs PHP, and one line in .htaccess can make it
 # run a picture as a program, send every visitor elsewhere or ask for a password. So each line
@@ -159,15 +161,19 @@ rm -f "$out/.head"
 # here first.
 rules=$out/.htaccess
 [ -f "$rules" ] || die "site/.htaccess is not there."
-[ "$(LC_ALL=C tr -d ' -~\n' <"$rules" | wc -c | tr -d ' ')" -eq 0 ] ||
-    die ".htaccess holds something that is not plain ASCII text (a tab and a Windows line end count)."
+if [ "$(LC_ALL=C tr -d ' -~\n' <"$rules" | wc -c | tr -d ' ')" -ne 0 ]; then
+    LC_ALL=C grep -n '[^ -~]' "$rules" >&2 || true
+    die ".htaccess holds something that is not plain ASCII text (see the lines above; a tab and a Windows line end count)."
+fi
 # A line that ends with "\" goes on in the next one, also when it is a comment.
 if grep -n '\\$' "$rules"; then
     die ".htaccess has a line that ends with a backslash (see the lines above)."
 fi
-header="Header set Content-Security-Policy \"default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'\""
+header="Header set Content-Security-Policy \"$front; frame-ancestors 'none'\""
 [ "$(grep -c 'Content-Security-Policy' "$rules")" -eq 1 ] ||
-    die ".htaccess names Content-Security-Policy more than once, or not at all. It is set in one line: $header"
+    die ".htaccess names Content-Security-Policy more than once, or not at all. A comment counts too. It is set in one line: $header"
+grep -qFx -- "  $header" "$rules" ||
+    die ".htaccess does not set the policy as this script knows it. To change the policy, change it in this script first. The line must be this, with two spaces in front of it: $header"
 kinds='</?IfModule( mod_(headers|rewrite)\.c)?>
 </?FilesMatch( "[^"]*")?>
 Header set (X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|Cache-Control) "[^"]*"
@@ -178,9 +184,7 @@ RewriteCond [^ ]+ [^ ]+( \[NC\])?
 RewriteRule [^ ]+ (-|https://%\{HTTP_HOST\}(/|%\{REQUEST_URI\})) \[R=(301|404),L\]'
 odd=$(sed 's/^ *//' "$rules" | grep -v '^#' | grep -v '^$' | grep -vFx -- "$header" |
     grep -Evx -e "$(printf '%s' "$kinds" | tr '\n' '|')" | head -n 3 || true)
-[ -z "$odd" ] || die ".htaccess holds a line this script does not know: $odd"
-grep -qFx -- "  $header" "$rules" ||
-    die ".htaccess does not set the policy as this script knows it. The line must be: $header"
+[ -z "$odd" ] || die ".htaccess holds a line this script does not know (a new kind of line is named in this script first, in the list \"kinds\"): $odd"
 
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.

@@ -12,7 +12,8 @@
 # page and https. This script
 #   1. builds the folder afresh with scripts/build-site.sh, which also checks it,
 #   2. uploads every file in it to httpd.www/darkburn/ on ssh.phobic.no, the pages last,
-#   3. asks the page for its front page and its headers, and says what it found.
+#   3. asks the page for its front page, its headers, the forward from http and its "not
+#      found" page, and says what it found.
 #
 # Set once, by hand, at the host: the name darkburn.phobic.no for the folder
 # httpd.www/darkburn, the way the other names under phobic.no are set up there. Until then
@@ -35,13 +36,14 @@ user=$1
 host=${DARKBURN_SITE_HOST:-ssh.phobic.no}
 dir=${DARKBURN_SITE_DIR:-httpd.www/darkburn}
 url=${DARKBURN_SITE_URL:-https://darkburn.phobic.no}
+url=${url%/}
 
 # These three end up on a command line and in a list of commands for sftp.
 case $user in
-    '' | -* | *[!A-Za-z0-9._@-]*) die "the user name may hold letters, digits, dot, dash, underscore and @." ;;
+    '' | -* | *[!A-Za-z0-9._@-]*) die "the user name may hold letters, digits, dot, dash, underscore and @, and does not start with a dash." ;;
 esac
 case $host in
-    '' | -* | *[!A-Za-z0-9.-]*) die "the host name may hold letters, digits, dot and dash." ;;
+    '' | -* | *[!A-Za-z0-9.-]*) die "the host name may hold letters, digits, dot and dash, and does not start with a dash." ;;
 esac
 case $dir in
     '' | -* | /* | */ | *..* | *//* | *[!A-Za-z0-9._/-]*) die "the folder on the host is a plain path from the login folder, such as httpd.www/darkburn." ;;
@@ -109,15 +111,27 @@ if curl -fsS -m 30 -D "$seen" -o "$seen.page" "$url/" 2>/dev/null; then
             to=$(curl -sS -m 30 -o /dev/null -w '%{http_code} %{redirect_url}' "$plain" 2>/dev/null || true)
             case $to in
                 "301 $url/") ;;
-                *) note "$plain does not forward to $url/ (it answers: ${to:-nothing}). Without https somebody on a visitor's network can change the install commands the page shows." ;;
+                *)
+                    # curl writes 000 when nothing answered.
+                    case ${to% } in
+                        000 | '') to=nothing ;;
+                        *) to=${to% } ;;
+                    esac
+                    note "$plain does not forward to $url/ (it answers: $to). Without https somebody on a visitor's network can change the install commands the page shows."
+                    ;;
             esac
             ;;
     esac
     lost=$(curl -sS -m 30 -o "$seen.page" -w '%{http_code}' "$url/no-such-page" 2>/dev/null || true)
-    if [ "$lost" != 404 ] || ! cmp -s "$seen.page" "$out/404.html"; then
-        note "$url/no-such-page does not answer 404 with the page's own \"not found\" (it answers: ${lost:-nothing})."
+    case $lost in
+        000 | '') lost=nothing ;;
+    esac
+    if [ "$lost" != 404 ]; then
+        note "$url/no-such-page should answer 404. It answers: $lost."
+    elif ! cmp -s "$seen.page" "$out/404.html"; then
+        note "$url/no-such-page answers 404, but not with the page's own \"not found\" (404.html). The host may not allow ErrorDocument in .htaccess files."
     fi
 else
-    note "$url/ does not answer yet. If the name is new at the host, it can take a while; if it is not set up there, see the top of this file."
+    note "$url/ does not answer yet. If the name is new at the host, it can take a while; if it is not set up there, see the top of scripts/deploy-site.sh."
 fi
 rm -f "$seen" "$seen.page"

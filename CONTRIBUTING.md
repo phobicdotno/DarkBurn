@@ -67,9 +67,9 @@ python3 -m http.server -d target/site
 
 The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there, that nothing is fetched from another host and that every page carries its Content-Security-Policy line. That line allows only the page's own files, so script and style go in `site/site.js` and `site/style.css`, never inside the HTML. `site/` holds five files and the script publishes a fixed list of files: a new file, a new font among them, is named in `scripts/build-site.sh` first. A new picture in `docs/img` needs no such line.
 
-The fifth file, `site/.htaccess`, holds the rules for the web host: the same policy as a header, which pages are kept by a browser, the "not found" page and https. The host runs PHP, and one line in that file could make it run an uploaded file as a program, so the script knows every kind of line in it and refuses any other. A new kind of line is named in `scripts/build-site.sh` first.
+The fifth file, `site/.htaccess`, holds the rules for the web host: the same policy as a header, what a browser may keep without asking again, the "not found" page and https. The host runs PHP, and one line in that file could make it run an uploaded file as a program, so the script knows every kind of line in it and refuses any other. A new kind of line is named in `scripts/build-site.sh` first.
 
-The page is on the owner's own web host, the way the other pages on phobic.no are: a folder of plain files, uploaded over SFTP. Nothing publishes it by itself. After a change to the page is on `main`, the owner uploads it:
+The page is hosted on the owner's own web host, the way the other pages on phobic.no are: a folder of plain files, uploaded over SFTP. Nothing publishes it by itself. After a change to the page is on `main`, the owner uploads it:
 
 ```sh
 sh scripts/deploy-site.sh USER

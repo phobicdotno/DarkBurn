@@ -25,8 +25,9 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
     # For pushes to main, as in ci.yml: not when only the front page, the documents, the web
     # page or what builds, checks and uploads the web page (the two site scripts, site.yml)
-    # changed: no package holds them. GitHub does not look at paths for a tag, so a tag always
-    # runs.
+    # changed: no program is built from them. (The Windows packages hold a copy of README.md;
+    # the next build brings it up to date.) GitHub does not look at paths for a tag, so a tag
+    # always runs.
     paths: ["**", "!README.md", "!docs/**", "!site/**", "!scripts/build-site.sh", "!scripts/deploy-site.sh", "!.github/workflows/site.yml", "docs/PARITY-CHECKLIST.md"]
   workflow_dispatch:
     inputs:

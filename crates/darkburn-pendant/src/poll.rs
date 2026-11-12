@@ -332,7 +332,8 @@ mod tests {
         let w = woke.clone();
         let p = Pendant::start(Box::new(NoConnector), fast(), Some(Box::new(move || w.store(true, Ordering::Relaxed))));
         assert_eq!(wait_for(&p, |_| true), Unavailable(PendantError::Unsupported));
-        assert!(woke.load(Ordering::Relaxed));
+        // The thread queues the event first and calls wake after, so wake may still be on its way.
+        wait_until(|| woke.load(Ordering::Relaxed));
         p.stop();
     }
 

@@ -64,10 +64,11 @@ pub struct PendantUi {
     pub status: PendantStatus,
     /// The keys held right now, to know whether FastStep is down when an arrow goes down.
     held: KeySet,
-    /// None: the real receiver (`darkburn_pendant::system_connector`).
+    /// None: the real receiver (`darkburn_pendant::system_connector`); in tests, no receiver.
     pub make_connector: Option<MakeConnector>,
 }
 
+#[cfg(test)]
 impl PendantUi {
     pub fn running(&self) -> bool {
         self.pendant.is_some()
@@ -75,7 +76,7 @@ impl PendantUi {
 }
 
 thread_local! {
-    static STATUS: RefCell<PendantStatus> = RefCell::new(PendantStatus::Off);
+    static STATUS: RefCell<PendantStatus> = const { RefCell::new(PendantStatus::Off) };
 }
 
 /// The pendant's status as of the last frame, for the Settings page (which only sees the prefs).
@@ -97,6 +98,8 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     if want && app.pendant.pendant.is_none() {
         let connector = match &app.pendant.make_connector {
             Some(make) => make(),
+            // Tests never reach the real receiver, even with every setting switched on.
+            None if cfg!(test) => Box::new(darkburn_pendant::NoConnector),
             None => darkburn_pendant::system_connector(),
         };
         let ctx2 = ctx.clone();

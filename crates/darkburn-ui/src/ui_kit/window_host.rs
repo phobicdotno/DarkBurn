@@ -732,14 +732,15 @@ mod tests {
     }
 
     /// One frame at time `t` (seconds) with these events, a dock area at the right and a
-    /// window `a` (a movable card with one big button) over it, as the app has them.
+    /// window `a` (a movable card) over it, as the app has them.
     fn drop_frame(ctx: &Context, t: f64, events: Vec<egui::Event>) {
         let input =
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), time: Some(t), events, ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
             dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(800.0, 0.0), Pos2::new(1200.0, 800.0)));
             let shown = egui::Area::new(Id::unique("card")).default_pos(Pos2::new(850.0, 100.0)).show(ui.ctx(), |ui| {
-                ui.add_sized([200.0, 100.0], egui::Button::new("Cancel"));
+                // The card's body: pressed and held there, as on a window's empty space.
+                ui.allocate_space(vec2(200.0, 100.0));
             });
             dock_on_drop(ui.ctx(), "a", &shown.response);
         });

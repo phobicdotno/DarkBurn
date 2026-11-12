@@ -6,7 +6,7 @@ Legend: **observed** = read directly from the shipped files (REA kept an evidenc
 
 ## Files
 
-- Download: `Mlaser-v0.0.1.51_SP1.zip`, from the Gweike documentation page on gweikecloud.com (gweikelaser.com is parked). Manual: `Gweike-M-Series-User-Manual.zip`, from the same page.
+- Download: `Mlaser-v0.0.1.51_SP1.zip`, from the Gweike documentation page on gweikecloud.com (gweikelaser.com is parked). Manual: `Gweike-M-Series-User-Manual.zip`, kept in the same folder.
 - Extracted tree: the folder `Mlaser-v0.0.1.51_SP1\Mlaser-v0.0.1.51_SP1\`, unpacked from that zip.
 - Prior full analysis of v0.0.0.52: the owner's phobicMlaserLinux project, `docs\analysis\` (00-overview, 01-hardware-config, 02-layer-params, 03-chf-format, 04-controller-protocol, 05-motion-pipeline, 06-ui-features, 07-exe-internals, 08-runtime-logs, 09-cad-libs, 10-wine-mlaser-prior-work, 11-static-findings, 99-gaps) and a Python protocol implementation in `src/nexcut/mcc/` (framing, crc, commands, registers, dissector).
 
@@ -60,7 +60,7 @@ Endpoints (all defaults, the user can change them in the app):
 
 Timing and protocol limits (observed): `MaxItemPerFrame=60`, `MaxFillItem=2000`, `MCFifoTime=1600`, `MCTimeout=500`, `MCMaxSendTime=2`, `MCMaxRecvTime=3`, `MCSendInterval=1`, `FifoTimeout=600`, `FifoAlarmNum=30`, `MCCore=30`, `OfflineTimeout=5000`, `MaxZFDownItem=512`, `MaxAFDownItem=200`, `MaxECDownItem=200`.
 `[Soft]` (observed): `MinHardwareVer=20177` (matches firmware `MCC100_V201.77.mcf` in `Update\`, 102,912 bytes, encrypted per old docs), `OnBZFMinHardwareVer=311`, `NCZFMinHardwareVer=325`, `AFMinHardwareVer=133`, `EnableOvertime=1`, `FollowOvertime=20000`, `AccessType=1`, `EnableLog=0`, `AdvLaserWrite=1`, `CheckUserID=109`, `Custom=1234`.
-Correction to what I said earlier in that session: this INI does contain the LaserIP, MonitorIP and `[Soft]` blocks.
+This INI does contain the LaserIP, MonitorIP and `[Soft]` blocks.
 
 ## Vendor log `Log\2026-09-16.log` (observed)
 

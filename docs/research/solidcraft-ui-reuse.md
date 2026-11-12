@@ -393,7 +393,7 @@ These come from `ui-egui/src/fonts.rs`: `base_font_definitions()`, `setup_bundle
 - **Git:** yes. `{ git = "https://github.com/phobicdotno/solidcraft", rev = "<sha>" }` works the same way. Cargo clones the repo and loads only the named package.
   - Pin a `rev`.
   - Version is `0.40.0-rc.3`, a pre-release; fine for git and path dependencies.
-  - Note: the fork's `main` follows upstream and may rename paths. Upstream is `tangency-labs/solidcraft`; the workspace `repository` field still says `bherbruck/solidcraft`.
+  - Note: the fork's `main` follows upstream and may rename paths. Upstream is `tangency-labs/solidcraft`.
 - **crates.io:** no. Nothing is published.
   - None of the four Shared crates sets `publish`.
   - `ui-egui` has no `publish = false`, but it is not published either.
@@ -522,7 +522,7 @@ Default host: x86_64-pc-windows-msvc; toolchain stable-x86_64-pc-windows-msvc (o
 ```
 
 - There is no `rust-toolchain.toml` in the repo. 1.99.1 is above the required 1.95.
-- MSVC Build Tools are present (per the earlier session notes).
+- MSVC Build Tools are present.
 
 **What is in `target\`:**
 - `release\solidcraft-cli.exe` (161 MB). This proves the toolchain works for the full engine.

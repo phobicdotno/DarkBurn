@@ -1522,10 +1522,12 @@ impl Window<'_> {
         let window = match (self.anchor, self.placed, stored) {
             (Some((align, offset)), _, _) => window.anchor(align, offset),
             (None, _, Some(pos)) => {
-                let now = egui::AreaState::load(ctx, self.id).map(|a| a.left_top_pos());
+                // Put where it was dropped (a tab dragged out) or first left (when it still holds
+                // the pivot it opened with), unless it is already there.
+                let off =
+                    egui::AreaState::load(ctx, self.id).is_some_and(|a| a.pivot != egui::Align2::LEFT_TOP || a.left_top_pos().distance(pos) > 0.5);
                 let window = window.pivot(egui::Align2::LEFT_TOP).default_pos(pos);
-                // Put where it was dropped (a tab dragged out), unless it is where it was left.
-                if now.is_some_and(|now| now.distance(pos) > 0.5) && !ctx.is_being_dragged(self.id) { window.current_pos(pos) } else { window }
+                if off && !ctx.is_being_dragged(self.id) { window.current_pos(pos) } else { window }
             }
             (None, Some((pivot, pos)), None) => window.pivot(pivot).default_pos(pos),
             (None, None, None) => window.pivot(egui::Align2::CENTER_CENTER).default_pos(ctx.content_rect().center() - vec2(0.0, row_height() * 2.5)),
@@ -1540,7 +1542,7 @@ impl Window<'_> {
         });
         if let Some(shown) = &shown {
             solidcraft_ui_registry::publish_rect("dialog:window", shown.response.rect);
-            drop_on_dock(ctx, key, place.pos.is_some(), &shown.response);
+            drop_on_dock(ctx, self.id, key, place.pos.is_some(), &shown.response);
         }
         shown.and_then(|r| r.inner).unwrap_or((false, super::Action::None))
     }
@@ -1608,12 +1610,14 @@ fn resize_grips(ui: &mut Ui, id: egui::Id, key: &str, margin: egui::Vec2) {
 
 /// While the floating card is dragged over a panel area, show that it will dock there; dropped
 /// there, it becomes a tab.
-fn drop_on_dock(ctx: &egui::Context, key: &str, stored: bool, response: &egui::Response) {
+fn drop_on_dock(ctx: &egui::Context, id: egui::Id, key: &str, stored: bool, response: &egui::Response) {
     use super::window_host as host;
     // Where the card is now (dragged, or kept on screen by egui) is where it opens next time. A
-    // card never moved keeps opening centred: its first frames are still finding their size.
-    if stored || response.dragged() {
-        host::moved(ctx, key, response.rect.min);
+    // card never moved keeps opening where it asks to: its first frames are still finding their size.
+    if (stored || response.drag_stopped())
+        && let Some(state) = egui::AreaState::load(ctx, id)
+    {
+        host::moved(ctx, key, state.left_top_pos());
     }
     if !(response.dragged() || response.drag_stopped()) {
         return;

@@ -459,7 +459,8 @@ fn non_default_prefs() -> crate::prefs::Prefs {
             "svg_dpi": 72.0,
             "theme": "light",
             "toolbar_order": order,
-            "view": { "offset": { "x": 12.0, "y": -7.0 }, "zoom": 2.0 }
+            "view": { "offset": { "x": 12.0, "y": -7.0 }, "zoom": 2.0 },
+            "windows": { "settings": { "placement": { "docked": "RightTop" }, "pos": [120.0, 80.0], "size": [640.0, 480.0], "native_pos": [40.0, 30.0], "native_size": [700.0, 520.0] } }
         }),
     );
     Prefs::from_json(&v.to_string())

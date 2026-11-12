@@ -78,6 +78,8 @@ pub struct DarkBurn {
     pub machine: crate::machine_ui::MachineUi,
     /// Libraries, hotkey editor, help (extras.rs).
     pub extras: crate::extras::Extras,
+    /// The wireless handheld pendant, when the user turned it on (pendant_ui.rs).
+    pub pendant: crate::pendant_ui::PendantUi,
     /// Job, preview, G-code and material test state (job_cmds.rs).
     pub job: crate::job_cmds::JobState,
     /// Image windows and presets (image_ui.rs).
@@ -124,6 +126,7 @@ impl DarkBurn {
             files: Default::default(),
             machine: Default::default(),
             extras: Default::default(),
+            pendant: Default::default(),
             job: Default::default(),
             images: Default::default(),
             shape_ui: Default::default(),
@@ -339,6 +342,7 @@ impl DarkBurn {
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
         crate::machine_ui::frame(ui.ctx(), self);
+        crate::pendant_ui::frame(ui.ctx(), self);
         crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);

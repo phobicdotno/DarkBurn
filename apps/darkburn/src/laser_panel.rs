@@ -90,7 +90,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     // Start, pause, stop [LASER-03]; stop and pause are never disabled.
     let connected = snap.connected();
     let ready = snap.state.can_start();
-    let start_ok = ready && !(family == Family::Ruida && dev.settings.dsp.disable_start) && !design_only;
+    let start_ok = start_allowed(app);
     ui.horizontal_wrapped(|ui| {
         if btn(ui, "Start", "Run the job on the laser", start_ok) {
             go(app, "job.start", json!({}));
@@ -288,7 +288,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     let snap = app.machine.handle.snapshot().clone();
     let family = machine_ui::family_of(&app.machine);
     let dev = app.machine.active().clone();
-    let free = snap.connected() && snap.state == LaserState::Ready;
+    let free = jog_free(app);
     if !snap.connected() {
         ui.label(RichText::new("Connect a laser to jog it. The simulator needs no hardware.").size(t.font_small).color(t.text_dim));
     }
@@ -586,6 +586,20 @@ pub fn set_finish_here(app: &mut DarkBurn) {
 }
 
 /// Click on an arrow: a step, or the start of a continuous jog.
+/// Whether Start may be pressed now: the Start button and the pendant's Start key both ask this.
+pub fn start_allowed(app: &DarkBurn) -> bool {
+    let snap = app.machine.handle.snapshot();
+    let dev = app.machine.active();
+    let family = machine_ui::family_of(&app.machine);
+    snap.state.can_start() && !(family == Family::Ruida && dev.settings.dsp.disable_start) && !dev.is_design_only()
+}
+
+/// Whether the head may be jogged now: the Move panel's arrows and the pendant both ask this.
+pub fn jog_free(app: &DarkBurn) -> bool {
+    let snap = app.machine.handle.snapshot();
+    snap.connected() && snap.state == LaserState::Ready
+}
+
 fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
     let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let feed = app.machine.jog.speed * 60.0;

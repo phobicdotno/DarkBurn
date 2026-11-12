@@ -385,6 +385,7 @@ the libraries").
 | Variable text | chrono (MIT OR Apache-2.0), csv (Unlicense OR MIT) | As named |
 | Serial ports | serialport | MPL-2.0 |
 | USB | nusb | Apache-2.0 OR MIT |
+| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) on Linux | As named |
 | Camera | nokhwa | Apache-2.0 |
 | File dialogs | rfd | MIT |
 | Clipboard | arboard | MIT OR Apache-2.0 |

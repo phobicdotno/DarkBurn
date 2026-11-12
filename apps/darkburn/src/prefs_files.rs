@@ -95,6 +95,8 @@ pub fn import(current: &mut Prefs, path: &Path, settings_dir: Option<&Path>) -> 
     new.recent = std::mem::take(&mut current.recent);
     // What AI agents may do is decided on this computer, in Settings: a file never changes it.
     new.mcp = current.mcp.clone();
+    // The pendant opens a USB device, so it is also only switched on here.
+    new.opts.pendant = current.opts.pendant;
     *current = new;
     Ok(())
 }

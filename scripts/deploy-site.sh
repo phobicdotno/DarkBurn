@@ -24,7 +24,8 @@
 #   2. uploads every file to httpd.www/darkburn/ on ssh.phobic.no under a second name
 #      (x.new) and then gives each its place, the pages last. This way a visitor is never
 #      sent half a file, and an upload that stops before that leaves the page as it was. The
-#      x.new files of a run that stopped stay on the host until the next run,
+#      x.new files of a run that stopped stay on the host until the next run. Ctrl-C stops
+#      the upload where it is, and the script says where that was,
 #   3. reads what the folder on the host then holds and names what is not part of the page,
 #   4. asks the page for its front page, its script and style, its headers, the forward from
 #      http, its "not found" page and the folder's address under the main name, and says
@@ -50,8 +51,9 @@
 #   DARKBURN_SITE_URL    the address to ask in step 4; a trial without it is not asked
 # A trial folder on the real host is seen only under a name of its own: under phobic.no/ the
 # rules send it on to the real page.
-# And for a host or a day that needs it:
-#   DARKBURN_SITE_ANY_STATE=1   upload the real page from a state that is not a clean main
+# And for a host or a day that needs it (each is 1 or not set):
+#   DARKBURN_SITE_ANY_STATE=1   upload into the real page's folder from a state that is not a
+#                               clean main
 #   DARKBURN_SITE_IN_PLACE=1    write each file straight over the old one. Only for a host
 #                               that cannot give a file the place of another: the upload then
 #                               stops at the first "rename", with the page as it was. In
@@ -108,9 +110,14 @@ case $url in
     *) die "the address of the page starts with https:// (or http://), such as $real_url." ;;
 esac
 case $url in
-    *[!A-Za-z0-9._~:/@%+-]*) die "the address of the page is a plain address, such as $real_url." ;;
+    */ | *[!A-Za-z0-9._~:/%+-]*) die "the address of the page is a plain address, such as $real_url." ;;
 esac
 [ "$real" = no ] || [ -n "$url" ] || die "DARKBURN_SITE_URL is set to nothing. Leave it out for the real page."
+
+case ${DARKBURN_SITE_ANY_STATE-}:${DARKBURN_SITE_IN_PLACE-} in
+    : | 1: | :1 | 1:1) ;;
+    *) die "DARKBURN_SITE_ANY_STATE and DARKBURN_SITE_IN_PLACE are 1 or not set." ;;
+esac
 
 command -v sftp >/dev/null 2>&1 ||
     die "sftp is not installed. It comes with OpenSSH, and with Git for Windows."
@@ -123,13 +130,19 @@ root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 state="not a git checkout"
 if [ -e "$root/.git" ] && command -v git >/dev/null 2>&1 && git -C "$root" rev-parse HEAD >/dev/null 2>&1; then
     state="commit $(git -C "$root" rev-parse --short HEAD) on $(git -C "$root" rev-parse --abbrev-ref HEAD)"
-    [ -z "$(git -C "$root" status --porcelain -- site docs/img assets/fonts assets/icons scripts/build-site.sh scripts/deploy-site.sh)" ] ||
+    # The second list: a file that git was told not to speak of (status.showUntrackedFiles, an
+    # exclude) is not committed either, and a picture among them would go up with the rest.
+    [ -z "$(git -C "$root" status --porcelain -- site docs/img assets/fonts assets/icons scripts/build-site.sh scripts/deploy-site.sh)$(git -C "$root" ls-files --others -- site 'docs/img/*.png')" ] ||
         state="$state, with changes that are not committed"
+elif [ -e "$root/.git" ]; then
+    state="a git checkout that git cannot read here"
 fi
-if [ "$real" = yes ] && [ -z "${DARKBURN_SITE_ANY_STATE-}" ]; then
+# The folder decides, not the name of the host: the real host has more names than one (an
+# entry in ~/.ssh/config, its address in numbers).
+if [ "$dir" = "$real_dir" ] && [ -z "${DARKBURN_SITE_ANY_STATE-}" ]; then
     case $state in
         "commit "*" on main") ;;
-        *) die "the real page is uploaded from main with nothing uncommitted. This is: $state. For a trial set DARKBURN_SITE_DIR ($real_dir-trial); to upload this all the same set DARKBURN_SITE_ANY_STATE=1." ;;
+        *) die "the real page is uploaded from main with nothing uncommitted. This is: $state. For a trial set DARKBURN_SITE_DIR ($real_dir-trial; a trial is seen only under a name of its own); to upload this all the same set DARKBURN_SITE_ANY_STATE=1." ;;
     esac
 fi
 
@@ -145,6 +158,7 @@ rm -f "$list" "$files" "$log" "$log.there" "$seen" "$seen.page" "$seen.err"
 # The lists and what the host answered are removed however the script ends.
 trap 'rm -f "$list" "$files" "$log" "$log.there" "$seen" "$seen.page" "$seen.err"' EXIT
 trap 'exit 130' INT
+trap 'exit 131' QUIT
 trap 'exit 143' HUP TERM
 
 # The files of the page. The pages come last, so a page that is new never points to a picture
@@ -161,7 +175,8 @@ count=$(grep -c '' "$files")
     # The folder of the page and the two in it. Not the folders above it: if they are not
     # there, this is the wrong host or the wrong login, and the first put says so.
     printf -- '-mkdir %s\n-mkdir %s/img\n-mkdir %s/fonts\n' "$dir" "$dir" "$dir"
-    printf -- '-chmod 755 %s/img\n-chmod 755 %s/fonts\n' "$dir" "$dir"
+    # Readable for the web server, whatever mode the host gives a new folder.
+    printf -- '-chmod 755 %s\n-chmod 755 %s/img\n-chmod 755 %s/fonts\n' "$dir" "$dir" "$dir"
     if [ -n "${DARKBURN_SITE_IN_PLACE-}" ]; then
         # A run that stopped at its first "rename" has left every file under its second name.
         while IFS= read -r f; do
@@ -190,9 +205,30 @@ printf 'A line that a folder could not be made ("remote mkdir ...: Failure") onl
 # password; the option before it allows the question again. What sftp writes about each
 # command goes to a file; its questions and its errors still show.
 st=0
-(cd "$out" && sftp -o BatchMode=no -b "$list" "$user@$host" >"$log") || st=$?
+stopped=''
+(cd "$out" && exec sftp -o BatchMode=no -b "$list" "$user@$host" >"$log") &
+up=$!
+# Ctrl-C does not stop sftp by itself: sftp drops the file that is on its way, takes it for
+# done and goes on with the rest of the list, the renames too. So sftp is stopped from here.
+trap 'stopped=yes; kill "$up" 2>/dev/null || true' INT QUIT HUP TERM
+wait "$up" || st=$?
+# wait comes back early when a signal arrives; the next wait then gives sftp's own answer.
+while kill -0 "$up" 2>/dev/null; do
+    st=0
+    wait "$up" || st=$?
+done
+trap 'exit 130' INT
+trap 'exit 131' QUIT
+trap 'exit 143' HUP TERM
+at=$(grep '^sftp> ' "$log" | tail -n 1 | sed 's/^sftp> //') || true
+case $at in
+    # Every file has its place by then. Only the list of the folder is missing, and the part
+    # below says so.
+    'ls -1a '*) st=0 ;;
+esac
 if [ "$st" -ne 0 ]; then
-    at=$(grep '^sftp> ' "$log" | tail -n 1 | sed 's/^sftp> //') || true
+    see="see the lines above"
+    [ -z "$stopped" ] || see="it was stopped from here"
     if [ -n "${DARKBURN_SITE_IN_PLACE-}" ]; then
         placed=$(grep -c '^sftp> put ' "$log") || true
         how="The host may hold some of the new files and some of the old, and the one that stopped may be cut"
@@ -200,16 +236,17 @@ if [ "$st" -ne 0 ]; then
         placed=$(grep -c '^sftp> rename ' "$log") || true
         how="Some files on the host are new and some are old"
     fi
-    if [ -z "$at" ]; then
-        die "sftp could not log in to $host (see the lines above). Nothing was sent."
+    if [ -z "$at" ] && [ -n "$stopped" ]; then
+        die "stopped before sftp had logged in to $host. Nothing was sent."
+    elif [ -z "$at" ]; then
+        die "sftp could not log in to $host ($see). Nothing was sent."
     elif [ "$placed" -eq 0 ]; then
-        die "the upload stopped at \"$at\" (see the lines above). The page on the host is as it was. Run this again."
+        die "the upload stopped at \"$at\" ($see). The page on the host is as it was. Run this again."
     else
         case $at in
-            ls*) die "every file is in its place, but the list of the folder could not be read (see the lines above). Look there yourself for files that are not part of the page." ;;
-            rename*) [ "$placed" -gt 1 ] || die "the upload stopped at \"$at\" (see the lines above): the host could not give a file the place of the old one. The page on the host is as it was. Run this again with DARKBURN_SITE_IN_PLACE=1." ;;
+            rename*) [ "$placed" -gt 1 ] || [ -n "$stopped" ] || die "the upload stopped at the first rename, \"$at\" ($see). If the line above ends in \"Failure\", the host cannot give a file the place of the old one, and the page on the host is as it was: run this again with DARKBURN_SITE_IN_PLACE=1. If it says anything else, that one file may be the new one already and the rest is as it was: run this again as it is." ;;
         esac
-        die "the upload stopped at \"$at\" (see the lines above). $how. Run this again."
+        die "the upload stopped at \"$at\" ($see). $how. Run this again."
     fi
 fi
 printf 'Uploaded %s files.\n' "$count"
@@ -223,12 +260,13 @@ note() {
 # What the folder on the host holds that is not part of the page. sftp writes the names with
 # or without the folder in front, depending on its version; both are read. One line of the
 # file for each command sent: more, and a name in the folder holds a line break.
-if [ "$(grep -c '^sftp> ' "$log")" -ne "$(grep -c '' "$list")" ]; then
+if [ "$(grep -c '^sftp> ' "$log")" -gt "$(grep -c '' "$list")" ]; then
     note "a file name in the folder on the host holds a line break, so the list below cannot be trusted. Look at the folder yourself: somebody may want a file not to be seen."
 fi
+# Only the three commands that were sent start a list. A file name cannot be one of them: it
+# holds no "/".
 awk -v dir="$dir" '
-    /^sftp> ls -1a / { cur = substr($0, 14); next }
-    /^sftp> / { cur = ""; next }
+    $0 == "sftp> ls -1a " dir || $0 == "sftp> ls -1a " dir "/img" || $0 == "sftp> ls -1a " dir "/fonts" { cur = substr($0, 14); next }
     cur != "" {
         name = $0
         if (index(name, cur "/") == 1) name = substr(name, length(cur) + 2)
@@ -239,13 +277,23 @@ awk -v dir="$dir" '
 if [ "$(LC_ALL=C sort "$files" | LC_ALL=C comm -23 - "$log.there" | grep -c '')" -ne 0 ]; then
     printf 'The list of the folder on the host could not be read, so look there yourself for files that are not part of the page.\n'
 else
-    extra=$(LC_ALL=C sort "$files" | LC_ALL=C comm -13 - "$log.there" | grep -vx -e img -e fonts -e .well-known | tr '\n' ' ') || true
-    [ -z "$extra" ] ||
-        note "the folder on the host also holds: ${extra% }. That is not part of the page. Delete it there by hand unless it is meant to be there: a page that is left is still shown at its address."
+    # One name on a line, in quotes, as plain letters: a name can hold spaces, and a name can
+    # be made to read like a line of this script.
+    extra=$(LC_ALL=C sort "$files" | LC_ALL=C comm -13 - "$log.there" | grep -vx -e img -e fonts -e .well-known | LC_ALL=C tr -c ' -~\n' '?') || true
+    if [ -n "$extra" ]; then
+        more=$(printf '%s\n' "$extra" | grep -c '')
+        printf 'Look at this: the folder on the host also holds what is not part of the page (%s):\n' "$more"
+        printf '%s\n' "$extra" | head -n 40 | sed 's/^/    "/; s/$/"/'
+        [ "$more" -le 40 ] || printf '    and %s more\n' "$((more - 40))"
+        printf 'Delete that there by hand unless it is meant to be there: a page that is left is still shown at its address.\n'
+    fi
 fi
 
 # What the host now answers. Only said, never an error: the upload itself went well.
-if [ -z "$url" ]; then
+if [ -z "$url" ] && [ "$dir" = "$real_dir" ]; then
+    printf 'The folder has the name of the real page, on the host %s, and DARKBURN_SITE_URL is not set, so the page was not asked. If %s is another name for %s, this was the real page: look at %s/ yourself.\n' "$host" "$host" "$real_host" "$real_url"
+    exit 0
+elif [ -z "$url" ]; then
     printf 'This was a trial, and DARKBURN_SITE_URL is not set, so the page was not asked.\n'
     exit 0
 fi
@@ -305,19 +353,16 @@ case $got in
         elif ! cmp -s "$seen.page" "$out/404.html"; then
             note "$url/no-such-page answers 404, but not with the page's own \"not found\" (404.html). The host may not allow ErrorDocument in .htaccess files."
         fi
-        if [ "$real" = yes ] && [ "$url" = "$real_url" ]; then
-            got=$(ask "$real_folder_url")
-            case $got in
-                30[1278]" $real_url/" | '404 ' | '403 ' | '410 ') ;;
-                *) note "$real_folder_url should forward to $real_url/ or not be there (it answers: $(said "$got")). Under the main name the page shares what a browser keeps apart by name with everything else on phobic.no." ;;
-            esac
-        fi
         ;;
     30?" $url/")
         note "$url/ forwards to itself. The host does not tell the rules in .htaccess that a request came over https."
         ;;
     30?' '*)
-        note "$url/ forwards to ${got#* }, so the page was not asked. If that is where the page is, give that address in DARKBURN_SITE_URL."
+        if [ "$real" = no ] && [ "${got#* }" = "$real_url/" ]; then
+            note "$url/ is sent on to the real page, $real_url/: the rules do that with every address under the main name. A trial is seen only under a name of its own."
+        else
+            note "$url/ forwards to ${got#* }, so the page was not asked. If that is where the page is, give that address in DARKBURN_SITE_URL."
+        fi
         ;;
     '000 ' | '')
         why=$(tr -d '\r' <"$seen.err" | head -n 1)
@@ -334,3 +379,16 @@ case $got in
         note "$url/ answers $(said "$got") and not the page. With 403 the host may not be allowed to read the files; with 500 it may not allow a line of .htaccess (its error log says which); else the name may point to another folder of the host."
         ;;
 esac
+# The folder's address under the main name, whatever the page's own name answered: on the
+# first day, with the own name not ready, this is where the page is most likely shown.
+if [ "$real" = yes ] && [ "$url" = "$real_url" ]; then
+    got=$(ask "$real_folder_url")
+    case $got in
+        # The main name may send to its www name first; that one is asked then.
+        30[1278]" https://www.${real_folder_url#https://}") got=$(ask "https://www.${real_folder_url#https://}") ;;
+    esac
+    case $got in
+        30[1278]" $real_url/" | '404 ' | '403 ' | '410 ') ;;
+        *) note "$real_folder_url should forward to $real_url/ or not be there (it answers: $(said "$got")). Under the main name the page shares what a browser keeps apart by name with everything else on phobic.no." ;;
+    esac
+fi

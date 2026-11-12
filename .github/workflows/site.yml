@@ -5,7 +5,14 @@
 # rules for the host (site/.htaccess). This workflow runs that script, so a change that breaks
 # the page shows on the pull request.
 #
-# It can also be started by hand (Actions > site > Run workflow).
+# Once a day, and when it is started by hand (Actions > site > Run workflow), it also asks
+# the host for every file of the page and compares it with what main builds. On the host the
+# page can be changed by everything that can write there: the one login, the host's control
+# panel, a fault in a program of another site. That shows here the day after. The run is
+# also red while main holds a change to the page that is not uploaded yet, which is worth
+# knowing too. Until the name darkburn.phobic.no exists, there is nothing to compare and the
+# run says so. (GitHub stops daily runs after 60 days in which nothing happens in the
+# repository, and says so by mail.)
 #
 # Nothing is published from here. The page is hosted on the owner's own web host and gets
 # there by hand, from a checkout of main:
@@ -16,7 +23,11 @@
 #
 # The page is not on GitHub Pages. Settings > Pages stays off, and the DNS of phobic.no gets
 # no record that points darkburn at GitHub: a record that points at GitHub while no page of
-# this account holds the name can be claimed by somebody else's page.
+# this account holds the name can be claimed by somebody else's page. If any of that was set
+# up for an earlier plan, it is undone in this order: first the DNS record (darkburn CNAME
+# phobicdotno.github.io.), then, under Settings > Pages, the custom domain and the site itself
+# (Unpublish site). A TXT record _github-pages-challenge-phobicdotno.phobic.no stays: it keeps
+# other accounts from using a name under phobic.no on GitHub Pages.
 name: site
 
 on:
@@ -45,8 +56,11 @@ on:
       - scripts/deploy-site.sh
       - .github/workflows/site.yml
   workflow_dispatch:
+  schedule:
+    # Daily, at a minute that is not the full hour, when GitHub is busiest.
+    - cron: "23 4 * * *"
 
-# Nothing by default. The job asks for what it needs.
+# Nothing by default. Each job asks for what it needs.
 permissions: {}
 
 # A new run for the same branch or pull request takes the place of the run before it.
@@ -76,3 +90,42 @@ jobs:
       # The script that uploads is not run here: it needs the login of the host.
       - name: The upload script reads as a script
         run: sh -n scripts/deploy-site.sh
+
+  live:
+    name: The page on the host is the page on main
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Put the page together
+        run: sh scripts/build-site.sh
+
+      - name: Compare it with what the host sends
+        run: |
+          url=https://darkburn.phobic.no
+          # curl ends with 6 when the name does not exist.
+          status=0
+          curl -sS -m 30 -o /dev/null "$url/" || status=$?
+          if [ "$status" -eq 6 ]; then
+            echo "::notice title=Nothing to compare yet::The name darkburn.phobic.no does not exist yet."
+            exit 0
+          fi
+          bad=0
+          # Every file of the page but the rules for the host, which a host does not hand out.
+          while IFS= read -r f; do
+            case $f in
+              index.html) address=$url/ ;;
+              *) address=$url/$f ;;
+            esac
+            if ! curl -fsS -m 60 -o live.tmp "$address" || ! cmp -s live.tmp "target/site/$f"; then
+              echo "::error title=The page on the host is not the page on main::$f does not answer or is not what main builds. Either main holds a change that is not uploaded yet (sh scripts/deploy-site.sh), or the file was changed on the host."
+              bad=1
+            fi
+          done < <(cd target/site && find . -type f ! -name .made-by-build-site ! -name .htaccess | sed 's|^\./||' | LC_ALL=C sort)
+          exit "$bad"

@@ -6,29 +6,41 @@
 # (comments are free). To change a rule, change it there first.
 
 <IfModule mod_headers.c>
-  # The same policy as the line in index.html, and one thing a line in a page cannot say: no
-  # other site may show the page in a frame.
-  Header set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'"
-  Header set X-Frame-Options "DENY"
-  Header set X-Content-Type-Options "nosniff"
-  Header set Referrer-Policy "strict-origin-when-cross-origin"
-  Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
-  # A browser asks again for the page and its code each time, so an upload shows at once.
-  # The fonts change rarely and may be kept.
-  <FilesMatch "\.(html|js|css)$">
+  # The headers stand in a block for every file ("."), not as plain lines: the host also reads
+  # the rules of the folder above, and a block there for certain files would otherwise take
+  # the place of a plain line here.
+  <FilesMatch ".">
+    # The same policy as the line in index.html, and one thing a line in a page cannot say:
+    # no other site may show the page in a frame.
+    Header set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'"
+    Header set X-Frame-Options "DENY"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    # A browser asks again for every file each time, so an upload shows at once, the pictures
+    # and the fonts too. A file that has not changed is not sent again.
     Header set Cache-Control "no-cache"
-  </FilesMatch>
-  <FilesMatch "\.ttf$">
-    Header set Cache-Control "public, max-age=31536000"
+    # A browser that has been here over https never asks over plain http again, for a year.
+    # For this name only: nothing is said about the names beside it.
+    Header set Strict-Transport-Security "max-age=31536000"
   </FilesMatch>
 </IfModule>
 
-# The page's own "not found". Its addresses start with "/", so it works at any depth.
+# The licence text of the fonts holds a copyright sign.
+AddDefaultCharset utf-8
+
+# The page's own "not found". Its addresses start with "/", so it works at any depth. The
+# page is served under its own name only (see the first rule below).
 ErrorDocument 404 /404.html
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+  # The host also serves this folder under the main name, as phobic.no/darkburn/. There the
+  # page would share everything a browser keeps apart by name with all else on phobic.no. So
+  # that address is sent on to the page's own name. Any other name (a trial) is left alone.
+  RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no(:[0-9]+)?$ [NC]
+  RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
   # Plain http is sent to https first, so the page and the install commands it shows always
   # arrive encrypted.
   RewriteCond %{HTTPS} !=on

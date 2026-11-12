@@ -44,7 +44,7 @@ for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
 done
 odd=$(find "$root/site" ! -type f ! -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds something that is not a plain file: $odd"
-odd=$(find "$root/site" ! -path "$root/site" -type d | head -n 3)
+odd=$(cd "$root/site" && find . ! -name . -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds a folder: $odd"
 # No folder on the way to these files is a link either.
 real=$(CDPATH='' cd -- "$root" && pwd -P)
@@ -143,6 +143,11 @@ for page in "$out"/*.html; do
     # no policy decides where a page goes next.
     [ "$(printf '%s\n' "$flat" | grep -Eio 'http-equiv|<base[[:space:]>/]' | wc -l | tr -d ' ')" -eq 1 ] ||
         die "$name has an http-equiv besides the policy line, or a <base>. Neither belongs on the page."
+    # A host can be set up to take such a line in a page as a program (PHP, includes). This
+    # host is not known to be, and the page needs neither.
+    if grep -n -e '<?' -e '<!--#' "$page"; then
+        die "$name holds \"<?\" or \"<!--#\" (see the lines above). A host can take that as a program: write &lt;? there."
+    fi
     # The policy allows every file of the page's own host as script. The page has one.
     if printf '%s\n' "$flat" | grep -Eio '<script[^>]*>?' | grep -vx '<script src="site.js">'; then
         die "$name has a <script> that is not exactly <script src=\"site.js\"> (see the lines above). A comment counts too: write &lt;script there."
@@ -172,24 +177,24 @@ if grep -n '\\$' "$rules"; then
     die ".htaccess has a line that ends with a backslash (see the lines above)."
 fi
 {
-    printf '<IfModule mod_headers.c>\n'
+    printf '<IfModule mod_headers.c>\n<FilesMatch ".">\n'
     printf 'Header set Content-Security-Policy "%s; frame-ancestors %s"\n' "$front" "'none'"
     cat <<'EOF'
 Header set X-Frame-Options "DENY"
 Header set X-Content-Type-Options "nosniff"
 Header set Referrer-Policy "strict-origin-when-cross-origin"
 Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
-<FilesMatch "\.(html|js|css)$">
 Header set Cache-Control "no-cache"
-</FilesMatch>
-<FilesMatch "\.ttf$">
-Header set Cache-Control "public, max-age=31536000"
+Header set Strict-Transport-Security "max-age=31536000"
 </FilesMatch>
 </IfModule>
+AddDefaultCharset utf-8
 ErrorDocument 404 /404.html
 <IfModule mod_rewrite.c>
 RewriteEngine On
 RewriteBase /
+RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no(:[0-9]+)?$ [NC]
+RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
 RewriteCond %{HTTPS} !=on
 RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
@@ -256,7 +261,7 @@ check_refs() {
             /*)
                 # 404.html needs such addresses: the host shows that page at any depth.
                 if [ "${1##*/}" != 404.html ]; then
-                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is looked at in a folder: a preview, or phobic.no/darkburn/.\n' "${1##*/}" "$ref" >&2
+                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is looked at in a folder, as in a preview.\n' "${1##*/}" "$ref" >&2
                     missing=1
                     continue
                 fi

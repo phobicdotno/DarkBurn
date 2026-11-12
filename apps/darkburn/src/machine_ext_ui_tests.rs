@@ -37,11 +37,15 @@ fn walk(s: &egui::epaint::Shape, found: &mut Vec<String>) {
 
 /// Draw one frame of the machine panels and dialogs; the text on screen.
 fn draw(ctx: &egui::Context, app: &mut DarkBurn) -> Vec<String> {
+    draw_on(ctx, app, egui::vec2(1400.0, 1000.0))
+}
+
+/// The texts drawn on a screen of `size`.
+fn draw_on(ctx: &egui::Context, app: &mut DarkBurn, size: egui::Vec2) -> Vec<String> {
     let mut found = Vec::new();
     // Windows size themselves on their first frame, so draw a few.
     for _ in 0..4 {
-        let input =
-            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))), ..Default::default() };
+        let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)), ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
             crate::machine_ui::frame(ui.ctx(), app);
             for (i, id) in ["laser", "move", "console", "file_list"].into_iter().enumerate() {
@@ -142,6 +146,8 @@ fn the_gweike_window_says_direct_control_waits_for_a_capture() {
     let t = draw(&ctx, &mut a);
     assert!(t.iter().any(|x| x.contains("read-only capture")), "{t:?}");
     run(&mut a, "gweike.simulate", Value::Null).unwrap();
-    let t = draw(&ctx, &mut a);
+    // The window's body scrolls: on a screen tall enough for all of it (the card keeps clear of
+    // the main window's resize border, so at 1000 points the result is just under the fold).
+    let t = draw_on(&ctx, &mut a, egui::vec2(1400.0, 1200.0));
     assert!(t.iter().any(|x| x.starts_with("Simulated card:")), "{t:?}");
 }

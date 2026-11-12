@@ -1152,6 +1152,42 @@ mod tests {
         }
     }
 
+    /// Y and N answer the restore question [KEY-01]: Y restores, N throws the copy away.
+    #[test]
+    fn y_and_n_answer_the_restore_question() {
+        use crate::ui_harness::Gui;
+        use egui::{Key, Modifiers};
+        for yes in [true, false] {
+            let mut g = Gui::standard();
+            let settings = g.temp("crashed");
+            let project = g.temp("mine.dbrn");
+            leave_a_crashed_session(&settings, &project);
+            {
+                let mut a = g.app();
+                a.settings_dir = Some(settings.clone());
+                a.safe_mode = false;
+                a.files.started = false;
+            }
+            g.frames(2);
+            let asked = |g: &Gui| g.window_titles().contains(&"Restore auto-saved project?".to_string());
+            assert!(asked(&g), "{:?}", g.window_titles());
+            // Other letters are not answers.
+            g.key(Key::X, Modifiers::NONE);
+            assert!(asked(&g), "still asking");
+            g.key(if yes { Key::Y } else { Key::N }, Modifiers::NONE);
+            assert!(!asked(&g), "answered");
+            let mut a = g.app();
+            if yes {
+                assert_eq!(a.editor.doc.len(), 1, "Y restored the rectangle");
+                assert_eq!(a.project_path.as_deref(), Some(project.as_path()));
+            } else {
+                assert_eq!(a.editor.doc.len(), 0);
+                assert!(!settings.join(AUTOSAVE_FILE).exists(), "N threw the copy away");
+            }
+            a.safe_mode = true;
+        }
+    }
+
     #[test]
     fn a_damaged_restore_file_is_reported_and_the_open_project_is_kept() {
         let dir = TempDir::new("crash-bad");

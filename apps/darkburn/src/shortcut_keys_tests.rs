@@ -417,27 +417,6 @@ fn ui_hotkey_editor_shows_and_edits_the_second_key() {
 
 // ----- Y and N ----------------------------------------------------------------------------------
 
-#[test]
-fn ui_y_and_n_answer_the_restore_question() {
-    // Y restores (the copy here is missing, so it says it could not).
-    let mut g = Gui::standard();
-    let missing = g.temp("no-such-autosave.dbp");
-    g.app().files.restore = Some(missing.clone());
-    g.frames(3);
-    assert!(g.has_text("Restore auto-saved project?"));
-    g.screenshot("shortcut_keys_restore_question");
-    g.key(Key::Y, Modifiers::NONE);
-    assert!(g.app().files.restore.is_none(), "Y answered");
-    assert!(g.app().files.message.is_some(), "Y chose Restore");
-    // N discards.
-    let mut g = Gui::standard();
-    g.app().files.restore = Some(missing);
-    g.frames(3);
-    g.key(Key::N, Modifiers::NONE);
-    assert!(g.app().files.restore.is_none(), "N answered");
-    assert!(g.app().files.message.is_none(), "N chose Discard");
-}
-
 /// A box that would act on the machine takes N for no, and Y never says yes to it.
 #[test]
 fn ui_y_does_not_confirm_a_machine_action_and_n_refuses_it() {

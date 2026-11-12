@@ -1,6 +1,6 @@
 # MLaser v0.0.1.51 SP1: REA findings (2026-11-08)
 
-Handed over from the SolidCraft session, where the official MLaser download was fetched and inspected with REA (Reverse Engineer Anything, `rea-agents` 6.8.0). Static analysis only: PE import tables, strings, shipped config and log files. Nothing from the download was executed. No decompiled code was transcribed.
+Written while working on SolidCraft, where the official MLaser download was fetched and inspected with REA (Reverse Engineer Anything, `rea-agents` 6.8.0). Static analysis only: PE import tables, strings, shipped config and log files. Nothing from the download was executed. No decompiled code was transcribed.
 
 Legend: **observed** = read directly from the shipped files (REA kept an evidence ID for some of them; the IDs and the file hashes are left out of this copy); **inferred** = my reading of observations; **unknown** = not established.
 
@@ -34,7 +34,7 @@ Same module layout as the v0.0.0.52 build analysed in phobicMlaserLinux. The .NE
 - Inferred: USB HID pendant driver (Chengdu XHC wireless handwheel). `xhcusb.txt` in the root is its log and is full of `Open HID error5` / `Get HID Error!1168` lines (observed), i.e. the pendant was not present on the vendor's packaging machine.
 
 ### `MainApp.exe` (observed in the earlier REA pass, evidence not retained)
-- Import inventory has 2001 functions (REA refused the default budget twice; the first pass earlier in the session read the saved JSON). Earlier observation: no `ws2_32`; imports include `HID`/`SETUPAPI`, `WINHTTP` and `SensApi`.
+- Import inventory has 2001 functions (REA refused the default budget twice; an earlier pass read the saved JSON). Earlier observation: no `ws2_32`; imports include `HID`/`SETUPAPI`, `WINHTTP` and `SensApi`.
 - Inferred: the shell does UI, HTTP (updates or cloud) and pendant handling itself, and delegates machine traffic to NCModule.
 
 ### Not inspected in this pass

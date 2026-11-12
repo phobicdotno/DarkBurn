@@ -42,7 +42,7 @@ It has built-in machine simulators, so a whole job can be run with no laser atta
 
 ## Install
 
-**Windows.** Download the `.msi` from [Releases](https://github.com/phobicdotno/DarkBurn/releases/latest) and open it.
+**Windows.** Download the `.msi` from [Releases](https://github.com/phobicdotno/DarkBurn/releases) and open it.
 
 **Linux and macOS.**
 

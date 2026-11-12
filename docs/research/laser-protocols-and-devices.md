@@ -1,6 +1,6 @@
 # DarkBurn research: the user's laser devices and the protocols a clean-room controller needs
 
-Date: 2026-11-08. Read-only survey of the local machine plus web research. Everything under "Part 1" was read from files on the owner's computer; nothing was modified. Files extracted from the Gweike USB zip were copied only into the scratchpad folder `gweike-usb-untrusted\` and treated as untrusted data. Part 1 was later cut down to the machine facts DarkBurn relies on: the paths, file names, identifiers and personal settings found in the survey are not in this copy.
+Date: 2026-11-08. Read-only survey of the local machine plus web research. Everything under "Part 1" was read from files on the owner's computer; nothing was modified. Files extracted from the Gweike USB zip were copied only into a working folder outside the repository and treated as untrusted data. Part 1 was later cut down to the machine facts DarkBurn relies on: the paths, file names, identifiers and personal settings found in the survey are not in this copy.
 
 ---
 
@@ -58,7 +58,7 @@ A CO2 laser with a Ruida RDC644x-class controller, over Ethernet (UDP) or USB. N
 
 ## PART 2 — Protocols, open implementations, file formats, Rust crates
 
-(Filled from the parallel web-research agents; each section ends with sources and a licensing note.)
+(From web research; each section ends with sources and a licensing note.)
 
 ### 2a. Gweike M3 Ultra — what it is and how it is driven
 
@@ -87,7 +87,7 @@ A CO2 laser with a Ruida RDC644x-class controller, over Ethernet (UDP) or USB. N
 | phobicdotno/Wine-Mlaser — https://github.com/phobicdotno/Wine-Mlaser | doc | (user's own) | Runs Mlaser v0.0.0.52 under Wine 9 (win32 prefix + `mfc42`), full UI + machine control confirmed working. |
 | nkapron/OpenLaser — https://github.com/nkapron/OpenLaser | **Rust** | GPL-3.0 | Alpha Au3tech MCC100 host; untested on hardware; could not implement firmware update. GPL — read-only reference for a non-GPL DarkBurn. |
 | rahilm/fiber_laser — https://github.com/rahilm/fiber_laser | Python | check repo | Rebuild of Mlaser from reverse engineering. |
-| Au3tech MCC100-X1 user manual — https://www.au3laser.com/uploads/19041/files/MCC100-X1-User-Manual-V1-1.pdf (text extracted to scratchpad `pdf\mcc100.txt`) | PDF | vendor | Wiring, IP setup, parameter pages, pendant; **no protocol/SDK documentation is published.** |
+| Au3tech MCC100-X1 user manual — https://www.au3laser.com/uploads/19041/files/MCC100-X1-User-Manual-V1-1.pdf (its text was extracted to working notes kept outside the repository) | PDF | vendor | Wiring, IP setup, parameter pages, pendant; **no protocol/SDK documentation is published.** |
 
 **LightBurn: not supported.** LightBurn staff (forum, 2026-04-07): "LightBurn does not support the M-series machines at this time"; they bought a unit, no timeline; feature request open at lightburn.fider.io/posts/4625. No `.lbdev` exists; Gweike's documentation page lists LightBurn profiles only for Cloud Pro II / RF / NOX / G3. Marketing lines claiming "LightBurn supported" are wrong.
 

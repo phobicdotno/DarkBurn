@@ -18,7 +18,7 @@ Find your case:
 
 ## Windows: the MSI
 
-The file is `darkburn-<version>-windows-x64.msi`. Once a release is out it is on the [Releases](https://github.com/phobicdotno/DarkBurn/releases/latest) page: download it and open it.
+The file is `darkburn-<version>-windows-x64.msi`. Once a release is out it is on the [Releases](https://github.com/phobicdotno/DarkBurn/releases) page: download it and open it.
 
 - **For you alone, by default.** It installs into `%LocalAppData%\Apps\DarkBurn` and needs no admin rights.
 - **For everyone on the computer:** choose "Install for all users of this machine" in the wizard, or give `msiexec` the setting `ALLUSERS=1` as shown below. That installs into `Program Files\DarkBurn` and asks for admin rights.

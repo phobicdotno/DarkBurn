@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(from_file(&to_file(&o)).unwrap(), o);
         reset(&mut o, "job.start#2");
         assert_eq!(effective(&o)["job.start#2"], "F2");
-        assign(&mut o, "edit.undo", "Ctrl+U", false).unwrap();
+        assign(&mut o, "edit.undo", "Ctrl+Alt+F7", false).unwrap();
         reset(&mut o, "edit.undo");
         assert!(o.is_empty(), "resetting a command resets both its keys: {o:?}");
         assert_eq!(assign(&mut o, "edit.undo#3", "F7", false), Err(Refused::UnknownCommand));

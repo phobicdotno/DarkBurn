@@ -254,8 +254,8 @@ fn number_pad_keys_jog_only_with_a_laser_and_never_from_the_digit_row() {
         assert_eq!(pad(&mut a, key, digit), Some(cmd), "pad {digit:?}");
         // The top-row digit (or NumLock on: the same key to egui) does not jog.
         assert_eq!(pad(&mut a, digit, digit), None, "digit {digit:?}");
-        // The ordinary arrow key is not a pad key.
-        assert_eq!(pad(&mut a, key, key), None, "{key:?}");
+        // The ordinary key (an arrow, Page Up) is not a pad key: it keeps what it did before.
+        assert_ne!(pad(&mut a, key, key), Some(cmd), "{key:?}");
         // Not while a text field has the keyboard, and not with Ctrl or Alt held.
         assert_eq!(press_at(&mut a, key, Some(digit), Modifiers::NONE, true), None);
         assert_ne!(press_at(&mut a, key, Some(digit), Modifiers::ALT, false), Some(cmd));

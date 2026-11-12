@@ -580,6 +580,8 @@
   "ui.more_commands": "More commands",
   "ui.more_tabs": "More tabs",
   "ui.move_to": "Move to",
+  "ui.window_detach": "Open in its own window",
+  "ui.window_float": "Float in the main window",
   "updates.available": "A newer version is available:",
   "updates.checking": "Checking for updates...",
   "updates.failed": "Could not reach the update server:",

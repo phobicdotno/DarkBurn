@@ -339,6 +339,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if app.extras.hotkeys.open {
         capture_key(ctx, app);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_hotkeys"), "settings", &tr("hotkeys.title", "Edit Hotkeys"))
+            .dockable("db_hotkeys")
             .fields()
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {

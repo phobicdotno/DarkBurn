@@ -580,6 +580,8 @@
   "ui.more_commands": "Flere kommandoer",
   "ui.more_tabs": "Flere faner",
   "ui.move_to": "Flytt til",
+  "ui.window_detach": "Åpne i eget vindu",
+  "ui.window_float": "Flyt i hovedvinduet",
   "updates.available": "En nyere versjon er tilgjengelig:",
   "updates.checking": "Ser etter oppdateringer...",
   "updates.failed": "Fikk ikke kontakt med oppdateringstjenesten:",

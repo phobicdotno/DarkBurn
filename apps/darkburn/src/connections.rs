@@ -1212,7 +1212,7 @@ fn automation_dialog(ctx: &Context, app: &mut DarkBurn) {
         return;
     }
     let (closed, action) =
-        ui_kit::Window::new(Id::unique("db_automation"), "settings", "Automation socket").cards(3.0).fields().actions("", "Close", None).show(
+        ui_kit::Window::new(Id::unique("db_automation"), "settings", "Automation socket").dockable("db_automation").cards(3.0).fields().actions("", "Close", None).show(
             ctx,
             true,
             |ui| {

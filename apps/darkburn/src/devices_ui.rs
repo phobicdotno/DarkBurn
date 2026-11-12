@@ -52,8 +52,11 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
     if !app.machine.dlg.devices {
         return;
     }
-    let (closed, action) =
-        ui_kit::Window::new(Id::unique("db_devices"), "settings", "Devices").cards(3.0).actions("", "Close", None).show(ctx, true, |ui| {
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_devices"), "settings", "Devices")
+        .dockable("db_devices")
+        .cards(3.0)
+        .actions("", "Close", None)
+        .show(ctx, true, |ui| {
             let t = Tokens::get();
             ui.horizontal_wrapped(|ui| {
                 if small(ui, "New", "Add a device with the wizard", true) {
@@ -381,6 +384,7 @@ fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     let Some((mut d, mut page)) = app.machine.dlg.settings.take() else { return };
     let errs = d.validate();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_device_settings"), "settings", &format!("Device Settings: {}", d.name))
+        .dockable("db_device_settings")
         .cards(4.0)
         .fields()
         .actions("OK", "Cancel", None)
@@ -738,6 +742,7 @@ fn machine_settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     let family = machine_ui::family_of(&app.machine);
     let (closed, action) = ui_kit::Window::new(Id::unique("db_machine_settings"), "settings", "Machine Settings")
+        .dockable("db_machine_settings")
         .cards(5.0)
         .fields()
         .actions("", "Close", None)
@@ -1145,6 +1150,7 @@ fn controller_info_dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     let snap = app.machine.handle.snapshot().clone();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_controller_info"), "settings", "Controller info")
+        .dockable("db_controller_info")
         .cards(3.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {

@@ -54,6 +54,9 @@ pub struct Prefs {
     pub active_tab: BTreeMap<Area, String>,
     /// The size the user dragged each dock to ("left", "right", "bottom"); none: the default.
     pub dock_sizes: BTreeMap<String, f32>,
+    /// Where each dockable window was left (floating, its own window or a tab) and its size.
+    #[serde(deserialize_with = "darkburn_ui::ui_kit::window_host::lenient")]
+    pub windows: darkburn_ui::ui_kit::window_host::WindowPlaces,
     pub toolbars: BTreeMap<String, bool>,
     /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
     pub toolbar_order: Vec<String>,
@@ -123,6 +126,7 @@ impl Default for Prefs {
             panels,
             active_tab,
             dock_sizes: BTreeMap::new(),
+            windows: Default::default(),
             toolbars,
             toolbar_order: Vec::new(),
             ribbon_tab: "home".into(),
@@ -250,6 +254,7 @@ impl Prefs {
         }
         self.panels.retain(|id, _| PANELS.iter().any(|p| p.id == id));
         self.dock_sizes.retain(|_, size| size.is_finite() && *size > 0.0);
+        darkburn_ui::ui_kit::window_host::sanitise(&mut self.windows);
         for (id, on) in d.toolbars {
             self.toolbars.entry(id).or_insert(on);
         }
@@ -267,6 +272,7 @@ impl Prefs {
         self.panels = d.panels;
         self.active_tab = d.active_tab;
         self.dock_sizes = d.dock_sizes;
+        self.windows = d.windows;
         self.toolbars = d.toolbars;
         self.toolbar_order = Vec::new();
         self.ribbon_tab = d.ribbon_tab;
@@ -344,6 +350,13 @@ mod tests {
         let mut p = Prefs { theme: "nord".into(), invert_wheel: true, ..Default::default() };
         p.panels.get_mut("move").unwrap().visible = true;
         assert_eq!(Prefs::from_json(&p.to_json()), p);
+        let mut docked = Prefs::default();
+        docked.windows.entry("settings".into()).or_default().dock("RightTop");
+        docked.windows.entry("db_hotkeys".into()).or_default().resize(egui::vec2(640.0, 480.0));
+        assert_eq!(Prefs::from_json(&docked.to_json()), docked, "window places survive a restart");
+        let odd = Prefs::from_json(r#"{"windows": {"settings": {"placement": "docked"}, "x": 5, "y": {"size": [1e9, -1]}}}"#);
+        assert!(odd.windows.get("x").is_none_or(|p| *p == Default::default()));
+        assert!(odd.windows.get("y").is_none_or(|p| p.size.is_none_or(|s| s[0] <= 8192.0 && s[1] >= 180.0)));
         assert_eq!(Prefs::from_json("not json"), Prefs::default());
         let odd = Prefs::from_json(r#"{"grid_contrast": 7, "page_width": -3, "panels": {"gone": {"area": "Left", "visible": true}}}"#);
         assert_eq!(odd.grid_contrast, 1.0);

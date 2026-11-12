@@ -572,6 +572,7 @@ fn optimization_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     let mut set_default = false;
     let mut reset = false;
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_optimization"), "settings", "Optimization Settings")
+        .dockable("db_job_optimization")
         .fields()
         .actions("OK", "Cancel", None)
         .show(ctx, true, |ui| {
@@ -677,6 +678,7 @@ fn gcode_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     }
     let (mut g, mut a) = app.job.gcode_draft.take().unwrap_or_else(|| (app.job.gcode.clone(), app.job.additional));
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_gcode"), "settings", "G-code and Simulation Settings")
+        .dockable("db_job_gcode")
         .fields()
         .cards(3.2)
         .actions("OK", "Cancel", None)

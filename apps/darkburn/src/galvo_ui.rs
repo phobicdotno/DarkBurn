@@ -123,6 +123,7 @@ fn frame_dialog(ctx: &Context, app: &mut DarkBurn) {
     let framing = app.machine.handle.snapshot().state == LaserState::Framing;
     let mut resend = false;
     let (closed, action) = ui_kit::Window::new(Id::unique("db_galvo_frame"), "settings", &tr("galvo.frame_title", "Red-light frame"))
+        .dockable("db_galvo_frame")
         .cards(3.0)
         .fields()
         .actions("", "Close", None)
@@ -218,6 +219,7 @@ fn lens_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut cal = ctx.data_mut(|d| d.get_temp::<(f64, f64)>(cal_id)).unwrap_or((100.0, 100.0));
     let cor = app.machine.active().settings.galvo.cor_path.clone();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_galvo_lens"), "settings", &tr("galvo.lens_title", "Lens correction and test"))
+        .dockable("db_galvo_lens")
         .cards(3.0)
         .fields()
         .actions("", "Close", None)
@@ -303,6 +305,7 @@ fn repeat_dialog(ctx: &Context, app: &mut DarkBurn) {
     let id = app.machine.active().id;
     let mut r = app.machine.active().settings.galvo.repeat;
     let (closed, action) = ui_kit::Window::new(Id::unique("db_galvo_repeat"), "settings", &tr("galvo.repeat_title", "Repeat marking"))
+        .dockable("db_galvo_repeat")
         .cards(2.0)
         .fields()
         .actions("", "Close", None)

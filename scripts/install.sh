@@ -399,6 +399,22 @@ wants_prebuilt() {
     [ -z "$REF" ] || is_version "${REF#v}"
 }
 
+# Runs "$@" with nothing on its input and its output thrown away. True when it ends by itself,
+# without an error, within 30 seconds; a program that is still running then is stopped.
+starts_here() {
+    "$@" </dev/null >/dev/null 2>&1 &
+    start_pid=$!
+    (
+        sleep 30
+        kill "$start_pid" 2>/dev/null
+    ) >/dev/null 2>&1 &
+    start_watch=$!
+    if wait "$start_pid" 2>/dev/null; then start_status=0; else start_status=$?; fi
+    kill "$start_watch" 2>/dev/null || true
+    wait "$start_watch" 2>/dev/null || true
+    return "$start_status"
+}
+
 # Returns 0 with PAYLOAD_DIR, ICON_FILE and VERSION set when a ready-made build was fetched and
 # runs here. Returns 1 when there is none, with the reason in PREBUILT_WHY (empty when no
 # release was asked for, or when a warning has already said why). Stops only on a wrong checksum.
@@ -496,7 +512,9 @@ https://github.com/$GITHUB_REPO/issues. DARKBURN_FROM_SOURCE=1 builds from sourc
     fi
     chmod 755 "$PAYLOAD_DIR/darkburn" "$PAYLOAD_DIR/darkburn-mcp" 2>/dev/null || true
     # A build for another C library or a newer system does not start: find out before installing.
-    if ! "$PAYLOAD_DIR/darkburn-mcp" --version >/dev/null 2>&1; then
+    # Each program is started once, as the two do not need the same things from the system.
+    # With nothing on its input, darkburn --mcp-headless starts without a window and stops.
+    if ! starts_here "$PAYLOAD_DIR/darkburn-mcp" --version || ! starts_here "$PAYLOAD_DIR/darkburn" --mcp-headless; then
         warn "the ready-made build does not run on this system; building from source instead."
         return 1
     fi

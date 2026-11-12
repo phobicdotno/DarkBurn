@@ -93,7 +93,7 @@ Once a release is out, the script downloads the archive for your computer, one o
 - `darkburn-<version>-macos-arm64.tar.gz`
 - `darkburn-<version>-macos-x86_64.tar.gz`
 
-Before it installs from an archive, the script starts the program once. When that fails, or the release has no archive for your computer, it builds from source. The Linux archives are to be built on Ubuntu 22.04, so they need glibc 2.35 or newer.
+Before it installs from an archive, the script starts both programs once. When that fails, or the release has no archive for your computer, it builds from source. The Linux archives are to be built on Ubuntu 22.04, so they need glibc 2.35 or newer.
 
 ### Windows
 

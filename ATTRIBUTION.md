@@ -191,8 +191,9 @@ of its list.
 
 `docs/research/laser-protocols-and-devices.md` also records that two project files the owner
 had saved with LightBurn were looked at for their root attributes (`AppVersion`,
-`FormatVersion`, `MirrorY`). They are not in the repository. The test files in that format are
-written by `crates/darkburn-import/tests/gen_fixtures.py`.
+`FormatVersion`, `MirrorY`) and for the form of the `Font` attribute of a text shape. They are
+not in the repository. The test files in that format are written by
+`crates/darkburn-import/tests/gen_fixtures.py`, which uses one font name in that form.
 
 The research notes name more projects as surveyed only: Rayforge, raydriver, the `ruida` crate
 by lyonlabs, galvoplotter and SnapmakerSACP-Python (MIT), gcodekit5 (MIT or Apache-2.0), glase

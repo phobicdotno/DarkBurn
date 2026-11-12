@@ -31,7 +31,7 @@ fn screen() -> Option<egui::Rect> {
 /// the shell would run. With `typing`, a text field has the keyboard.
 fn press_at(app: &mut DarkBurn, key: Key, physical: Option<Key>, mods: Modifiers, typing: bool) -> Option<&'static str> {
     let ctx = egui::Context::default();
-    let field = egui::Id::new("shortcut_keys_field");
+    let field = egui::Id::unique("shortcut_keys_field");
     let mut text = String::new();
     if typing {
         let mut out = ctx.run_ui(RawInput { screen_rect: screen(), ..Default::default() }, |ui| {

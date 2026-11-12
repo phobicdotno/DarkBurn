@@ -41,7 +41,7 @@ mod tests {
         let event = egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers: mods };
         let input = egui::RawInput { events: vec![event], ..Default::default() };
         let mut got = Action::None;
-        let field = egui::Id::new("answer_keys_field");
+        let field = egui::Id::unique("answer_keys_field");
         if typing {
             // A text field that has the keyboard (its state marks it as a text edit).
             let _ = ctx.run_ui(egui::RawInput::default(), |ui| {

@@ -111,10 +111,11 @@ pub fn numpad_owns(app: &DarkBurn, id: &str) -> bool {
 }
 
 /// The command of a number pad key (NumLock off) pressed this frame; the press is used up so
-/// the canvas does not also take it for an arrow. Not over a dialog or a menu, and not with Ctrl
-/// or Alt (those are the keys' ordinary shortcuts).
+/// the canvas does not also take it for an arrow. Not over a dialog or a menu, not with Ctrl or
+/// Alt (those are the keys' ordinary shortcuts), and not in the node tool, which owns every
+/// plain key (the pad's arrows nudge its nodes).
 pub fn numpad_command(app: &DarkBurn, ctx: &egui::Context) -> Option<&'static str> {
-    if crate::escape::window_open(ctx) {
+    if app.tool == crate::tools::Tool::Nodes || crate::escape::window_open(ctx) {
         return None;
     }
     let pad = crate::keymap::numpad_table(&app.prefs.hotkeys);

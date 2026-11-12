@@ -11,7 +11,12 @@
 //! cannot be told apart (eframe 0.37 has no hook before that conversion except a raw Windows
 //! message hook, which needs unsafe code). With NumLock off the number pad sends arrows, Home,
 //! PgUp, End and PgDn as the logical key and still `NumN` as the physical key, which no other key
-//! does: those presses are what a `Numpad8` binding matches.
+//! does: those presses are what a `Numpad8` binding matches. Only the key each pad digit stands
+//! for with NumLock off counts (8 is ArrowUp, 7 Home, 0 Insert): a digit-row key that types
+//! punctuation (Shift+1 is `!`, the AZERTY 6 is `-`) also has a digit as its physical key.
+//!
+//! A key the user gave a command beats a default key: when a newer version adds a default (F2
+//! for Start) that the user already uses for something else, the default is left out.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -35,15 +40,16 @@ pub const NUMPAD: &str = "Numpad";
 
 thread_local! {
     // One snapshot per thread that draws an app (see `options::get`).
-    static CURRENT: RefCell<Overrides> = const { RefCell::new(Overrides::new()) };
+    // The overrides and, once asked for, the effective keys they give.
+    static CURRENT: RefCell<(Overrides, Option<BTreeMap<&'static str, String>>)> = const { RefCell::new((Overrides::new(), None)) };
 }
 
 /// Refresh the snapshot the menus and the ribbon tooltips read.
 pub fn publish(o: &Overrides) {
     CURRENT.with(|c| {
         let mut c = c.borrow_mut();
-        if *c != *o {
-            *c = o.clone();
+        if c.0 != *o {
+            *c = (o.clone(), None);
         }
     });
 }
@@ -51,7 +57,22 @@ pub fn publish(o: &Overrides) {
 /// The key text now bound to command `c` (its default unless changed). Menus and tooltips show
 /// the first key only.
 pub fn key_for(c: &Cmd) -> String {
-    CURRENT.with(|o| key_in(&o.borrow(), c.id, default_key(c)))
+    CURRENT.with(|cur| {
+        let mut cur = cur.borrow_mut();
+        let (o, eff) = &mut *cur;
+        // Commands that take arguments have no slot; they show their default.
+        eff.get_or_insert_with(|| effective(o)).get(c.id).cloned().unwrap_or_else(|| key_in(o, c.id, default_key(c)))
+    })
+}
+
+/// The key slot `id` has now (empty for none), as the key handler sees it.
+pub fn key_of(o: &Overrides, id: &str) -> String {
+    effective(o).get(id).cloned().unwrap_or_default()
+}
+
+/// The first key command `c` has now with overrides `o` (what [`key_for`] shows).
+pub fn first_key(o: &Overrides, c: &Cmd) -> String {
+    effective(o).get(c.id).cloned().unwrap_or_else(|| key_in(o, c.id, default_key(c)))
 }
 
 /// Keys of commands whose registry entry (in another module) has none: the laser keys that
@@ -158,19 +179,39 @@ pub enum Binding {
     Numpad(Key),
 }
 
-/// Parse a key text: what the command table writes, or `Numpad0` to `Numpad9`.
+/// Parse a key text: what the command table writes, or `Numpad0` to `Numpad9` without
+/// `Numpad5` (which cannot be told from the digit 5, see [`PAD_KEYS`]).
 pub fn parse_binding(text: &str) -> Option<Binding> {
     if let Some(digit) = text.strip_prefix(NUMPAD) {
-        return Some(digit).filter(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit()).and_then(Key::from_name).map(Binding::Numpad);
+        return Some(digit)
+            .filter(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit())
+            .and_then(Key::from_name)
+            .filter(|k| PAD_KEYS.iter().any(|(d, _)| d == k))
+            .map(Binding::Numpad);
     }
     commands::parse_key(text).map(Binding::Keys)
 }
 
-/// The physical number pad key of a key event, when the logical key shows NumLock is off (it
-/// is then an arrow, Home, PgUp, End or PgDn, not the digit).
+/// What each number pad digit sends with NumLock off. Pad 5 sends a key egui does not know, so
+/// egui reports it as the digit and it cannot be told from the 5 above the letters.
+const PAD_KEYS: [(Key, Key); 9] = [
+    (Key::Num0, Key::Insert),
+    (Key::Num1, Key::End),
+    (Key::Num2, Key::ArrowDown),
+    (Key::Num3, Key::PageDown),
+    (Key::Num4, Key::ArrowLeft),
+    (Key::Num6, Key::ArrowRight),
+    (Key::Num7, Key::Home),
+    (Key::Num8, Key::ArrowUp),
+    (Key::Num9, Key::PageUp),
+];
+
+/// The physical number pad key of a key event, when the logical key shows NumLock is off: the
+/// key that pad digit sends then (8 is ArrowUp, 7 Home). Any other pair is not a pad key, also
+/// when the physical key is a digit: Shift+1 (`!`) or the AZERTY 6 (`-`) on the digit row.
 pub fn numpad_key(key: Key, physical: Option<Key>) -> Option<Key> {
-    const DIGITS: [Key; 10] = [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
-    physical.filter(|p| DIGITS.contains(p) && !DIGITS.contains(&key))
+    let physical = physical?;
+    PAD_KEYS.iter().any(|&(digit, sends)| digit == physical && sends == key).then_some(physical)
 }
 
 /// The key text of a number pad key ([`numpad_key`]).
@@ -179,12 +220,18 @@ pub fn numpad_text(key: Key) -> String {
 }
 
 /// The effective key of each slot: every first key (empty when it has none) and the second keys
-/// that are set or were changed.
+/// that are set or were changed. A default key that the user gave another slot is left out, so
+/// a key set up before a version added that default keeps doing what the user chose.
 pub fn effective(o: &Overrides) -> BTreeMap<&'static str, String> {
+    let chosen: Vec<Binding> = o.iter().filter(|(id, k)| !k.is_empty() && slot(id).is_some()).filter_map(|(_, k)| parse_binding(k)).collect();
     slots()
         .iter()
         .filter_map(|s| {
-            let key = key_in(o, s.id, s.default);
+            let key = match o.get(s.id) {
+                Some(k) => k.clone(),
+                None if !chosen.is_empty() && parse_binding(s.default).is_some_and(|b| chosen.contains(&b)) => String::new(),
+                None => s.default.to_string(),
+            };
             (s.id == s.cmd || !key.is_empty() || o.contains_key(s.id)).then_some((s.id, key))
         })
         .collect()
@@ -394,12 +441,22 @@ mod tests {
         assert_eq!(effective(&o)["edit.undo"], "");
         assert_eq!(effective(&o)["edit.redo"], "Ctrl+Z");
         assert!(conflicts(&o).is_empty());
-        // A conflict made by hand (an imported file) is reported.
+        // A conflict made by hand (an imported file) between two keys the user chose is reported.
         let mut bad = Overrides::new();
-        bad.insert("edit.redo".into(), "Ctrl+Z".into());
+        bad.insert("edit.redo".into(), "Ctrl+Shift+F12".into());
+        bad.insert("edit.undo".into(), "Ctrl+Shift+F12".into());
         let c = conflicts(&bad);
         assert_eq!(c.len(), 1);
         assert!(c[0].1.contains(&"edit.undo") && c[0].1.contains(&"edit.redo"));
+        // A key the user chose beats another command's default: the default is left out.
+        let mut mine = Overrides::new();
+        mine.insert("edit.redo".into(), "Ctrl+Z".into());
+        assert!(conflicts(&mine).is_empty());
+        assert_eq!(effective(&mine)["edit.undo"], "");
+        assert_eq!(
+            table(&mine).iter().filter(|(k, _)| commands::parse_key("Ctrl+Z") == Some(*k)).map(|(_, id)| *id).collect::<Vec<_>>(),
+            ["edit.redo"]
+        );
         assert_eq!(assign(&mut o, "no.such", "F5", false), Err(Refused::UnknownCommand));
         assert_eq!(assign(&mut o, "edit.undo", "Ctrl+Banana", false), Err(Refused::BadKey));
     }
@@ -446,6 +503,7 @@ mod tests {
         assert_eq!(parse_binding("Numpad"), None);
         assert_eq!(parse_binding("Numpad12"), None);
         assert_eq!(parse_binding("NumpadA"), None);
+        assert_eq!(parse_binding("Numpad5"), None, "pad 5 is the digit 5 to egui");
         // NumLock off: an arrow with the physical key of a pad digit. NumLock on, or the digit
         // row: the digit itself, which is not a number pad key.
         assert_eq!(numpad_key(Key::ArrowUp, Some(Key::Num8)), Some(Key::Num8));
@@ -453,6 +511,15 @@ mod tests {
         assert_eq!(numpad_key(Key::Num8, Some(Key::Num8)), None);
         assert_eq!(numpad_key(Key::ArrowUp, Some(Key::ArrowUp)), None);
         assert_eq!(numpad_key(Key::ArrowUp, None), None);
+        // The pad digit must send its own key: 8 is ArrowUp, never Home.
+        assert_eq!(numpad_key(Key::Home, Some(Key::Num8)), None);
+        assert_eq!(numpad_key(Key::Insert, Some(Key::Num0)), Some(Key::Num0));
+        // Digit-row keys that type punctuation have a digit as their physical key too: Shift+1
+        // is `!`, Shift+7 is `/` on Nordic and German keyboards, the AZERTY 6 is `-` and its 4
+        // is `'`. None of them is a pad key.
+        for (key, digit) in [(Key::Exclamationmark, Key::Num1), (Key::Slash, Key::Num7), (Key::Minus, Key::Num6), (Key::Quote, Key::Num4)] {
+            assert_eq!(numpad_key(key, Some(digit)), None, "{key:?} on {digit:?}");
+        }
         assert_eq!(numpad_text(Key::Num8), "Numpad8");
         let pad = numpad_table(&Overrides::new());
         for (key, id) in [
@@ -472,8 +539,9 @@ mod tests {
         // A number pad key can be moved like any other.
         let mut o = Overrides::new();
         assert_eq!(assign(&mut o, "laser.jog_up", "Numpad8", false), Err(Refused::Taken("laser.jog_up#2")));
-        assign(&mut o, "laser.jog_up#2", "Numpad5", false).unwrap();
-        assert!(numpad_table(&o).contains(&(Key::Num5, "laser.jog_up")));
+        assign(&mut o, "laser.jog_up#2", "Numpad0", false).unwrap();
+        assert!(numpad_table(&o).contains(&(Key::Num0, "laser.jog_up")));
+        assert_eq!(assign(&mut o, "laser.jog_up#2", "Numpad5", false), Err(Refused::BadKey));
         assert_eq!(from_file(&to_file(&o)).unwrap(), o);
     }
 
@@ -492,6 +560,37 @@ mod tests {
             assert_eq!(e[id], key, "{id}");
             assert!(table(&o).contains(&(commands::parse_key(key).unwrap(), id)), "{id}");
         }
+    }
+
+    /// Keys saved by an older version that a newer default also uses: the user's key wins, in
+    /// the preferences and in an imported file, and the menus show what really happens.
+    #[test]
+    fn a_users_key_beats_a_newer_default_key() {
+        let mut o = Overrides::new();
+        o.insert("view.zoom_page".into(), "F2".into());
+        o.insert("view.pan".into(), "Ctrl+Alt+Home".into());
+        let f2 = commands::parse_key("F2").unwrap();
+        let home = commands::parse_key("Ctrl+Alt+Home").unwrap();
+        let t = table(&o);
+        assert_eq!(t.iter().filter(|(k, _)| *k == f2).map(|(_, id)| *id).collect::<Vec<_>>(), ["view.zoom_page"], "F2 does not start a job");
+        assert_eq!(t.iter().filter(|(k, _)| *k == home).map(|(_, id)| *id).collect::<Vec<_>>(), ["view.pan"], "Ctrl+Alt+Home does not jog");
+        assert!(t.contains(&(commands::parse_key("Alt+S").unwrap(), "job.start")), "Start keeps its first key");
+        assert!(conflicts(&o).is_empty(), "{:?}", conflicts(&o));
+        assert_eq!(key_of(&o, "job.start#2"), "");
+        assert_eq!(key_of(&o, "laser.jog_up_left"), "");
+        // An older file that binds F2 does the same.
+        let old = r#"{"format":"darkburn-hotkeys","version":1,"keys":{"view.zoom_page":"F2","job.start":"Alt+S"}}"#;
+        let imported = from_file(old).unwrap();
+        assert!(!table(&imported).contains(&(f2, "job.start")));
+        assert!(table(&imported).contains(&(f2, "view.zoom_page")));
+        // Menus show the key that works.
+        publish(&o);
+        assert_eq!(key_for(commands::lookup("laser.jog_up_left").unwrap()), "");
+        assert_eq!(key_for(commands::lookup("view.zoom_page").unwrap()), "F2");
+        // Giving the key back brings the default back.
+        reset(&mut o, "view.zoom_page");
+        assert!(table(&o).contains(&(f2, "job.start")));
+        publish(&Overrides::new());
     }
 
     #[test]

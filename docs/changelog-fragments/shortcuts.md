@@ -3,3 +3,4 @@
 - New: keys to jog Z and diagonally
 - New: number pad jogs the laser (with NumLock off)
 - New: Y and N answer yes/no questions
+- Fix: keys you picked yourself keep working when a new default key would take them

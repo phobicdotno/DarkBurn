@@ -395,10 +395,9 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
 /// Width of a key column in the hotkey editor.
 const KEY_CELL: f32 = 120.0;
 
-/// One key of a command in the hotkey editor: click it, then press the key; right-click removes
-/// just this key.
-fn key_cell(ui: &mut Ui, app: &mut DarkBurn, slot: &str, default: &str) {
-    let key = keymap::key_in(&app.prefs.hotkeys, slot, default);
+/// One key of a command in the hotkey editor (`key`, what it has now): click it, then press the
+/// key; right-click removes just this key.
+fn key_cell(ui: &mut Ui, app: &mut DarkBurn, slot: &str, key: String) {
     let waiting = app.extras.hotkeys.capturing.as_deref() == Some(slot);
     let text = if waiting {
         tr("hotkeys.press", "Press a key...")
@@ -464,6 +463,9 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
         head(ui, KEY_CELL, tr("hotkeys.key", "Key"));
         head(ui, KEY_CELL, tr("hotkeys.second", "Second key"));
     });
+    // The keys as the key handler sees them: a default another command was given is not shown.
+    let eff = keymap::effective(&app.prefs.hotkeys);
+    let now = |slot: &str| eff.get(slot).cloned().unwrap_or_default();
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
         for (id, label, default) in keymap::bindable() {
             let cmd = crate::commands::find(id);
@@ -474,8 +476,8 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             let second = keymap::second_of(id);
             ui.horizontal(|ui| {
                 left_cell(ui, 250.0, 22.0, egui::Label::new(shown).truncate());
-                key_cell(ui, app, id, default);
-                key_cell(ui, app, &second, keymap::second_default(id));
+                key_cell(ui, app, id, now(id));
+                key_cell(ui, app, &second, now(&second));
                 if ui_kit::button(ui, tr("hotkeys.clear", "Clear"), ui_kit::Button::Small).clicked() {
                     let _ = keymap::assign(&mut app.prefs.hotkeys, id, "", false);
                     let _ = keymap::assign(&mut app.prefs.hotkeys, &second, "", false);

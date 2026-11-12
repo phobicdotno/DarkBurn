@@ -274,12 +274,87 @@ fn a_number_pad_key_can_be_moved_and_removed() {
     let up2 = keymap::second_of("laser.jog_up");
     keymap::assign(&mut a.prefs.hotkeys, &up2, "", false).unwrap();
     assert_eq!(pad(&mut a, Key::ArrowUp, Key::Num8), None, "removed");
-    keymap::assign(&mut a.prefs.hotkeys, &up2, "Numpad5", false).unwrap();
-    assert_eq!(pad(&mut a, Key::Num5, Key::Num5), None, "NumLock on is the digit row");
-    // Pad 5 with NumLock off sends no key egui knows; a layout that sends one is matched by place.
-    assert_eq!(pad(&mut a, Key::Space, Key::Num5), Some("laser.jog_up"));
+    // Pad 5 cannot be told from the digit 5, so it cannot be a pad key.
+    assert_eq!(keymap::assign(&mut a.prefs.hotkeys, &up2, "Numpad5", false), Err(keymap::Refused::BadKey));
+    keymap::assign(&mut a.prefs.hotkeys, &up2, "Numpad0", false).unwrap();
+    assert_eq!(pad(&mut a, Key::Num0, Key::Num0), None, "NumLock on is the digit row");
+    assert_eq!(pad(&mut a, Key::Insert, Key::Num0), Some("laser.jog_up"), "pad 0 sends Insert with NumLock off");
     keymap::reset(&mut a.prefs.hotkeys, "laser.jog_up");
     assert_eq!(pad(&mut a, Key::ArrowUp, Key::Num8), Some("laser.jog_up"));
+}
+
+/// Keys on the digit row that type punctuation also have a digit as their physical key; they
+/// are not number pad keys and never jog.
+#[test]
+fn shifted_digits_and_azerty_punctuation_do_not_jog() {
+    let mut a = app();
+    connect_sim(&mut a);
+    let p0 = pos(&a);
+    for (key, digit, mods, what) in [
+        (Key::Exclamationmark, Key::Num1, Modifiers::SHIFT, "Shift+1 on a US or German keyboard"),
+        (Key::Slash, Key::Num7, Modifiers::SHIFT, "Shift+7 on a Nordic or German keyboard"),
+        (Key::Minus, Key::Num6, Modifiers::NONE, "the AZERTY 6 key"),
+        (Key::Quote, Key::Num4, Modifiers::NONE, "the AZERTY 4 key"),
+    ] {
+        let got = press_at(&mut a, key, Some(digit), mods, false);
+        assert!(!got.is_some_and(|c| c.starts_with("laser.")), "{what}: {got:?}");
+    }
+    a.machine.message = None;
+    std::thread::sleep(Duration::from_millis(100));
+    a.machine.tick();
+    assert_eq!(pos(&a), p0, "nothing moved");
+    assert_eq!(message(&a), "", "and nothing was refused either");
+}
+
+/// The node tool owns every plain key: the pad's arrows (NumLock off) nudge its nodes, as the
+/// arrow keys do, and do not jog the laser.
+#[test]
+fn the_number_pad_leaves_the_node_tool_its_arrows() {
+    let mut a = app();
+    connect_sim(&mut a);
+    a.set_tool(crate::tools::Tool::Nodes);
+    assert_eq!(pad(&mut a, Key::ArrowUp, Key::Num8), None);
+    assert_eq!(pad(&mut a, Key::Home, Key::Num7), None);
+    a.set_tool(crate::tools::Tool::Select);
+    assert_eq!(pad(&mut a, Key::ArrowUp, Key::Num8), Some("laser.jog_up"));
+}
+
+/// F2 starts a job on a connected laser, the same as Alt+S and the Start button.
+#[test]
+fn f2_starts_a_job_on_the_simulator() {
+    let mut a = app();
+    connect_sim(&mut a);
+    execute_headless(&mut a, "shape.add_rect", &json!({ "x": 10, "y": 10, "width": 10, "height": 10, "layer": 0 })).unwrap();
+    let cmd = press(&mut a, Key::F2, Modifiers::NONE).unwrap();
+    assert_eq!(cmd, "job.start");
+    a.run(&egui::Context::default(), cmd);
+    wait(&mut a, "the job under way", |a| state(a) == LaserState::Busy || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+    a.machine.stop_and_close();
+    wait(&mut a, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+}
+
+/// Preferences saved before F2 and the Ctrl+Alt jog keys were defaults may use those keys for
+/// something else: the user's keys keep working and neither starts a job nor jogs.
+#[test]
+fn keys_the_user_set_up_before_beat_the_new_defaults() {
+    let prefs = Prefs::from_json(r#"{"hotkeys":{"view.zoom_page":"F2","view.pan":"Ctrl+Alt+Home"}}"#);
+    assert_eq!(prefs.hotkeys.get("view.zoom_page").map(String::as_str), Some("F2"), "kept when loaded");
+    let mut a = DarkBurn::new(prefs);
+    connect_sim(&mut a);
+    execute_headless(&mut a, "shape.add_rect", &json!({ "x": 10, "y": 10, "width": 10, "height": 10, "layer": 0 })).unwrap();
+    let f2 = press(&mut a, Key::F2, Modifiers::NONE);
+    assert_ne!(f2, Some("job.start"));
+    assert_ne!(press(&mut a, Key::Home, Modifiers::COMMAND | Modifiers::ALT), Some("laser.jog_up_left"));
+    assert_eq!(press(&mut a, Key::S, Modifiers::ALT), Some("job.start"), "Start keeps its first key");
+    // The user's F2 runs what they gave it.
+    if let Some(cmd) = f2 {
+        assert_eq!(cmd, "view.zoom_page");
+        a.run(&egui::Context::default(), cmd);
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    a.machine.tick();
+    assert_eq!(state(&a), LaserState::Ready, "no job started");
+    assert!(a.machine.handle.snapshot().job.is_none());
 }
 
 // ----- in the window ----------------------------------------------------------------------------
@@ -317,7 +392,7 @@ fn ui_jog_keys_are_refused_without_a_laser_and_jog_with_one() {
     g.screenshot("shortcut_keys_jog_refused");
     // The pad arrow without a laser is just an arrow: no complaint.
     g.app().machine.message = None;
-    g.key_at(Key::ArrowUp, Key::Num8);
+    g.key_at(Key::ArrowUp, Key::Num8, Modifiers::NONE);
     assert_eq!(message(&g.app()), "");
     gui_connect(&mut g);
     let p0 = pos(&g.app());
@@ -326,7 +401,7 @@ fn ui_jog_keys_are_refused_without_a_laser_and_jog_with_one() {
     gui_wait(&mut g, "diagonal by key", |a| ((pos(a)[0] - p0[0]).abs() - d).abs() < 0.01 && ((pos(a)[1] - p0[1]).abs() - d).abs() < 0.01);
     gui_wait(&mut g, "idle", |a| state(a) == LaserState::Ready);
     let p1 = pos(&g.app());
-    g.key_at(Key::ArrowDown, Key::Num2);
+    g.key_at(Key::ArrowDown, Key::Num2, Modifiers::NONE);
     gui_wait(&mut g, "pad 2 by key", |a| ((pos(a)[1] - p1[1]).abs() - d).abs() < 0.01);
     gui_wait(&mut g, "idle", |a| state(a) == LaserState::Ready);
     // Z on a machine without Z: refused, and said so.
@@ -348,7 +423,7 @@ fn ui_jog_keys_type_into_a_focused_field() {
     let p0 = pos(&g.app());
     g.app().machine.message = None;
     g.key(Key::PageUp, Modifiers::COMMAND | Modifiers::ALT);
-    g.key_at(Key::ArrowUp, Key::Num8);
+    g.key_at(Key::ArrowUp, Key::Num8, Modifiers::NONE);
     g.frames(5);
     g.app().machine.tick();
     assert_eq!(message(&g.app()), "");
@@ -373,7 +448,7 @@ fn ui_jog_keys_are_refused_while_a_job_runs() {
     }
     gui_wait(&mut g, "busy", |a| state(a) == LaserState::Busy);
     g.app().machine.message = None;
-    g.key_at(Key::ArrowLeft, Key::Num4);
+    g.key_at(Key::ArrowLeft, Key::Num4, Modifiers::NONE);
     let said = message(&g.app());
     assert!(said.contains(BUSY), "{said:?}");
     g.app().machine.message = None;
@@ -431,4 +506,136 @@ fn ui_y_does_not_confirm_a_machine_action_and_n_refuses_it() {
     g.key(Key::N, Modifiers::NONE);
     assert!(!g.app().machine.dlg.confirm_close, "N kept the job running");
     assert!(!g.app().machine.close_ok);
+}
+
+/// Y does not write risky settings; N says Cancel and nothing is written.
+#[test]
+fn ui_y_does_not_write_risky_settings_and_n_cancels() {
+    let mut g = Gui::standard();
+    gui_connect(&mut g);
+    {
+        let mut a = g.app();
+        a.machine.dlg.machine_settings = true;
+        a.machine.dlg.setting_edits.insert(30, "500".into());
+        a.machine.dlg.message = Some("risky".into());
+    }
+    g.frames(3);
+    assert!(g.has_text("Change protection settings?"), "{:?}", g.window_titles());
+    g.key(Key::Y, Modifiers::NONE);
+    assert_eq!(g.app().machine.dlg.message.as_deref(), Some("risky"), "Y did not write anyway");
+    assert!(g.app().machine.dlg.setting_edits.contains_key(&30), "nothing was written");
+    g.key(Key::N, Modifiers::NONE);
+    assert_eq!(g.app().machine.dlg.message, None, "N cancelled");
+    assert!(g.app().machine.dlg.setting_edits.contains_key(&30), "and wrote nothing");
+    assert!(!g.has_text("Change protection settings?"));
+}
+
+/// Y does not restore a settings backup to the laser; N says Cancel.
+#[test]
+fn ui_y_does_not_restore_settings_and_n_cancels() {
+    let mut g = Gui::standard();
+    gui_connect(&mut g);
+    {
+        let mut a = g.app();
+        a.machine.dlg.machine_settings = true;
+        let backup = crate::machine_api::SettingsBackup::parse(crate::machine_api::Family::Grbl, "$110=1234\n").unwrap();
+        a.machine.dlg.confirm_restore = Some(backup);
+    }
+    g.frames(3);
+    assert!(g.has_text("Write these settings to the laser?"), "{:?}", g.window_titles());
+    g.key(Key::Y, Modifiers::NONE);
+    assert!(g.app().machine.dlg.confirm_restore.is_some(), "Y did not write the backup");
+    g.key(Key::N, Modifiers::NONE);
+    assert!(g.app().machine.dlg.confirm_restore.is_none(), "N cancelled");
+    // The controller still has its own value.
+    execute_headless(&mut g.app(), "machine.read_settings", &json!({})).unwrap();
+    gui_wait(&mut g, "settings read", |a| a.machine.handle.snapshot().grbl_settings.contains_key(&110));
+    let v = g.app().machine.handle.snapshot().grbl_settings.get(&110).cloned().unwrap_or_default();
+    assert!(!v.starts_with("1234"), "the backup was written: {v}");
+}
+
+/// Y does not connect a real machine; N says Cancel and nothing is opened.
+#[test]
+fn ui_y_does_not_connect_a_real_machine_and_n_cancels() {
+    use crate::devices::{ConnectionKind, Device};
+    let mut g = Gui::standard();
+    {
+        let mut a = g.app();
+        // A documentation address: nothing is ever opened, test builds refuse real links anyway.
+        let id = a.machine.devices.add(Device {
+            name: "Real".into(),
+            connection: ConnectionKind::Tcp,
+            host: "192.0.2.1".into(),
+            ..Device::new(DeviceType::Grbl)
+        });
+        a.machine.devices.select(id);
+        assert!(crate::machine_ui::run_with(&mut a, "machine.connect", &json!({})));
+        assert!(a.machine.dlg.confirm_connect.is_some(), "Connect asks first");
+    }
+    g.frames(3);
+    assert!(g.has_text("Connect to a real machine?"), "{:?}", g.window_titles());
+    g.key(Key::Y, Modifiers::NONE);
+    assert!(g.app().machine.dlg.confirm_connect.is_some(), "Y did not connect");
+    assert!(!g.app().machine.handle.is_real_machine());
+    g.screenshot("shortcut_keys_connect_question");
+    g.key(Key::N, Modifiers::NONE);
+    assert!(g.app().machine.dlg.confirm_connect.is_none(), "N cancelled");
+    assert!(!g.app().machine.handle.is_real_machine());
+    assert_eq!(state(&g.app()), LaserState::Disconnected);
+}
+
+/// F2 pressed in the window starts the job on the connected simulator.
+#[test]
+fn ui_f2_starts_the_job() {
+    let mut g = Gui::standard();
+    gui_connect(&mut g);
+    g.exec("shape.add_rect", json!({ "x": 10, "y": 10, "width": 10, "height": 10, "layer": 0 }));
+    g.frames(2);
+    g.key(Key::F2, Modifiers::NONE);
+    gui_wait(&mut g, "the job under way", |a| state(a) == LaserState::Busy || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+    g.app().machine.stop_and_close();
+    gui_wait(&mut g, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+}
+
+/// Shift+1 pressed in the window does not jog, and the Hotkeys editor keeps it as Shift+1's
+/// own key, not as a number pad key.
+#[test]
+fn ui_a_shifted_digit_is_not_a_number_pad_key() {
+    let mut g = Gui::standard();
+    gui_connect(&mut g);
+    let p0 = pos(&g.app());
+    g.app().machine.message = None;
+    g.key_at(Key::Exclamationmark, Key::Num1, Modifiers::SHIFT);
+    g.key_at(Key::Minus, Key::Num6, Modifiers::NONE);
+    g.frames(5);
+    g.app().machine.tick();
+    assert_eq!(pos(&g.app()), p0, "nothing jogged");
+    assert_eq!(message(&g.app()), "");
+    // In the Hotkeys editor: capture a key for Start's second key.
+    g.run_command("file.hotkeys");
+    g.app().extras.hotkeys.filter = "job.start".into();
+    g.frames(3);
+    let at = g.find_text("F2").unwrap();
+    g.click_pos(at.center());
+    g.key_at(Key::Exclamationmark, Key::Num1, Modifiers::SHIFT);
+    let key = keymap::key_of(&g.app().prefs.hotkeys, &keymap::second_of("job.start"));
+    assert_ne!(key, "Numpad1");
+    assert!(!key.starts_with(keymap::NUMPAD), "{key}");
+    g.close_dialogs();
+}
+
+/// In the node tool the pad's arrows are the node tool's, also with a laser connected.
+#[test]
+fn ui_the_number_pad_does_not_jog_in_the_node_tool() {
+    let mut g = Gui::standard();
+    gui_connect(&mut g);
+    g.app().set_tool(crate::tools::Tool::Nodes);
+    g.frames(2);
+    let p0 = pos(&g.app());
+    g.app().machine.message = None;
+    g.key_at(Key::ArrowUp, Key::Num8, Modifiers::NONE);
+    g.frames(5);
+    g.app().machine.tick();
+    assert_eq!(pos(&g.app()), p0, "nothing jogged");
+    assert_eq!(message(&g.app()), "");
 }

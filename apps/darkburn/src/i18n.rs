@@ -341,17 +341,36 @@ mod tests {
         n
     }
 
-    /// The key names in `text` (Ctrl, Shift, Alt, Cmd, Esc, F1 to F24), sorted. They name keys on
-    /// the keyboard, so they stay as they are.
+    /// The key names in `text`, sorted. They name keys on the keyboard, so they stay as they are.
+    /// Ctrl, Cmd, Esc and F1 to F24 count wherever they stand as a word. Shift and Alt count only
+    /// in a key combination, next to a `+` (`Alt+Drag`, `Ctrl+Shift+Z`): on their own they are
+    /// ordinary words in some languages ("Alt" is "all" in Norwegian and Danish).
     fn key_names(text: &str) -> Vec<String> {
-        let mut out: Vec<String> = text
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| {
-                matches!(*w, "Ctrl" | "Shift" | "Alt" | "Cmd" | "Esc")
-                    || w.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=24).contains(&n) && !w.starts_with("F0"))
-            })
-            .map(str::to_string)
-            .collect();
+        let mut out = Vec::new();
+        let mut words = Vec::new();
+        let mut start = None;
+        for (i, c) in text.char_indices().chain([(text.len(), ' ')]) {
+            match (c.is_alphanumeric(), start) {
+                (true, None) => start = Some(i),
+                (false, Some(s)) => {
+                    words.push((s, i));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        for (s, e) in words {
+            let w = &text[s..e];
+            let in_combination = text[..s].ends_with('+') || text[e..].starts_with('+');
+            let key = match w {
+                "Ctrl" | "Cmd" | "Esc" => true,
+                "Shift" | "Alt" => in_combination,
+                _ => w.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=24).contains(&n) && !w.starts_with("F0")),
+            };
+            if key {
+                out.push(w.to_string());
+            }
+        }
         out.sort();
         out
     }
@@ -447,11 +466,19 @@ mod tests {
 
     #[test]
     fn the_locale_checker_finds_each_kind_of_mistake() {
-        let english: BTreeMap<String, String> =
-            [("a", "Export..."), ("b", "Speed:"), ("c", "Saved {count} files"), ("d", "&Open"), ("e", "Press F1 or Ctrl+H"), ("f", " mm")]
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
+        let english: BTreeMap<String, String> = [
+            ("a", "Export..."),
+            ("b", "Speed:"),
+            ("c", "Saved {count} files"),
+            ("d", "&Open"),
+            ("e", "Press F1 or Ctrl+H"),
+            ("f", " mm"),
+            ("g", "All"),
+            ("h", "Hold Alt+Shift to snap"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
         let one = |key: &str, text: &str| check_file(&english, &serde_json::json!({ key: text }).to_string());
         // Each rule kept: no problem.
         for (k, v) in [
@@ -462,7 +489,14 @@ mod tests {
         ] {
             assert!(one(k, v).is_empty(), "{k} {v}: {:?}", one(k, v));
         }
-        for (k, v) in [("c", "{count} Dateien gespeichert"), ("d", "\u{00c5}&pne"), ("e", "Trykk F1 eller Ctrl+H"), ("f", " mm")] {
+        for (k, v) in [
+            ("c", "{count} Dateien gespeichert"),
+            ("d", "\u{00c5}&pne"),
+            ("e", "Trykk F1 eller Ctrl+H"),
+            ("f", " mm"),
+            ("g", "Alt"),
+            ("h", "Hold Alt+Shift for \u{e5} feste"),
+        ] {
             assert!(one(k, v).is_empty(), "{k} {v}: {:?}", one(k, v));
         }
         // Each rule broken: a problem that says which.
@@ -475,6 +509,8 @@ mod tests {
             ("d", "Open", "shortcut marks"),
             ("e", "Trykk F2 eller Ctrl+H", "keys"),
             ("e", "Trykk F1 eller Strg+H", "keys"),
+            ("h", "Hold Alt for \u{e5} feste", "keys"),
+            ("h", "Hold Alt+Skift for \u{e5} feste", "keys"),
             ("f", "mm", "spaces"),
             ("f", " mm ", "spaces"),
             ("b", "   ", "empty"),

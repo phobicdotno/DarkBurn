@@ -276,3 +276,23 @@ fn glyph_count_counts_the_characters_a_face_can_draw() {
     let bytes: &[u8] = (*data).as_ref();
     assert_eq!(bytes.len(), data.data.len());
 }
+
+#[test]
+fn glyphs_tells_for_each_character_whether_a_face_draws_it() {
+    let l = lib();
+    let id = l.resolve(SANS, false, false).unwrap().id;
+    assert_eq!(l.glyphs(id, &['A', '\u{65E5}', '\u{0416}', '\u{0633}']), vec![true, false, true, false]);
+    assert!(l.glyphs(id, &[]).is_empty());
+}
+
+#[test]
+fn read_face_data_gives_a_copy_of_the_bytes_of_its_own() {
+    let l = lib();
+    let id = l.resolve(SANS, false, false).unwrap().id;
+    let read = l.read_face_data(id).unwrap();
+    let kept = l.face_data(id).unwrap();
+    assert_eq!(read.data, kept.data);
+    assert_eq!(read.index, kept.index);
+    // A copy of its own, not the library's.
+    assert_ne!(read.data.as_ptr(), kept.data.as_ptr());
+}

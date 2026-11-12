@@ -34,8 +34,10 @@ language picks its own words, the ones its laser users already know.
   or `…`, and the other way round.
 - Shortcut marks: an `&` right before a letter marks the key for that menu item. Keep as many as
   English has (a different letter is fine). `&&` and `& ` are a plain ampersand.
-- Key names stay as they are, as many times as in English: Ctrl, Shift, Alt, Cmd, Esc, F1 to
-  F24. They name keys printed on the keyboard.
+- Key names stay as they are, as many times as in English: Ctrl, Cmd, Esc and F1 to F24
+  anywhere, Shift and Alt in a key combination (next to a `+`, as in `Alt+Drag`). They name keys
+  printed on the keyboard. On their own, "Shift" and "Alt" are not checked, because "Alt" is an
+  ordinary word in Norwegian and Danish ("all") and German ("old").
 - Leave these names as they are: DarkBurn, LightBurn, G-code, GRBL, Ruida, Gweike, DXF, SVG, PDF,
   PNG, QR, DPI, mm, mm/s, mm/min.
 
@@ -49,6 +51,10 @@ language picks its own words, the ones its laser users already know.
   Hiragino, Apple SD Gothic Neo, PingFang; Linux: Noto Sans CJK, Source Han Sans, WenQuanYi,
   Nanum and others), then any font that has the characters. A test checks that every character
   of a file has a glyph in the fonts picked for it; on Linux, install `fonts-noto-cjk` for it.
+  The fonts are worked out on a thread of their own, so the window does not wait; on a computer
+  without a font for the script the search gives up after a couple of characters and the text
+  shows as boxes. The faces for the language names in the Language menu are added only while the
+  menu is open.
   The full list per script is `Script::preferred_fonts` in `languages.rs`.
 - **Arabic is not offered.** egui 0.37 (the toolkit the interface is drawn with) shapes the
   letters of each word, so they join, but it has no bidirectional text: it lays the runs of a

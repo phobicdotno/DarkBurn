@@ -30,6 +30,19 @@ esac
 
 [ -f "$root/site/index.html" ] || die "site/index.html is not there."
 
+# Only plain files are published. A link could point at a file outside the repository, and what
+# packs the folder for GitHub Pages puts the file itself in the place of a link.
+fonts=$root/assets/fonts
+icons=$root/assets/icons
+for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
+    "$fonts/ibm-plex-sans/IBMPlexSans-Variable.ttf" "$fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf" \
+    "$fonts/ibm-plex-sans/OFL.txt" "$icons/ui/design/svg/model/db_app.svg" \
+    "$icons/app/darkburn-256.png" "$icons/app/darkburn.ico"; do
+    [ ! -L "$f" ] || die "$f is a link. Only plain files are published."
+done
+odd=$(find "$root/site" ! -type f ! -type d | head -n 3)
+[ -z "$odd" ] || die "site/ holds something that is not a plain file: $odd"
+
 # The folder is made new each time. Only a folder this script made is ever removed.
 mark=.made-by-build-site
 if [ -e "$out" ]; then
@@ -44,13 +57,22 @@ mkdir -p "$out/img" "$out/fonts"
 
 cp -R "$root/site/." "$out/"
 cp "$root"/docs/img/*.png "$out/img/"
-cp "$root/assets/fonts/ibm-plex-sans/IBMPlexSans-Variable.ttf" "$out/fonts/"
-cp "$root/assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf" "$out/fonts/"
+cp "$fonts/ibm-plex-sans/IBMPlexSans-Variable.ttf" "$out/fonts/"
+cp "$fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf" "$out/fonts/"
 # One licence text for both fonts: the two OFL.txt files are the same.
-cp "$root/assets/fonts/ibm-plex-sans/OFL.txt" "$out/fonts/OFL.txt"
-cp "$root/assets/icons/ui/design/svg/model/db_app.svg" "$out/icon.svg"
-cp "$root/assets/icons/app/darkburn-256.png" "$out/icon-256.png"
-cp "$root/assets/icons/app/darkburn.ico" "$out/favicon.ico"
+cp "$fonts/ibm-plex-sans/OFL.txt" "$out/fonts/OFL.txt"
+cp "$icons/ui/design/svg/model/db_app.svg" "$out/icon.svg"
+cp "$icons/app/darkburn-256.png" "$out/icon-256.png"
+cp "$icons/app/darkburn.ico" "$out/favicon.ico"
+
+# A drawing opened by its own address is a page of its own, and the policy line of index.html
+# does not reach it. So no drawing may carry script.
+for svg in "$out"/*.svg "$out"/img/*.svg; do
+    [ -f "$svg" ] || continue
+    if grep -Ein "<script|<foreignObject|<iframe|<embed|<object|javascript:|[[:space:]]on[a-z]+[[:space:]]*=" "$svg"; then
+        die "${svg##*/} carries script or another document (see the lines above)."
+    fi
+done
 
 # Each page carries a Content-Security-Policy line that allows the page's own files and nothing
 # else, and the line stands before anything the page loads. A browser holds the page to it:

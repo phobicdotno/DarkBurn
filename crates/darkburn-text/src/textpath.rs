@@ -105,19 +105,30 @@ fn len_of(p: &[Point]) -> f64 {
     p.windows(2).map(|w| (w[1] - w[0]).hypot()).sum()
 }
 
+/// The most pieces one straight stretch of a letter is cut into before it is bent.
+const MAX_PIECES: f64 = 4096.0;
+
 fn flatten_fine(path: &BezPath, max_seg: f64) -> Vec<(Vec<Point>, bool)> {
     geomutil::flatten_polylines(path, 0.002)
         .into_iter()
         .map(|(pts, closed)| {
             let mut out: Vec<Point> = Vec::with_capacity(pts.len());
-            for w in pts.windows(2) {
+            // A closed outline has one more edge than it has points between them: the one that
+            // closes it. It bends like the others.
+            let mut ring = pts.clone();
+            if closed && ring.first() != ring.last() {
+                ring.push(ring[0]);
+            }
+            for w in ring.windows(2) {
                 let (a, b) = (w[0], w[1]);
-                let n = (((b - a).hypot()) / max_seg).ceil().max(1.0) as usize;
+                // Enough pieces to follow the bend, but never so many that an enormous letter
+                // fills the memory.
+                let n = (((b - a).hypot()) / max_seg).ceil().clamp(1.0, MAX_PIECES) as usize;
                 for k in 0..n {
                     out.push(a.lerp(b, k as f64 / n as f64));
                 }
             }
-            if let Some(l) = pts.last() {
+            if let Some(l) = pts.last().filter(|_| !closed) {
                 out.push(*l);
             }
             (out, closed)
@@ -181,4 +192,66 @@ pub fn apply_path_to_text(layout: &TextLayout, path: &BezPath) -> Vec<BezPath> {
 /// Number of nodes in a path (test/UI helper).
 pub fn node_count(p: &BezPath) -> usize {
     p.elements().iter().filter(|e| !matches!(e, PathEl::ClosePath)).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{LineMetrics, TextMetrics};
+    use kurbo::{Rect, Shape};
+
+    fn one_glyph(size: f64) -> TextLayout {
+        let path = Rect::new(0.0, 0.0, size, size).to_path(0.1);
+        let glyph = GlyphOutline { text: "I".into(), line: 0, path, origin_x: 0.0, baseline_y: 0.0, advance: size, rtl: false, missing: false };
+        TextLayout {
+            glyphs: vec![glyph],
+            lines: vec![LineMetrics { baseline_y: 0.0, width: size, x_start: 0.0 }],
+            metrics: TextMetrics::default(),
+            bounds: Rect::new(0.0, 0.0, size, size),
+            family_used: String::new(),
+        }
+    }
+
+    fn corner() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((50.0, 0.0));
+        p.line_to((50.0, 50.0));
+        p
+    }
+
+    #[test]
+    fn the_edge_that_closes_an_outline_bends_too() {
+        // A flat bar whose closing edge is its long bottom, bent around a circle of radius 10.
+        let mut bar = BezPath::new();
+        bar.move_to((0.0, 0.0));
+        bar.line_to((0.0, 1.0));
+        bar.line_to((30.0, 1.0));
+        bar.line_to((30.0, 0.0));
+        bar.close_path();
+        let mut layout = one_glyph(30.0);
+        layout.glyphs[0].path = bar;
+        let circle = kurbo::Circle::new((0.0, 0.0), 10.0).to_path(1e-4);
+        let bent = text_on_path(&layout, &circle, &PathTextOptions { distort: true, ..Default::default() });
+        let pts: Vec<Point> = geomutil::flatten_polylines(&bent[0].path, 0.001).into_iter().flat_map(|(p, _)| p).collect();
+        let n = pts.len();
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            let r = a.midpoint(b).to_vec2().hypot();
+            assert!((8.9..=11.1).contains(&r), "an edge from {a:?} to {b:?} cuts across the circle (radius {r})");
+        }
+    }
+
+    #[test]
+    fn bending_an_enormous_letter_does_not_fill_the_memory() {
+        let opts = PathTextOptions { distort: true, ..Default::default() };
+        // A letter a thousand kilometres tall used to ask for tens of gigabytes here.
+        let bent = text_on_path(&one_glyph(1e9), &corner(), &opts);
+        assert_eq!(bent.len(), 1);
+        let n = node_count(&bent[0].path);
+        assert!(n > 4 && n <= 4 * 4096 + 8, "{n}");
+        // An ordinary letter is still cut finely enough to follow the bend.
+        let small = text_on_path(&one_glyph(10.0), &corner(), &opts);
+        assert!(node_count(&small[0].path) >= 4 * 39, "{}", node_count(&small[0].path));
+    }
 }

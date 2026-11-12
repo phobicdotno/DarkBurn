@@ -295,7 +295,7 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
             mach(app.machine.handle.command(MachineCommand::GalvoAxis { axis, mm }))
         })(),
         "galvo.estimate" => galvo_device(app).and_then(|d| {
-            let b = galvo_job::build_job(&app.editor.doc, &d)?;
+            let b = galvo_job::build_job(&galvo_job::job_document(app)?, &d)?;
             let c = galvo_job::compile(&b.job, &d)?;
             let mut v = galvo_job::estimate_json(&c);
             v["warnings"] = json!(b.warnings);
@@ -386,12 +386,14 @@ pub fn galvo_start(app: &mut DarkBurn, send_only: bool) -> Result<Value, String>
         return Err("A galvo marks as it is sent. Use Start.".into());
     }
     let dev = galvo_device(app)?;
-    let (req, warnings) = galvo_job::request(&app.editor.doc, &dev, false, false)?;
+    let (req, warnings) = galvo_job::request(&galvo_job::job_document(app)?, &dev, false, false)?;
     let armed = app.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.armed);
     if !armed {
         return Err("Arm the laser first (Arm in the Laser panel). The laser is never enabled without it.".into());
     }
-    match app.machine.begin_start(req)? {
+    let outcome = app.machine.begin_start(req)?;
+    app.job_run.from_project = true;
+    match outcome {
         crate::machine_ui::StartOutcome::Started => Ok(json!({ "ok": true, "warnings": warnings })),
         crate::machine_ui::StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
     }
@@ -415,7 +417,7 @@ fn galvo_frame(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if let Some(v) = a.get("repeat").and_then(Value::as_bool) {
         adj.repeat = v;
     }
-    let b = galvo_job::build_job(&app.editor.doc, &dev)?;
+    let b = galvo_job::build_job(&galvo_job::job_document(app)?, &dev)?;
     let frame = galvo_job::frame_for(&b.job, &dev, &adj)?;
     app.machine.ext.frame = adj;
     mach(app.machine.handle.command(MachineCommand::GalvoFrame { frame: Box::new(frame), repeat: adj.repeat }))

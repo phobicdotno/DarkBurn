@@ -78,6 +78,10 @@ pub struct TestDraft {
     first_layer: usize,
     label_layer: usize,
     text: String,
+    /// The test's numbers as the window shows them. They are the window's own until Create
+    /// stores them with the project.
+    focus: Option<darkburn_vision::testpatterns::FocusTestParams>,
+    interval: Option<darkburn_vision::testpatterns::IntervalTestParams>,
 }
 
 #[derive(Default, Clone)]
@@ -266,10 +270,10 @@ fn open_dialog(app: &mut DarkBurn, d: Dlg) {
             u.pnc = d;
         }
         Dlg::Focus => {
-            u.focus = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, text: String::new() };
+            u.focus = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, ..Default::default() };
         }
         Dlg::Interval => {
-            u.interval = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, text: String::new() };
+            u.interval = TestDraft { x: 10.0, y: 10.0, first_layer: 0, label_layer: 29, ..Default::default() };
         }
         Dlg::Centre => {
             u.centre = CentreDraft { pts: vec![[0.0, 0.0]; 3], mark: true, text: String::new() };
@@ -337,7 +341,8 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
 /// A click on the canvas while a position is being picked fills in that field.
 fn take_pick(ctx: &Context, app: &mut DarkBurn) {
     let Some((i, design)) = app.vision.ui.pnc.pick else { return };
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    // Escape stops the pick and is used up: the window the pick came from stays open.
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         app.vision.ui.pnc.pick = None;
         return;
     }
@@ -361,14 +366,19 @@ fn take_pick(ctx: &Context, app: &mut DarkBurn) {
 fn window(ctx: &Context, title: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
     let mut open = true;
     let screen = ctx.content_rect();
+    let id = Id::unique(("vision_window", title));
     egui::Window::new(title)
-        .id(Id::unique(("vision_window", title)))
+        .id(id)
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
         .default_pos(pos2((screen.right() - width - 330.0).max(60.0), 100.0))
         .default_width(width)
         .show(ctx, add);
+    // Escape closes the window, as it does for every other window in the app.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
     open
 }
 
@@ -384,14 +394,29 @@ fn note(ui: &mut Ui, text: &str) {
 
 fn field(ui: &mut Ui, label: &str, v: &mut f64, unit: &str) {
     ui_kit::row(ui, label, |ui| {
-        ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit));
+        let r = ui.add(egui::DragValue::new(v).speed(0.1).suffix(unit).custom_parser(ui_kit::typed_number(ui.ctx(), unit)));
+        crate::a11y::number(ui, &r, label);
     });
+}
+
+/// One axis of a position: a number field named for what it places ("Head at X").
+fn coord(ui: &mut Ui, what: &str, axis: &str, v: &mut f64, speed: f64) {
+    let r =
+        ui.add(egui::DragValue::new(v).speed(speed).prefix(format!("{axis} ")).suffix(" mm").custom_parser(ui_kit::typed_number(ui.ctx(), " mm")));
+    crate::a11y::number(ui, &r, &format!("{what} {axis}"));
 }
 
 fn count_field(ui: &mut Ui, label: &str, v: &mut usize, range: std::ops::RangeInclusive<usize>) {
     ui_kit::row(ui, label, |ui| {
-        ui.add(egui::DragValue::new(v).range(range));
+        let r = ui.add(egui::DragValue::new(v).range(range).custom_parser(whole_number(ui.ctx())));
+        crate::a11y::number(ui, &r, label);
     });
+}
+
+/// What a whole-number field reads: a number or a sum, rounded to the nearest whole number.
+fn whole_number(ctx: &Context) -> impl Fn(&str) -> Option<f64> + use<> {
+    let typed = ui_kit::typed_number(ctx, "");
+    move |text: &str| typed(text).map(f64::round)
 }
 
 fn result_line(ui: &mut Ui, text: &str) {
@@ -484,7 +509,8 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
         field(ui, "Turns", &mut d.revs, "");
         ui.horizontal(|ui| {
             if button(ui, "Plan test", "Shows what the test would do; nothing is sent from here") {
-                d.plan = msg(vc::rotary_set(app, &rotary_args(&d)).and_then(|_| execute_plan(app, d.revs)), plan_text);
+                // From what the window shows; only Apply keeps the settings.
+                d.plan = msg(vc::rotary_plan_for(app, &rotary_args(&d), d.revs), plan_text);
             }
         });
         result_line(ui, &d.plan);
@@ -503,10 +529,6 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
     if !open || closing {
         close(app);
     }
-}
-
-fn execute_plan(app: &mut DarkBurn, revs: f64) -> Result<Value, String> {
-    crate::api::execute_headless(app, "rotary.test_plan", &json!({ "revolutions": revs }))
 }
 
 fn plan_text(v: &Value) -> String {
@@ -575,8 +597,8 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui_kit::section_heading(ui, names[i]);
             ui.horizontal(|ui| {
                 ui.label("Laser");
-                ui.add(egui::DragValue::new(&mut d.laser[i][0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.laser[i][1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("{} laser", names[i]), "X", &mut d.laser[i][0], 0.1);
+                coord(ui, &format!("{} laser", names[i]), "Y", &mut d.laser[i][1], 0.1);
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, false));
                 }
@@ -588,8 +610,8 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             });
             ui.horizontal(|ui| {
                 ui.label("Design");
-                ui.add(egui::DragValue::new(&mut d.design[i][0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.design[i][1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("{} design", names[i]), "X", &mut d.design[i][0], 0.1);
+                coord(ui, &format!("{} design", names[i]), "Y", &mut d.design[i][1], 0.1);
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, true));
                 }
@@ -682,8 +704,8 @@ fn wizard_section(ui: &mut Ui, app: &mut DarkBurn, d: &mut PncDraft) {
                 );
             }
             ui.horizontal(|ui| {
-                ui.add(egui::DragValue::new(&mut d.wiz[0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut d.wiz[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, "Measured position", "X", &mut d.wiz[0], 0.1);
+                coord(ui, "Measured position", "Y", &mut d.wiz[1], 0.1);
                 if button(ui, "Set", "") {
                     ev = Some(PnCEvent::Measured(Point::new(d.wiz[0], d.wiz[1])));
                 }
@@ -735,8 +757,8 @@ fn wizard_section(ui: &mut Ui, app: &mut DarkBurn, d: &mut PncDraft) {
 fn place_fields(ui: &mut Ui, d: &mut TestDraft) {
     ui.horizontal(|ui| {
         ui.label("Lower left at");
-        ui.add(egui::DragValue::new(&mut d.x).speed(0.5).prefix("X ").suffix(" mm"));
-        ui.add(egui::DragValue::new(&mut d.y).speed(0.5).prefix("Y ").suffix(" mm"));
+        coord(ui, "Lower left at", "X", &mut d.x, 0.5);
+        coord(ui, "Lower left at", "Y", &mut d.y, 0.5);
     });
     count_field(ui, "First layer", &mut d.first_layer, 0..=29);
     count_field(ui, "Label layer", &mut d.label_layer, 0..=29);
@@ -744,7 +766,7 @@ fn place_fields(ui: &mut Ui, d: &mut TestDraft) {
 
 fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.vision.ui.focus);
-    let mut p = app.vision.state.focus;
+    let mut p = d.focus.unwrap_or(app.vision.state.focus);
     let mut closing = false;
     let open = window(ctx, "Focus Test", 340.0, |ui| {
         note(ui, "Draws a line for each height. Each line sits on its own layer with that Z offset. Burn it, then pick the sharpest line.");
@@ -769,7 +791,7 @@ fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
         result_line(ui, &d.text);
     });
-    app.vision.state.focus = p;
+    d.focus = Some(p);
     app.vision.ui.focus = d;
     if !open || closing {
         close(app);
@@ -778,7 +800,7 @@ fn focus_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 fn interval_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.vision.ui.interval);
-    let mut p = app.vision.state.interval;
+    let mut p = d.interval.unwrap_or(app.vision.state.interval);
     let mut closing = false;
     let open = window(ctx, "Interval Test", 340.0, |ui| {
         note(ui, "Draws a filled block for each line interval, each on its own layer. Burn it, then pick the interval that looks best.");
@@ -803,7 +825,7 @@ fn interval_dialog(ctx: &Context, app: &mut DarkBurn) {
         });
         result_line(ui, &d.text);
     });
-    app.vision.state.interval = p;
+    d.interval = Some(p);
     app.vision.ui.interval = d;
     if !open || closing {
         close(app);
@@ -822,8 +844,8 @@ fn centre_dialog(ctx: &Context, app: &mut DarkBurn) {
         for (i, p) in d.pts.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(format!("Edge {}", i + 1));
-                ui.add(egui::DragValue::new(&mut p[0]).speed(0.1).prefix("X ").suffix(" mm"));
-                ui.add(egui::DragValue::new(&mut p[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+                coord(ui, &format!("Edge {}", i + 1), "X", &mut p[0], 0.1);
+                coord(ui, &format!("Edge {}", i + 1), "Y", &mut p[1], 0.1);
                 if d_len_ok(i) && button(ui, "Remove", "") {
                     remove = Some(i);
                 }
@@ -939,18 +961,26 @@ fn clickable_picture(ui: &mut Ui, tex: egui::TextureId, size: (u32, u32), marks:
     let resp = ui.add(egui::Image::new(egui::load::SizedTexture::new(tex, vec2(w, h))).sense(Sense::click()));
     let r = resp.rect;
     for (i, m) in marks.iter().enumerate() {
-        let c = pos2(r.left() + m.x as f32 / size.0 as f32 * r.width(), r.top() + m.y as f32 / size.1 as f32 * r.height());
+        let c = pixel_on_screen(r, size, *m);
         ui.painter().circle_stroke(c, 7.0, Stroke::new(2.0, Color32::from_rgb(255, 60, 60)));
         ui.painter().text(c + vec2(9.0, -9.0), Align2::LEFT_BOTTOM, (i + 1).to_string(), FontId::proportional(12.0), Color32::from_rgb(255, 60, 60));
     }
     if resp.clicked() {
-        let p = resp.interact_pointer_pos()?;
-        return Some(Point::new(
-            f64::from((p.x - r.left()) / r.width()) * f64::from(size.0),
-            f64::from((p.y - r.top()) / r.height()) * f64::from(size.1),
-        ));
+        return Some(pixel_at(r, size, resp.interact_pointer_pos()?));
     }
     None
+}
+
+/// The pixel position under the screen point `p` of a picture of `size` pixels drawn in `r`.
+/// Pixel centres are on whole numbers, as everywhere in the camera code: the picture's corner
+/// is at (-0.5, -0.5).
+fn pixel_at(r: Rect, size: (u32, u32), p: egui::Pos2) -> Point {
+    Point::new(f64::from((p.x - r.left()) / r.width()) * f64::from(size.0) - 0.5, f64::from((p.y - r.top()) / r.height()) * f64::from(size.1) - 0.5)
+}
+
+/// Where the pixel position `m` is drawn; the opposite of [`pixel_at`].
+fn pixel_on_screen(r: Rect, size: (u32, u32), m: Point) -> egui::Pos2 {
+    pos2(r.left() + (m.x as f32 + 0.5) / size.0 as f32 * r.width(), r.top() + (m.y as f32 + 0.5) / size.1 as f32 * r.height())
 }
 
 fn lens_dialog(ctx: &Context, app: &mut DarkBurn) {
@@ -1056,7 +1086,8 @@ fn align_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui_kit::checkbox(ui, "Flip left-right", &mut d.flip_x);
             ui_kit::checkbox(ui, "Flip top-bottom", &mut d.flip_y);
             ui.label("Turns");
-            ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3));
+            let r = ui.add(egui::DragValue::new(&mut d.rotate).range(0..=3).custom_parser(whole_number(ui.ctx())));
+            crate::a11y::number(ui, &r, "Turns");
         });
         match tex {
             Some((id, size)) => {
@@ -1110,11 +1141,11 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
     let open = window(ctx, "Head Camera Alignment", 560.0, |ui| {
         note(
             ui,
-            "For a camera on the laser head. Move the head so a known mark is in view, click the mark in the picture, enter where the head was and where the mark truly is, then add it. Use four or more marks spread across the picture.",
+            "For a camera on the laser head. Move the head so a known mark is in view, click the mark in the picture, enter where the head was (the position the laser reports) and where the mark is in the design, then add it. Use four or more marks spread across the picture.",
         );
         match tex {
             Some((id, size)) => {
-                let shown: Vec<Point> = app.vision.marks.iter().map(|m| m.image).chain(d.pending).collect();
+                let shown: Vec<Point> = app.vision.marks.iter().map(|m| vc::mark_in_view(app, m)).chain(d.pending).collect();
                 if let Some(p) = clickable_picture(ui, id, size, &shown) {
                     d.pending = Some(p);
                 }
@@ -1123,23 +1154,20 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         }
         ui.horizontal(|ui| {
             ui.label("Head at");
-            ui.add(egui::DragValue::new(&mut d.head[0]).speed(0.1).prefix("X ").suffix(" mm"));
-            ui.add(egui::DragValue::new(&mut d.head[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+            coord(ui, "Head at", "X", &mut d.head[0], 0.1);
+            coord(ui, "Head at", "Y", &mut d.head[1], 0.1);
         });
         ui.horizontal(|ui| {
             ui.label("Mark at");
-            ui.add(egui::DragValue::new(&mut d.bed[0]).speed(0.1).prefix("X ").suffix(" mm"));
-            ui.add(egui::DragValue::new(&mut d.bed[1]).speed(0.1).prefix("Y ").suffix(" mm"));
+            coord(ui, "Mark at", "X", &mut d.bed[0], 0.1);
+            coord(ui, "Mark at", "Y", &mut d.bed[1], 0.1);
         });
         ui.horizontal(|ui| {
             if ui.add_enabled(d.pending.is_some(), egui::Button::new("Add mark")).clicked()
                 && let Some(p) = d.pending.take()
             {
-                app.vision.marks.push(darkburn_vision::camera::HeadMark {
-                    image: p,
-                    head_pos: Point::new(d.head[0], d.head[1]),
-                    bed: Point::new(d.bed[0], d.bed[1]),
-                });
+                let mark = vc::head_mark(app, p, Point::new(d.head[0], d.head[1]), Point::new(d.bed[0], d.bed[1]));
+                app.vision.marks.push(mark);
             }
             if button(ui, "Clear marks", "") {
                 app.vision.marks.clear();
@@ -1332,16 +1360,24 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui_kit::checkbox(ui, "Colour", &mut c.state.color);
     ui_kit::checkbox(ui, "Crop to page", &mut c.crop_to_page);
     ui_kit::row(ui, "Fade", |ui| {
-        ui.add(egui::Slider::new(&mut c.state.fade, 0.0..=0.95).show_value(false));
+        let r = ui.add(egui::Slider::new(&mut c.state.fade, 0.0..=0.95).show_value(false));
+        crate::a11y::slider(ui, &r, "Fade");
     });
     let mut wp = c.overlay.width_mm.map_or(100.0, |w| w / covers.width * 100.0);
     let mut hp = c.overlay.height_mm.map_or(100.0, |h| h / covers.height * 100.0);
+    let (wp0, hp0) = (wp, hp);
     field(ui, "Width", &mut wp, " %");
     field(ui, "Height", &mut hp, " %");
     field(ui, "X shift", &mut c.overlay.x_shift_mm, " mm");
     field(ui, "Y shift", &mut c.overlay.y_shift_mm, " mm");
-    c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
-    c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    // Only a value that was changed here is written back: millimetres to percent and back does
+    // not always give the same number, and that alone must not count as a change to the project.
+    if wp != wp0 {
+        c.overlay.width_mm = ((wp - 100.0).abs() > 1e-9 && wp > 0.0).then(|| wp / 100.0 * covers.width);
+    }
+    if hp != hp0 {
+        c.overlay.height_mm = ((hp - 100.0).abs() > 1e-9 && hp > 0.0).then(|| hp / 100.0 * covers.height);
+    }
     // Camera controls
     let mut ex = c.exposure.unwrap_or(0.0);
     let mut br = c.brightness.unwrap_or(0.0);
@@ -1485,4 +1521,29 @@ pub fn status_chips(ui: &mut Ui, bar: Rect, app: &mut DarkBurn) -> f32 {
         x = br.left() - 4.0;
     }
     x - 8.0
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    /// A click in the middle of a drawn pixel is that pixel's whole-number position, the way the
+    /// detectors and the lens code count pixels; it used to be half a pixel further on.
+    #[test]
+    fn a_click_on_the_middle_of_a_pixel_is_that_pixel() {
+        // 4 x 2 pixels drawn 100 points to the pixel
+        let r = Rect::from_min_size(pos2(10.0, 20.0), vec2(400.0, 200.0));
+        let first = pixel_at(r, (4, 2), pos2(60.0, 70.0));
+        assert!(first.x.abs() < 1e-6 && first.y.abs() < 1e-6, "{first:?}");
+        let last = pixel_at(r, (4, 2), pos2(360.0, 170.0));
+        assert!((last.x - 3.0).abs() < 1e-6 && (last.y - 1.0).abs() < 1e-6, "{last:?}");
+        // The same convention as the sampler: the value read at the clicked position is the pixel's own.
+        let mut img = image::GrayImage::new(4, 2);
+        img.put_pixel(3, 1, image::Luma([200]));
+        let got = darkburn_vision::imageops::sample_bilinear(&img, last.x, last.y);
+        assert_eq!(got.map(|p| p[0]), Some(200));
+        // A mark is drawn where it was clicked.
+        let back = pixel_on_screen(r, (4, 2), last);
+        assert!((back - pos2(360.0, 170.0)).length() < 1e-3, "{back:?}");
+    }
 }

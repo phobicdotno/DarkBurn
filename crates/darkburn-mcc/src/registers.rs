@@ -74,7 +74,10 @@ impl Block {
 
     /// True if `[addr, addr + count)` lies inside the block.
     pub const fn contains(&self, addr: u32, count: u32) -> bool {
-        self.start <= addr && addr + count <= self.end()
+        match addr.checked_add(count) {
+            Some(end) => self.start <= addr && end <= self.end(),
+            None => false,
+        }
     }
 }
 

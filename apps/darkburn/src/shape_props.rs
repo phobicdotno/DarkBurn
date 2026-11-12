@@ -81,10 +81,12 @@ impl Grid<'_> {
         let Some((first, mixed)) = common(&self.shapes, get) else { return };
         let mut v = if mixed { String::new() } else { first };
         let resp = ui_kit::row(ui, label, |ui| {
-            ui.add_sized(
+            let r = ui.add_sized(
                 egui::vec2(ui.available_width(), Tokens::get().control_height),
                 egui::TextEdit::singleline(&mut v).id(Id::unique(("sp_text", label))).hint_text(if mixed { "Mixed" } else { "" }),
-            )
+            );
+            crate::a11y::text(ui, &r, label);
+            r
         });
         if resp.changed() {
             // Typing goes on as one undo step while the field keeps focus.
@@ -112,8 +114,8 @@ impl Grid<'_> {
             }
         });
         if clear {
-            let ids = self.ids.clone();
-            self.app.editor.edit("Clear start point", |d, _| set_each(d, &ids, |s| Some(s.start_point.is_some()), |s| s.start_point = None));
+            // The registered command does the edit (it works on the selection, which is what this panel shows).
+            let _ = crate::api::execute(self.app, &ui.ctx().clone(), "shape.clear_start_point", &serde_json::json!({}));
         }
     }
 

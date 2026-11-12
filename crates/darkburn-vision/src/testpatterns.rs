@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TestError {
     TooFewSteps,
+    TooManySteps,
     InvalidRange,
     InvalidSize,
 }
@@ -16,12 +17,16 @@ impl std::fmt::Display for TestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::TooFewSteps => "at least two steps are needed",
+            Self::TooManySteps => "that is more steps than a test can have (1000)",
             Self::InvalidRange => "the start and end values must differ and be valid",
             Self::InvalidSize => "sizes must be above zero",
         })
     }
 }
 impl std::error::Error for TestError {}
+
+/// The most rows a test pattern can have.
+pub const MAX_STEPS: usize = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,6 +118,9 @@ pub struct FocusTest {
 pub fn focus_test(params: &FocusTestParams) -> Result<FocusTest, TestError> {
     if params.steps < 2 {
         return Err(TestError::TooFewSteps);
+    }
+    if params.steps > MAX_STEPS {
+        return Err(TestError::TooManySteps);
     }
     if !(params.z_start.is_finite() && params.z_end.is_finite()) || params.z_start == params.z_end {
         return Err(TestError::InvalidRange);
@@ -220,6 +228,9 @@ pub fn interval_test(params: &IntervalTestParams) -> Result<IntervalTest, TestEr
     if params.steps < 2 {
         return Err(TestError::TooFewSteps);
     }
+    if params.steps > MAX_STEPS {
+        return Err(TestError::TooManySteps);
+    }
     if !(params.interval_start > 0.0 && params.interval_end > 0.0) || params.interval_start == params.interval_end {
         return Err(TestError::InvalidRange);
     }
@@ -254,6 +265,15 @@ pub fn interval_test(params: &IntervalTestParams) -> Result<IntervalTest, TestEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_absurd_number_of_steps_is_refused_not_a_crash() {
+        for steps in [usize::MAX, usize::MAX / 2, 100_000] {
+            assert_eq!(focus_test(&FocusTestParams { steps, ..Default::default() }).unwrap_err(), TestError::TooManySteps);
+            assert_eq!(interval_test(&IntervalTestParams { steps, ..Default::default() }).unwrap_err(), TestError::TooManySteps);
+        }
+        assert_eq!(focus_test(&FocusTestParams { steps: MAX_STEPS, with_labels: false, ..Default::default() }).unwrap().rows.len(), MAX_STEPS);
+    }
 
     #[test]
     fn focus_rows_step_through_z() {

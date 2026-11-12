@@ -86,11 +86,7 @@ fn var_kind(v: VariableText) -> VarKind {
 
 /// The state moved on by a copy's index offset.
 fn shifted(state: &VariableState, offset: i64) -> VariableState {
-    let mut s = state.clone();
-    for _ in 0..offset.unsigned_abs().min(100_000) {
-        s = if offset > 0 { s.next() } else { s.previous() };
-    }
-    s
+    state.stepped(offset.clamp(-100_000, 100_000))
 }
 
 /// The cut values a shape on `layer` shows in `{cut:..}` tokens.
@@ -197,6 +193,12 @@ fn text_key(t: &TextShape, text: &str) -> u64 {
         t.align_y,
         font_present(&t.font)
     ))
+}
+
+/// Take the letters a text shape came with (from a file) as its rendering: they are kept until
+/// one of its settings changes.
+pub fn keep_letters(t: &mut TextShape) {
+    t.render_key = text_key(t, &t.text);
 }
 
 /// Render a text shape now. Returns false when nothing changed.

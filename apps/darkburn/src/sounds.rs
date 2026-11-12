@@ -1,6 +1,7 @@
-//! Sounds for errors and finished jobs [SET-22]. No audio library: a short tone is generated as a
-//! WAV file in the temp folder and handed to the system's own player (PowerShell's SoundPlayer on
-//! Windows, `afplay` on macOS, `aplay` elsewhere), on a background thread. Failure is silent.
+//! Sounds for errors and finished jobs [SET-22, LASER-25]. No audio library: a short tone is
+//! generated as a WAV file in the temp folder and handed to the system's own player (PowerShell's
+//! SoundPlayer on Windows, `afplay` on macOS, `aplay` elsewhere), on a background thread. Failure
+//! is silent. Under test nothing is played: the request is only noted (see [`take_requests`]).
 
 use crate::options::Options;
 
@@ -62,9 +63,26 @@ pub fn wav(s: Sound) -> Vec<u8> {
     out
 }
 
-fn play(s: Sound) {
+#[cfg(test)]
+thread_local! {
+    static REQUESTS: std::cell::RefCell<Vec<Sound>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The sounds asked for on this thread since the last call (tests only: nothing is ever played
+/// under test).
+#[cfg(test)]
+pub fn take_requests() -> Vec<Sound> {
+    REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Play `s` now, whatever the settings say (the Settings window's try buttons).
+pub fn play(s: Sound) {
+    #[cfg(test)]
+    {
+        REQUESTS.with(|r| r.borrow_mut().push(s));
+    }
     if cfg!(test) {
-        return;
+        return; // tests never make a noise
     }
     std::thread::spawn(move || {
         let path = std::env::temp_dir().join(match s {
@@ -120,5 +138,22 @@ mod tests {
         assert!(wanted(&o, Sound::JobDone) && !wanted(&o, Sound::Error));
         o.sound_error = true;
         assert!(wanted(&o, Sound::Error));
+    }
+
+    #[test]
+    fn a_wanted_sound_is_requested_and_an_unwanted_one_is_not() {
+        let mut o = Options::default();
+        take_requests();
+        play_if(&o, Sound::JobDone);
+        play_if(&o, Sound::Error);
+        assert!(take_requests().is_empty(), "both are off by default");
+        o.sound_done = true;
+        play_if(&o, Sound::JobDone);
+        play_if(&o, Sound::Error);
+        assert_eq!(take_requests(), [Sound::JobDone]);
+        o.sound_error = true;
+        play_if(&o, Sound::Error);
+        assert_eq!(take_requests(), [Sound::Error]);
+        assert!(take_requests().is_empty(), "taking empties the list");
     }
 }

@@ -29,9 +29,16 @@ pub struct ScanRow {
 /// Rows lie on the global grid `y = (k + 0.5) * interval` of the rotated frame, so separate
 /// scans line up. Returns rows in the scan frame; map back with `Affine::rotate(angle)`.
 pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f64, power: f64) -> Vec<ScanRow> {
+    scan_polygons_powers(polys, &vec![power; polys.len()], rule, interval, angle)
+}
+
+/// [`scan_polygons`] with a power for each polygon: a filled stretch burns at the power of the
+/// smallest polygon it lies in (the shape itself, not the shapes around it).
+pub fn scan_polygons_powers(polys: &[&[Point]], powers: &[f64], rule: FillRule, interval: f64, angle: f64) -> Vec<ScanRow> {
     let interval = interval.max(1e-3);
-    let mut edges: Vec<(Point, Point, i32)> = Vec::new();
-    for poly in polys {
+    let areas: Vec<f64> = polys.iter().map(|p| geom::signed_area(p).abs()).collect();
+    let mut edges: Vec<(Point, Point, i32, usize)> = Vec::new();
+    for (pi, poly) in polys.iter().enumerate() {
         let n = poly.len();
         for i in 0..n {
             let a = geom::rotate_point(poly[i], -angle);
@@ -39,13 +46,13 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
             if (a.y - b.y).abs() < 1e-12 {
                 continue;
             }
-            if a.y < b.y { edges.push((a, b, 1)) } else { edges.push((b, a, -1)) }
+            if a.y < b.y { edges.push((a, b, 1, pi)) } else { edges.push((b, a, -1, pi)) }
         }
     }
     if edges.is_empty() {
         return Vec::new();
     }
-    edges.sort_by(|a, b| a.0.y.partial_cmp(&b.0.y).unwrap());
+    edges.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     let ymin = edges[0].0.y;
     let ymax = edges.iter().map(|e| e.1.y).fold(f64::MIN, f64::max);
     let k0 = (ymin / interval - 0.5).ceil() as i64;
@@ -53,7 +60,12 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
     let mut rows = Vec::new();
     let mut active: Vec<usize> = Vec::new();
     let mut next = 0;
-    let mut xs: Vec<(f64, i32)> = Vec::new();
+    let mut xs: Vec<(f64, i32, usize)> = Vec::new();
+    // With one power for all there is no need to know which polygon a stretch lies in.
+    let uniform = powers.windows(2).all(|w| w[0] == w[1]);
+    // Winding of each polygon at the current x, and the polygons the current x lies in.
+    let mut winds: Vec<i32> = if uniform { Vec::new() } else { vec![0; polys.len()] };
+    let mut open: Vec<usize> = Vec::new();
     for k in k0..=k1 {
         let y = (k as f64 + 0.5) * interval;
         while next < edges.len() && edges[next].0.y <= y {
@@ -63,39 +75,48 @@ pub fn scan_polygons(polys: &[&[Point]], rule: FillRule, interval: f64, angle: f
         active.retain(|&e| edges[e].1.y > y);
         xs.clear();
         for &e in &active {
-            let (a, b, w) = edges[e];
+            let (a, b, w, pi) = edges[e];
             if y >= a.y && y < b.y {
-                xs.push((a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y), w));
+                xs.push((a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y), w, pi));
             }
         }
-        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-        let mut runs = Vec::new();
+        xs.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut runs: Vec<ScanRun> = Vec::new();
         let mut wind = 0;
         let mut inside = false;
         let mut x_start = 0.0;
-        for &(x, w) in &xs {
+        for p in open.drain(..) {
+            winds[p] = 0;
+        }
+        for &(x, w, pi) in &xs {
+            if inside && x - x_start > EPS {
+                // The stretch up to this crossing lies in the `open` polygons.
+                let power =
+                    if uniform { powers[0] } else { open.iter().copied().min_by(|a, b| areas[*a].total_cmp(&areas[*b])).map_or(0.0, |p| powers[p]) };
+                match runs.last_mut() {
+                    // Merge runs that touch.
+                    Some(m) if x_start - m.x1 < EPS && m.power == power => m.x1 = x,
+                    _ => runs.push(ScanRun { x0: x_start, x1: x, power, ramp_start: true, ramp_end: true }),
+                }
+            }
             wind += w;
-            let now = match rule {
+            if !uniform {
+                let was = winds[pi];
+                winds[pi] += w;
+                if was == 0 {
+                    open.push(pi);
+                } else if winds[pi] == 0 {
+                    open.retain(|p| *p != pi);
+                }
+            }
+            inside = match rule {
                 FillRule::EvenOdd => !inside,
                 FillRule::NonZero => wind != 0,
             };
-            if now && !inside {
-                x_start = x;
-            } else if !now && inside && x - x_start > EPS {
-                runs.push(ScanRun { x0: x_start, x1: x, power, ramp_start: true, ramp_end: true });
-            }
-            inside = now;
+            x_start = x;
         }
-        // Merge runs that touch.
-        let mut merged: Vec<ScanRun> = Vec::new();
-        for r in runs {
-            match merged.last_mut() {
-                Some(m) if r.x0 - m.x1 < EPS => m.x1 = r.x1,
-                _ => merged.push(r),
-            }
-        }
-        if !merged.is_empty() {
-            rows.push(ScanRow { y, runs: merged });
+        if !runs.is_empty() {
+            rows.push(ScanRow { y, runs });
         }
     }
     rows
@@ -209,6 +230,7 @@ pub fn emit_rows(rows: &[(ScanRow, bool)], e: &RowEmit, out: &mut Vec<Op>) {
 fn emit_run(r: &ScanRun, dir: f64, y: f64, e: &RowEmit, f: &dyn Fn(f64, f64) -> Point, out: &mut Vec<Op>) {
     let len = (r.x1 - r.x0).abs();
     let (ramp_len, min_power) = e.ramp;
+    let min_power = min_power.min(r.power);
     let ramp_in = ramp_len > 0.0 && r.ramp_start && r.power > 0.0;
     let ramp_out = ramp_len > 0.0 && r.ramp_end && r.power > 0.0;
     let ends = ramp_in as u32 + ramp_out as u32;
@@ -292,20 +314,92 @@ pub fn parents(polys: &[Vec<Point>]) -> Vec<Option<usize>> {
         .collect()
 }
 
-/// Concentric inward rings for offset fill, outermost first, at `interval / 2`,
-/// `interval * 1.5`, ... from the edge.
-pub fn offset_rings(poly: &[Point], interval: f64) -> Vec<Vec<Point>> {
+/// The rings of an offset fill of the area inside `polys` (even-odd, so a shape inside another
+/// is a hole), level by level: level `k` holds the closed rings `interval / 2 + k * interval`
+/// inside the edge. A shape with arms, a neck or holes has as many rings on a level as it has
+/// parts left at that depth; rings run around holes too.
+pub fn offset_levels(polys: &[&[Point]], interval: f64) -> Vec<Vec<Vec<Point>>> {
+    use darkburn_geom::offset::{Join, OffsetOptions, OffsetSide, offset};
     let interval = interval.max(1e-3);
-    let mut rings = Vec::new();
-    let mut d = interval / 2.0;
-    while rings.len() < 100_000 {
-        match geom::offset_inward(poly, d) {
-            Some(r) => rings.push(r),
-            None => break,
-        }
-        d += interval;
+    let mut path = kurbo::BezPath::new();
+    for poly in polys.iter().filter(|p| p.len() >= 3) {
+        path.move_to(poly[0]);
+        poly[1..].iter().for_each(|p| path.line_to(*p));
+        path.close_path();
     }
-    rings
+    let tol = (interval / 10.0).clamp(0.002, 0.02);
+    // The rings `d` inside the edge. Every level is offset from the drawn outline, so one level
+    // does not depend on another.
+    let level = |d: f64| -> Vec<Vec<Point>> {
+        let opts = OffsetOptions {
+            distance: d,
+            side: OffsetSide::Inward,
+            join: Join::Round,
+            fill_rule: darkburn_geom::FillRule::EvenOdd,
+            tol,
+            ..Default::default()
+        };
+        offset(std::slice::from_ref(&path), &opts)
+            .inward
+            .iter()
+            .flat_map(|p| geom::flatten(p, tol))
+            .filter(|p| p.closed && p.pts.len() >= 3 && geom::signed_area(&p.pts).abs() > 1e-9)
+            .map(|p| p.pts)
+            .collect()
+    };
+    let mut levels: Vec<Vec<Vec<Point>>> = Vec::new();
+    let mut count = 0usize;
+    // Takes the next level; false when the fill is complete.
+    let mut take = |rings: Vec<Vec<Point>>, levels: &mut Vec<Vec<Vec<Point>>>| {
+        if count >= 100_000 || rings.is_empty() {
+            return false;
+        }
+        count += rings.len();
+        levels.push(rings);
+        true
+    };
+    // A level of a shape with many corners (a circle, lettering) takes milliseconds, and a fine
+    // fill has hundreds of them: those are worked out side by side, a batch at a time, and
+    // taken in order, which gives the same rings as one after the other. Quick levels (a
+    // rectangle) are not worth a thread.
+    let mut d = interval / 2.0;
+    let started = std::time::Instant::now();
+    if !take(level(d), &mut levels) {
+        return levels;
+    }
+    let threads = if started.elapsed() > std::time::Duration::from_micros(300) {
+        std::thread::available_parallelism().map_or(1, |n| n.get()).min(16)
+    } else {
+        1
+    };
+    loop {
+        // The depths of the next levels, each one interval further in than the one before.
+        let depths: Vec<f64> = (0..if threads > 1 { threads * 4 } else { 1 })
+            .map(|_| {
+                d += interval;
+                d
+            })
+            .collect();
+        let batch: Vec<Vec<Vec<Point>>> = if threads > 1 {
+            std::thread::scope(|scope| {
+                let level = &level;
+                let handles: Vec<_> = depths.chunks(4).map(|c| scope.spawn(move || c.iter().map(|d| level(*d)).collect::<Vec<_>>())).collect();
+                handles.into_iter().flat_map(|h| h.join().expect("an offset level panicked")).collect()
+            })
+        } else {
+            vec![level(depths[0])]
+        };
+        for rings in batch {
+            if !take(rings, &mut levels) {
+                return levels;
+            }
+        }
+    }
+}
+
+/// The rings of one shape for offset fill, outermost first (see [`offset_levels`]).
+pub fn offset_rings(poly: &[Point], interval: f64) -> Vec<Vec<Point>> {
+    offset_levels(&[poly], interval).into_iter().flatten().collect()
 }
 
 #[cfg(test)]
@@ -314,6 +408,55 @@ mod tests {
 
     fn square(x: f64, y: f64, s: f64) -> Vec<Point> {
         vec![Point::new(x, y), Point::new(x + s, y), Point::new(x + s, y + s), Point::new(x, y + s)]
+    }
+
+    /// Levels worked out side by side are the levels worked out one after the other.
+    #[test]
+    fn offset_levels_in_batches_are_the_levels_one_by_one() {
+        use darkburn_geom::offset::{Join, OffsetOptions, OffsetSide, offset};
+        let one_by_one = |polys: &[&[Point]], interval: f64| -> Vec<Vec<Vec<Point>>> {
+            let mut path = kurbo::BezPath::new();
+            for poly in polys {
+                path.move_to(poly[0]);
+                poly[1..].iter().for_each(|p| path.line_to(*p));
+                path.close_path();
+            }
+            let tol = (interval / 10.0).clamp(0.002, 0.02);
+            let mut levels = Vec::new();
+            let mut d = interval / 2.0;
+            loop {
+                let opts = OffsetOptions {
+                    distance: d,
+                    side: OffsetSide::Inward,
+                    join: Join::Round,
+                    fill_rule: darkburn_geom::FillRule::EvenOdd,
+                    tol,
+                    ..Default::default()
+                };
+                let rings: Vec<Vec<Point>> = offset(std::slice::from_ref(&path), &opts)
+                    .inward
+                    .iter()
+                    .flat_map(|p| geom::flatten(p, tol))
+                    .filter(|p| p.closed && p.pts.len() >= 3 && geom::signed_area(&p.pts).abs() > 1e-9)
+                    .map(|p| p.pts)
+                    .collect();
+                if rings.is_empty() {
+                    return levels;
+                }
+                levels.push(rings);
+                d += interval;
+            }
+        };
+        // A round shape (slow levels: the batches) with a hole, and a square (quick levels).
+        let circle = |r: f64| -> Vec<Point> {
+            (0..120).map(|i| (i as f64 * std::f64::consts::TAU / 120.0).sin_cos()).map(|(s, c)| Point::new(50.0 + r * c, 50.0 + r * s)).collect()
+        };
+        let (outer, hole, sq) = (circle(40.0), circle(11.3), square(0.0, 0.0, 20.0));
+        for (polys, interval) in [(vec![outer.as_slice(), hole.as_slice()], 0.6), (vec![outer.as_slice()], 0.9), (vec![sq.as_slice()], 0.3)] {
+            let got = offset_levels(&polys, interval);
+            assert!(got.len() > 20, "{}", got.len());
+            assert_eq!(got, one_by_one(&polys, interval), "{} shapes at {interval}", polys.len());
+        }
     }
 
     #[test]
@@ -388,6 +531,84 @@ mod tests {
         for r in &rings {
             for p in r {
                 assert!(geom::point_in_polygon(*p, &l));
+            }
+        }
+    }
+
+    #[test]
+    fn rings_split_where_a_neck_closes_and_run_around_holes() {
+        let p = |x: f64, y: f64| Point::new(x, y);
+        // Two 10 mm squares joined by a neck 2 mm wide.
+        let dumbbell = vec![
+            p(0.0, 0.0),
+            p(10.0, 0.0),
+            p(10.0, 4.0),
+            p(20.0, 4.0),
+            p(20.0, 0.0),
+            p(30.0, 0.0),
+            p(30.0, 10.0),
+            p(20.0, 10.0),
+            p(20.0, 6.0),
+            p(10.0, 6.0),
+            p(10.0, 10.0),
+            p(0.0, 10.0),
+        ];
+        let levels = offset_levels(&[&dumbbell], 1.0);
+        assert_eq!(levels.len(), 5, "both squares are filled to their middle");
+        assert_eq!(levels.iter().map(Vec::len).collect::<Vec<_>>(), vec![1, 2, 2, 2, 2], "one ring through the neck, then one for each square");
+        // A plate with a hole: one ring inside the edge and one around the hole.
+        let plate = square(0.0, 0.0, 20.0);
+        let hole = square(5.0, 5.0, 10.0);
+        let levels = offset_levels(&[&plate, &hole], 1.0);
+        assert_eq!(levels.len(), 3, "5 mm of plate between edge and hole");
+        assert_eq!(levels[0].len(), 2);
+        for ring in levels.iter().flatten() {
+            for q in ring {
+                assert!(geom::point_in_polygon(*q, &plate) && !geom::point_in_polygon(*q, &hole), "{q:?}");
+            }
+        }
+    }
+
+    /// Every ring of an offset fill lies inside the shape, at its distance from the edge.
+    #[test]
+    fn rings_of_shapes_with_arms_stay_inside() {
+        let p = |x: f64, y: f64| Point::new(x, y);
+        let shapes: Vec<(&str, Vec<Point>)> = vec![
+            ("U", vec![p(0.0, 0.0), p(30.0, 0.0), p(30.0, 40.0), p(20.0, 40.0), p(20.0, 20.0), p(10.0, 20.0), p(10.0, 40.0), p(0.0, 40.0)]),
+            ("T", vec![p(10.0, 0.0), p(20.0, 0.0), p(20.0, 30.0), p(30.0, 30.0), p(30.0, 36.0), p(0.0, 36.0), p(0.0, 30.0), p(10.0, 30.0)]),
+            (
+                "E",
+                vec![
+                    p(0.0, 0.0),
+                    p(20.0, 0.0),
+                    p(20.0, 4.0),
+                    p(8.0, 4.0),
+                    p(8.0, 10.0),
+                    p(16.0, 10.0),
+                    p(16.0, 14.0),
+                    p(8.0, 14.0),
+                    p(8.0, 20.0),
+                    p(20.0, 20.0),
+                    p(20.0, 24.0),
+                    p(0.0, 24.0),
+                ],
+            ),
+        ];
+        for (name, poly) in shapes {
+            let mut closed = poly.clone();
+            closed.push(poly[0]);
+            let levels = offset_levels(&[&poly], 1.0);
+            assert!(levels.len() >= 2, "{name}");
+            for (k, ring) in levels.iter().enumerate().flat_map(|(k, l)| l.iter().map(move |r| (k, r))) {
+                let d = 0.5 + k as f64;
+                let n = ring.len();
+                for i in 0..n {
+                    for q in [ring[i], ring[i].midpoint(ring[(i + 1) % n])] {
+                        let dist = geom::nearest_arclen(&closed, q).1;
+                        assert!(geom::point_in_polygon(q, &poly), "{name}: ring {k} leaves the shape at {q:?}");
+                        assert!(dist > d - 0.03, "{name}: ring {k} at {q:?} is {dist} mm from the edge, not {d}");
+                    }
+                }
             }
         }
     }

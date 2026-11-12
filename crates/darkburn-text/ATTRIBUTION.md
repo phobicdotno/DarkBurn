@@ -1,5 +1,8 @@
 # Attribution for darkburn-text
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 All code in this crate is original DarkBurn code (MIT OR Apache-2.0). Formats were implemented from
 public specifications; no third-party source was copied and nothing from any commercial laser software
 was consulted.

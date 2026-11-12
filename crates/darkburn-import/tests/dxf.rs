@@ -176,3 +176,30 @@ fn detect() {
     assert_eq!(detect_format(Some("x.dxf"), &data("entities.dxf")), Some(Format::Dxf));
     assert_eq!(detect_format(None, &data("entities.dxf")), Some(Format::Dxf));
 }
+
+/// A few kilobytes of blocks that each insert the next one several times expand to millions of
+/// copies. The reader must stop instead of working (and allocating) without end.
+#[test]
+fn blocks_that_multiply_are_cut_off() {
+    // 9 levels, each inserting the next 6 times: 6^9 = 10 million inserts of the innermost line.
+    let levels = 9;
+    let mut dxf = String::from("0\nSECTION\n2\nBLOCKS\n");
+    for l in 0..levels {
+        dxf += &format!("0\nBLOCK\n8\n0\n2\nB{l}\n70\n0\n10\n0\n20\n0\n");
+        if l + 1 < levels {
+            for k in 0..6 {
+                dxf += &format!("0\nINSERT\n8\n0\n2\nB{}\n10\n{k}\n20\n0\n", l + 1);
+            }
+        } else {
+            dxf += "0\nLINE\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n";
+        }
+        dxf += "0\nENDBLK\n8\n0\n";
+    }
+    dxf += "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n8\n0\n2\nB0\n10\n0\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    assert!(dxf.len() < 10_000);
+    let doc = dxf_import::import(dxf.as_bytes(), &DxfOptions::default()).unwrap();
+    assert!(doc.groups.len() <= 300_000, "{} groups from a {} byte file", doc.groups.len(), dxf.len());
+    assert!(doc.items.len() <= 300_000, "{} items", doc.items.len());
+    assert!(!doc.items.is_empty(), "what fits is still imported");
+    assert!(doc.warnings.iter().any(|w| w.contains("too many")), "{:?}", doc.warnings);
+}

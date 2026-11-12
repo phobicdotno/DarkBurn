@@ -96,10 +96,64 @@ pub struct SlicedImage {
     pub cleanup: Option<MarkParams>,
 }
 
+/// Drill mode: instead of tracing an outline, fire in place at points along it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrillSettings {
+    /// How long the laser fires at each point, in milliseconds.
+    pub dwell_ms: f64,
+    /// Distance between points along the outline in mm. 0 drills only the outline's own
+    /// points (the corners of a polygon, the ends of a line).
+    pub spacing_mm: f64,
+}
+
+impl Default for DrillSettings {
+    fn default() -> Self {
+        Self { dwell_ms: 1.0, spacing_mm: 0.5 }
+    }
+}
+
+/// The longest dwell one `LaserOnPoint` carries, in its 10 microsecond units; longer drills
+/// are sent as several in a row.
+pub const MAX_POINT_DWELL: u16 = 60_000;
+
+/// The points to drill along one polyline: its own points when `spacing` is 0, otherwise
+/// evenly spread about `spacing` apart (both ends of an open line are always drilled).
+pub fn drill_points(pts: &[Point], closed: bool, spacing: f64) -> Vec<Point> {
+    let mut line: Vec<Point> = pts.to_vec();
+    line.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+    if closed && line.len() > 1 && (line[0] - line[line.len() - 1]).hypot() < 1e-9 {
+        line.pop();
+    }
+    if line.len() < 2 || !(spacing.is_finite() && spacing > 0.0) {
+        return line;
+    }
+    if closed {
+        line.push(line[0]);
+    }
+    let length: f64 = line.windows(2).map(|w| (w[1] - w[0]).hypot()).sum();
+    let steps = ((length / spacing).round() as usize).max(1);
+    let count = if closed { steps } else { steps + 1 };
+    let mut out = Vec::with_capacity(count);
+    let (mut seg, mut walked) = (0usize, 0.0f64);
+    for i in 0..count {
+        let target = length * i as f64 / steps as f64;
+        while seg + 2 < line.len() && walked + (line[seg + 1] - line[seg]).hypot() < target {
+            walked += (line[seg + 1] - line[seg]).hypot();
+            seg += 1;
+        }
+        let d = (line[seg + 1] - line[seg]).hypot();
+        let t = if d > 0.0 { ((target - walked) / d).clamp(0.0, 1.0) } else { 0.0 };
+        out.push(line[seg].lerp(line[seg + 1], t));
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayerMode {
     /// Trace the outlines.
     Line,
+    /// Fire in place at points along the outlines.
+    Drill(DrillSettings),
     /// Hatch closed shapes.
     Fill(FillSettings),
     /// Hatch with continuous sweeps: gaps between segments of one scan line are crossed with
@@ -485,6 +539,24 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
+    /// Jump to `p` and fire in place for `dwell_ms`.
+    fn drill(&mut self, p: Point, dwell_ms: f64) -> Result<(), CompileError> {
+        let g = self.goto(p)?;
+        if self.last != Some(g) {
+            self.jump_to(p, None)?;
+        }
+        // 10 microsecond units, as the board's point command counts them.
+        let mut units = (dwell_ms * 100.0).round().max(1.0) as u64;
+        while units > 0 {
+            let part = units.min(MAX_POINT_DWELL as u64);
+            self.cmds.push(ListCmd::LaserOnPoint { dwell: part as u16 });
+            units -= part;
+        }
+        self.est.mark_s += dwell_ms.max(0.01) / 1000.0;
+        self.est.delay_s += (self.timings.laser_on_tc.max(0) + self.timings.laser_off_tc.max(0)) as f64 * 1e-6;
+        Ok(())
+    }
+
     /// One scan line of a flood fill: segments joined by delay-free jumps.
     fn flood_line(&mut self, segs: &[(Point, Point)]) -> Result<(), CompileError> {
         for (i, &(a, b)) in segs.iter().enumerate() {
@@ -519,6 +591,42 @@ struct Window {
     band: Option<(f64, f64)>,
     /// `(layer, geometry index)` allowed in this window; `None` = all.
     shapes: Option<Vec<(usize, usize)>>,
+    /// The lowest band of its design (or shape): the only one that owns its lower edge.
+    first_band: bool,
+    /// The highest band of its design (or shape): the only one that owns its upper edge.
+    last_band: bool,
+}
+
+/// Takes the parts lying on the lower edge `y0` of a band out of a clipped piece. Such a part
+/// belongs to the band below, which marks it; marking it here as well would burn it twice.
+fn without_lower_edge(piece: Vec<Point>, y0: f64) -> Vec<Vec<Point>> {
+    let on_edge = |p: &Point| (p.y - y0).abs() < 1e-9;
+    let mut out: Vec<Vec<Point>> = Vec::new();
+    let mut cur: Vec<Point> = Vec::new();
+    for w in piece.windows(2) {
+        if on_edge(&w[0]) && on_edge(&w[1]) {
+            if cur.len() > 1 {
+                out.push(std::mem::take(&mut cur));
+            }
+            cur.clear();
+            continue;
+        }
+        if cur.is_empty() {
+            cur.push(w[0]);
+        }
+        cur.push(w[1]);
+    }
+    if cur.len() > 1 {
+        out.push(cur);
+    }
+    out
+}
+
+/// The pieces of an open polyline this window marks.
+fn band_pieces(pts: &[Point], win: &Window) -> Option<Vec<Vec<Point>>> {
+    let (y0, y1) = win.band?;
+    let pieces = clip_polyline_y(pts, y0, y1);
+    Some(if win.first_band { pieces } else { pieces.into_iter().flat_map(|p| without_lower_edge(p, y0)).collect() })
 }
 
 fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOptions) -> Result<Vec<Window>, CompileError> {
@@ -547,7 +655,13 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
         let h = (b - a) / n as f64;
         for k in 0..n {
             let (y0, y1) = (a + h * k as f64, a + h * (k + 1) as f64);
-            out.push(Window { center_y: Some((y0 + y1) / 2.0), band: Some((y0, y1)), shapes: shapes.clone() });
+            out.push(Window {
+                center_y: Some((y0 + y1) / 2.0),
+                band: Some((y0, y1)),
+                shapes: shapes.clone(),
+                first_band: k == 0,
+                last_band: k + 1 == n,
+            });
         }
     };
     match rc.mode {
@@ -558,7 +672,13 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
             let (mut g0, mut g1) = (0.0, 0.0);
             let close = |group: &mut Vec<(usize, usize)>, g0: f64, g1: f64, out: &mut Vec<Window>| {
                 if !group.is_empty() {
-                    out.push(Window { center_y: Some((g0 + g1) / 2.0), band: None, shapes: Some(std::mem::take(group)) });
+                    out.push(Window {
+                        center_y: Some((g0 + g1) / 2.0),
+                        band: None,
+                        shapes: Some(std::mem::take(group)),
+                        first_band: true,
+                        last_band: true,
+                    });
                 }
             };
             for (id, r) in shapes {
@@ -607,6 +727,24 @@ fn layer_polys(job_layer: &Layer, li: usize, win: &Window, opt: &CompileOptions)
         .collect()
 }
 
+/// Drill mode: the outlines become rows of points, each fired at in place. Wobble does not
+/// apply. With a rotary, each window drills the points inside its band.
+fn emit_drill_layer(w: &mut Writer, shapes: &[Vec<Poly>], d: &DrillSettings, win: &Window) -> Result<(), CompileError> {
+    let dy = win.center_y.unwrap_or(0.0);
+    for poly in shapes.iter().flatten() {
+        for p in drill_points(&poly.pts, poly.closed, d.spacing_mm) {
+            // A point on the line between two bands belongs to the upper one, so it is drilled once.
+            if let Some((a, b)) = win.band
+                && !(p.y >= a && (p.y < b || (win.last_band && p.y <= b + 1e-9)))
+            {
+                continue;
+            }
+            w.drill(shift(p, dy), d.dwell_ms)?;
+        }
+    }
+    Ok(())
+}
+
 fn emit_line_layer(w: &mut Writer, layer: &Layer, shapes: &[Vec<Poly>], win: &Window, job: &Job, opt: &CompileOptions) -> Result<(), CompileError> {
     let mut paths: Vec<(Vec<Point>, bool)> = Vec::new();
     for poly in shapes.iter().flatten() {
@@ -614,8 +752,8 @@ fn emit_line_layer(w: &mut Writer, layer: &Layer, shapes: &[Vec<Poly>], win: &Wi
         if poly.closed && pts.len() > 1 {
             pts.push(pts[0]);
         }
-        let pieces = match win.band {
-            Some((a, b)) => clip_polyline_y(&pts, a, b).into_iter().map(|p| (p, false)).collect::<Vec<_>>(),
+        let pieces = match band_pieces(&pts, win) {
+            Some(pieces) => pieces.into_iter().map(|p| (p, false)).collect::<Vec<_>>(),
             None => vec![(pts, poly.closed)],
         };
         for (p, closed) in pieces {
@@ -695,8 +833,8 @@ fn emit_fill_layer(
         // pieces of this scan line after clipping to the rotary band
         let mut pieces: Vec<(Point, Point)> = Vec::new();
         for (a, b) in line {
-            match win.band {
-                Some((y0, y1)) => pieces.extend(clip_polyline_y(&[a, b], y0, y1).into_iter().map(|p| (p[0], p[p.len() - 1]))),
+            match band_pieces(&[a, b], win) {
+                Some(inside) => pieces.extend(inside.into_iter().map(|p| (p[0], p[p.len() - 1]))),
                 None => pieces.push((a, b)),
             }
         }
@@ -768,6 +906,12 @@ fn validate(job: &Job) -> Result<(), CompileError> {
             return Err(CompileError::Invalid(format!("Layer '{}' has invalid power, frequency or speed.", l.name)));
         }
         match &l.mode {
+            LayerMode::Drill(d) if !(d.dwell_ms > 0.0 && d.dwell_ms <= 60_000.0 && d.spacing_mm >= 0.0) => {
+                return Err(CompileError::Invalid(format!(
+                    "Layer '{}' needs a drill time above zero (at most 60 s) and a point spacing of zero or more.",
+                    l.name
+                )));
+            }
             LayerMode::Fill(f) | LayerMode::Flood(f) if f.interval_mm <= 0.0 => {
                 return Err(CompileError::Invalid(format!("Layer '{}' needs a line interval above zero.", l.name)));
             }
@@ -805,7 +949,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
     let bounds = job.bounds(opt.tolerance_mm).ok_or(CompileError::NothingToMark)?;
     let windows = match &job.rotary {
         Some(rc) => plan_windows(job, rc, dev.field.size_mm, opt)?,
-        None => vec![Window { center_y: None, band: None, shapes: None }],
+        None => vec![Window { center_y: None, band: None, shapes: None, first_band: true, last_band: true }],
     };
 
     // one repeat body
@@ -820,7 +964,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
         for (li, layer) in job.layers.iter().enumerate().filter(|(_, l)| l.enabled) {
             if let LayerMode::Sliced(s) = &layer.mode {
                 flush(&mut w, dev, &field, &mut body, &mut est);
-                emit_sliced(dev, &field, layer, s, &mut body, &mut est)?;
+                emit_sliced(dev, &field, layer, s, job.door_protect, &mut body, &mut est)?;
                 continue;
             }
             let shapes = layer_polys(layer, li, win, opt);
@@ -835,6 +979,7 @@ pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<
                 w.set_params(&layer.params);
                 match &layer.mode {
                     LayerMode::Line => emit_line_layer(&mut w, layer, &shapes, win, job, opt)?,
+                    LayerMode::Drill(d) => emit_drill_layer(&mut w, &shapes, d, win)?,
                     LayerMode::Fill(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, false, pass, win)?,
                     LayerMode::Flood(fs) => emit_fill_layer(&mut w, layer, &shapes, fs, true, pass, win)?,
                     LayerMode::Sliced(_) => unreachable!("handled above"),
@@ -874,12 +1019,17 @@ fn emit_sliced(
     field: &Field,
     layer: &Layer,
     s: &SlicedImage,
+    door_protect: bool,
     body: &mut Vec<Step>,
     est: &mut Estimate,
 ) -> Result<(), CompileError> {
     let run = |lines: Vec<Vec<(Point, Point)>>, params: &MarkParams, z: f64, body: &mut Vec<Step>, est: &mut Estimate| -> Result<(), CompileError> {
         if lines.is_empty() {
             return Ok(());
+        }
+        // Every slice is a stage of its own, so each gets the door check a layer pass gets.
+        if door_protect {
+            body.push(Step::WaitDoorClosed);
         }
         body.push(Step::MoveZ { mm: z });
         est.motion_s += MOTION_STEP_S;
@@ -1000,7 +1150,10 @@ pub fn compile_frame(spec: &FrameSpec, dev: &DeviceSettings) -> Result<CompiledF
     for p in &outline {
         r = r.union_pt(*p);
     }
-    Ok(CompiledFrame { packets: packetize(&cmds), bounds_mm: r, key: spec.key })
+    // A shifted or scaled frame shows another place than the job marks, so it carries the key of
+    // what it showed, not the job's: it must not count for "require framing".
+    let as_is = spec.nudge_mm == (0.0, 0.0) && spec.scale_pct == 100.0;
+    Ok(CompiledFrame { packets: packetize(&cmds), bounds_mm: r, key: if as_is { spec.key } else { bounds_key(r) } })
 }
 
 #[cfg(test)]
@@ -1249,6 +1402,124 @@ mod tests {
         assert_eq!(p.steps.len(), 1);
     }
 
+    fn drill_layer(g: Vec<BezPath>, dwell_ms: f64, spacing_mm: f64) -> Layer {
+        Layer::new("D", LayerMode::Drill(DrillSettings { dwell_ms, spacing_mm }), MarkParams::default(), g)
+    }
+
+    /// Where each shot lands (mm) and its total dwell in 10 microsecond units.
+    fn shots(c: &CompiledJob) -> Vec<(Point, u32)> {
+        let field = Field::new(dev().field);
+        let mut at = Point::ORIGIN;
+        let mut out: Vec<(Point, u32)> = Vec::new();
+        let mut fresh = true;
+        for cmd in c.list_commands() {
+            match cmd {
+                ListCmd::JumpTo { x, y, .. } => {
+                    at = field.galvo_to_mm(x as f64, y as f64);
+                    fresh = true;
+                }
+                ListCmd::LaserOnPoint { dwell } => {
+                    if fresh {
+                        out.push((at, dwell as u32));
+                        fresh = false;
+                    } else {
+                        out.last_mut().unwrap().1 += dwell as u32;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn drill_points_are_the_corners_or_evenly_spread() {
+        let sq = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0), Point::new(0.0, 10.0)];
+        assert_eq!(drill_points(&sq, true, 0.0), sq, "spacing 0: the corners");
+        // A closed square with a repeated first point is still four corners.
+        let mut again = sq.to_vec();
+        again.push(sq[0]);
+        assert_eq!(drill_points(&again, true, 0.0).len(), 4);
+        // 40 mm round, every 5 mm: eight points, none twice.
+        let eight = drill_points(&sq, true, 5.0);
+        assert_eq!(eight.len(), 8);
+        assert_eq!(eight[0], Point::new(0.0, 0.0));
+        assert!((eight[1] - Point::new(5.0, 0.0)).hypot() < 1e-9 && (eight[3] - Point::new(10.0, 5.0)).hypot() < 1e-9);
+        assert!((eight[7] - Point::new(0.0, 5.0)).hypot() < 1e-9);
+        // An open 10 mm line every 3 mm: both ends and two between, evenly.
+        let line = [Point::new(0.0, 0.0), Point::new(10.0, 0.0)];
+        let four = drill_points(&line, false, 3.0);
+        assert_eq!(four.len(), 4);
+        assert!((four[3] - line[1]).hypot() < 1e-9 && (four[1].x - 10.0 / 3.0).abs() < 1e-9);
+        // A spacing longer than the line: just its ends. A single point stays one point.
+        assert_eq!(drill_points(&line, false, 50.0), line);
+        assert_eq!(drill_points(&line[..1], false, 1.0), line[..1]);
+        assert!(drill_points(&[], true, 1.0).is_empty());
+    }
+
+    #[test]
+    fn drill_layer_fires_in_place_and_never_marks_a_line() {
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, -10.0, 20.0, 20.0)], 2.5, 0.0));
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(marks(&c), 0, "no line is drawn");
+        let s = shots(&c);
+        assert_eq!(s.len(), 4, "one shot per corner: {s:?}");
+        for (p, dwell) in &s {
+            assert!((p.x.abs() - 10.0).abs() < 0.05 && (p.y.abs() - 10.0).abs() < 0.05, "{p:?}");
+            assert_eq!(*dwell, 250, "2.5 ms in 10 microsecond units");
+        }
+        // The power and frequency are set as for any layer.
+        assert!(c.list_commands().iter().any(|c| matches!(c, ListCmd::QSwitchPeriod(667))));
+        assert!(c.estimate.mark_s > 0.0099 && c.estimate.mark_s < 0.0101, "four shots of 2.5 ms: {}", c.estimate.mark_s);
+        assert!((c.bounds_mm.width() - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn drill_spacing_passes_and_long_dwells() {
+        let mut job = Job::new();
+        let mut l = drill_layer(vec![rect_path(0.0, 0.0, 10.0, 10.0)], 1.0, 2.0);
+        l.passes = 3;
+        job.layers.push(l);
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(shots(&c).len(), 20 * 3, "40 mm round every 2 mm, three passes");
+        // A dwell longer than one command carries is sent as several, adding up.
+        let mut long = Job::new();
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((5.0, 0.0));
+        long.layers.push(drill_layer(vec![line], 1500.0, 0.0));
+        let c = compile(&long, &dev(), &CompileOptions::default()).unwrap();
+        let s = shots(&c);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].1, 150_000);
+        assert!(c.list_commands().iter().all(|c| !matches!(c, ListCmd::LaserOnPoint { dwell } if *dwell > MAX_POINT_DWELL)));
+        assert_eq!(c.list_commands().iter().filter(|c| matches!(c, ListCmd::LaserOnPoint { .. })).count(), 6);
+    }
+
+    #[test]
+    fn drill_settings_are_checked() {
+        for (dwell, spacing) in [(0.0, 1.0), (-1.0, 1.0), (f64::NAN, 1.0), (70_000.0, 1.0), (1.0, -0.5)] {
+            let mut job = Job::new();
+            job.layers.push(drill_layer(vec![rect_path(0.0, 0.0, 5.0, 5.0)], dwell, spacing));
+            assert!(matches!(compile(&job, &dev(), &CompileOptions::default()), Err(CompileError::Invalid(_))), "{dwell} {spacing}");
+        }
+    }
+
+    #[test]
+    fn drill_with_a_rotary_drills_each_point_once_in_its_window() {
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, 0.0, 20.0, 90.0)], 1.0, 10.0));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(c.steps.iter().filter(|s| matches!(s, Step::MoveAxis { .. })).count(), 3);
+        let s = shots(&c);
+        assert_eq!(s.len(), 22, "220 mm round every 10 mm, none lost or doubled at the band edges");
+        for (p, _) in &s {
+            assert!(p.y.abs() <= 15.0 + 0.05, "inside the band: {p:?}");
+        }
+    }
+
     #[test]
     fn rotary_by_slice_splits_and_recentres() {
         let mut job = Job::new();
@@ -1284,6 +1555,105 @@ mod tests {
         assert_eq!(moves.len(), 2 + 3);
         assert_eq!(moves[0], 11.0);
         assert_eq!(moves[1], 105.0);
+    }
+
+    /// Total length of everything marked, in mm.
+    fn marked_mm(c: &CompiledJob) -> f64 {
+        let field = Field::new(dev().field);
+        let (mut at, mut sum) = (Point::ORIGIN, 0.0);
+        for cmd in c.list_commands() {
+            match cmd {
+                ListCmd::JumpTo { x, y, .. } => at = field.galvo_to_mm(x as f64, y as f64),
+                ListCmd::MarkTo { x, y, .. } => {
+                    let to = field.galvo_to_mm(x as f64, y as f64);
+                    sum += at.distance(to);
+                    at = to;
+                }
+                _ => {}
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn rotary_marks_a_line_on_the_edge_between_two_bands_once() {
+        // Bands 0..40 and 40..80: the top of the square lies exactly on the edge between them.
+        let mut tick = BezPath::new();
+        tick.move_to((20.0, 0.0));
+        tick.line_to((20.0, 80.0));
+        let mut job = Job::new();
+        job.layers.push(line_layer(vec![rect_path(-10.0, 0.0, 20.0, 40.0), tick.clone()]));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let mm = marked_mm(&c);
+        assert!((mm - 200.0).abs() < 0.2, "a 20 x 40 square and an 80 mm line are 200 mm, marked {mm}");
+
+        // A fill whose scan line falls on the edge: 0.5..60.5 with 1 mm lines has one at y = 40.
+        let mut job = Job::new();
+        let fs = FillSettings { interval_mm: 1.0, bidirectional: false, ..Default::default() };
+        job.layers.push(Layer::new("F", LayerMode::Fill(fs), MarkParams::default(), vec![rect_path(-10.0, 0.5, 20.0, 60.0)]));
+        job.layers.push(line_layer(vec![tick]));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let mm = marked_mm(&c);
+        assert!((mm - (60.0 * 20.0 + 80.0)).abs() < 0.5, "60 scan lines of 20 mm and the 80 mm line, marked {mm}");
+    }
+
+    #[test]
+    fn rotary_by_shape_drills_the_top_of_a_sliced_shape() {
+        // The tall square is cut into three bands; the small one comes after it in its own window.
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(-10.0, 0.0, 20.0, 90.0), rect_path(20.0, 5.0, 5.0, 5.0)], 1.0, 0.0));
+        job.rotary = Some(RotaryConfig { mode: RotaryMode::ByShape, max_size_mm: 40.0, axis: 0 });
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        assert_eq!(c.steps.iter().filter(|s| matches!(s, Step::MoveAxis { .. })).count(), 4);
+        assert_eq!(shots(&c).len(), 8, "four corners each: {:?}", shots(&c));
+    }
+
+    fn step_name(s: &Step) -> &'static str {
+        match s {
+            Step::List(_) => "list",
+            Step::MoveAxis { .. } => "axis",
+            Step::MoveZ { .. } => "z",
+            Step::WaitDoorClosed => "door",
+            Step::WaitFootSwitch => "foot",
+        }
+    }
+
+    #[test]
+    fn door_protect_waits_before_every_stage_of_a_sliced_image() {
+        let img = SlicedImage {
+            width_px: 2,
+            height_px: 1,
+            depth: vec![100, 250],
+            origin: Point::new(-1.0, -0.5),
+            size_mm: (2.0, 1.0),
+            slices: 2,
+            z_step_mm: 0.1,
+            interval_mm: 1.0,
+            bidirectional: false,
+            cleanup: Some(MarkParams::default()),
+        };
+        let mut job = Job::new();
+        job.door_protect = true;
+        job.layers.push(line_layer(vec![rect_path(-5.0, -5.0, 10.0, 10.0)]));
+        job.layers.push(Layer::new("3D", LayerMode::Sliced(img), MarkParams::default(), vec![]));
+        let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+        let names: Vec<&str> = c.steps.iter().map(step_name).collect();
+        let mut waited = false;
+        let mut lists = 0;
+        for s in &c.steps {
+            match s {
+                Step::WaitDoorClosed => waited = true,
+                Step::List(_) => {
+                    assert!(waited, "a stage fires without a door check before it: {names:?}");
+                    waited = false;
+                    lists += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(lists, 4, "the outline, two slices and the cleanup");
     }
 
     #[test]

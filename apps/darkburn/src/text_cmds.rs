@@ -172,7 +172,8 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         if h <= 0.0 {
             return Err("height must be above zero".into());
         }
-        t.height = h;
+        // The ranges of the text fields (`text_ui.rs`).
+        t.height = h.clamp(0.1, 10_000.0);
     }
     if let Some(v) = flag(a, "bold") {
         t.bold = v;
@@ -190,10 +191,10 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         t.distort = v;
     }
     if let Some(v) = num(a, "letter_spacing") {
-        t.letter_spacing = v;
+        t.letter_spacing = v.clamp(-100.0, 1000.0);
     }
     if let Some(v) = num(a, "line_spacing") {
-        t.line_spacing = v;
+        t.line_spacing = v.clamp(-100.0, 1000.0);
     }
     if let Some(s) = word(a, "align_x") {
         t.align_x = match s {
@@ -216,7 +217,7 @@ pub fn apply_text_args(t: &mut TextShape, a: &Value) -> Result<(), String> {
         t.variable = variable_kind(s)?;
     }
     if let Some(v) = int(a, "offset") {
-        t.offset = v;
+        t.offset = v.clamp(-100_000, 100_000);
     }
     Ok(())
 }
@@ -299,6 +300,16 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
     }))
 }
 
+/// The largest module (one square or the narrowest bar) of a QR code or barcode, in mm.
+const MAX_CODE_MODULE_MM: f64 = 1_000.0;
+/// The largest QR code side or barcode height, in mm.
+const MAX_CODE_SIZE_MM: f64 = 100_000.0;
+
+/// A size of a code: above zero and no larger than `max` (which also refuses "not a number").
+fn code_size(what: &str, v: f64, max: f64) -> Result<f64, String> {
+    if v > 0.0 && v <= max { Ok(v) } else { Err(format!("{what} must be above zero and at most {max} mm")) }
+}
+
 fn apply_qr_args(doc: &Document, layer: usize, c: &mut CodeShape, a: &Value) -> Result<(), String> {
     let CodeSpec::Qr(q) = &mut c.spec else { return Err("not a QR code".into()) };
     if let Some(content) = qr_content(a, Some(&q.content))? {
@@ -314,19 +325,13 @@ fn apply_qr_args(doc: &Document, layer: usize, c: &mut CodeShape, a: &Value) -> 
         };
     }
     if let Some(m) = num(a, "module") {
-        if m <= 0.0 {
-            return Err("module must be above zero".into());
-        }
-        q.module_mm = m;
+        q.module_mm = code_size("module", m, MAX_CODE_MODULE_MM)?;
     }
     if let Some(v) = flag(a, "variable") {
         c.variable = v;
     }
     if let Some(size) = num(a, "size") {
-        if size <= 0.0 {
-            return Err("size must be above zero".into());
-        }
-        render::set_code_size(doc, layer, c, size);
+        render::set_code_size(doc, layer, c, code_size("size", size, MAX_CODE_SIZE_MM)?);
     }
     Ok(())
 }
@@ -352,13 +357,10 @@ fn apply_barcode_args(c: &mut CodeShape, a: &Value) -> Result<(), String> {
         b.data = d.to_string();
     }
     if let Some(m) = num(a, "module") {
-        if m <= 0.0 {
-            return Err("module must be above zero".into());
-        }
-        b.module_mm = m;
+        b.module_mm = code_size("module", m, MAX_CODE_MODULE_MM)?;
     }
     if let Some(h) = num(a, "height") {
-        b.height_mm = h.max(0.1);
+        b.height_mm = code_size("height", h.max(0.1), MAX_CODE_SIZE_MM)?;
     }
     if let Some(v) = flag(a, "variable") {
         c.variable = v;
@@ -485,6 +487,9 @@ fn on_path(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if ps.local_outline().elements().is_empty() {
         return Err("the path is empty".into());
     }
+    if darkburn_geom::path::length(&ps.local_outline()) <= 1e-9 {
+        return Err("the path has no length".into());
+    }
     let path = path_for_text(&ts, &ps);
     let pt = PathText {
         path,
@@ -531,7 +536,8 @@ fn edit_variables(app: &mut DarkBurn, label: &str, f: impl FnOnce(&mut Document)
             return false;
         }
         render::refresh(d);
-        d.variables != before || true
+        // Nothing asked for, or what was already set: no undo step and `changed: false`.
+        d.variables != before
     });
     match err {
         Some(e) => Err(e),

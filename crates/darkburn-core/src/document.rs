@@ -183,17 +183,21 @@ impl Document {
         self.layer_order.iter().copied().filter(|l| used[*l]).collect()
     }
 
-    /// Move layer `layer` one place earlier (`delta` -1) or later (+1) among the used layers.
+    /// Move layer `layer` earlier (`delta` below zero) or later by that many places among the used
+    /// layers, as far as the list goes. False when it is already at that end.
     pub fn move_layer(&mut self, layer: usize, delta: isize) -> bool {
-        let used = self.used_layers();
-        let Some(pos) = used.iter().position(|l| *l == layer) else { return false };
-        let to = pos as isize + delta;
-        if to < 0 || to as usize >= used.len() {
-            return false;
+        let mut moved = false;
+        for _ in 0..delta.unsigned_abs().min(LAYER_COUNT) {
+            let used = self.used_layers();
+            let Some(pos) = used.iter().position(|l| *l == layer) else { return false };
+            let to = pos as isize + delta.signum();
+            if to < 0 || to as usize >= used.len() {
+                break;
+            }
+            self.swap_order(layer, used[to as usize]);
+            moved = true;
         }
-        let other = used[to as usize];
-        self.swap_order(layer, other);
-        true
+        moved
     }
 
     /// Put `layer` just before `before` in the output order (drag and drop in the list).
@@ -228,8 +232,17 @@ impl Document {
     /// Delete layer `layer`: its settings go back to the defaults; with `shapes`, its shapes go too.
     pub fn delete_layer(&mut self, layer: usize, shapes: bool) {
         if shapes {
-            let ids = self.shapes_on_layer(layer);
-            self.remove(&ids);
+            // A group loses only its children on the layer; it goes when none are left.
+            let old = std::mem::take(&mut self.shapes);
+            for s in old {
+                if !s.layers().contains(&layer) {
+                    self.shapes.push(s);
+                } else if let Some(kept) = without_layer(&s, layer) {
+                    self.shapes.push(Arc::new(kept));
+                }
+            }
+            // The pixels of the pictures that went are no longer needed.
+            self.prune_images();
         }
         self.layers[layer] = Layer::new(layer);
     }
@@ -272,6 +285,28 @@ fn max_id(s: &Shape) -> u64 {
     match &s.kind {
         ShapeKind::Group { children } => children.iter().map(max_id).max().unwrap_or(0).max(s.id.0),
         _ => s.id.0,
+    }
+}
+
+/// `shape` without everything on layer `layer`: `None` when nothing is left of it.
+fn without_layer(shape: &Shape, layer: usize) -> Option<Shape> {
+    match &shape.kind {
+        ShapeKind::Group { children } => {
+            let kept: Vec<Shape> = children.iter().filter_map(|c| without_layer(c, layer)).collect();
+            let first = kept.first()?.layer;
+            let mut group = shape.clone();
+            if group.layer == layer {
+                group.layer = first;
+            }
+            group.kind = ShapeKind::Group { children: kept };
+            // A virtual array loses its originals on the layer too, or they would be back the next
+            // time the array is edited.
+            if let Some(a) = &mut group.array {
+                a.source = a.source.iter().filter_map(|s| without_layer(s, layer)).collect();
+            }
+            Some(group)
+        }
+        _ => (shape.layer != layer).then(|| shape.clone()),
     }
 }
 
@@ -323,6 +358,11 @@ mod tests {
         assert!(d.move_layer(9, -1));
         assert_eq!(d.used_layers(), vec![1, 9, 4]);
         assert!(!d.move_layer(1, -1));
+        // Two places is two steps, not a swap with the layer two places on: 1 9 4 -> 9 4 1.
+        assert!(d.move_layer(1, 2));
+        assert_eq!(d.used_layers(), vec![9, 4, 1]);
+        assert!(d.move_layer(1, -5), "further than the list goes: to the front");
+        assert_eq!(d.used_layers(), vec![1, 9, 4]);
         d.place_layer_before(4, Some(1));
         assert_eq!(d.used_layers(), vec![4, 1, 9]);
         d.layer_mut(9).main_mut().mode = Mode::Fill;
@@ -341,6 +381,26 @@ mod tests {
         assert_eq!(d.layer(2).main().speed, 100.0);
         d.delete_layer(2, true);
         assert!(d.is_empty());
+    }
+
+    #[test]
+    fn deleting_a_layer_with_its_shapes_keeps_the_rest_of_a_group() {
+        let mut d = Document::new();
+        let inner = Shape::new(ShapeKind::Group { children: vec![rect(0.0, 2), rect(10.0, 2)] }, kurbo::Affine::IDENTITY, 2);
+        let group = Shape::new(ShapeKind::Group { children: vec![rect(0.0, 2), rect(20.0, 5), inner, rect(40.0, 7)] }, kurbo::Affine::IDENTITY, 2);
+        let g = d.add(group);
+        let only = d.add(Shape::new(ShapeKind::Group { children: vec![rect(0.0, 2)] }, kurbo::Affine::IDENTITY, 2));
+        d.add(rect(0.0, 2));
+        d.add(rect(0.0, 3));
+        d.delete_layer(2, true);
+        assert_eq!(d.len(), 2, "the mixed group and the shape on layer 3 stay");
+        assert!(d.get(only).is_none(), "a group with nothing left goes");
+        let kept = d.get(g).expect("the group stays");
+        match &kept.kind {
+            ShapeKind::Group { children } => assert_eq!(children.iter().map(|c| c.layer).collect::<Vec<_>>(), vec![5, 7]),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(d.used_layers(), vec![3, 5, 7]);
     }
 
     #[test]

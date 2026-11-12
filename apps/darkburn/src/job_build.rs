@@ -57,6 +57,17 @@ pub struct JobDevice {
     pub pointer_offset: [f64; 2],
     /// Curve flattening tolerance for the job, mm (SET-36).
     pub tolerance: f64,
+    /// Partly cut tabs are made of full-power pulses of this length, mm (DS-05). 0: the tab
+    /// is cut at the tab power instead.
+    pub tab_pulse_width: f64,
+    /// The controller has no dynamic power: every layer is written with M3 (GRBL-02).
+    pub m3_only: bool,
+    /// The machine's job has no place for a pause on the spot (a Ruida job): start and end
+    /// pauses and cut-through are left out, and the job says so in a warning.
+    pub no_pauses: bool,
+    /// The speed (mm/s) of the device's fast whitespace scan when it is on (DS-10): the time
+    /// estimate counts blank moves inside scans at this speed, as the G-code is written.
+    pub fast_whitespace: Option<f64>,
 }
 
 impl Default for JobDevice {
@@ -71,6 +82,10 @@ impl Default for JobDevice {
             z_reverse: false,
             pointer_offset: [0.0, 0.0],
             tolerance: TOLERANCE,
+            tab_pulse_width: 0.0,
+            m3_only: false,
+            no_pauses: false,
+            fast_whitespace: None,
         }
     }
 }
@@ -384,6 +399,19 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
+/// The most scan lines the fill of one layer may have: 500 m of fill at 0.1 mm, far beyond any
+/// machine. Past it the layer's shapes are left out of the job with a warning.
+pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
+
+/// The finest line interval of the layer's fill settings, or None when it does not fill.
+fn fill_interval(l: &Layer) -> Option<f64> {
+    l.settings
+        .iter()
+        .filter(|s| s.enabled && matches!(s.mode, Mode::Fill | Mode::FillLine | Mode::OffsetFill))
+        .map(|s| s.interval.max(0.001))
+        .min_by(f64::total_cmp)
+}
+
 /// A built job.
 #[derive(Clone, Debug)]
 pub struct BuiltJob {
@@ -400,6 +428,8 @@ pub struct BuiltJob {
     pub bounds_report: BoundsReport,
     /// Shapes left out because they were outside the work area.
     pub dropped_shapes: usize,
+    /// The speed of the device's fast whitespace scan (see [`JobDevice::fast_whitespace`]).
+    pub fast_whitespace: Option<f64>,
 }
 
 impl BuiltJob {
@@ -414,7 +444,10 @@ impl BuiltJob {
 
     /// Time estimate and simulation in design coordinates.
     pub fn simulate(&self, motion: &AdditionalSettings) -> job::Simulation {
-        job::sim::simulate(&self.design, &motion.motion())
+        match self.fast_whitespace {
+            Some(speed) => job::sim::simulate(&fast_whitespace(&self.design, speed.max(1.0)), &motion.motion()),
+            None => job::sim::simulate(&self.design, &motion.motion()),
+        }
     }
 }
 
@@ -454,6 +487,22 @@ pub fn map_settings(s: &CutSetting, layer: &Layer, z_enabled: bool) -> job::CutS
     map_settings_with(s, layer, z_enabled, &crate::scan_offsets::ScanTuning::default())
 }
 
+/// The tab settings of a cut setting as the job engine takes them.
+pub fn tab_settings(s: &CutSetting) -> job::TabSettings {
+    job::TabSettings {
+        enabled: s.tabs.enabled,
+        auto: s.tabs.auto_spacing,
+        spacing: s.tabs.spacing.max(0.1),
+        min_count: s.tabs.min_count,
+        max_count: s.tabs.max_count.max(s.tabs.min_count),
+        size: s.tabs.size.max(0.0),
+        tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
+        skip_inner: s.tabs.skip_inner,
+        // The device's tab pulse width is filled in by the job builder.
+        pulse_width: 0.0,
+    }
+}
+
 /// [`map_settings`] with the device's scan tuning (fast skip over blank stretches, DS-08).
 pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning: &crate::scan_offsets::ScanTuning) -> job::CutSettings {
     let lead = |l: &layer::Lead| {
@@ -487,16 +536,7 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
     };
     c.line = job::LineSettings {
         perforation: s.perforation.then_some(job::Perforation { cut: s.perf_cut.max(0.01), skip: s.perf_skip.max(0.0) }),
-        tabs: job::TabSettings {
-            enabled: s.tabs.enabled,
-            auto: s.tabs.auto_spacing,
-            spacing: s.tabs.spacing.max(0.1),
-            min_count: s.tabs.min_count,
-            max_count: s.tabs.max_count.max(s.tabs.min_count),
-            size: s.tabs.size.max(0.0),
-            tab_power: s.tabs.partial.then_some(s.tabs.tab_power.clamp(0.0, 100.0)),
-            skip_inner: s.tabs.skip_inner,
-        },
+        tabs: tab_settings(s),
         start_pause_ms: s.start_pause_ms.max(0.0),
         end_pause_ms: s.end_pause_ms.max(0.0),
         cut_through_start: s.cut_through_start,
@@ -523,6 +563,8 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
         flood_fill: s.flood_fill,
         ramp_length: s.ramp_length.max(0.0),
         ramp_outer_edge: s.ramp_outer,
+        // The device's scanning offset table moves forward and reverse lines apart (DS-08).
+        direction_offset: if s.bidirectional { tuning.offsets.offset_at(s.speed) } else { 0.0 },
         ..job::FillSettings::default()
     };
     c.image = job::ImageSettings {
@@ -532,38 +574,6 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
         rapid_gap: tuning.skip_mm.max(0.1),
     };
     c
-}
-
-fn raster_mode(s: &CutSetting) -> darkburn_raster::ImageMode {
-    use darkburn_core::layer::ImageMode as M;
-    use darkburn_raster::ImageMode as R;
-    if s.pass_through {
-        return R::PassThrough;
-    }
-    match s.image_mode {
-        M::Threshold => R::Threshold { threshold: 0.5, ramp_length_mm: s.threshold_ramp.max(0.0) },
-        M::Ordered => R::Ordered,
-        M::Atkinson => R::Atkinson,
-        M::Dither => R::FloydSteinberg,
-        M::Stucki => R::Stucki,
-        M::Jarvis => R::Jarvis,
-        M::Newsprint => R::Newsprint,
-        M::Halftone => R::Halftone { cells_per_inch: s.halftone_cells.max(1.0), angle_deg: s.halftone_angle },
-        M::Sketch => R::Sketch { radius_px: 2.0, gain: 1.5 },
-        M::Grayscale => R::Grayscale,
-    }
-}
-
-fn adjustments(a: &darkburn_core::ImageAdjust) -> darkburn_raster::Adjustments {
-    darkburn_raster::Adjustments {
-        brightness: a.brightness as f32,
-        contrast: a.contrast as f32,
-        gamma: a.gamma.clamp(0.1, 10.0) as f32,
-        enhance_amount: (a.enhance_amount / 100.0).max(0.0) as f32,
-        enhance_radius: if a.enhance_radius > 0.0 { a.enhance_radius as f32 } else { 1.0 },
-        enhance_denoise: (a.enhance_denoise / 10.0).clamp(0.0, 1.0) as f32,
-        negative: false,
-    }
 }
 
 /// Pixels to the shape's local millimetres: the image is centred on the local origin, y up.
@@ -578,11 +588,11 @@ fn image_inputs(
     doc: &Document,
     leaves: &[(&Shape, Option<u32>)],
     s: &CutSetting,
-    cache: &mut HashMap<String, Arc<darkburn_raster::GrayF>>,
     tuning: &crate::scan_offsets::ScanTuning,
+    warnings: &mut Vec<String>,
 ) -> Vec<job::ImageInput> {
     let settings = darkburn_raster::ImageSettings {
-        mode: raster_mode(s),
+        mode: crate::images::engine_mode(s),
         line_interval_mm: s.interval.max(0.001),
         scan_angle_deg: s.scan_angle,
         negative: s.negative,
@@ -596,65 +606,82 @@ fn image_inputs(
         min_power: 0.4,
         max_power: 100.0,
     };
-    let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64)> = Vec::new();
+    // (dots, group, priority, power scale, corners of the picture)
+    let mut processed: Vec<(darkburn_raster::ProcessedImage, Option<u32>, i32, f64, Vec<Point>)> = Vec::new();
     for (shape, group) in leaves {
         let ShapeKind::Image(img) = &shape.kind else { continue };
-        let Some(data) = doc.images.get(&img.image) else { continue };
-        let gray = match cache.get(&img.image) {
-            Some(g) => g.clone(),
-            None => {
-                let Ok(decoded) = image::load_from_memory(&data.bytes) else { continue };
-                let g = Arc::new(darkburn_raster::GrayF::from_dynamic(&decoded));
-                cache.insert(img.image.clone(), g.clone());
-                g
+        let label = layer::layer_label(shape.layer.min(layer::LAYER_COUNT - 1));
+        // An image too fine to scan is left out before anything that big is allocated.
+        let (w, h) = crate::images::size_mm(shape, img);
+        let bb = shape.bbox();
+        let dots = crate::images::dots_for(bb.width().max(w), bb.height().max(h), settings.line_interval_mm);
+        if dots > crate::images::MAX_DOTS {
+            warnings.push(format!("An image on layer {label} was left out: {}.", crate::images::ImageError::TooLarge { dots, shape: shape.id.0 }));
+            continue;
+        }
+        // The pixels with the image's crop applied (outside the crop nothing burns).
+        let gray = match crate::images::source_gray(doc, img) {
+            Ok(g) => g,
+            Err(e) => {
+                warnings.push(format!("An image on layer {label} was left out: {e}."));
+                continue;
             }
         };
         let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
-        let p = darkburn_raster::process_image(&gray, to_mm, &adjustments(&img.adjust), &settings);
-        processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0)));
+        let p = darkburn_raster::process_image(&gray, to_mm, &crate::images::adjustments(&img.adjust), &settings);
+        let outline: Vec<Point> = job::geom::flatten(&shape.outline(), TOLERANCE).into_iter().flat_map(|poly| poly.pts).collect();
+        processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0), outline));
     }
     let mut out = Vec::new();
-    let build = |mut plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, out: &mut Vec<job::ImageInput>| {
-        // The device's scanning offset table moves forward and reverse lines apart (DS-08).
-        crate::scan_offsets::shift_plans(&mut plans, s.speed, &tuning.offsets);
-        for plan in plans {
-            let lines = plan
-                .lines
-                .iter()
-                .map(|l| {
-                    let mut runs: Vec<(f64, f64, f64)> =
-                        l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
-                    runs.sort_by(|a, b| a.0.total_cmp(&b.0));
-                    job::Scanline { y: l.y, runs }
-                })
-                .collect();
-            let mut input = job::ImageInput::new(lines);
-            input.transform = plan.scan_to_mm();
-            input.group = group;
-            input.priority = priority;
-            out.push(input);
-        }
-    };
+    // The device's scanning offset table moves forward and reverse lines apart (DS-08). The job
+    // engine applies it, because only it knows which way each line ends up being scanned.
+    let direction_offset = if s.bidirectional { tuning.offsets.offset_at(s.speed) } else { 0.0 };
+    let build =
+        |plans: Vec<darkburn_raster::ScanPlan>, group: Option<u32>, priority: i32, scale: f64, outline: &[Point], out: &mut Vec<job::ImageInput>| {
+            for plan in plans {
+                let lines = plan
+                    .lines
+                    .iter()
+                    .map(|l| {
+                        let mut runs: Vec<(f64, f64, f64)> =
+                            l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
+                        runs.sort_by(|a, b| a.0.total_cmp(&b.0));
+                        job::Scanline { y: l.y, runs }
+                    })
+                    .collect();
+                let mut input = job::ImageInput::new(lines);
+                input.transform = plan.scan_to_mm();
+                input.group = group;
+                input.priority = priority;
+                input.direction_offset = direction_offset;
+                input.outline = outline.to_vec();
+                out.push(input);
+            }
+        };
     if s.merge_images && processed.iter().all(|p| (p.3 - processed[0].3).abs() < 1e-9) && !processed.is_empty() {
         let refs: Vec<&darkburn_raster::ProcessedImage> = processed.iter().map(|p| &p.0).collect();
         let group = processed[0].1;
         let prio = processed.iter().map(|p| p.2).min().unwrap_or(0);
-        build(darkburn_raster::scan_plans(&refs, &scan), group, prio, processed[0].3, &mut out);
+        let outline: Vec<Point> = processed.iter().flat_map(|p| p.4.iter().copied()).collect();
+        build(darkburn_raster::scan_plans(&refs, &scan), group, prio, processed[0].3, &outline, &mut out);
     } else {
         for p in &processed {
-            build(darkburn_raster::scan_plans(&[&p.0], &scan), p.1, p.2, p.3, &mut out);
+            build(darkburn_raster::scan_plans(&[&p.0], &scan), p.1, p.2, p.3, &p.4, &mut out);
         }
     }
     out
 }
 
-fn kerf_of(layer: &Layer) -> (f64, bool) {
-    let kerfs: Vec<f64> =
-        layer.settings.iter().filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine) && s.kerf != 0.0).map(|s| s.kerf).collect();
-    match kerfs.first() {
-        Some(&k) => (k, kerfs.iter().any(|x| (x - k).abs() > 1e-9)),
-        None => (0.0, false),
-    }
+/// The kerf offset each line sub-layer of `layer` cuts with, as (index into its settings,
+/// kerf). Fills are never offset.
+fn kerfs_of(layer: &Layer) -> Vec<(usize, f64)> {
+    layer
+        .settings
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine) && s.kerf != 0.0)
+        .map(|(i, s)| (i, s.kerf))
+        .collect()
 }
 
 fn is_outside(bbox: Rect, area: Rect) -> bool {
@@ -683,13 +710,67 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
     let mut tool_frame: Vec<BezPath> = Vec::new();
-    let mut kerf_note = [false; layer::LAYER_COUNT];
+    let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
     let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
     let total = tops.len().max(1);
+    // Kerf: a shape drawn inside another shape that is cut is a hole, and its kerf goes the
+    // other way. The shape around it may be on another layer (holes are often given a layer of
+    // their own to cut them first). These are the closed outlines of the shapes on the layers
+    // that cut lines, each with the number of its shape; they are only needed when some layer
+    // has a kerf offset.
+    let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
+    let any_kerf = (0..layer::LAYER_COUNT).any(|li| doc.layer(li).outputs() && !kerfs_of(doc.layer(li)).is_empty());
+    let mut kerf_outlines: Vec<(usize, Rect, Vec<Point>)> = Vec::new();
+    let mut leaf_no = 0usize;
+    for top in &tops {
+        for leaf in top.leaves() {
+            leaf_no += 1;
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if !any_kerf || !l.outputs() || leaf.is_image() || !cuts_lines(l) {
+                continue;
+            }
+            for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
+                if poly.closed {
+                    kerf_outlines.push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                }
+            }
+        }
+    }
+    // A fill is scanned line by line across everything on its layer. Shapes scaled up by
+    // accident to kilometres would be more lines than there is memory for, so a layer whose
+    // fill is that large is left out before any of it is worked out.
+    let mut fill_span: Vec<Option<Rect>> = vec![None; layer::LAYER_COUNT];
+    for top in &tops {
+        for leaf in top.leaves() {
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if l.outputs() && !leaf.is_image() && fill_interval(l).is_some() {
+                let b = leaf.bbox();
+                fill_span[li] = Some(fill_span[li].map_or(b, |r| r.union(b)));
+            }
+        }
+    }
+    let mut fill_too_big = [false; layer::LAYER_COUNT];
+    for li in 0..layer::LAYER_COUNT {
+        let (Some(span), Some(interval)) = (fill_span[li], fill_interval(doc.layer(li))) else { continue };
+        let rows = span.width().max(span.height()) / interval;
+        // (A size that is not a number is not let through either.)
+        if rows.is_nan() || rows > MAX_FILL_ROWS {
+            fill_too_big[li] = true;
+            warnings.push(format!(
+                "The shapes on layer {} were left out: the fill would be {:.0} million scan lines (the limit is {:.0} million). Check their size.",
+                layer::layer_label(li),
+                rows / 1e6,
+                MAX_FILL_ROWS / 1e6
+            ));
+        }
+    }
+    let mut leaf_no = 0usize;
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -697,13 +778,22 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         report(0.25 * n as f32 / total as f32);
         let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
         for leaf in top.leaves() {
+            leaf_no += 1;
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
                 // Tool layers never burn, but may be framed with the job (LAYER-02).
                 if l.is_tool() && l.frame && !leaf.is_image() {
-                    tool_frame.push(leaf.outline());
+                    // Mapped like the shapes that burn, so the frame stays with the job.
+                    let outline = leaf.outline();
+                    tool_frame.push(match &vision_map {
+                        Some(m) => m.apply(outline),
+                        None => outline,
+                    });
                 }
+                continue;
+            }
+            if fill_too_big[li] && !leaf.is_image() {
                 continue;
             }
             let bbox = leaf.bbox();
@@ -722,7 +812,18 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let entry = layers[li].get_or_insert_with(|| {
-                let settings = l.settings.iter().map(|s| map_settings_with(s, l, input.device.z_enabled, &tuning)).collect();
+                let mut settings: Vec<job::CutSettings> = l
+                    .settings
+                    .iter()
+                    .map(|s| {
+                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                        c.constant_power |= input.device.m3_only;
+                        c
+                    })
+                    .collect();
+                for s in &mut settings {
+                    s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
+                }
                 LayerInput {
                     index: li,
                     name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
@@ -734,7 +835,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 }
             });
             if leaf.is_image() {
-                frame_paths.push(leaf.outline());
                 leaves_by_layer[li].push((leaf, group));
                 continue;
             }
@@ -742,34 +842,78 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             if path.elements().is_empty() {
                 continue;
             }
-            let (kerf, differ) = kerf_of(l);
-            if kerf != 0.0 {
-                path = darkburn_geom::offset::kerf_offset(&path, kerf, input.device.tolerance);
-                kerf_note[li] |= differ;
+            // Each line sub-layer with a kerf offset cuts its own outline; fills keep the drawn one.
+            let kerfs = kerfs_of(l);
+            let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
+            if !kerfs.is_empty() {
+                // How many other cut shapes this one lies inside: odd means a hole.
+                let depth = match path.elements().first() {
+                    Some(PathEl::MoveTo(p0)) => kerf_outlines
+                        .iter()
+                        .filter(|(no, r, pts)| {
+                            *no != leaf_no
+                                && r.area() > bbox.area() + 1e-9
+                                && job::geom::rect_inside(bbox, *r)
+                                && job::geom::point_in_polygon(*p0, pts)
+                        })
+                        .count(),
+                    _ => 0,
+                };
+                let mut lost_most = 0;
+                for (setting, kerf) in kerfs {
+                    let kerf = if depth % 2 == 1 { -kerf } else { kerf };
+                    let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
+                    lost_most = lost_most.max(lost);
+                    line_paths.push((setting, offset));
+                }
+                kerf_lost[li] += lost_most;
             }
             if let Some(m) = &vision_map {
                 path = m.apply(path);
+                for (_, p) in &mut line_paths {
+                    *p = m.apply(std::mem::take(p));
+                }
             }
-            frame_paths.push(path.clone());
             let mut si = ShapeInput::new(path);
-            // Tabs placed with the Add tabs tool are stored in the shape's local coordinates.
-            si.start_point = leaf.start_point.map(|p| leaf.transform * Point::new(p[0], p[1]));
+            si.line_paths = line_paths;
+            {
+                let used = si.outlines_used(&entry.settings);
+                if used.iter().all(|p| p.elements().is_empty()) {
+                    // Nothing of the shape is left to cut.
+                    continue;
+                }
+                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+            }
+            // Tabs and forced start points are stored in the shape's local coordinates; they
+            // go through the same mapping as the outline (the kerf offset keeps them: each
+            // snaps to the nearest point of the path that is cut).
+            let place = |p: &[f64; 2]| {
+                let q = leaf.transform * Point::new(p[0], p[1]);
+                vision_map.as_ref().map_or(q, |m| m.apply_point(q))
+            };
+            si.start_point = leaf.start_point.as_ref().map(place);
+            si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
             si.direction = match leaf.direction {
                 darkburn_core::CutDirection::Auto => None,
                 darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
                 darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
                 darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
             };
-            si.tabs = leaf.tabs.iter().map(|t| leaf.transform * Point::new(t[0], t[1])).collect();
+            si.tabs = leaf.tabs.iter().map(place).collect();
             si.group = group;
             si.priority = leaf.priority;
             si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
             entry.shapes.push(si);
         }
     }
-    for (li, differ) in kerf_note.iter().enumerate() {
-        if *differ {
-            warnings.push(format!("Layer {} has different kerf offsets on its sub-layers; the first one is used.", layer::layer_label(li)));
+    for (li, lost) in kerf_lost.iter().enumerate() {
+        if *lost > 0 {
+            warnings.push(format!(
+                "Layer {}: {lost} shape or hole{} smaller than the kerf offset {} left out.",
+                layer::layer_label(li),
+                if *lost == 1 { "" } else { "s" },
+                if *lost == 1 { "was" } else { "were" }
+            ));
         }
     }
 
@@ -778,7 +922,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     }
 
     // Images, layer by layer.
-    let mut cache = HashMap::new();
     for li in 0..layer::LAYER_COUNT {
         if leaves_by_layer[li].is_empty() {
             continue;
@@ -793,7 +936,21 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         match image_setting {
             Some(s) => {
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, s, &mut cache, &tuning);
+                entry.images = image_inputs(doc, &refs, s, &tuning, &mut warnings);
+                // Only the pictures that burn are framed (one left out is not part of the job).
+                for img in &entry.images {
+                    let mut p = BezPath::new();
+                    for (i, pt) in img.outline.iter().enumerate() {
+                        if i == 0 {
+                            p.move_to(*pt);
+                        } else {
+                            p.line_to(*pt);
+                        }
+                    }
+                    if !p.elements().is_empty() {
+                        frame_paths.push(p);
+                    }
+                }
             }
             None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
         }
@@ -803,26 +960,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut list: Vec<LayerInput> = layers.into_iter().flatten().filter(|l| !l.shapes.is_empty() || !l.images.is_empty()).collect();
     list.sort_by_key(|l| (l.priority, l.index));
 
-    // Bounds of what burns, flattened the way the engine does it.
-    let tol = input.device.tolerance;
-    let mut bounds: Option<Rect> = None;
-    let mut add = |p: Point| bounds = Some(bounds.map_or(Rect::from_points(p, p), |r| r.union_pt(p)));
-    for l in &list {
-        for s in &l.shapes {
-            for poly in job::geom::flatten(&s.path, tol) {
-                poly.pts.iter().for_each(|p| add(*p));
-            }
-        }
-        for img in &l.images {
-            for sl in &img.scanlines {
-                for &(x0, x1, _) in &sl.runs {
-                    add(img.transform * Point::new(x0, sl.y));
-                    add(img.transform * Point::new(x1, sl.y));
-                }
-            }
-        }
-    }
-    Ok(Collected { job: JobInput { layers: list }, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
+    // Bounds of what burns, as the engine anchors the job.
+    let job = JobInput { layers: list };
+    let bounds = job::generate::job_bounds(&job, input.device.tolerance);
+    Ok(Collected { job, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -905,12 +1046,24 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     if c.dropped > 0 {
         warnings.push(format!("{} shape(s) outside the work area were left out.", c.dropped));
     }
+    if input.device.no_pauses {
+        warnings.extend(crate::machine_job::rd_dropped_pauses(&toolpath));
+    }
     let bounds_report = check_work_area(input, &toolpath);
     if !bounds_report.is_ok() {
         let burning = bounds_report.violations.iter().filter(|v| v.burning).count();
         warnings.push(format!("The job leaves the work area ({} moves, {burning} of them burning).", bounds_report.violations.len()));
     }
-    Ok(BuiltJob { toolpath, design, bounds, origin, warnings, bounds_report, dropped_shapes: c.dropped })
+    Ok(BuiltJob {
+        toolpath,
+        design,
+        bounds,
+        origin,
+        warnings,
+        bounds_report,
+        dropped_shapes: c.dropped,
+        fast_whitespace: input.device.fast_whitespace,
+    })
 }
 
 /// The work-area check in the toolpath's own coordinates; empty when it cannot be checked.
@@ -992,6 +1145,25 @@ impl BuildTask {
     }
 }
 
+#[cfg(test)]
+impl BuildTask {
+    /// A build for tests that runs until it is cancelled and then takes `lag` longer to stop,
+    /// like a worker on a busy computer that notices Cancel late.
+    pub fn slow_to_cancel(lag: std::time::Duration) -> BuildTask {
+        let (tx, rx) = channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            while !c2.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            std::thread::sleep(lag);
+            let _ = tx.send(Err(BuildError::Cancelled));
+        });
+        BuildTask { rx, cancel, progress: Arc::new(AtomicU32::new(0)), done: None }
+    }
+}
+
 // ----- G-code ---------------------------------------------------------------------------------
 
 /// The device's own changes to a toolpath before it is written as G-code.
@@ -1001,7 +1173,14 @@ fn for_device(tp: Toolpath, dev: &DeviceGcodeSettings) -> Toolpath {
 
 /// G-code for the job, or for the job from operation `from_op` on.
 pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings) -> String {
-    let settings = dev.to_gcode();
+    gcode_text_for(job, from_op, dev, false)
+}
+
+/// [`gcode_text`] for a controller that may have no laser mode (`m3_only`, GRBL 1.1e and
+/// older): its travel moves switch the laser off themselves.
+pub fn gcode_text_for(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSettings, m3_only: bool) -> String {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
     match from_op {
         Some(op) => job::gcode::emit(&for_device(job.toolpath_from(op), dev), &settings),
         None => job::gcode::emit(&for_device(job.toolpath.clone(), dev), &settings),
@@ -1010,7 +1189,14 @@ pub fn gcode_text(job: &BuiltJob, from_op: Option<usize>, dev: &DeviceGcodeSetti
 
 /// G-code lines to stream to a controller.
 pub fn gcode_lines(tp: &Toolpath, dev: &DeviceGcodeSettings) -> Vec<String> {
-    job::gcode::lines(&for_device(tp.clone(), dev), &dev.to_gcode()).collect()
+    gcode_lines_for(tp, dev, false)
+}
+
+/// [`gcode_lines`] for a controller that may have no laser mode (see [`gcode_text_for`]).
+pub fn gcode_lines_for(tp: &Toolpath, dev: &DeviceGcodeSettings, m3_only: bool) -> Vec<String> {
+    let mut settings = dev.to_gcode();
+    settings.travel_s0 = m3_only;
+    job::gcode::lines(&for_device(tp.clone(), dev), &settings).collect()
 }
 
 /// File extensions the G-code save offers (EXP-06).
@@ -1339,11 +1525,50 @@ mod tests {
     }
 
     #[test]
+    fn a_fill_far_too_big_to_scan_is_left_out_with_a_warning() {
+        // Found by the monkey (seed 2006): shapes scaled up by accident to thousands of
+        // kilometres on a fill layer took all the memory there is and the program with it.
+        let mut d = Document::new();
+        d.layer_mut(2).main_mut().mode = Mode::Fill;
+        d.layer_mut(2).main_mut().interval = 0.1;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 6e7, 6e7), 0.0, 2));
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0));
+        let b = build_job_simple(&input(d.clone())).unwrap();
+        assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("scan lines")), "{:?}", b.warnings);
+        assert!(b.toolpath.ops.len() < 100, "only the small square is cut: {} operations", b.toolpath.ops.len());
+        // A fill that fits a large machine is not touched by the limit.
+        d.layer_mut(2).main_mut().interval = 1.0;
+        let s = d.iter().next().unwrap().id;
+        d.get_mut(s).unwrap().kind = ShapeKind::Rect { width: 3000.0, height: 1500.0, radius: 0.0 };
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!(!b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
+        assert!(b.toolpath.ops.len() > 1500);
+    }
+
+    #[test]
     fn kerf_grows_closed_shapes() {
         let mut d = square_doc();
         d.layer_mut(0).main_mut().kerf = 1.0;
         let b = build_job_simple(&input(d)).unwrap();
         assert!((b.bounds.width() - 22.0).abs() < 0.05, "{:?}", b.bounds);
+    }
+
+    #[test]
+    fn a_hole_the_kerf_closes_up_is_said() {
+        use darkburn_core::kurbo::Shape as _;
+        let mut d = square_doc();
+        d.layer_mut(0).main_mut().kerf = 0.5;
+        // a 0.4 mm hole in the square, and one that is big enough
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((15.0, 15.0), 0.2).to_path(0.001), 0));
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((25.0, 25.0), 3.0).to_path(0.001), 0));
+        let b = build_job_simple(&input(d)).unwrap();
+        let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("kerf")).collect();
+        assert_eq!(said.len(), 1, "{:?}", b.warnings);
+        assert!(said[0].contains("1 shape or hole") && said[0].contains("left out"), "{}", said[0]);
+        // without a kerf nothing is said
+        let mut d = square_doc();
+        d.add(Shape::path(darkburn_core::kurbo::Circle::new((15.0, 15.0), 0.2).to_path(0.001), 0));
+        assert!(build_job_simple(&input(d)).unwrap().warnings.iter().all(|w| !w.contains("kerf")));
     }
 
     #[test]

@@ -173,6 +173,27 @@ pub fn grid_steps(zoom: f32) -> (f32, Option<f32>) {
     (major, minor)
 }
 
+/// The drawn grid for a chosen spacing [SET-05]: lines every `spacing` mm (every 2, 5, 10, ...
+/// spacings when they would be closer than 8 points), every fifth one a major line. A spacing
+/// of 0 (or less) follows the zoom, as [`grid_steps`] does.
+pub fn grid_steps_for(zoom: f32, spacing: f32) -> (f32, Option<f32>) {
+    if !(spacing.is_finite() && spacing > 0.0) {
+        return grid_steps(zoom);
+    }
+    let zoom = zoom.max(f32::EPSILON);
+    let mut decade = 1.0f32;
+    let fine = 'found: loop {
+        for m in [1.0, 2.0, 5.0] {
+            let step = spacing * m * decade;
+            if step * zoom >= 8.0 || !step.is_finite() {
+                break 'found step;
+            }
+        }
+        decade *= 10.0;
+    };
+    (fine * 5.0, Some(fine))
+}
+
 /// The multiples of `step` from `from` to `to` (in that order, inclusive).
 pub fn ticks(from: f32, to: f32, step: f32) -> impl Iterator<Item = f32> {
     let (lo, hi) = (from.min(to), from.max(to));
@@ -271,6 +292,32 @@ mod tests {
         for o in Origin::ALL {
             let p = pos2(123.0, 45.0);
             assert_eq!(o.to_page(o.to_machine(p, page), page), p);
+        }
+    }
+
+    #[test]
+    fn a_chosen_grid_spacing_is_drawn_as_asked_until_the_lines_would_touch() {
+        // 10 mm at 1.4 points per mm: a line every 10 mm, a major one every 50 mm.
+        assert_eq!(grid_steps_for(1.4, 10.0), (50.0, Some(10.0)));
+        // Zooming in does not add finer lines: the spacing is the user's.
+        assert_eq!(grid_steps_for(40.0, 10.0), (50.0, Some(10.0)));
+        assert_eq!(grid_steps_for(1.4, 25.0), (125.0, Some(25.0)));
+        // Zoomed out, every 2nd, 5th, 10th ... line is kept so they stay 8 points apart.
+        assert_eq!(grid_steps_for(0.5, 10.0), (100.0, Some(20.0)));
+        assert_eq!(grid_steps_for(0.2, 10.0), (250.0, Some(50.0)));
+        assert_eq!(grid_steps_for(0.05, 10.0), (1000.0, Some(200.0)));
+        for zoom in [0.001, 0.03, 0.5, 3.7, 300.0] {
+            for spacing in [0.1, 1.0, 10.0, 25.4, 1000.0] {
+                let (major, fine) = grid_steps_for(zoom, spacing);
+                let fine = fine.unwrap();
+                assert!(fine * zoom >= 8.0 * 0.999, "{fine} mm at {zoom}");
+                assert!(((fine / spacing).round() - fine / spacing).abs() < 1e-3, "a whole number of spacings");
+                assert!((major - fine * 5.0).abs() < major * 1e-5);
+            }
+        }
+        // 0, negative or broken values follow the zoom.
+        for auto in [0.0, -5.0, f32::NAN] {
+            assert_eq!(grid_steps_for(3.7, auto), grid_steps(3.7));
         }
     }
 

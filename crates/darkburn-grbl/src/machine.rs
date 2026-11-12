@@ -37,6 +37,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -125,6 +126,10 @@ impl Default for ConnectOptions {
 const MIN_POLL: Duration = Duration::from_millis(200);
 const POLL_STALE: Duration = Duration::from_secs(1);
 const STOP_STEP_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long `disconnect` (and dropping the handle) waits for the worker to finish.
+const DISCONNECT_WAIT: Duration = Duration::from_secs(1);
+/// How long it then waits for the worker to let the link go once it was told to give up.
+const GIVE_UP_WAIT: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Errors returned straight from [`GrblMachine`] methods.
@@ -297,6 +302,8 @@ pub struct Snapshot {
     pub rx_in_flight_peak: usize,
     pub rx_capacity: usize,
     pub show_all: bool,
+    /// A known diode laser recognised from the welcome text or the `$I` reply.
+    pub detected: Option<crate::detect::DetectedLaser>,
 }
 
 impl Snapshot {
@@ -309,9 +316,12 @@ impl Snapshot {
         if self.alarm_locked || self.status.state.is_alarm() {
             return LaserStatus::Alarm;
         }
+        // A job or frame the controller holds (a pause, a hold of its own, the safety door) goes
+        // on with Resume only: it shows as paused whoever asked for the hold.
+        let held = self.paused || matches!(self.status.state, MachineState::Hold(_) | MachineState::Door(_));
         match self.activity {
+            Activity::Framing | Activity::Job if held => LaserStatus::Paused,
             Activity::Framing => LaserStatus::Framing,
-            Activity::Job if self.paused => LaserStatus::Paused,
             Activity::Job | Activity::Stopping => LaserStatus::Busy,
             Activity::Idle => match self.status.state {
                 MachineState::Hold(_) | MachineState::Door(_) => LaserStatus::Paused,
@@ -526,11 +536,14 @@ pub struct FrameOptions {
     pub feed: f64,
     /// Laser on at this power (percent) while tracing, limited by `max_fire_percent`.
     pub laser_percent: Option<f64>,
+    /// Where the head goes when the frame is done, laser off (work coordinates). A job that
+    /// starts from the current position needs the head back where it was.
+    pub return_to: Option<Point>,
 }
 
 impl Default for FrameOptions {
     fn default() -> Self {
-        Self { feed: 3000.0, laser_percent: None }
+        Self { feed: 3000.0, laser_percent: None, return_to: None }
     }
 }
 
@@ -584,12 +597,23 @@ impl SettingsBackup {
 }
 
 enum Cmd {
-    Line { text: String, origin: Origin },
-    Lines { lines: Vec<String>, origin: Origin },
+    Line {
+        text: String,
+        origin: Origin,
+    },
+    /// `keep_fire`: the lines switch an accessory only, so the fire button stays as it is.
+    Lines {
+        lines: Vec<String>,
+        origin: Origin,
+        keep_fire: bool,
+    },
     Realtime(Vec<u8>),
     StartJob(Job, JobKind),
     Stop,
-    Fire { s: f64, until: Instant },
+    Fire {
+        s: f64,
+        until: Instant,
+    },
     FireOff,
     JogCancel,
     SetShowAll(bool),
@@ -603,6 +627,9 @@ pub struct GrblMachine {
     shared: Arc<Mutex<Snapshot>>,
     opts: ConnectOptions,
     worker: Option<JoinHandle<()>>,
+    /// Set when `disconnect` stops waiting: the worker then resets the controller and lets the
+    /// link go at once.
+    give_up: Arc<AtomicBool>,
 }
 
 impl GrblMachine {
@@ -620,9 +647,11 @@ impl GrblMachine {
             ..Default::default()
         };
         let shared = Arc::new(Mutex::new(snap.clone()));
-        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), opts.clone(), snap);
+        let give_up = Arc::new(AtomicBool::new(false));
+        let mut worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), opts.clone(), snap);
+        worker.give_up = give_up.clone();
         let handle = std::thread::Builder::new().name("darkburn-grbl".into()).spawn(move || worker.run()).expect("spawn GRBL worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle) }
+        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle), give_up }
     }
 
     /// Everything that happened since the last call. Never blocks.
@@ -669,7 +698,25 @@ impl GrblMachine {
     fn shutdown(&mut self) {
         let _ = self.cmds.send(Cmd::Disconnect);
         if let Some(h) = self.worker.take() {
-            let _ = h.join();
+            // The worker stops the job and turns the laser off before it lets the link go. With
+            // a controller that no longer answers that takes several seconds of waiting, and
+            // the caller is usually the UI thread: wait a little, then tell the worker to give
+            // up. It sends a reset (the laser goes off with it) and closes the link, so the
+            // port is free for the next connection when this returns.
+            let wait = |d: Duration| {
+                let end = Instant::now() + d;
+                while !h.is_finished() && Instant::now() < end {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            };
+            wait(DISCONNECT_WAIT);
+            if !h.is_finished() {
+                self.give_up.store(true, Ordering::SeqCst);
+                wait(GIVE_UP_WAIT);
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            }
         }
     }
 
@@ -765,8 +812,11 @@ impl GrblMachine {
         if points.is_empty() {
             return Err(GrblError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(GrblError::InvalidArgument("Framing speed must be above 0.".into()));
+        }
+        if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(GrblError::InvalidArgument("The frame has a position that is not a number.".into()));
         }
         if let Some(pct) = opts.laser_percent
             && !(0.0..=self.opts.max_fire_percent).contains(&pct)
@@ -776,7 +826,7 @@ impl GrblMachine {
         let s = self.motion_ok(false)?;
         if let Some(t) = s.travel(&self.opts) {
             let wco = s.status.wco;
-            for p in points {
+            for p in points.iter().chain(&opts.return_to) {
                 let m = Point::new(p.x + wco[0], p.y + wco[1]);
                 if !contains(t.xy, m) {
                     return Err(GrblError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", m.x, m.y)));
@@ -794,6 +844,10 @@ impl GrblMachine {
             lines.push(format!("G1 X{} Y{} F{f}", fmt_num(p.x), fmt_num(p.y)));
         }
         lines.push("M5 S0".to_owned());
+        if let Some(p) = opts.return_to {
+            // Laser off by the line above: back to where the head was.
+            lines.push(format!("G0 X{} Y{}", fmt_num(p.x), fmt_num(p.y)));
+        }
         let n = lines.len();
         let job = Job::from_lines(lines).with_total(n);
         self.send(Cmd::StartJob(job, JobKind::Frame))
@@ -804,8 +858,11 @@ impl GrblMachine {
     /// Relative jog (`$J=G91`), works for X/Y diagonals and Z. Turns the fire button off first.
     pub fn jog(&self, step: JogStep) -> Result<(), GrblError> {
         let s = self.motion_ok(true)?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(GrblError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -830,6 +887,7 @@ impl GrblMachine {
             self.send(Cmd::Lines {
                 lines: vec!["M5".into(), format!("G21 G91 G1{axes} F{}", fmt_num(step.feed)), "G90".into()],
                 origin: Origin::Internal(Tag::Plain),
+                keep_fire: false,
             })
         }
     }
@@ -840,7 +898,7 @@ impl GrblMachine {
         if !s.is_v11() {
             return Err(GrblError::Unsupported("continuous jog needs GRBL 1.1"));
         }
-        if feed <= 0.0 {
+        if !positive(feed) {
             return Err(GrblError::InvalidArgument("Jog speed must be above 0.".into()));
         }
         let t =
@@ -916,8 +974,11 @@ impl GrblMachine {
         if target.x.is_none() && target.y.is_none() && target.z.is_none() {
             return Ok(());
         }
-        if target.feed <= 0.0 {
+        if !positive(target.feed) {
             return Err(GrblError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [target.x, target.y, target.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(GrblError::InvalidArgument("The position is not a number.".into()));
         }
         if let Some(t) = s.travel(&self.opts) {
             let off = if target.coords == Coords::Machine { [0.0; 4] } else { s.status.wco };
@@ -1067,7 +1128,18 @@ impl GrblMachine {
         if lines.is_empty() {
             return Ok(());
         }
-        self.send(Cmd::Lines { lines, origin: Origin::Macro })
+        self.send(Cmd::Lines { lines, origin: Origin::Macro, keep_fire: false })
+    }
+
+    /// Runs the lines that switch an accessory (air assist: `M8`, `M9` or the device's own
+    /// commands). Unlike [`run_macro`](Self::run_macro) it leaves the fire button as it is.
+    pub fn run_accessory(&self, text: &str) -> Result<(), GrblError> {
+        self.free()?;
+        let lines: Vec<String> = text.lines().filter_map(clean_line).collect();
+        if lines.is_empty() {
+            return Ok(());
+        }
+        self.send(Cmd::Lines { lines, origin: Origin::Macro, keep_fire: true })
     }
 
     /// Echo every sent line (including job lines) and its `ok`.
@@ -1080,6 +1152,12 @@ impl Drop for GrblMachine {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 fn contains(r: Rect, p: Point) -> bool {
@@ -1133,6 +1211,10 @@ struct Pending {
     len: usize,
     origin: Origin,
     text: String,
+}
+
+fn is_jog_line(text: &str) -> bool {
+    text.get(..3).is_some_and(|t| t.eq_ignore_ascii_case("$J="))
 }
 
 struct ActiveJob {
@@ -1209,6 +1291,9 @@ enum StopPhase {
 struct StopSeq {
     phase: StopPhase,
     since: Instant,
+    /// Where the last status report after the feed hold put the machine. GRBL 0.9 does not
+    /// say when a hold is complete, so the reset waits until two reports agree.
+    held_at: Option<Axes>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1232,6 +1317,11 @@ struct Worker {
     queue: VecDeque<Outgoing>,
     job: Option<ActiveJob>,
     motion_pending: bool,
+    /// When the last jog line went out, until a status report asked for after it shows the
+    /// machine out of the jog. A jogging controller answers G-code with an error and drops it.
+    jog_sent: Option<Instant>,
+    /// The spindle stop byte was sent in this pause (it is a toggle: once per hold).
+    hold_laser_stopped: bool,
     poll_sent: Option<Instant>,
     last_poll: Instant,
     echo_status: bool,
@@ -1242,6 +1332,8 @@ struct Worker {
     alarm_count: u64,
     home_alarm_count: u64,
     outbox: RefCell<Vec<Event>>,
+    detector: crate::detect::LaserDetector,
+    give_up: Arc<AtomicBool>,
 }
 
 impl Worker {
@@ -1268,6 +1360,8 @@ impl Worker {
             queue: VecDeque::new(),
             job: None,
             motion_pending: false,
+            jog_sent: None,
+            hold_laser_stopped: false,
             poll_sent: None,
             last_poll: now,
             echo_status: false,
@@ -1278,6 +1372,8 @@ impl Worker {
             alarm_count: 0,
             home_alarm_count: 0,
             outbox: RefCell::new(Vec::new()),
+            detector: crate::detect::LaserDetector::default(),
+            give_up: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1409,6 +1505,7 @@ impl Worker {
         }
         self.fire_until = None;
         self.stop = None;
+        self.snap.paused = false;
         let was_connecting = self.snap.connection == ConnectionState::Connecting;
         self.snap.connection = ConnectionState::Disconnected;
         if was_connecting {
@@ -1421,22 +1518,37 @@ impl Worker {
 
     fn shutdown(&mut self) {
         if self.phase == Phase::Ready {
-            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some();
+            // A jog whose start no status report has shown yet still runs on the controller.
+            let jogging = self.jogging();
+            if jogging && self.stop.is_none() && self.snap.is_v11() {
+                let _ = self.write(&[rt::JOG_CANCEL]);
+            }
+            let busy = self.job.is_some() || self.snap.status.state.is_moving() || self.stop.is_some() || jogging;
             if busy && self.stop.is_none() {
                 let _ = self.begin_stop();
             }
+            let gave_up = |w: &Self| w.give_up.load(Ordering::SeqCst);
             let end = Instant::now() + STOP_STEP_TIMEOUT * 2;
-            while self.stop.is_some() && Instant::now() < end {
+            while self.stop.is_some() && Instant::now() < end && !gave_up(self) {
                 if self.iterate().is_err() {
                     break;
                 }
             }
+            if self.stop.is_some() && gave_up(self) {
+                // The caller stopped waiting for a controller that does not answer the stop.
+                // A reset is the last thing that can still turn the laser off; then the link
+                // is let go, so the port is not held for seconds more.
+                if !self.snap.alarm_locked {
+                    let _ = self.write(&[rt::SOFT_RESET]);
+                }
+                self.stop = None;
+            }
             // Laser off where the controller accepts G-code; an alarm already keeps it off.
-            if !self.snap.alarm_locked && self.in_flight_bytes + 6 <= self.capacity() && self.write(b"M5 S0\n").is_ok() {
+            else if !self.snap.alarm_locked && self.in_flight_bytes + 6 <= self.capacity() && self.write(b"M5 S0\n").is_ok() {
                 self.in_flight.push_back(Pending { len: 6, origin: Origin::Internal(Tag::Plain), text: "M5 S0".into() });
                 self.in_flight_bytes += 6;
                 let end = Instant::now() + Duration::from_millis(500);
-                while !self.in_flight.is_empty() && Instant::now() < end {
+                while !self.in_flight.is_empty() && Instant::now() < end && !gave_up(self) {
                     if self.iterate().is_err() {
                         break;
                     }
@@ -1446,6 +1558,7 @@ impl Worker {
             }
         }
         self.fire_until = None;
+        self.snap.paused = false;
         self.snap.connection = ConnectionState::Disconnected;
         self.emit(Event::Disconnected(None));
         self.publish();
@@ -1469,13 +1582,17 @@ impl Worker {
                     if origin == Origin::Console {
                         self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
                     }
+                    self.fire_off_before_command();
                     self.queue.push_back(Outgoing::new(text, origin));
                 }
             }
-            Cmd::Lines { lines, origin } => {
+            Cmd::Lines { lines, origin, keep_fire } => {
                 if busy {
                     self.reject("Busy, macro not run.");
                 } else {
+                    if !keep_fire {
+                        self.fire_off_before_command();
+                    }
                     for text in lines {
                         if origin == Origin::Macro {
                             self.emit(Event::Console(ConsoleLine { kind: ConsoleKind::Sent, text: text.clone() }));
@@ -1498,6 +1615,7 @@ impl Worker {
                     }
                     if bytes == [rt::CYCLE_START] {
                         self.snap.paused = false;
+                        self.hold_laser_stopped = false;
                     }
                 }
             }
@@ -1542,6 +1660,10 @@ impl Worker {
     }
 
     fn fire_off(&mut self, timed_out: bool) {
+        // A fire line that still waits (behind homing, a full buffer) is dropped: the `M5`
+        // goes to the front of the queue, so the line would be sent after its own switch-off
+        // and nothing would end it.
+        self.queue.retain(|o| o.origin != Origin::Internal(Tag::Fire));
         if self.fire_until.take().is_some() || !timed_out {
             self.queue.push_front(Outgoing { text: "M5 S0".into(), origin: Origin::Internal(Tag::Plain), sync: false, needs_idle: false });
         }
@@ -1550,9 +1672,27 @@ impl Worker {
         }
     }
 
+    /// The fire button never stays on while something else runs: a homing cycle or another
+    /// command that waits for the machine would hold back the timed `M5` until it is done.
+    fn fire_off_before_command(&mut self) {
+        if self.fire_until.is_some() {
+            self.fire_off(false);
+        }
+    }
+
+    /// A jog is waiting to be sent, is on its way or runs.
+    fn jogging(&self) -> bool {
+        self.jog_sent.is_some() || self.snap.status.state == MachineState::Jog || self.queue.iter().any(|o| is_jog_line(&o.text))
+    }
+
     fn start_job(&mut self, job: Job, kind: JobKind) -> Result<(), String> {
         if self.job.is_some() || self.stop.is_some() {
             self.reject("A job is already running.");
+            return Ok(());
+        }
+        if self.jogging() {
+            // The controller would answer the first lines with an error and run the rest.
+            self.reject("The machine is still jogging; wait until it stands still, then start again.");
             return Ok(());
         }
         if self.snap.alarm_locked || self.snap.status.state.is_alarm() {
@@ -1608,13 +1748,18 @@ impl Worker {
         self.snap.paused = false;
         let state = &self.snap.status.state;
         let may_move = state.is_moving() || matches!(state, MachineState::Hold(_)) || self.motion_pending || !self.in_flight.is_empty();
+        // A homing cycle ignores feed hold and answers no status requests, so its state here
+        // is stale; only a reset stops it.
+        let homing = self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H"));
         let now = Instant::now();
-        if self.snap.is_v11() && may_move && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
+        // Feed hold first on every GRBL version: a reset while the machine moves raises an
+        // alarm and loses the position.
+        if may_move && !homing && !matches!(state, MachineState::Home | MachineState::Alarm(_)) {
             self.write(&[rt::FEED_HOLD])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Hold, since: now, held_at: None });
         } else {
             self.write(&[rt::SOFT_RESET])?;
-            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now });
+            self.stop = Some(StopSeq { phase: StopPhase::Reset, since: now, held_at: None });
         }
         self.publish();
         Ok(())
@@ -1622,12 +1767,12 @@ impl Worker {
 
     fn stop_reset(&mut self) -> Result<(), String> {
         self.write(&[rt::SOFT_RESET])?;
-        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::Reset, since: Instant::now(), held_at: None });
         Ok(())
     }
 
     fn stop_after_reset(&mut self) -> Result<(), String> {
-        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now() });
+        self.stop = Some(StopSeq { phase: StopPhase::AwaitStatus, since: Instant::now(), held_at: None });
         self.poll(true)
     }
 
@@ -1791,6 +1936,9 @@ impl Worker {
         if (!up.starts_with('$') || up.starts_with("$J=")) && o.origin != Origin::Internal(Tag::Sync) {
             self.motion_pending = true;
         }
+        if up.starts_with("$J=") {
+            self.jog_sent = Some(Instant::now());
+        }
         if o.origin == Origin::Internal(Tag::Home) {
             self.home_alarm_count = self.alarm_count;
         }
@@ -1821,6 +1969,11 @@ impl Worker {
     }
 
     fn on_line(&mut self, line: &str) -> Result<(), String> {
+        // Vendor tags and welcome lines name the machine; plain replies are skipped cheaply.
+        if line.starts_with('[') || line.ends_with('!') {
+            self.detector.feed(line);
+            self.snap.detected = self.detector.result();
+        }
         let resp = parse_response(line);
         match resp {
             Response::Ok => self.on_answer(line, None),
@@ -1899,6 +2052,10 @@ impl Worker {
         };
         self.in_flight_bytes -= p.len;
         let user = matches!(p.origin, Origin::Console | Origin::Macro);
+        if error.is_some() && is_jog_line(&p.text) && !self.in_flight.iter().any(|q| is_jog_line(&q.text)) {
+            // The controller refused the jog: nothing moves.
+            self.jog_sent = None;
+        }
         if let Some((code, msg)) = &error {
             self.received(&format!("{line} ({msg})"));
             match &p.origin {
@@ -2016,6 +2173,7 @@ impl Worker {
         self.in_flight.clear();
         self.in_flight_bytes = 0;
         self.motion_pending = false;
+        self.jog_sent = None;
         self.settings_collect.clear();
         self.fire_until = None;
         self.snap.status.overrides = Overrides::default();
@@ -2116,23 +2274,79 @@ impl Worker {
         st.updated = Some(Instant::now());
         let changed = st.state != r.state;
         st.state = r.state.clone();
+        if let (Some(jog), Some(asked)) = (self.jog_sent, poll_time)
+            && asked > jog
+            && r.state != MachineState::Jog
+            && !self.in_flight.iter().any(|p| is_jog_line(&p.text))
+        {
+            self.jog_sent = None;
+        }
         if r.state.is_alarm() {
             self.snap.alarm_locked = true;
+            // The `ALARM:` line itself can be lost or never sent; a controller that reports the
+            // alarm state runs nothing, so nothing here may wait to go on once it is cleared.
+            if self.job.is_some() || self.fire_until.is_some() {
+                self.fire_until = None;
+                self.queue.retain(|o| o.origin != Origin::Internal(Tag::Fire));
+                self.abort_job("The machine is in alarm.");
+            }
         } else if r.state != MachineState::Unknown {
             self.snap.alarm_locked = false;
         }
         if changed {
             self.emit(Event::StateChanged(r.state.clone()));
         }
-        if let Some(stop) = &self.stop {
+        // The safety door ends the fire button. The controller switches the laser off while the
+        // door is open and puts the spindle state back when it is closed and resumed: without
+        // the `M5` the laser would come on again there, under a press made before the door
+        // opened.
+        if matches!(r.state, MachineState::Door(_)) && self.fire_until.is_some() && self.job.is_none() {
+            self.fire_off(false);
+            self.emit(Event::FireOff);
+        }
+        // A feed hold stops the motion; without laser mode ($32) the laser output stays on.
+        // GRBL 1.1 switches it off with the spindle stop byte, taken only once the hold is
+        // complete, and puts it back on the cycle start.
+        if !matches!(r.state, MachineState::Hold(_)) {
+            self.hold_laser_stopped = false;
+        } else if r.state == MachineState::Hold(0)
+            && self.snap.paused
+            && self.job.is_some()
+            && self.stop.is_none()
+            && !self.hold_laser_stopped
+            && self.snap.firmware.as_ref().is_some_and(FirmwareInfo::is_v11)
+            && !self.snap.settings.get(&32).is_some_and(|v| v.trim() == "1")
+        {
+            self.write(&[rt::SPINDLE_STOP])?;
+            self.hold_laser_stopped = true;
+        }
+        let v11 = self.snap.is_v11();
+        let mpos = self.snap.status.mpos;
+        if let Some(stop) = &mut self.stop {
             match stop.phase {
                 StopPhase::Hold => {
                     let after_hold = poll_time.is_some_and(|t| t > stop.since);
-                    if after_hold && !r.state.is_moving() {
+                    // GRBL 1.1 reports `Hold:1` while it slows down. GRBL 0.9 reports a plain
+                    // `Hold` all the way, so there the machine stands still once two reports
+                    // in a row give the same position.
+                    let still = v11 || !matches!(r.state, MachineState::Hold(_)) || stop.held_at == Some(mpos);
+                    if after_hold {
+                        stop.held_at = Some(mpos);
+                    }
+                    if after_hold && !r.state.is_moving() && still {
                         self.stop_reset()?;
                     }
                 }
-                StopPhase::AwaitStatus => self.finish_stop(),
+                StopPhase::AwaitStatus => {
+                    // The reset byte went out before this status request, and the controller
+                    // takes both straight off the wire: one that answers the request has also
+                    // reset, with or without a start-up message. Its buffer is empty.
+                    self.in_flight.clear();
+                    self.in_flight_bytes = 0;
+                    self.motion_pending = false;
+                    self.jog_sent = None;
+                    self.finish_stop();
+                }
                 StopPhase::Reset => {}
             }
         }

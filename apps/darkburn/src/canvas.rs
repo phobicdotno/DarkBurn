@@ -77,7 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     solidcraft_ui_registry::publish_rect("canvas", canvas);
     let id = ui.scope_id().with("canvas");
     let response = ui.interact(canvas, id, Sense::click_and_drag());
-    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p));
+    // The pointer on the canvas itself: not on a window, menu or list in front of it (the wheel
+    // there scrolls that, and must not zoom the drawing behind).
+    let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p) && response.contains_pointer());
     let pan_mode = {
         let prefs = &mut app.prefs;
         let view = &mut prefs.view;
@@ -192,8 +194,8 @@ fn paint_backdrop(ui: &Ui, prefs: &Prefs, view: &View, canvas: Rect) {
     let page_fill = ct.field;
     painter.rect_filled(page_rect, 0.0, page_fill);
 
-    // Grid: major lines, plus a finer grid when zoomed in far enough.
-    let (major, minor) = view::grid_steps(view.zoom);
+    // Grid: lines at the chosen spacing (or following the zoom), every fifth one stronger.
+    let (major, minor) = view::grid_steps_for(view.zoom, prefs.grid_spacing);
     if prefs.show_grid {
         let k = 0.25 + 0.75 * prefs.grid_contrast;
         let major_ink = mix(page_fill, ct.grid_major, k * 1.4);

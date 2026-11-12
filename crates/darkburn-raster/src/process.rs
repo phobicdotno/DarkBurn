@@ -221,6 +221,38 @@ mod tests {
         GrayF::from_fn(200, 40, |x, _| x as f32 / 199.0)
     }
 
+    #[test]
+    fn transparent_pixels_never_burn_even_when_negative_or_darkened() {
+        // Left half opaque white, right half fully transparent.
+        let rgba = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([255, 255, 255, 255]) } else { image::Rgba([0, 0, 0, 0]) });
+        let src = GrayF::from_dynamic(&image::DynamicImage::ImageRgba8(rgba));
+        let t = placement(8, 4, Point::ZERO, Size::new(0.8, 0.4));
+        for (negative, brightness, resample_pass_through) in [(true, 0.0, false), (false, -100.0, false), (true, 0.0, true)] {
+            let mode = if resample_pass_through { ImageMode::PassThrough } else { ImageMode::Threshold { threshold: 0.5, ramp_length_mm: 0.0 } };
+            let s = ImageSettings { mode, negative, ..Default::default() };
+            let p = process_image(&src, t, &Adjustments { brightness, ..Default::default() }, &s);
+            assert_eq!((p.map.width, p.map.height), (8, 4));
+            for y in 0..4 {
+                for x in 0..8 {
+                    assert_eq!(p.map.get(x, y) != 0, x < 4, "negative {negative}, brightness {brightness}, at {x},{y}");
+                }
+            }
+        }
+        // An opaque pixel next to a transparent one keeps its own tone up to the edge: black
+        // beside nothing stays black, it does not fade to white over half a pixel.
+        let rgba = image::RgbaImage::from_fn(2, 1, |x, _| if x == 0 { image::Rgba([0, 0, 0, 255]) } else { image::Rgba([0, 0, 0, 0]) });
+        let src = GrayF::from_dynamic(&image::DynamicImage::ImageRgba8(rgba));
+        let s = ImageSettings { mode: ImageMode::Threshold { threshold: 0.5, ramp_length_mm: 0.0 }, ..Default::default() };
+        let p = process_image(&src, placement(2, 1, Point::ZERO, Size::new(2.0, 0.1)), &Adjustments::default(), &s);
+        assert_eq!(p.map.width, 20);
+        let on: Vec<bool> = (0..20).map(|x| p.map.get(x, 0) != 0).collect();
+        assert_eq!(on, (0..20).map(|x| x < 10).collect::<Vec<_>>(), "the black pixel burns its whole millimetre and nothing more");
+        // Without transparency nothing is kept.
+        assert!(
+            GrayF::from_dynamic(&image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 9, 9, 255])))).clear.is_empty()
+        );
+    }
+
     fn run(mode: ImageMode) -> ProcessedImage {
         let src = gradient();
         let t = placement(200, 40, Point::ZERO, Size::new(20.0, 4.0));

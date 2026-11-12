@@ -56,6 +56,22 @@ pub fn shape_json(s: &Shape, detail: bool) -> Value {
         o.insert("power_scale".into(), json!(s.power_scale));
         o.insert("closed".into(), json!(s.is_closed()));
         o.insert("tabs".into(), json!(s.tabs.len()));
+        // Manual tabs and forced start points in document coordinates, and the cut direction.
+        let doc_pt = |p: [f64; 2]| {
+            let q = s.transform * darkburn_core::kurbo::Point::new(p[0], p[1]);
+            json!([r4(q.x), r4(q.y)])
+        };
+        o.insert("tab_points".into(), Value::Array(s.tabs.iter().copied().map(doc_pt).collect()));
+        o.insert("start_points".into(), Value::Array(s.start_points().map(doc_pt).collect()));
+        o.insert(
+            "direction".into(),
+            json!(match s.direction {
+                darkburn_core::CutDirection::Auto => "auto",
+                darkburn_core::CutDirection::Clockwise => "clockwise",
+                darkburn_core::CutDirection::CounterClockwise => "counter_clockwise",
+                darkburn_core::CutDirection::Reversed => "reversed",
+            }),
+        );
         o.insert("virtual_array".into(), json!(s.array.is_some()));
     }
     match &s.kind {
@@ -372,7 +388,7 @@ pub fn vision_json(app: &DarkBurn, which: Option<&str>) -> Result<Value, Command
         None => Ok(all),
         Some("camera") => Ok(all["camera"].clone()),
         Some("rotary") => {
-            Ok(json!({"rotary": all["rotary"], "split": all["rotary_split"], "cylinder": all["cylinder"], "on": app.machine.rotary_on}))
+            Ok(json!({"rotary": all["rotary"], "split": all["rotary_split"], "cylinder": all["cylinder"], "on": app.vision.state.rotary.enabled}))
         }
         Some("print_and_cut" | "pnc") => Ok(all["pnc"].clone()),
         Some(other) => Err(CommandError::failed(format!("unknown vision path `{other}`: use camera, rotary or print_and_cut"))),

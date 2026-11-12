@@ -252,6 +252,13 @@ pub struct Galvo {
     pub laser_off_tc_us: f64,
     pub end_tc_us: f64,
     pub polygon_tc_us: f64,
+    /// Drill mode (line layers) [GALVO-19]: fire in place at points along the outline
+    /// instead of tracing it.
+    pub drill: bool,
+    /// How long the laser fires at each drill point, ms.
+    pub drill_dwell_ms: f64,
+    /// Distance between drill points along the outline, mm; 0 drills only the outline's own points.
+    pub drill_spacing_mm: f64,
 }
 
 impl Default for Galvo {
@@ -275,6 +282,9 @@ impl Default for Galvo {
             laser_off_tc_us: 100.0,
             end_tc_us: 300.0,
             polygon_tc_us: 100.0,
+            drill: false,
+            drill_dwell_ms: 1.0,
+            drill_spacing_mm: 0.5,
         }
     }
 }
@@ -455,6 +465,56 @@ impl CutSetting {
         clamp(&mut self.z_offset, -100.0, 100.0, 0.0);
         self.scan_angle = if self.scan_angle.is_finite() { self.scan_angle.rem_euclid(360.0) } else { 0.0 };
         self.passes = self.passes.clamp(1, 10_000);
+        // Everything else: the ranges the Cut Settings editor holds its fields to, so a value
+        // from a file or a script is never one the editor could not have made (four thousand
+        // million tabs, a pause of years).
+        let d = CutSetting::default();
+        clamp(&mut self.z_step, -100.0, 100.0, d.z_step);
+        clamp(&mut self.kerf, -10.0, 10.0, d.kerf);
+        clamp(&mut self.perf_cut, 0.01, 1000.0, d.perf_cut);
+        clamp(&mut self.perf_skip, 0.01, 1000.0, d.perf_skip);
+        clamp(&mut self.tabs.spacing, 0.1, 10_000.0, d.tabs.spacing);
+        clamp(&mut self.tabs.size, 0.0, 100.0, d.tabs.size);
+        clamp(&mut self.tabs.tab_power, 0.0, 100.0, d.tabs.tab_power);
+        self.tabs.min_count = self.tabs.min_count.min(1000);
+        self.tabs.max_count = self.tabs.max_count.min(1000);
+        clamp(&mut self.start_pause_ms, 0.0, 60_000.0, d.start_pause_ms);
+        clamp(&mut self.end_pause_ms, 0.0, 60_000.0, d.end_pause_ms);
+        clamp(&mut self.overcut, 0.0, 100.0, d.overcut);
+        clamp(&mut self.pwm_khz, 0.1, 1000.0, d.pwm_khz);
+        clamp(&mut self.ppi, 1.0, 10_000.0, d.ppi);
+        for l in [&mut self.lead_in, &mut self.lead_out] {
+            clamp(&mut l.length, 0.0, 100.0, 1.0);
+            clamp(&mut l.angle, 0.0, 180.0, 90.0);
+        }
+        clamp(&mut self.dot_time_ms, 0.001, 10_000.0, d.dot_time_ms);
+        clamp(&mut self.dot_spacing, 0.001, 1000.0, d.dot_spacing);
+        clamp(&mut self.u_offset, -1000.0, 1000.0, d.u_offset);
+        clamp(&mut self.overscan, 0.0, 1000.0, d.overscan);
+        clamp(&mut self.angle_increment, -360.0, 360.0, d.angle_increment);
+        clamp(&mut self.ramp_length, 0.0, 100.0, d.ramp_length);
+        clamp(&mut self.dot_width_correction, 0.0, 10.0, d.dot_width_correction);
+        clamp(&mut self.halftone_cells, 1.0, 1000.0, d.halftone_cells);
+        clamp(&mut self.halftone_angle, -360.0, 360.0, d.halftone_angle);
+        clamp(&mut self.threshold_ramp, 0.0, 100.0, d.threshold_ramp);
+        let (g, dg) = (&mut self.galvo, d.galvo);
+        clamp(&mut g.frequency_khz, 1.0, 4000.0, dg.frequency_khz);
+        clamp(&mut g.q_pulse_ns, 1.0, 10_000.0, dg.q_pulse_ns);
+        clamp(&mut g.pause_before_ms, 0.0, 60_000.0, dg.pause_before_ms);
+        clamp(&mut g.pause_after_ms, 0.0, 60_000.0, dg.pause_after_ms);
+        g.global_passes = g.global_passes.clamp(1, 10_000);
+        clamp(&mut g.wobble_size, 0.0, 10.0, dg.wobble_size);
+        clamp(&mut g.wobble_step, 0.0, 10.0, dg.wobble_step);
+        clamp(&mut g.jump_speed, 1.0, 100_000.0, dg.jump_speed);
+        clamp(&mut g.min_jump_delay_us, 0.0, 100_000.0, dg.min_jump_delay_us);
+        clamp(&mut g.max_jump_delay_us, 0.0, 100_000.0, dg.max_jump_delay_us);
+        clamp(&mut g.jump_distance_limit, 0.0, 1000.0, dg.jump_distance_limit);
+        clamp(&mut g.laser_on_tc_us, -10_000.0, 10_000.0, dg.laser_on_tc_us);
+        clamp(&mut g.laser_off_tc_us, -10_000.0, 10_000.0, dg.laser_off_tc_us);
+        clamp(&mut g.end_tc_us, 0.0, 100_000.0, dg.end_tc_us);
+        clamp(&mut g.polygon_tc_us, 0.0, 100_000.0, dg.polygon_tc_us);
+        clamp(&mut g.drill_dwell_ms, 0.01, 60_000.0, dg.drill_dwell_ms);
+        clamp(&mut g.drill_spacing_mm, 0.0, 1000.0, dg.drill_spacing_mm);
     }
 }
 

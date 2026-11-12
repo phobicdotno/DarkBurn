@@ -219,6 +219,8 @@ struct Ctx<'a> {
     skipped: BTreeMap<&'static str, usize>,
     hidden_skipped: usize,
     budget: usize,
+    /// Block copies that may still be expanded (see [`MAX_INSERTS`]).
+    insert_budget: usize,
 }
 
 /// Inherited state when walking into a block.
@@ -234,6 +236,9 @@ struct Inherit {
 
 const MAX_DEPTH: u32 = 32;
 const MAX_ITEMS: usize = 2_000_000;
+/// The most block copies expanded in one file. Blocks that insert each other several times
+/// multiply; without a limit a tiny file can ask for billions of copies.
+const MAX_INSERTS: usize = 200_000;
 
 /// Imports a DXF file (ASCII or binary).
 pub fn import(bytes: &[u8], opts: &DxfOptions) -> Result<Imported, ImportError> {
@@ -282,7 +287,19 @@ pub fn import(bytes: &[u8], opts: &DxfOptions) -> Result<Imported, ImportError> 
         .collect();
     let blocks = drawing.blocks().map(|b| (b.name.to_ascii_uppercase(), b)).collect();
 
-    let mut ctx = Ctx { opts, blocks, layers, styles, line_types, scale, out, skipped: BTreeMap::new(), hidden_skipped: 0, budget: MAX_ITEMS };
+    let mut ctx = Ctx {
+        opts,
+        blocks,
+        layers,
+        styles,
+        line_types,
+        scale,
+        out,
+        skipped: BTreeMap::new(),
+        hidden_skipped: 0,
+        budget: MAX_ITEMS,
+        insert_budget: MAX_INSERTS,
+    };
     let root = Inherit { xf: Affine::scale(scale), layer: None, colour: None, line_type: None, group: None, depth: 0 };
     for e in drawing.entities() {
         if e.common.is_in_paper_space {
@@ -390,7 +407,8 @@ impl Ctx<'_> {
                 let mut p = BezPath::new();
                 p.move_to(pt(&l.p1));
                 p.line_to(pt(&l.p2));
-                self.push_path(e, inh, p, ocs(l.extrusion_direction.z));
+                // A line's points are world coordinates; its extrusion only steers a thickness.
+                self.push_path(e, inh, p, Affine::IDENTITY);
             }
             EntityType::Circle(c) => {
                 self.push_path(e, inh, circle_path(pt(&c.center), c.radius), ocs(c.normal.z));
@@ -452,9 +470,7 @@ impl Ctx<'_> {
                 self.push_path(e, inh, quad_path(c), ocs(s.extrusion_direction.z));
             }
             EntityType::Text(t) => {
-                let anchor = if t.horizontal_text_justification == HorizontalTextJustification::Left
-                    && t.vertical_text_justification == VerticalTextJustification::Baseline
-                {
+                let anchor = if at_first_point(t.horizontal_text_justification, t.vertical_text_justification) {
                     pt(&t.location)
                 } else {
                     pt(&t.second_alignment_point)
@@ -527,9 +543,7 @@ impl Ctx<'_> {
         if a.flags & 1 != 0 {
             return; // invisible attribute
         }
-        let anchor = if a.horizontal_text_justification == HorizontalTextJustification::Left
-            && a.vertical_text_justification == VerticalTextJustification::Baseline
-        {
+        let anchor = if at_first_point(a.horizontal_text_justification, a.vertical_text_justification) {
             pt(&a.location)
         } else {
             pt(&a.second_alignment_point)
@@ -608,6 +622,11 @@ impl Ctx<'_> {
         let line_type = Some(e.common.line_type_name.clone()).filter(|n| !n.eq_ignore_ascii_case("BYBLOCK"));
         for r in 0..rows {
             for c in 0..cols {
+                if self.insert_budget == 0 || self.budget == 0 {
+                    self.out.warn("The drawing has too many block copies (or objects); the rest were left out");
+                    return;
+                }
+                self.insert_budget -= 1;
                 let xf = inh.xf
                     * ocs(ins.extrusion_direction.z)
                     * Affine::translate(pt(&ins.location).to_vec2())
@@ -638,9 +657,10 @@ impl Ctx<'_> {
 
     fn dimension(&mut self, e: &Entity, block_name: &str, inh: &Inherit) {
         let Some(block) = self.blocks.get(&block_name.to_ascii_uppercase()).copied() else { return };
-        if inh.depth >= MAX_DEPTH {
+        if inh.depth >= MAX_DEPTH || self.insert_budget == 0 || self.budget == 0 {
             return;
         }
+        self.insert_budget -= 1;
         let layer = self.effective_layer(e, inh);
         let colour = self.colour(e, &layer, inh);
         let child = Inherit {
@@ -681,6 +701,16 @@ struct TextRec {
     h: HAlign,
     v: VAlign,
     ocs_z: f64,
+}
+
+/// Whether text is anchored at its first point: plain left baseline text, and Aligned and Fit
+/// text, which runs from its first point to its second and is read as left aligned.
+fn at_first_point(h: HorizontalTextJustification, v: VerticalTextJustification) -> bool {
+    match h {
+        HorizontalTextJustification::Aligned | HorizontalTextJustification::Fit => true,
+        HorizontalTextJustification::Left => v == VerticalTextJustification::Baseline,
+        _ => false,
+    }
 }
 
 fn text_align(h: HorizontalTextJustification, v: VerticalTextJustification) -> (HAlign, VAlign) {

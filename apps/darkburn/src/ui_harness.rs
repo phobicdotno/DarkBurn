@@ -54,6 +54,8 @@ pub struct A11y {
     pub label: Option<String>,
     pub value: Option<String>,
     pub rect: Rect,
+    /// The widget's egui id (the accessibility node id is the same number).
+    pub id: u64,
 }
 
 /// One piece of text painted on screen, topmost last.
@@ -68,11 +70,40 @@ pub struct Painted {
     pub broken_word: bool,
 }
 
-/// The GPU device is made and destroyed under one lock: tests run in parallel threads, and a
-/// device torn down while another is being created crashed the process (access violation).
+/// One lock for everything that makes the software rasteriser work: making a GPU device,
+/// destroying one, and drawing a picture.
+///
+/// Tests run in parallel threads, each with its own device, and all of them end up on the one
+/// software adapter the harness prefers (WARP on Windows). The process crashed now and then
+/// with an access violation inside `d3d10warp.dll`, on one of its own worker threads. The
+/// crash dumps showed some tests drawing a screenshot while others made or destroyed their
+/// device; serialising only creation and teardown did not stop it. So drawing takes the lock
+/// too. Ordinary frames do not: they draw nothing, they only make textures and queue the
+/// uploads, which run with the next picture.
+///
+/// Everything that owns a piece of the device lives inside the harness (the renderer and the
+/// copies of its render state that eframe keeps), and the harness only ever exists inside a
+/// [`Guarded`]: [`Guarded::build`] makes it under the lock and `Drop` destroys it under the
+/// lock, also when a test panics or the app fails to start. The app itself holds nothing of
+/// the GPU, so it may outlive the harness.
 static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Guarded(Option<Harness<'static, crate::App>>);
+
+impl Guarded {
+    /// Runs `make` (which creates the device) under the GPU lock. If `make` panics, what it
+    /// had built so far is dropped while the lock is still held.
+    fn build(make: impl FnOnce() -> Harness<'static, crate::App>) -> Guarded {
+        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        Guarded(Some(make()))
+    }
+
+    /// Draws the last frame offscreen, under the GPU lock.
+    fn render(&mut self) -> Result<image::RgbaImage, String> {
+        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        self.0.as_mut().expect("the harness is alive").render()
+    }
+}
 
 impl std::ops::Deref for Guarded {
     type Target = Harness<'static, crate::App>;
@@ -111,6 +142,11 @@ static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::ne
 impl Gui {
     /// A fresh app in a `width` x `height` point window at `scale` pixels per point.
     pub fn new(width: f32, height: f32, scale: f32) -> Gui {
+        Gui::with_prefs(width, height, scale, Prefs::default())
+    }
+
+    /// A fresh app that starts with `prefs`, as after a restart with those preferences stored.
+    pub fn with_prefs(width: f32, height: f32, scale: f32, prefs: Prefs) -> Gui {
         let dir =
             std::env::temp_dir().join(format!("darkburn-ui-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let _ = std::fs::remove_dir_all(&dir);
@@ -118,32 +154,31 @@ impl Gui {
         darkburn_dialogs_script();
         let cell: Rc<RefCell<Option<Rc<RefCell<DarkBurn>>>>> = Rc::new(RefCell::new(None));
         let (cell2, dir2) = (cell.clone(), dir.clone());
-        let gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
-        let h = Harness::builder()
-            .with_size(vec2(width, height))
-            .with_pixels_per_point(scale)
-            .with_max_steps(60)
-            .allow_missing_glyphs()
-            .with_accessibility_check(false)
-            .with_context_setup(|ctx| {
-                darkburn_ui::fonts::setup_bundled_fonts(ctx);
-                ctx.options_mut(|o| o.warn_on_id_clash = true);
-            })
-            .wgpu()
-            .build_eframe(move |cc| {
-                let mut app = DarkBurn::new(Prefs::default());
-                app.settings_dir = Some(dir2.clone());
-                app.safe_mode = true;
-                app.custom_titlebar = true;
-                crate::image_ui::load_tuning(&app);
-                app.apply_theme(&cc.egui_ctx);
-                let app = Rc::new(RefCell::new(app));
-                *cell2.borrow_mut() = Some(app.clone());
-                let mcp = crate::mcp_ui::Host::new(app.clone());
-                crate::App { app, writer: crate::PrefsWriter::default(), frames: 2, mcp }
-            });
-        drop(gpu);
-        let h = Guarded(Some(h));
+        let h = Guarded::build(|| {
+            Harness::builder()
+                .with_size(vec2(width, height))
+                .with_pixels_per_point(scale)
+                .with_max_steps(60)
+                .allow_missing_glyphs()
+                .with_accessibility_check(false)
+                .with_context_setup(|ctx| {
+                    darkburn_ui::fonts::setup_bundled_fonts(ctx);
+                    ctx.options_mut(|o| o.warn_on_id_clash = true);
+                })
+                .wgpu()
+                .build_eframe(move |cc| {
+                    let mut app = DarkBurn::new(prefs.clone());
+                    app.settings_dir = Some(dir2.clone());
+                    app.safe_mode = true;
+                    app.custom_titlebar = true;
+                    crate::image_ui::load_tuning(&app);
+                    app.apply_theme(&cc.egui_ctx);
+                    let app = Rc::new(RefCell::new(app));
+                    *cell2.borrow_mut() = Some(app.clone());
+                    let mcp = crate::mcp_ui::Host::new(app.clone());
+                    crate::App { app, writer: crate::PrefsWriter::default(), frames: 2, mcp }
+                })
+        });
         let app = cell.borrow_mut().take().expect("the app was built");
         let mut g = Gui { h, app, dir, scale, last: "start".into(), strict_ids: true, clashes: Vec::new(), shots: Vec::new() };
         g.frames(3);
@@ -302,7 +337,7 @@ impl Gui {
             let Some(b) = ak.bounding_box() else { continue };
             let ppp = self.scale;
             let rect = Rect::from_min_max(pos2(b.x0 as f32 / ppp, b.y0 as f32 / ppp), pos2(b.x1 as f32 / ppp, b.y1 as f32 / ppp));
-            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect });
+            out.push(A11y { role: format!("{:?}", ak.role()), label: ak.label(), value: ak.value(), rect, id: ak.locate().0.0 });
         }
         out
     }
@@ -330,6 +365,23 @@ impl Gui {
 
     fn button(&mut self, p: Pos2, button: PointerButton, pressed: bool, m: Modifiers) {
         self.h.event(Event::PointerButton { pos: p, button, pressed, modifiers: m });
+    }
+
+    /// Press the primary button at a screen point and keep it down (one frame is drawn).
+    pub fn press_pos(&mut self, p: Pos2) -> &mut Self {
+        self.last = format!("press at {p:?}");
+        self.h.event(Event::PointerMoved(p));
+        self.h.step();
+        self.after_frame();
+        self.button(p, PointerButton::Primary, true, Modifiers::NONE);
+        self.frames(1)
+    }
+
+    /// Let the primary button go at a screen point (one frame is drawn).
+    pub fn release_pos(&mut self, p: Pos2) -> &mut Self {
+        self.last = format!("release at {p:?}");
+        self.button(p, PointerButton::Primary, false, Modifiers::NONE);
+        self.frames(1)
     }
 
     /// Click at a screen point (points, not pixels).
@@ -687,7 +739,8 @@ impl Gui {
     /// Things on screen that clip or overflow the window, one line each:
     /// - published controls (ribbon, tools, menus, panel tabs, status) not wholly inside the screen;
     /// - painted text that runs past the screen edge, or is cut off at the side by a clip
-    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted);
+    ///   rectangle (a scroll area cutting a line at its top or bottom is normal and not counted,
+    ///   nor is a ruler number cut off where the ruler ends);
     /// - ribbon buttons or panel tabs that overlap each other;
     /// - dialog windows not wholly inside the screen.
     pub fn layout_problems(&self) -> Vec<String> {
@@ -711,7 +764,14 @@ impl Gui {
                 }
             }
         }
+        // The rulers beside the canvas cut a number off where the ruler ends: that is how a ruler looks.
+        let canvas = self.rect_of("canvas");
+        let on_ruler =
+            |r: Rect| canvas.is_some_and(|c| (c.top() - 24.0..c.top()).contains(&r.top()) || (c.left() - 24.0..c.left()).contains(&r.left()));
         for p in self.painted() {
+            if on_ruler(p.full) && p.text.trim().parse::<f64>().is_ok() {
+                continue;
+            }
             if p.broken_word {
                 out.push(format!("text {:?} {:?} is broken in the middle of a word", p.text, p.full));
             } else if outside(screen, p.full) {
@@ -728,14 +788,38 @@ impl Gui {
         !self.dialog_windows().is_empty() || !self.window_titles().is_empty()
     }
 
+    fn job_build_pending(&self) -> bool {
+        self.app().job.pending.is_some()
+    }
+
+    /// Draws frames until the job being prepared on its worker thread has ended (finished or
+    /// cancelled) and the app has taken the result. Returns at once when there is none.
+    #[track_caller]
+    pub fn wait_for_job_build(&mut self) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while self.job_build_pending() {
+            assert!(std::time::Instant::now() < end, "the job build never ended after `{}`", self.last);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            self.frames(1);
+        }
+    }
+
     /// Close every open dialog window: Escape first, then its close button or a closing action.
-    /// Returns how many rounds it took.
+    /// A job still being prepared in the background is waited for, so no window of its own can
+    /// come up after this returns. Returns how many rounds it took.
     #[track_caller]
     pub fn close_dialogs(&mut self) -> usize {
         let mut rounds = 0;
         for _ in 0..6 {
             if !self.dialog_open() {
-                break;
+                if !self.job_build_pending() {
+                    break;
+                }
+                // A job is being prepared in the background. Its progress window, or the
+                // window its result opens, would come up later, at a moment that depends on
+                // how fast the computer is. Let it end, then look again.
+                self.wait_for_job_build();
+                continue;
             }
             rounds += 1;
             self.escape();
@@ -766,6 +850,8 @@ impl Gui {
                     }
                 }
             }
+            // Cancel only asks the worker to stop; the progress window stays until it has.
+            self.wait_for_job_build();
         }
         assert!(
             !self.dialog_open(),

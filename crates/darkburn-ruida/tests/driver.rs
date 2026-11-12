@@ -258,6 +258,20 @@ fn frame_rectangle_and_outline() {
 }
 
 #[test]
+fn a_coordinate_that_is_not_a_number_is_refused_not_sent_as_zero() {
+    let (mut m, emu) = udp_machine();
+    m.move_to(Point::new(50.0, 60.0), false).unwrap();
+    let before = lock(&emu).motion.len();
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(m.move_to(Point::new(bad, 10.0), false).is_err(), "x = {bad}");
+        assert!(m.move_to(Point::new(10.0, bad), true).is_err(), "y = {bad}");
+        assert!(m.frame_outline(&[Point::new(1.0, 1.0), Point::new(bad, 5.0), Point::new(1.0, 1.0)], true).is_err(), "outline with {bad}");
+        assert!(m.frame_rect(Rect::new(10.0, 10.0, bad, 20.0), false).is_err(), "rectangle with {bad}");
+    }
+    assert_eq!(lock(&emu).motion.len(), before, "nothing moved");
+}
+
+#[test]
 fn frame_on_controller_traces_last_job() {
     let (mut m, emu) = udp_machine();
     m.send_job("F", &square_job((10.0, 10.0), 20.0, 10.0), &SendOptions { start_immediately: true, ..Default::default() }, &mut never).unwrap();
@@ -464,4 +478,223 @@ fn raw_commands_pass_through() {
     let e = lock(&emu);
     assert!(e.received.contains(&Command::Raw(vec![0xFE, 0x01, 0x02])));
     assert_eq!(e.received.last(), Some(&Command::HomeXY));
+}
+
+// ---- magic detection on a link that loses or delays datagrams ------------------------------
+
+/// What happens to the answers of one outgoing datagram.
+#[derive(Clone, Copy, PartialEq)]
+enum Fate {
+    /// Delivered as usual.
+    Pass,
+    /// The datagram never reaches the controller.
+    Lost,
+    /// The controller's answers arrive only after the next datagram has been sent.
+    Late,
+}
+
+/// A link to the emulator that treats the n-th outgoing datagram as scripted.
+struct Scripted {
+    inner: MemoryTransport,
+    script: Vec<Fate>,
+    sent: usize,
+    held: Vec<Vec<u8>>,
+    ready: std::collections::VecDeque<Vec<u8>>,
+}
+
+impl Scripted {
+    fn new(emu: Emu, script: &[Fate]) -> Self {
+        Scripted { inner: MemoryTransport::udp(emu), script: script.to_vec(), sent: 0, held: Vec::new(), ready: Default::default() }
+    }
+}
+
+impl Transport for Scripted {
+    fn framing(&self) -> Framing {
+        Framing::Udp
+    }
+    fn send(&mut self, channel: Channel, data: &[u8]) -> Result<()> {
+        let fate = self.script.get(self.sent).copied().unwrap_or(Fate::Pass);
+        self.sent += 1;
+        // Answers held back from the datagram before arrive now, ahead of the new ones.
+        self.ready.extend(self.held.drain(..));
+        if fate == Fate::Lost {
+            return Ok(());
+        }
+        self.inner.send(channel, data)?;
+        while let Some(reply) = self.inner.recv(channel, std::time::Duration::ZERO)? {
+            if fate == Fate::Late { self.held.push(reply) } else { self.ready.push_back(reply) }
+        }
+        Ok(())
+    }
+    fn recv(&mut self, _channel: Channel, _timeout: std::time::Duration) -> Result<Option<Vec<u8>>> {
+        Ok(self.ready.pop_front())
+    }
+    fn describe(&self) -> String {
+        "scripted".into()
+    }
+}
+
+fn probing(magic: Magic, script: &[Fate]) -> (RuidaMachine<Scripted>, Emu) {
+    let emu = emulator(EmulatorConfig { magic, ..Default::default() });
+    let m = RuidaMachine::new(Scripted::new(emu.clone(), script), MachineConfig { magic: None, ..Default::default() });
+    (m, emu)
+}
+
+#[test]
+fn the_acknowledge_byte_names_the_magic() {
+    for m in 0..=255u8 {
+        assert_eq!(swizzle::magic_from_wire(swizzle::swizzle_byte(0xCC, Magic(m)), 0xCC), Magic(m));
+        assert_eq!(swizzle::magic_from_wire(swizzle::swizzle_byte(0xDA, Magic(m)), 0xDA), Magic(m));
+    }
+    // An uncommon magic is found with the second probe, not the 200th.
+    let (mut m, emu) = probing(Magic(0xC3), &[]);
+    m.connect().unwrap();
+    assert_eq!(m.magic(), Magic(0xC3));
+    let probes = lock(&emu).received.len();
+    assert!(m.transport().sent <= 12, "{} datagrams, {probes} commands", m.transport().sent);
+}
+
+#[test]
+fn a_lost_probe_does_not_spoil_magic_detection() {
+    use Fate::*;
+    // The very first probe is lost, then the probe with the right magic is lost.
+    for script in [&[Lost][..], &[Pass, Lost][..], &[Lost, Pass, Lost][..]] {
+        for magic in [Magic(0x11), Magic(0x38), Magic(0x5A)] {
+            let (mut m, _emu) = probing(magic, script);
+            m.connect().unwrap();
+            assert_eq!(m.magic(), magic);
+            assert_eq!(m.read_setting(addr::BED_X).unwrap(), 600_000);
+        }
+    }
+}
+
+#[test]
+fn late_answers_during_probing_are_not_taken_for_the_next_probe() {
+    use Fate::*;
+    // The answers to a probe come only after the next datagram went out: first for the wrong
+    // magic, then for the right one, then for both in a row.
+    for script in
+        [&[Late][..], &[Pass, Late][..], &[Late, Late][..], &[Late, Pass, Late][..], &[Late, Late, Late, Late][..], &[Lost, Late, Lost, Late][..]]
+    {
+        for magic in [Magic(0x11), Magic(0x38), Magic(0x5A)] {
+            let (mut m, _emu) = probing(magic, script);
+            m.connect().unwrap();
+            assert_eq!(m.magic(), magic, "script of {} steps", script.len());
+            // Nothing is left out of step: the next questions get their own answers.
+            assert_eq!(m.read_setting(addr::BED_X).unwrap(), 600_000);
+            assert_eq!(m.read_setting(addr::BED_Y).unwrap(), 400_000);
+            assert_eq!(m.info().unwrap().card_id, 0x6510_6510);
+        }
+    }
+}
+
+#[test]
+fn probing_a_dead_link_tries_every_value_and_the_common_ones_twice() {
+    let emu = emulator(EmulatorConfig::default());
+    let lost = vec![Fate::Lost; 1000];
+    let mut m = RuidaMachine::new(Scripted::new(emu, &lost), MachineConfig { magic: None, ..Default::default() });
+    assert!(matches!(m.detect_magic(), Err(RuidaError::Timeout(_))));
+    assert_eq!(m.transport().sent, 259);
+}
+
+#[test]
+fn a_controller_that_only_answers_the_right_magic_is_still_found() {
+    // Over a stream there is no acknowledge byte to go by: the reply itself is the proof.
+    for magic in [Magic(0x38), Magic(0x5A)] {
+        let emu = emulator(EmulatorConfig { magic, ..Default::default() });
+        let mut m = RuidaMachine::new(MemoryTransport::stream(emu), MachineConfig { magic: None, ..Default::default() });
+        m.connect().unwrap();
+        assert_eq!(m.magic(), magic);
+        assert_eq!(m.read_setting(addr::BED_Y).unwrap(), 400_000);
+    }
+}
+
+// ---- acknowledges that arrive late ----------------------------------------------------------
+
+#[test]
+fn a_late_acknowledge_is_not_taken_for_the_next_datagram() {
+    use Fate::*;
+    let emu = emulator(EmulatorConfig::default());
+    let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), MachineConfig::default());
+    m.connect().unwrap();
+    let before = lock(&emu).motion.len();
+    // The acknowledge of the first move is late, so the move is sent again and both copies get
+    // answered. The second move is then lost on the way: the leftover acknowledge of the first
+    // must not pass for its own.
+    let n = m.transport().sent;
+    m.transport_mut().script = [vec![Pass; n], vec![Late, Pass, Lost]].concat();
+    m.move_to(Point::new(10.0, 10.0), false).unwrap();
+    assert_eq!(m.resends, 1);
+    m.move_to(Point::new(20.0, 20.0), false).unwrap();
+    m.move_to(Point::new(30.0, 30.0), false).unwrap();
+    let e = lock(&emu);
+    let pts: Vec<[i32; 2]> = e.motion[before..].iter().map(|r| [r.to[0], r.to[1]]).collect();
+    assert!(pts.contains(&[20_000, 20_000]), "the second move never reached the controller and nobody noticed: {pts:?}");
+    assert_eq!(pts.last(), Some(&[30_000, 30_000]));
+    drop(e);
+    assert_eq!(m.resends, 2, "the lost move was sent again");
+}
+
+/// The Pulse key (and each jog key) held down by the program.
+fn key_is_down(emu: &Emu, key: PanelKey) -> bool {
+    let e = lock(emu);
+    let last = e.panel_received.iter().rev().find(|c| matches!(c, PanelCommand::KeyDown(k) | PanelCommand::KeyUp(k) if *k == key));
+    matches!(last, Some(PanelCommand::KeyDown(_)))
+}
+
+#[test]
+fn a_late_answer_to_a_key_press_is_not_taken_for_the_answer_to_its_release() {
+    use Fate::*;
+    // The answer to the key press is late, so the press is sent again and both copies get
+    // answered. The release is then lost on the way: the leftover answer to the press must not
+    // pass for its own, or the key stays down on the controller and nobody notices.
+    // In the first script the leftover answer is there before the release goes out, in the
+    // second it arrives after.
+    for script in [[Late, Pass, Lost], [Late, Late, Lost]] {
+        for key in [PanelKey::Pulse, PanelKey::PlusX] {
+            let emu = emulator(EmulatorConfig::default());
+            let cfg = MachineConfig { timeout: std::time::Duration::from_millis(40), ..Default::default() };
+            let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), cfg);
+            m.connect().unwrap();
+            let n = m.transport().sent;
+            m.transport_mut().script = [vec![Pass; n], script.to_vec()].concat();
+            let resends = m.resends;
+            m.panel_key(key, true).unwrap();
+            assert_eq!(m.resends, resends + 1);
+            assert!(key_is_down(&emu, key));
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key), "{key:?}: the release never reached the controller and nobody noticed");
+            assert_eq!(m.resends, resends + 2, "{key:?}: the lost release was sent again");
+            // Right after that the key still works, at the price of one release sent twice:
+            // the answer to the lost copy could still come.
+            m.panel_key(key, true).unwrap();
+            assert!(key_is_down(&emu, key));
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key));
+            assert!(m.resends <= resends + 3);
+            // And once that answer is given up the link is as good as new: nothing is sent twice.
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let resends = m.resends;
+            let sent = m.transport().sent;
+            m.panel_key(key, true).unwrap();
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key));
+            assert_eq!((m.resends, m.transport().sent), (resends, sent + 2));
+        }
+    }
+}
+
+#[test]
+fn a_release_that_is_never_answered_is_an_error_also_after_a_late_answer() {
+    use Fate::*;
+    let emu = emulator(EmulatorConfig::default());
+    let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), MachineConfig::default());
+    m.connect().unwrap();
+    let n = m.transport().sent;
+    // Press: answered late. Release: every copy is lost.
+    m.transport_mut().script = [vec![Pass; n], vec![Late, Pass], vec![Lost; 16]].concat();
+    m.panel_key(PanelKey::Pulse, true).unwrap();
+    let r = m.panel_key(PanelKey::Pulse, false);
+    assert!(matches!(r, Err(RuidaError::Timeout(_))), "a release that never arrived was reported as done: {r:?}");
+    assert!(key_is_down(&emu, PanelKey::Pulse));
 }

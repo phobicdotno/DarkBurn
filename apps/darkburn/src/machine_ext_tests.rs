@@ -106,8 +106,11 @@ fn every_gcode_simulator_runs_a_job_to_the_end() {
 fn every_gcode_simulator_pauses_resumes_and_stops() {
     for kind in [SimGcode::Grbl, SimGcode::Smoothie, SimGcode::Marlin, SimGcode::Snapmaker, SimGcode::Custom] {
         let mut h = connected(kind, 1.0);
-        // A slow job: 150 mm at 600 mm/min is 15 s of machine time.
-        let lines = vec!["G21 G90".to_owned(), "M4 S100".to_owned(), "G0 X10 Y10".to_owned(), "G1 X160 Y10 F600".to_owned(), "M5".to_owned()];
+        // A slow job: 150 mm at 600 mm/min is 15 s of machine time. Fifty pieces, more than a
+        // controller plans ahead, so the pause comes while lines are still to be sent.
+        let mut lines = vec!["G21 G90".to_owned(), "M4 S100".to_owned(), "G0 X10 Y10".to_owned()];
+        lines.extend((1..=50).map(|i| format!("G1 X{} Y10 F600", 10 + 3 * i)));
+        lines.push("M5".to_owned());
         h.start_job(JobRequest::gcode(lines)).unwrap();
         assert!(h.wait_for(T, |s, _| s.state == LaserState::Busy), "{kind:?} busy");
         if kind != SimGcode::Custom {
@@ -507,6 +510,15 @@ fn galvo_red_light_frame_never_fires_and_satisfies_require_framing() {
         assert!(!g.log().singles.contains(&galvo::SingleCmd::EnableLaser), "framing never enables the laser");
         assert!(!g.log().motions.iter().any(|m| m.mark || m.emitting), "framing never marks");
     }
+    // That frame was shifted and scaled, so it showed another place than the job marks: the job
+    // is still refused. A frame of the job as it lies lets it start.
+    assert!(matches!(a.machine.handle.start_job(req.clone()), Err(MachineError::Refused(m)) if m.contains("Frame")));
+    let shifted = a.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key);
+    run(&mut a, "machine.galvo_frame", json!({ "repeat": false, "nudge_x": 0.0, "nudge_y": 0.0, "scale_pct": 100.0 })).unwrap();
+    wait(&mut a, "framed as it lies", |a| {
+        a.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.framed_key.is_some() && g.framed_key != shifted)
+    });
+    wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
     a.machine.handle.start_job(req).unwrap();
     wait(&mut a, "job done", |a| a.machine.handle.snapshot().state == LaserState::Busy || a.machine.handle.snapshot().state == LaserState::Ready);
     wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready && emu.lock().unwrap().log().motions.iter().any(|m| m.mark));
@@ -566,6 +578,165 @@ fn galvo_job_maps_layers_to_line_fill_flood_and_sliced() {
     assert!(bounds.x0 < 0.0 && bounds.x1 > 0.0 && (bounds.x0 + 45.0).abs() < 1e-6, "{bounds:?}");
     let est = run(&mut a, "galvo.estimate", Value::Null).unwrap();
     assert!(est["total_s"].as_f64().unwrap() > 0.0 && est["packets"].as_u64().unwrap() > 0, "{est}");
+}
+
+#[test]
+fn galvo_job_keeps_power_scale_priority_kerf_and_start_points() {
+    use darkburn_core::ShapeId;
+    use darkburn_core::kurbo::{PathEl, Point, Shape as _};
+    let (mut a, id) = galvo_app();
+    let dev = a.machine.devices.get(id).unwrap().clone();
+    let rect = |a: &mut DarkBurn, x: f64, y: f64, w: f64, layer: usize| {
+        ShapeId(run(a, "shape.add_rect", json!({ "x": x, "y": y, "width": w, "height": w, "layer": layer })).unwrap()["id"].as_u64().unwrap())
+    };
+    let first = rect(&mut a, 10.0, 10.0, 30.0, 0);
+    let second = rect(&mut a, 50.0, 10.0, 30.0, 0);
+    a.editor.doc.layer_mut(0).main_mut().max_power = 40.0;
+    let build = |a: &DarkBurn| crate::galvo_job::build_job(&crate::galvo_job::job_document(a).unwrap(), &dev).unwrap().job;
+    let start_of = |l: &galvo::Layer| match l.geometry[0].elements()[0] {
+        PathEl::MoveTo(p) => p,
+        other => panic!("a path starts with a move: {other:?}"),
+    };
+    // Nothing special set: one layer with both squares, as before.
+    let plain = build(&a);
+    assert_eq!(plain.layers.len(), 1);
+    assert_eq!((plain.layers[0].geometry.len(), plain.layers[0].params.power_pct), (2, 40.0));
+
+    // Power scale: the second square is marked at half the layer's power.
+    a.editor.doc.get_mut(second).unwrap().power_scale = 50.0;
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| (l.geometry.len(), l.params.power_pct)).collect::<Vec<_>>(), vec![(1, 40.0), (1, 20.0)]);
+    assert!(j.layers[1].geometry[0].bounding_box().x1 > 0.0, "the half-power layer holds the second square");
+
+    // Cut order priority, when the optimization settings order by it: the lower number first.
+    a.editor.doc.get_mut(first).unwrap().priority = 5;
+    a.editor.doc.get_mut(second).unwrap().priority = 1;
+    assert_eq!(build(&a).layers[0].params.power_pct, 40.0, "priority is not an order key yet");
+    crate::job_cmds::update_settings(&mut a, "order", |s| s.planner.order_by = vec![darkburn_job::OrderKey::Priority]);
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| l.params.power_pct).collect::<Vec<_>>(), vec![20.0, 40.0]);
+
+    // A forced start point: the outline starts there (the middle of the first square's right side).
+    let local = a.editor.doc.get(first).unwrap().transform.inverse() * Point::new(40.0, 25.0);
+    a.editor.doc.get_mut(first).unwrap().start_point = Some([local.x, local.y]);
+    let j = build(&a);
+    let p = start_of(&j.layers[1]);
+    assert!(p.distance(Point::new(40.0 - 55.0, 25.0 - 55.0)) < 1e-6, "{p:?}");
+    assert_eq!(j.layers[1].geometry[0].elements().iter().filter(|e| matches!(e, PathEl::ClosePath)).count(), 1, "still closed");
+
+    // Kerf offset: the outline grows by the kerf on every side.
+    let before = build(&a).bounds(0.01).unwrap();
+    a.editor.doc.layer_mut(0).main_mut().kerf = 0.5;
+    let after = build(&a).bounds(0.01).unwrap();
+    assert!((after.width() - before.width() - 1.0).abs() < 1e-6 && (after.height() - before.height() - 1.0).abs() < 1e-6, "{before:?} {after:?}");
+
+    // Fill: a hole with another power scale stays a hole, and is not filled a second time.
+    let outer = rect(&mut a, 10.0, 50.0, 30.0, 1);
+    let hole = rect(&mut a, 20.0, 60.0, 10.0, 1);
+    run(&mut a, "layer.set_mode", json!({ "layer": 1, "mode": "fill" })).unwrap();
+    a.editor.doc.get_mut(hole).unwrap().power_scale = 50.0;
+    let _ = outer;
+    let j = build(&a);
+    let fills: Vec<&galvo::Layer> = j.layers.iter().filter(|l| matches!(l.mode, galvo::LayerMode::Fill(_))).collect();
+    assert_eq!(fills.len(), 1, "{:?}", fills.iter().map(|l| (l.geometry.len(), l.params.power_pct)).collect::<Vec<_>>());
+    assert_eq!(fills[0].geometry.len(), 2, "the outline and its hole");
+}
+
+#[test]
+fn galvo_job_keeps_the_cut_direction_and_the_tabs() {
+    use darkburn_core::kurbo::{PathEl, Point};
+    use darkburn_core::{CutDirection, ShapeId};
+    let (mut a, id) = galvo_app();
+    let dev = a.machine.devices.get(id).unwrap().clone();
+    let sq =
+        ShapeId(run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 30, "height": 30, "layer": 0 })).unwrap()["id"].as_u64().unwrap());
+    a.editor.doc.layer_mut(0).main_mut().max_power = 40.0;
+    let build = |a: &DarkBurn| crate::galvo_job::build_job(&crate::galvo_job::job_document(a).unwrap(), &dev).unwrap().job;
+    let points =
+        |p: &darkburn_core::kurbo::BezPath| -> Vec<Point> { darkburn_job::geom::flatten(p, 0.001).into_iter().flat_map(|q| q.pts).collect() };
+    let area = |j: &galvo::Job| darkburn_job::geom::signed_area(&points(&j.layers[0].geometry[0]));
+    let length = |l: &galvo::Layer| -> f64 {
+        l.geometry
+            .iter()
+            .flat_map(|p| darkburn_job::geom::flatten(p, 0.001))
+            .map(|q| {
+                let mut pts = q.pts.clone();
+                if q.closed {
+                    pts.push(pts[0]);
+                }
+                darkburn_job::geom::polyline_length(&pts)
+            })
+            .sum()
+    };
+
+    // Cut direction: clockwise and counter-clockwise turn the outline, reversed turns the drawn one round.
+    let drawn = area(&build(&a));
+    assert!((drawn.abs() - 900.0).abs() < 1e-6, "{drawn}");
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Clockwise;
+    assert!(area(&build(&a)) < 0.0, "clockwise (Y up): {}", area(&build(&a)));
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::CounterClockwise;
+    assert!(area(&build(&a)) > 0.0, "counter-clockwise: {}", area(&build(&a)));
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Reversed;
+    assert!(area(&build(&a)) * drawn < 0.0, "reversed: {} against {drawn}", area(&build(&a)));
+    // A forced start point stays the start whichever way round.
+    let local = a.editor.doc.get(sq).unwrap().transform.inverse() * Point::new(40.0, 25.0);
+    a.editor.doc.get_mut(sq).unwrap().start_point = Some([local.x, local.y]);
+    for d in CutDirection::ALL {
+        a.editor.doc.get_mut(sq).unwrap().direction = d;
+        let j = build(&a);
+        let first = points(&j.layers[0].geometry[0])[0];
+        assert!(first.distance(Point::new(40.0 - 55.0, 25.0 - 55.0)) < 1e-6, "{d:?}: {first:?}");
+        assert_eq!(j.layers[0].geometry[0].elements().iter().filter(|e| matches!(e, PathEl::ClosePath)).count(), 1, "{d:?}: still closed");
+    }
+    a.editor.doc.get_mut(sq).unwrap().direction = CutDirection::Auto;
+    a.editor.doc.get_mut(sq).unwrap().start_point = None;
+
+    // Automatic tabs: four gaps of 2 mm in the 120 mm outline.
+    {
+        let t = &mut a.editor.doc.layer_mut(0).main_mut().tabs;
+        t.enabled = true;
+        t.auto_spacing = true;
+        t.spacing = 30.0;
+        t.size = 2.0;
+        t.min_count = 4;
+        t.max_count = 4;
+    }
+    let j = build(&a);
+    assert_eq!(j.layers.len(), 1);
+    assert!((length(&j.layers[0]) - 112.0).abs() < 1e-6, "marked {} mm of 120", length(&j.layers[0]));
+    for mid in [Point::new(25.0, 10.0), Point::new(40.0, 25.0), Point::new(25.0, 40.0), Point::new(10.0, 25.0)] {
+        let board = Point::new(mid.x - 55.0, mid.y - 55.0);
+        let near = j.layers[0].geometry.iter().flat_map(&points).map(|p| p.distance(board)).fold(f64::MAX, f64::min);
+        assert!((near - 1.0).abs() < 1e-6, "the tab at {mid:?} is a 2 mm gap: nearest mark {near}");
+    }
+
+    // A manual tab replaces the automatic ones on its shape.
+    let local = a.editor.doc.get(sq).unwrap().transform.inverse() * Point::new(20.0, 10.0);
+    a.editor.doc.get_mut(sq).unwrap().tabs = vec![[local.x, local.y]];
+    let j = build(&a);
+    assert!((length(&j.layers[0]) - 118.0).abs() < 1e-6, "{}", length(&j.layers[0]));
+    let board = Point::new(20.0 - 55.0, 10.0 - 55.0);
+    let near = j.layers[0].geometry.iter().flat_map(&points).map(|p| p.distance(board)).fold(f64::MAX, f64::min);
+    assert!((near - 1.0).abs() < 1e-6, "{near}");
+
+    // Partly cut tabs are marked at the tab power, not left out.
+    a.editor.doc.layer_mut(0).main_mut().tabs.partial = true;
+    a.editor.doc.layer_mut(0).main_mut().tabs.tab_power = 10.0;
+    let j = build(&a);
+    assert_eq!(j.layers.iter().map(|l| l.params.power_pct).collect::<Vec<_>>(), vec![40.0, 10.0]);
+    assert!(
+        (length(&j.layers[0]) - 118.0).abs() < 1e-6 && (length(&j.layers[1]) - 2.0).abs() < 1e-6,
+        "{} {}",
+        length(&j.layers[0]),
+        length(&j.layers[1])
+    );
+    crate::galvo_job::compile(&j, &dev).expect("the job with tabs compiles");
+
+    // Tabs off: the whole outline, closed, as before.
+    a.editor.doc.layer_mut(0).main_mut().tabs.enabled = false;
+    let j = build(&a);
+    assert_eq!(j.layers.len(), 1);
+    assert!((length(&j.layers[0]) - 120.0).abs() < 1e-6);
 }
 
 #[test]
@@ -670,6 +841,67 @@ fn real_galvo_usb_is_not_built_in() {
 
 // ----- Gweike -------------------------------------------------------------------------------------------------
 
+/// A craft with a value outside the machine's limits (gas pressure, speed, frequency, a missing
+/// pierce stage) is not stored when a command or an agent sets it, and a table that holds one
+/// some other way (the editor, a device file) is not written out for the operator to enter.
+#[test]
+fn a_craft_outside_the_machine_limits_is_refused_and_never_exported() {
+    let dir = std::env::temp_dir().join(format!("darkburn_chf_bad_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = gweike_app();
+    let good = serde_json::to_value(darkburn_mcc::FibreCraft::default()).unwrap();
+    for (field, value) in [("gas_pressure_bar", json!(40.0)), ("speed_mm_s", json!(0.0)), ("freq_hz", json!(1.0e9)), ("power_pct", json!(250.0))] {
+        let mut bad = good.clone();
+        bad["cut"][field] = value;
+        let r = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 2, "craft": bad }));
+        assert!(r.is_err(), "{field} out of range was stored: {r:?}");
+    }
+    let mut no_pierce = good.clone();
+    no_pierce["process"] = json!("pierce3");
+    no_pierce["pierce"] = json!([]);
+    assert!(
+        run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 2, "craft": no_pierce })).is_err(),
+        "a pierce process without its stages"
+    );
+    let mut co2 = serde_json::to_value(darkburn_mcc::Co2Craft::default()).unwrap();
+    co2["gas_pressure_bar"] = json!(11.0);
+    assert!(run(&mut a, "gweike.set_craft", json!({ "head": "co2", "slot": 2, "craft": co2 })).is_err());
+    assert_eq!(a.machine.active().settings.gweike.crafts, darkburn_mcc::CraftTable::default(), "nothing was stored");
+    // The export of a sound table still works...
+    let path = dir.join("job.chf");
+    let side = dir.join("job.chf.crafts.json");
+    run(&mut a, "gweike.export_chf", json!({ "path": path.display().to_string() })).unwrap();
+    assert!(path.exists() && side.exists());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::remove_file(&side).unwrap();
+    // ...and one with a bad value in it writes nothing.
+    let id = a.machine.active().id;
+    a.machine.devices.get_mut(id).unwrap().settings.gweike.crafts.fibre[5].cut.gas_pressure_bar = 40.0;
+    let e = run(&mut a, "gweike.export_chf", json!({ "path": path.display().to_string() })).unwrap_err();
+    assert!(e.contains("gas pressure"), "{e}");
+    assert!(!path.exists() && !side.exists(), "no file for the operator to enter 40 bar from");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A device file whose craft table is short (cut by hand, or from another program) must not
+/// crash the craft editor or `gweike.set_craft`: the table is filled up to the eleven slots.
+#[test]
+fn a_short_craft_table_in_a_device_file_is_filled_up() {
+    let mut a = gweike_app();
+    let id = a.machine.active().id;
+    let text = a.machine.devices.export_profile(id).unwrap();
+    let mut v: Value = serde_json::from_str(&text).unwrap();
+    let crafts = v.pointer_mut("/device/settings/gweike/crafts").expect("the crafts of the profile");
+    crafts["fibre"] = json!([]);
+    crafts["co2"].as_array_mut().unwrap().truncate(2);
+    let id2 = a.machine.devices.import_profile(&v.to_string()).unwrap();
+    run(&mut a, "device.select", json!({ "id": id2 })).unwrap();
+    let t = &a.machine.active().settings.gweike.crafts;
+    assert_eq!((t.fibre.len(), t.co2.len()), (11, 11));
+    let good = serde_json::to_value(darkburn_mcc::FibreCraft::default()).unwrap();
+    run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 10, "craft": good })).unwrap();
+}
+
 fn gweike_app() -> DarkBurn {
     let mut a = app();
     let id = run(&mut a, "device.add", json!({ "type": "GweikeCardSimulator" })).unwrap()["id"].as_u64().unwrap();
@@ -731,11 +963,12 @@ fn craft_editor_values_validate_and_survive_the_profile() {
     let c = run(&mut a, "gweike.crafts", Value::Null).unwrap();
     assert_eq!(c["crafts"]["fibre"][3]["nozzle"], "1.5S");
     assert_eq!(c["crafts"]["fibre"][3]["pierce"].as_array().unwrap().len(), 2);
-    // A speed past the machine's limit is reported as a problem, not sent anywhere.
+    // A speed past the machine's limit is refused: the slot keeps what it had.
     let mut bad = craft.clone();
     bad["cut"]["speed_mm_s"] = json!(9000.0);
-    let r = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 4, "craft": bad })).unwrap();
-    assert!(!r["problems"].as_array().unwrap().is_empty());
+    let e = run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 4, "craft": bad })).unwrap_err();
+    assert!(e.contains("speed"), "{e}");
+    assert_eq!(a.machine.active().settings.gweike.crafts.fibre[4], darkburn_mcc::FibreCraft::default());
     assert!(run(&mut a, "gweike.set_craft", json!({ "head": "fibre", "slot": 3, "craft": { "process": "bogus" } })).is_err());
     // It is kept with the device.
     let id = a.machine.active().id;

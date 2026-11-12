@@ -266,9 +266,14 @@ pub fn apply_op(
     let mut desc: Vec<NodeRef> = nodes.to_vec();
     desc.sort_by_key(|n| std::cmp::Reverse((n.subpath, n.node)));
     desc.dedup();
+    // A selected node stands for the line or curve that leaves it; the end node of an open
+    // subpath has none.
     let segs: Vec<(usize, usize)> = match seg {
         Some(s) => vec![s],
-        None => desc.iter().map(|n| (n.subpath, n.node)).collect(),
+        None => {
+            let cs = contours(path);
+            desc.iter().filter(|n| cs.get(n.subpath).is_none_or(|c| c.closed || n.node < c.segs.len())).map(|n| (n.subpath, n.node)).collect()
+        }
     };
     let mut p = path.clone();
     let each = |p: &mut BezPath, f: &dyn Fn(&BezPath, usize, usize) -> Result<BezPath, NodeError>, items: &[(usize, usize)]| -> Result<(), String> {
@@ -292,8 +297,18 @@ pub fn apply_op(
             if desc.is_empty() {
                 return Err("select nodes first".into());
             }
+            // A subpath that runs out of nodes is gone as a whole: its other selected nodes went
+            // with it, and its index now belongs to the subpath after it.
+            let mut gone = None;
             for n in &desc {
+                if gone == Some(n.subpath) {
+                    continue;
+                }
+                let before = contours(&p).len();
                 p = gnode::delete_node(&p, *n).map_err(err_text)?;
+                if contours(&p).len() < before {
+                    gone = Some(n.subpath);
+                }
             }
         }
         NodeOp::DeleteSegment => {
@@ -302,7 +317,20 @@ pub fn apply_op(
             }
             let mut items = segs.clone();
             items.sort_by_key(|x| std::cmp::Reverse(*x));
-            each(&mut p, &|p, s, i| gnode::delete_segment(p, s, i), &items)?;
+            // Taking a line out of a closed subpath opens it, and the open subpath starts after
+            // that line: the lines before it move up by `shift`.
+            let mut opened: Option<(usize, usize)> = None;
+            for (s, i) in items {
+                let cs = contours(&p);
+                let i = match opened {
+                    Some((sub, shift)) if sub == s => i + shift,
+                    _ => i,
+                };
+                if let Some(c) = cs.get(s).filter(|c| c.closed && i < c.segs.len()) {
+                    opened = Some((s, c.segs.len() - 1 - i));
+                }
+                p = gnode::delete_segment(&p, s, i).map_err(err_text)?;
+            }
         }
         NodeOp::ToLine | NodeOp::ToCurve => {
             if segs.is_empty() {
@@ -318,11 +346,25 @@ pub fn apply_op(
             if desc.is_empty() {
                 return Err("select nodes first".into());
             }
+            // Breaking a closed subpath opens it with the break as its first node: the nodes
+            // before the break move up by `shift`.
+            let mut opened: Option<(usize, usize)> = None;
             for n in &desc {
+                let mut n = *n;
+                if let Some((sub, shift)) = opened
+                    && sub == n.subpath
+                {
+                    n.node += shift;
+                }
+                if op == NodeOp::Break
+                    && let Some(c) = contours(&p).get(n.subpath).filter(|c| c.closed && n.node < c.segs.len())
+                {
+                    opened = Some((n.subpath, c.segs.len() - n.node));
+                }
                 p = match op {
-                    NodeOp::Corner => gnode::set_node_corner(&p, *n),
-                    NodeOp::Smooth => gnode::set_node_smooth(&p, *n),
-                    _ => gnode::break_at_node(&p, *n),
+                    NodeOp::Corner => gnode::set_node_corner(&p, n),
+                    NodeOp::Smooth => gnode::set_node_smooth(&p, n),
+                    _ => gnode::break_at_node(&p, n),
                 }
                 .map_err(err_text)?;
             }
@@ -539,6 +581,11 @@ fn measure_id() -> egui::Id {
     egui::Id::unique("darkburn_measure_memory")
 }
 
+/// Escape for the tool: an open dialog or window gets the key first (it closes), as on the canvas.
+fn take_escape(ctx: &egui::Context) -> Option<Modifiers> {
+    if crate::escape::window_open(ctx) { None } else { take_key(ctx, Key::Escape) }
+}
+
 fn press_origin(ui: &Ui, xf: &Xf) -> Option<Point> {
     ui.input(|i| i.pointer.press_origin()).map(|p| xf.to_doc(p))
 }
@@ -624,7 +671,9 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, xf: &Xf, m: Mo
     st.canvas = Some(response.rect);
     st.hover = raw;
     st.snapped = None;
-    let free = ctx.memory(|mem| mem.focused().is_none()) && !egui::Popup::is_any_open(&ctx);
+    // The keys are the tool's only while nothing else has them: no field is being typed in and no
+    // dialog, window or menu is open over the canvas.
+    let free = ctx.memory(|mem| mem.focused().is_none()) && !egui::Popup::is_any_open(&ctx) && !crate::escape::window_open(&ctx);
     match app.tool {
         Tool::Nodes => nodes_tool(ui, &ctx, app, &mut st, response, xf, m, raw, free),
         Tool::Tabs => tabs_tool(&ctx, app, &mut st, response, xf, raw),
@@ -880,7 +929,7 @@ fn nodes_tool(
     }
     // Escape cancels a gesture in progress.
     if !matches!(st.gesture, Gesture::None) {
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             cancel_gesture(app, st);
         }
         return;
@@ -1010,7 +1059,14 @@ fn run_node_op(_ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, op: Nod
 
 /// A shape's manual tabs in document coordinates.
 pub fn tab_points(app: &DarkBurn, id: ShapeId) -> Vec<Point> {
-    app.editor.doc.get(id).map(|s| s.tabs.iter().map(|t| s.transform * Point::new(t[0], t[1])).collect()).unwrap_or_default()
+    crate::shape_nodes::tab_points(&app.editor.doc, id)
+}
+
+/// The shape under `p` that can carry tabs and start points: a plain shape, or a group (its
+/// shapes carry them).
+fn cut_hit(app: &DarkBurn, p: Point, tol: f64) -> Option<ShapeId> {
+    let id = select::hit(&app.editor.doc, p, tol)?;
+    crate::shape_nodes::cut_outline(&app.editor.doc, id).map(|_| id)
 }
 
 fn tab_size(app: &DarkBurn, id: ShapeId) -> f64 {
@@ -1029,7 +1085,7 @@ fn tabs_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
         && let Some(p) = raw
     {
         let mut ids = app.editor.selected();
-        if let Some(h) = plain_hit(app, p, tol)
+        if let Some(h) = cut_hit(app, p, tol)
             && !ids.contains(&h)
         {
             ids.push(h);
@@ -1043,7 +1099,7 @@ fn tabs_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
                 return;
             }
         }
-        if let Some(id) = plain_hit(app, p, tol) {
+        if let Some(id) = cut_hit(app, p, tol) {
             app.editor.selection.set([id]);
             run_cmd(app, ctx, st, "tabs.add", json!({ "shape": id.0, "x": p.x, "y": p.y }));
         }
@@ -1103,7 +1159,7 @@ fn measure_tool(
             mem.inches = !mem.inches;
             st.sel_info.0 = u64::MAX;
         }
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             if mem.pts.is_empty() {
                 app.set_tool(Tool::Select);
             }
@@ -1176,7 +1232,7 @@ fn warp_tool(
             w.perspective = !w.perspective;
             changed = true;
         }
-        if take_key(ctx, Key::Escape).is_some() {
+        if take_escape(ctx).is_some() {
             if matches!(st.gesture, Gesture::Warp(_)) {
                 st.gesture = Gesture::None;
             }
@@ -1233,7 +1289,7 @@ fn start_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response:
         .min_by(|a, b| a.1.total_cmp(&b.1));
     let id = match near {
         Some((id, _)) => id,
-        None => match plain_hit(app, p, tol) {
+        None => match cut_hit(app, p, tol) {
             Some(id) => {
                 app.editor.selection.set([id]);
                 return;
@@ -1293,7 +1349,7 @@ fn pick_tool(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, response: 
         st.snapped = info;
         q
     });
-    if free && take_key(ctx, Key::Escape).is_some() {
+    if free && take_escape(ctx).is_some() {
         if st.pick.is_empty() {
             app.set_tool(Tool::Select);
         }
@@ -1446,13 +1502,13 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
         }
         Tool::Tabs => {
             let mut ids: Vec<ShapeId> = app.editor.selected();
-            if let Some(h) = hover.and_then(|p| plain_hit(app, p, tol))
+            if let Some(h) = hover.and_then(|p| cut_hit(app, p, tol))
                 && !ids.contains(&h)
             {
                 ids.push(h);
             }
             for id in &ids {
-                let Some(path) = crate::shape_ops::shape_path(&app.editor.doc, *id) else { continue };
+                let Some(path) = crate::shape_nodes::cut_outline(&app.editor.doc, *id) else { continue };
                 let size = tab_size(app, *id);
                 for g in crate::shape_nodes::auto_gaps(&app.editor.doc, *id, false) {
                     painter.line_segment([xf.to_screen(g.from), xf.to_screen(g.to)], Stroke::new(5.0, ORANGE.gamma_multiply(0.8)));
@@ -1775,6 +1831,99 @@ mod tests {
         assert!(apply_op(&sq, NodeOp::Delete, &[], None, Point::ZERO, &[]).is_err());
         let moved = move_nodes(&sq, &[NodeRef::new(0, 2)], Vec2::new(5.0, 5.0));
         assert_eq!(contours(&moved)[0].node(2), Some(Point::new(15.0, 15.0)));
+    }
+
+    fn line_and_square() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((-20.0, 0.0));
+        p.line_to((-10.0, 0.0));
+        p.extend(square());
+        p
+    }
+
+    #[test]
+    fn deleting_every_node_of_a_subpath_removes_only_that_subpath() {
+        // Both nodes of the line: the line goes, the square after it keeps its four nodes.
+        let both = [NodeRef::new(0, 0), NodeRef::new(0, 1)];
+        let out = apply_op(&line_and_square(), NodeOp::Delete, &both, None, Point::ZERO, &[]).unwrap();
+        assert_eq!(contours(&out).len(), 1);
+        assert_eq!(out, square());
+        // Every node of the only subpath: nothing is left, and that is not an error.
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((10.0, 0.0));
+        assert!(apply_op(&line, NodeOp::Delete, &both, None, Point::ZERO, &[]).unwrap().elements().is_empty());
+        let all: Vec<NodeRef> = (0..4).map(|i| NodeRef::new(0, i)).collect();
+        assert!(apply_op(&square(), NodeOp::Delete, &all, None, Point::ZERO, &[]).unwrap().elements().is_empty());
+    }
+
+    #[test]
+    fn several_breaks_or_deleted_lines_on_a_closed_shape_hit_the_chosen_ones() {
+        // Delete the bottom and the top line of the square: the right and the left line stay.
+        let nodes = [NodeRef::new(0, 0), NodeRef::new(0, 2)];
+        let out = apply_op(&square(), NodeOp::DeleteSegment, &nodes, None, Point::ZERO, &[]).unwrap();
+        let cs = contours(&out);
+        assert_eq!(cs.len(), 2);
+        for c in &cs {
+            assert_eq!(c.segs.len(), 1);
+            assert!((c.start().unwrap().x - c.end().unwrap().x).abs() < 1e-9, "an upright line is left: {c:?}");
+        }
+        // Break at two opposite corners: two halves of two lines each, meeting at those corners.
+        let nodes = [NodeRef::new(0, 1), NodeRef::new(0, 3)];
+        let out = apply_op(&square(), NodeOp::Break, &nodes, None, Point::ZERO, &[]).unwrap();
+        let cs = contours(&out);
+        assert_eq!(cs.len(), 2);
+        let corners = [Point::new(10.0, 0.0), Point::new(0.0, 10.0)];
+        for c in &cs {
+            assert!(!c.closed);
+            assert_eq!(c.segs.len(), 2);
+            assert!(corners.contains(&c.start().unwrap()) && corners.contains(&c.end().unwrap()), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn the_end_node_of_an_open_line_does_not_stop_segment_edits() {
+        // Every node of an open line selected: its end node has no line of its own.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        let all = [NodeRef::new(0, 0), NodeRef::new(0, 1), NodeRef::new(0, 2)];
+        let curved = apply_op(&p, NodeOp::ToCurve, &all, None, Point::ZERO, &[]).unwrap();
+        assert!(contours(&curved)[0].segs.iter().all(|s| matches!(s, PathSeg::Cubic(_))));
+        let lines = apply_op(&curved, NodeOp::ToLine, &all, None, Point::ZERO, &[]).unwrap();
+        assert_eq!(lines, p);
+        let gone = apply_op(&p, NodeOp::DeleteSegment, &all, None, Point::ZERO, &[]).unwrap();
+        assert!(gone.elements().is_empty());
+        // Only the end node: there is nothing to change, and the message says what to pick.
+        let err = apply_op(&p, NodeOp::ToCurve, &[NodeRef::new(0, 2)], None, Point::ZERO, &[]).unwrap_err();
+        assert!(err.contains("select"), "{err}");
+    }
+
+    #[test]
+    fn deleting_the_last_nodes_of_a_shape_removes_the_shape() {
+        use crate::shape_ops::tests::{app, run, select};
+        let mut app = app();
+        let id = ShapeId(run(&mut app, "shape.add_line", json!({ "points": [[0, 0], [10, 0]], "connect": false })).unwrap()["id"].as_u64().unwrap());
+        let other = crate::shape_ops::tests::add_rect(&mut app, 50.0, 50.0, 10.0, 10.0, 0);
+        select(&mut app, &[id]);
+        // The node tool: both nodes selected, Delete.
+        let mut st = State::default();
+        st.nodes.push((id, NodeRef::new(0, 0)));
+        st.nodes.push((id, NodeRef::new(0, 1)));
+        press(&mut app, &mut st, Key::Delete, Modifiers::NONE);
+        assert!(app.editor.doc.get(id).is_none(), "no empty shape is left behind");
+        assert_eq!(app.editor.doc.len(), 1);
+        assert!(app.editor.selected().is_empty());
+        app.editor.undo();
+        assert_eq!(crate::shape_ops::shape_path(&app.editor.doc, id).map(|p| cleanup::node_count(&p)), Some(2), "undo brings the line back");
+        // The command: deleting one node of a two-node line leaves nothing to draw.
+        select(&mut app, &[id]);
+        run(&mut app, "node.edit", json!({ "op": "delete", "subpath": 0, "node": 0 })).unwrap();
+        assert!(app.editor.doc.get(id).is_none());
+        assert!(app.editor.doc.get(other).is_some());
+        let bb = app.editor.doc.bbox_of(&darkburn_core::select::all(&app.editor.doc)).unwrap();
+        assert!((bb.x0 - 50.0).abs() < 1e-9 && (bb.y0 - 50.0).abs() < 1e-9, "{bb:?}");
     }
 
     #[test]

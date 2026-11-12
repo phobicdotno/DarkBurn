@@ -242,6 +242,49 @@ fn an_oversized_request_after_login_closes_only_that_connection() {
     assert!(other.inspect("undo", 0).is_ok());
 }
 
+/// Waits until the server has let go of every connection.
+fn wait_all_closed(server: &ControlServer) {
+    let end = std::time::Instant::now() + Duration::from_secs(10);
+    while server.connections() > 0 {
+        assert!(std::time::Instant::now() < end, "the server kept the connection open");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn a_refusal_still_reaches_a_client_that_reads_it_after_the_server_hung_up() {
+    // In each case the client has sent bytes the server never reads as a request. The reply
+    // must survive the server closing its end, however late the client gets round to reading.
+    let server = ControlServer::bind(ControlConfig { port: 0, token: Some(TOKEN.into()), max_frame: 4096, ..Default::default() }).unwrap();
+    let hello = json!({"hello": {"token": TOKEN, "client": "test", "version": 1}});
+
+    // An oversized request after login.
+    let mut s = TcpStream::connect(server.addr()).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut s, &hello).unwrap();
+    assert_eq!(read_frame(&mut s, 1 << 20).unwrap().unwrap()["ok"], true);
+    write_frame(&mut s, &json!({"id": 1, "method": "measure", "params": {"pad": "x".repeat(10_000)}})).unwrap();
+    wait_all_closed(&server);
+    let reply = read_frame(&mut s, 1 << 20).expect("the reply is not lost").expect("a reply before the end");
+    assert_eq!(reply["error"]["code"], "invalid_params");
+    assert!(read_frame(&mut s, 1 << 20).unwrap().is_none(), "then a clean end of stream");
+
+    // Bytes that are not a frame, and a hello that claims a gigabyte and keeps sending.
+    let mut junk = (1u32 << 30).to_be_bytes().to_vec();
+    junk.extend_from_slice(&[b'z'; 20_000]);
+    for bytes in [b"GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec(), junk] {
+        let mut s = TcpStream::connect(server.addr()).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        s.write_all(&bytes).unwrap();
+        wait_all_closed(&server);
+        let reply = read_frame(&mut s, 1 << 20).expect("the reply is not lost").expect("a reply before the end");
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("authentication failed"));
+        assert!(read_frame(&mut s, 1 << 20).unwrap().is_none(), "then a clean end of stream");
+    }
+    assert_eq!(server.refused_connections(), 2);
+}
+
 #[test]
 fn large_payloads_cross_the_channel() {
     let app = App::start(McpPolicy::default());

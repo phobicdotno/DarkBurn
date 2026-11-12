@@ -66,6 +66,11 @@ pub fn config(p: &DeviceProfile) -> LineConfig {
         persist: String::new(),
         jog: "G91\nG0 X{dx} Y{dy} Z{dz} F{feed}\nG90".into(),
     };
+    if !g.fire_button {
+        // The fire button is switched off in the device settings: the driver has no fire command.
+        c.commands.fire_on.clear();
+    }
+    c.laser_frames = g.laser_on_when_framing;
     c.power = frame_options(p);
     c
 }

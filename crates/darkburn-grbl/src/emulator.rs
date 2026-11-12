@@ -30,6 +30,9 @@ pub enum EmulatorFlavor {
     GrblHal,
     /// FluidNC on an ESP32.
     FluidNc,
+    /// grbl-LPC on an LPC1769 board such as a Smoothieboard: the GRBL 1.1 protocol over native
+    /// USB, so opening the port does not reset the board, and a much larger RX buffer.
+    GrblLpc,
 }
 
 /// Emulator set-up.
@@ -52,10 +55,17 @@ pub struct EmulatorConfig {
     pub homing_seconds: f64,
     /// Make `$H` fail with ALARM:9.
     pub homing_fails: bool,
+    /// Simulated seconds the machine takes to slow down after a feed hold; it still moves
+    /// (at half speed) during that time.
+    pub decel_seconds: f64,
     /// Keep every processed line in [`EmulatorStats::lines`].
     pub record_lines: bool,
     /// Settings that differ from the built-in defaults.
     pub settings: Vec<(u16, f64)>,
+    /// Extra lines printed after the start-up banner (vendor welcome text).
+    pub welcome: Vec<String>,
+    /// Extra lines printed with the `$I` build info (vendor tags such as `[MODEL: ...]`).
+    pub build_info: Vec<String>,
 }
 
 impl Default for EmulatorConfig {
@@ -78,8 +88,11 @@ impl EmulatorConfig {
             force_set_origin: true,
             homing_seconds: 2.0,
             homing_fails: false,
+            decel_seconds: DECEL_SECONDS,
             record_lines: true,
             settings: Vec::new(),
+            welcome: Vec::new(),
+            build_info: Vec::new(),
         }
     }
     /// Another firmware family with matching buffer sizes.
@@ -90,7 +103,19 @@ impl EmulatorConfig {
             c.rx_buffer_size = 1024;
             c.planner_blocks = 35;
         }
+        if flavor == EmulatorFlavor::GrblLpc {
+            // Native USB: no DTR reset. The buffer size is what users of the port report; the
+            // driver takes the real value from `[OPT:...]` either way.
+            c.rx_buffer_size = 8192;
+            c.reset_on_open = false;
+        }
         c
+    }
+    /// Vendor text: lines after the banner and lines in the `$I` reply.
+    pub fn with_vendor_text(mut self, welcome: &[&str], build_info: &[&str]) -> Self {
+        self.welcome = welcome.iter().map(|s| (*s).to_owned()).collect();
+        self.build_info = build_info.iter().map(|s| (*s).to_owned()).collect();
+        self
     }
     pub fn with_time_scale(mut self, scale: f64) -> Self {
         self.time_scale = scale;
@@ -127,6 +152,16 @@ pub struct EmulatorStats {
     pub laser_switch_ons: usize,
     /// Highest S value (after override) the laser fired at.
     pub max_laser_s: f64,
+    /// Every move that started with the laser on, in order (when `record_lines`).
+    pub burns: Vec<Burn>,
+}
+
+/// A move the laser was on for: machine positions in mm and the S value of the block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Burn {
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub s: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,6 +223,8 @@ pub struct GrblEmulator {
     timer_until: Option<f64>,
     state: State,
     resume_after_hold: bool,
+    /// The spindle stop override (0x9E) is in force: the spindle output is off in this hold.
+    spindle_stopped: bool,
     /// Critical alarm: ignore everything except real-time bytes until a reset.
     wait_reset: bool,
     alarm_code: Option<u16>,
@@ -216,6 +253,9 @@ pub struct GrblEmulator {
     dtr: bool,
     unplugged: bool,
     laser_was_on: bool,
+    /// Highest laser power of a move made during the clock step in progress. A block that
+    /// starts and ends inside one step is seen nowhere else.
+    step_power: f64,
     stats: EmulatorStats,
 }
 
@@ -261,6 +301,10 @@ fn default_settings(flavor: EmulatorFlavor) -> BTreeMap<u16, f64> {
     if flavor == EmulatorFlavor::GrblHal {
         m.extend([(33, 1000.0), (34, 0.0), (35, 0.0), (36, 100.0)]);
     }
+    if flavor == EmulatorFlavor::GrblLpc {
+        // grbl-LPC's README: $33 PWM frequency (Hz), $34 PWM off, $35 PWM min, $36 PWM max (%).
+        m.extend([(33, 5000.0), (34, 0.0), (35, 0.0), (36, 100.0)]);
+    }
     if flavor == EmulatorFlavor::Grbl09 {
         m.remove(&30);
         m.remove(&31);
@@ -289,6 +333,7 @@ impl GrblEmulator {
             timer_until: None,
             state: State::Idle,
             resume_after_hold: false,
+            spindle_stopped: false,
             wait_reset: false,
             alarm_code: None,
             mpos: [0.0; 3],
@@ -316,6 +361,7 @@ impl GrblEmulator {
             dtr: true,
             unplugged: false,
             laser_was_on: false,
+            step_power: 0.0,
             stats: EmulatorStats::default(),
         };
         e.power_on_reset();
@@ -362,6 +408,10 @@ impl GrblEmulator {
     }
     pub fn spindle_enabled(&self) -> bool {
         self.spindle != Spindle::Off
+    }
+    /// The DTR level the host last set.
+    pub fn dtr(&self) -> bool {
+        self.dtr
     }
     pub fn is_unplugged(&self) -> bool {
         self.unplugged
@@ -475,9 +525,21 @@ impl GrblEmulator {
 
     fn step(&mut self, max: f64) -> f64 {
         let power_before = self.laser_power();
+        self.step_power = 0.0;
         let used = self.step_inner(max);
-        if used > 0.0 && power_before > 0.0 {
+        // The laser is looked at between steps. When the clock jumps far (a busy computer), a
+        // whole powered move fits in one step and is over before the next look, so the move
+        // itself reports its power.
+        let burned = self.step_power;
+        if used > 0.0 && (power_before > 0.0 || burned > 0.0) {
             self.stats.laser_on_seconds += used;
+        }
+        if burned > 0.0 {
+            self.stats.max_laser_s = self.stats.max_laser_s.max(burned);
+            if !self.laser_was_on {
+                self.stats.laser_switch_ons += 1;
+            }
+            self.laser_was_on = true;
         }
         self.track_laser();
         used
@@ -497,6 +559,9 @@ impl GrblEmulator {
         }
         if let Some(t) = self.timer_until {
             let d = (t - self.now).max(0.0);
+            if self.state == (State::Hold { complete: false }) {
+                self.decelerate(d.min(max));
+            }
             if d > max {
                 self.now += max;
                 return max;
@@ -568,12 +633,30 @@ impl GrblEmulator {
         (b.feed * f64::from(self.ov.0) / 100.0).min(max_xy).max(1.0)
     }
 
+    /// The machine keeps moving while it slows down after a feed hold.
+    fn decelerate(&mut self, dt: f64) {
+        let Some(mut cur) = self.current else { return };
+        if cur.dwell_left > 0.0 || cur.length <= 0.0 {
+            return;
+        }
+        let rate = self.effective_rate(&cur.block) / 60.0 * 0.5;
+        cur.done = (cur.done + rate * dt).min(cur.length);
+        let f = cur.done / cur.length;
+        for i in 0..3 {
+            self.mpos[i] = cur.start[i] + (cur.block.target[i] - cur.start[i]) * f;
+        }
+        self.current = Some(cur);
+    }
+
     fn step_motion(&mut self, max: f64) -> f64 {
         if self.current.is_none() {
             match self.planner.pop_front() {
                 Some(block) => {
                     let start = self.mpos;
                     let length = dist(start, block.target);
+                    if self.cfg.record_lines && block.power > 0.0 && block.dwell <= 0.0 && length > 0.0 {
+                        self.stats.burns.push(Burn { from: [start[0], start[1]], to: [block.target[0], block.target[1]], s: block.power });
+                    }
                     self.current = Some(Active { block, start, length, done: 0.0, dwell_left: block.dwell });
                     if block.jog {
                         self.state = State::Jog;
@@ -596,6 +679,9 @@ impl GrblEmulator {
         } else {
             let rate = self.effective_rate(&cur.block) / 60.0;
             let left = cur.length - cur.done;
+            if left > 0.0 {
+                self.step_power = self.step_power.max(cur.block.power * f64::from(self.ov.2) / 100.0);
+            }
             let t_left = left / rate;
             if t_left <= max {
                 used = t_left;
@@ -633,10 +719,15 @@ impl GrblEmulator {
                 if let Some(c) = &self.current {
                     if c.dwell_left > 0.0 { self.static_power() } else { c.block.power * scale }
                 } else {
-                    0.0
+                    // Between two blocks: the next one starts at once, so the laser does not
+                    // go off and on again between two powered moves.
+                    self.planner.front().map_or(0.0, |b| if b.dwell > 0.0 { self.static_power() } else { b.power * scale })
                 }
             }
             State::Idle | State::Check => self.static_power(),
+            // Without laser mode a feed hold stops the motion, not the spindle output: it
+            // stays on until the spindle stop override switches it off.
+            State::Hold { .. } if !self.laser_mode() && !self.spindle_stopped => self.static_power(),
             _ => 0.0,
         }
     }
@@ -691,6 +782,7 @@ impl GrblEmulator {
             EmulatorFlavor::Grbl09 => "Grbl 0.9j ['$' for help]",
             EmulatorFlavor::GrblHal => "GrblHAL 1.1f ['$' or '$HELP' for help]",
             EmulatorFlavor::FluidNc => "Grbl 3.9 [FluidNC v3.9.7 (noradio) '$' for help]",
+            EmulatorFlavor::GrblLpc => "Grbl 1.1f ['$' for help]",
         }
     }
 
@@ -698,6 +790,9 @@ impl GrblEmulator {
         self.print("");
         let b = self.banner();
         self.print(b);
+        for l in self.cfg.welcome.clone() {
+            self.print(&l);
+        }
         if self.state == State::Alarm {
             self.print("[MSG:'$H'|'$X' to unlock]");
         }
@@ -745,6 +840,7 @@ impl GrblEmulator {
     }
 
     fn soft_reset(&mut self) {
+        self.spindle_stopped = false;
         self.stats.soft_resets += 1;
         let moving = matches!(self.state, State::Run | State::Jog | State::Home | State::Hold { complete: false })
             || matches!(self.state, State::Door(2) | State::Door(3));
@@ -758,6 +854,11 @@ impl GrblEmulator {
         self.reset_modal();
         self.wait_reset = false;
         self.state = if in_alarm { State::Alarm } else { State::Idle };
+        // GRBL 1.1 looks at the door switch after a reset and goes straight back into its door
+        // state while the door is open.
+        if !in_alarm && self.door_switch_open {
+            self.enter_door();
+        }
         self.reports = 0;
         self.wco_dirty = true;
         self.ov_dirty = true;
@@ -842,6 +943,12 @@ impl GrblEmulator {
                 };
                 self.ov_dirty = true;
             }
+            rt::SPINDLE_STOP => {
+                // A toggle, and only taken while a hold is complete.
+                if self.cfg.flavor != EmulatorFlavor::Grbl09 && self.state == (State::Hold { complete: true }) {
+                    self.spindle_stopped = !self.spindle_stopped;
+                }
+            }
             rt::FLOOD_TOGGLE => self.flood = !self.flood,
             rt::MIST_TOGGLE => self.mist = !self.mist,
             _ => {}
@@ -858,7 +965,7 @@ impl GrblEmulator {
         match self.state {
             State::Run => {
                 self.state = State::Hold { complete: false };
-                self.timer_until = Some(self.now + DECEL_SECONDS);
+                self.timer_until = Some(self.now + self.cfg.decel_seconds);
             }
             State::Jog => self.cancel_jog(),
             State::Idle if self.cycle_pending() => {
@@ -881,6 +988,7 @@ impl GrblEmulator {
     }
 
     fn resume(&mut self) {
+        self.spindle_stopped = false;
         self.state = if self.cycle_pending() { State::Run } else { State::Idle };
     }
 
@@ -1166,6 +1274,13 @@ impl GrblEmulator {
                         self.print("[VER:3.9 FluidNC v3.9.7:]");
                         self.print("[OPT:PHS]");
                     }
+                    EmulatorFlavor::GrblLpc => {
+                        self.print("[VER:1.1f.20170801:]");
+                        self.print(&format!("[OPT:V,{},{}]", self.cfg.planner_blocks, self.cfg.rx_buffer_size));
+                    }
+                }
+                for l in self.cfg.build_info.clone() {
+                    self.print(&l);
                 }
                 self.reply_ok();
             }
@@ -1687,6 +1802,20 @@ mod tests {
         assert_eq!(send(&mut e, "G0 X1\n"), "error:9\r\n");
         assert!(send(&mut e, "$X\n").contains("Unlocked"));
         assert_eq!(e.state_name(), "Idle");
+    }
+
+    #[test]
+    fn a_powered_move_that_fits_in_one_clock_step_still_counts_as_laser_on() {
+        // A busy computer advances the clock in big jumps. The whole program then runs inside
+        // one call, and the laser is off again by the time anyone looks.
+        let mut e = emu();
+        e.receive(b"G21 G90\nG0 X5\nM3 S10\nG1 X20 F6000\nG1 Y20\nM5 S0\n");
+        e.advance(Duration::from_secs(600));
+        assert_eq!(e.machine_position()[..2], [20.0, 20.0]);
+        assert!(!e.laser_on());
+        assert_eq!(e.stats().laser_switch_ons, 1);
+        assert_eq!(e.stats().max_laser_s, 10.0);
+        assert!(e.stats().laser_on_seconds > 0.2, "{}", e.stats().laser_on_seconds);
     }
 
     #[test]

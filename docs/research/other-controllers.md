@@ -9,7 +9,7 @@ Tags used below:
 - **[forum]** reported by a user or staff member in a public forum, unverified.
 - **[inferred]** my reasoning, not stated by any source.
 
-Note: `docs/HARDWARE-CHECKS.md` is not in the main tree of `C:\Users\kk\DarkBurn`. The copy read lives at `.claude\worktrees\agent-a0cfe22186f7881f3\docs\HARDWARE-CHECKS.md`, next to the `darkburn-ruida` crate and its `ATTRIBUTION.md`.
+Note: when this was written, `docs/HARDWARE-CHECKS.md` was not yet in the main tree of DarkBurn. The copy read was the one in a work-in-progress tree, next to the `darkburn-ruida` crate and its `ATTRIBUTION.md`.
 
 ---
 
@@ -84,7 +84,7 @@ Ethernet:
 ### 1.5 Feasibility
 
 **Needs real hardware capture.** No clean-room path exists from public documents. A workable path:
-1. Owner obtains a controller (AWC608 or AWC708 Lite are the cheapest).
+1. Owner obtains a controller (an AWC608 or AWC708 Lite, for example).
 2. Owner generates a handful of tiny `.ud5` files with the vendor's own tool (one line at known power/speed, one rectangle, two layers, one raster) and compares bytes. This is black-box analysis of files the owner created; DarkBurn code never touches the machine.
 3. Owner takes passive captures of USB and Ethernet traffic with standard tools (Wireshark, USBPcap) while the vendor tool sends those same files.
 4. Only then write the transport impls and an in-memory emulator.

@@ -12,7 +12,6 @@
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use darkburn_core::kurbo::Affine;
@@ -27,12 +26,14 @@ pub const MAX_SIDE: u32 = 2048;
 /// Frames an unused texture is kept for.
 const KEEP_FRAMES: u64 = 600;
 
-/// Worker jobs started so far (tests count them).
-static STARTED: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    /// Worker jobs started so far from this thread (tests count them; each test has its own thread).
+    static STARTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 pub fn jobs_started() -> usize {
-    STARTED.load(Ordering::Relaxed)
+    STARTED.with(std::cell::Cell::get)
 }
 
 /// What to compute for one image.
@@ -86,7 +87,7 @@ pub fn window(gray: &GrayF, size_mm: (f64, f64), interval_mm: f64, max_side: u32
     let (w, h) = (gray.width, gray.height);
     let (sw, sh) = (((f64::from(w) * fx) as u32).clamp(1, w), ((f64::from(h) * fy) as u32).clamp(1, h));
     let (x0, y0) = ((w - sw) / 2, (h - sh) / 2);
-    let sub = GrayF::from_fn(sw, sh, |x, y| gray.get(x0 + x, y0 + y));
+    let sub = gray.window(x0, y0, sw, sh);
     (std::borrow::Cow::Owned(sub), (size_mm.0 * f64::from(sw) / f64::from(w), size_mm.1 * f64::from(sh) / f64::from(h)), true)
 }
 
@@ -156,11 +157,13 @@ pub fn texture(ctx: &Context, doc: &Document, leaf: &Shape, img: &ImageShape) ->
         let done = slot.lock().ok().and_then(|mut s| s.take());
         if let Some(result) = done {
             entry.pending = None;
+            // Done for these inputs, also when the picture could not be read: trying again
+            // every frame would start a worker per frame and never get further.
+            entry.hash = h;
             if let Some(colour) = result {
                 let options =
                     TextureOptions { magnification: egui::TextureFilter::Nearest, minification: egui::TextureFilter::Linear, ..Default::default() };
                 entry.texture = Some(ctx.load_texture(format!("db_processed_{}", leaf.id.0), colour, options));
-                entry.hash = h;
             }
         }
     }
@@ -170,7 +173,7 @@ pub fn texture(ctx: &Context, doc: &Document, leaf: &Shape, img: &ImageShape) ->
         entry.pending = Some((hash, slot.clone()));
         let job = Job { data, shape: img.clone(), adjust, settings, size_mm: size, max_side: MAX_SIDE };
         let repaint = ctx.clone();
-        STARTED.fetch_add(1, Ordering::Relaxed);
+        STARTED.with(|s| s.set(s.get() + 1));
         std::thread::spawn(move || {
             let out = compute(&job);
             if let Ok(mut s) = slot.lock() {
@@ -270,6 +273,22 @@ mod tests {
         tweaked.adjust.gamma = 2.0;
         let (_, s) = display_settings(&d, &leaf, &tweaked).unwrap();
         assert_eq!(s.mode, ImageMode::Grayscale, "adjustments show live without dots");
+    }
+
+    #[test]
+    fn a_picture_that_cannot_be_read_is_tried_once_not_every_frame() {
+        let ctx = Context::default();
+        let mut d = Document::new();
+        image_layer(&mut d, 3, 0.25);
+        let id = add_image(&mut d, b"this is not a picture".to_vec(), (64, 8), (16.0, 2.0), (20.0, 20.0), 3);
+        let before = jobs_started();
+        for _ in 0..40 {
+            let leaf = d.get(id).unwrap();
+            let ShapeKind::Image(img) = &leaf.kind else { panic!() };
+            assert!(texture(&ctx, &d, leaf, img).is_none());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(jobs_started() - before, 1, "one try, not a new worker for every frame");
     }
 
     #[test]

@@ -129,3 +129,69 @@ fn many_requests_in_order() {
     h.shutdown();
     assert!(h.poll().contains(&Event::Stopped));
 }
+
+#[test]
+fn stop_does_not_wait_behind_an_unanswered_prompt_or_other_requests() {
+    let (mut h, emu) = handle(None);
+    let id = h.request(Request::Connect);
+    h.wait(id, T, &mut never).unwrap();
+    let job = square_job((1.0, 1.0), 5.0, 10.0);
+    let id = h.request(Request::SendJob { name: "DUP".into(), job: Box::new(job.clone()), options: SendOptions::default() });
+    h.wait(id, T, &mut never).unwrap();
+
+    // A second send with the same name asks whether to overwrite. Nobody answers.
+    let send = h.request(Request::SendJob { name: "DUP".into(), job: Box::new(job), options: SendOptions::default() });
+    let end = Instant::now() + T;
+    let mut prompted = false;
+    while !prompted && Instant::now() < end {
+        prompted = h.poll().iter().any(|e| matches!(e, Event::OverwritePrompt { id, .. } if *id == send));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(prompted);
+
+    // Other requests queue up, and then Stop is pressed.
+    let home = h.request(Request::Home(HomeAxes::XY));
+    let mv = h.request(Request::MoveTo { to: kurbo::Point::new(5.0, 5.0), light: false });
+    let stop = h.request(Request::Stop);
+    assert_eq!(h.wait(stop, Duration::from_secs(3), &mut never), Ok(Response::Done), "Stop waited for the overwrite question");
+
+    // Replies in the order they were handled: the send is given up, Stop runs first, then the rest.
+    let mut order = Vec::new();
+    let end = Instant::now() + T;
+    while order.len() < 3 && Instant::now() < end {
+        for e in h.poll() {
+            if let Event::Reply { id, result } = e {
+                order.push((id, result));
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(order, vec![(send, Err(RuidaError::Cancelled)), (home, Ok(Response::Done)), (mv, Ok(Response::Done))]);
+    assert_eq!(lock(&emu).files().len(), 1);
+}
+
+#[test]
+fn closing_while_an_overwrite_question_is_open_does_not_hang() {
+    let (mut h, _emu) = handle(None);
+    let id = h.request(Request::Connect);
+    h.wait(id, T, &mut never).unwrap();
+    let job = square_job((1.0, 1.0), 5.0, 10.0);
+    let id = h.request(Request::SendJob { name: "DUP".into(), job: Box::new(job.clone()), options: SendOptions::default() });
+    h.wait(id, T, &mut never).unwrap();
+    let send = h.request(Request::SendJob { name: "DUP".into(), job: Box::new(job), options: SendOptions::default() });
+    let end = Instant::now() + T;
+    let mut prompted = false;
+    while !prompted && Instant::now() < end {
+        prompted = h.poll().iter().any(|e| matches!(e, Event::OverwritePrompt { id, .. } if *id == send));
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(prompted);
+    // The program closes (the handle is dropped) with the question still open. Done on another
+    // thread so that a hang fails this test instead of stopping the whole run.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(h);
+        let _ = done_tx.send(());
+    });
+    assert!(done_rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the worker thread never ended");
+}

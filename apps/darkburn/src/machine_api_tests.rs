@@ -1,7 +1,8 @@
 //! Headless tests of [`MachineHandle`] against both emulators. No real port, USB or network
 //! connection is ever opened (test builds refuse real links).
 
-use std::time::Duration;
+use std::ops::{Deref, DerefMut};
+use std::time::{Duration, Instant};
 
 use kurbo::{Point, Rect};
 
@@ -16,18 +17,76 @@ fn spec(family: Family, scale: f64) -> ConnectSpec {
     s
 }
 
-fn connected(family: Family, scale: f64) -> MachineHandle {
-    let mut h = MachineHandle::new();
+/// A machine handle for tests that never drops an event.
+///
+/// [`MachineHandle::poll`] hands each event out once, and one poll can return several: a slow
+/// test thread may get `JobStarted` and `JobFinished` together. A wait that looked only at the
+/// latest batch would then lose every event behind the one it was waiting for. Here every
+/// polled event is kept until [`wait_event`] has matched it.
+struct Sim {
+    h: MachineHandle,
+    /// Events polled and not yet matched by [`wait_event`], oldest first.
+    unseen: Vec<MachineEvent>,
+}
+
+impl Sim {
+    fn new() -> Sim {
+        Sim { h: MachineHandle::new(), unseen: Vec::new() }
+    }
+
+    /// Polls until `pred` holds or `timeout` passes. `pred` gets the snapshot and every event
+    /// that no [`wait_event`] has matched yet (not only the newest ones).
+    fn wait_for(&mut self, timeout: Duration, mut pred: impl FnMut(&Snapshot, &[MachineEvent]) -> bool) -> bool {
+        let end = Instant::now() + timeout;
+        loop {
+            let new = self.h.poll();
+            self.unseen.extend(new);
+            if pred(self.h.snapshot(), &self.unseen) {
+                return true;
+            }
+            if Instant::now() >= end {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Deref for Sim {
+    type Target = MachineHandle;
+    fn deref(&self) -> &MachineHandle {
+        &self.h
+    }
+}
+
+impl DerefMut for Sim {
+    fn deref_mut(&mut self) -> &mut MachineHandle {
+        &mut self.h
+    }
+}
+
+fn connected(family: Family, scale: f64) -> Sim {
+    let mut h = Sim::new();
     h.connect(&spec(family, scale), None).unwrap();
     assert!(h.wait_for(T, |s, _| s.connected()), "{family:?} simulator connects");
     h
 }
 
-fn wait_event(h: &mut MachineHandle, f: impl Fn(&MachineEvent) -> bool) -> bool {
-    h.wait_for(T, |_, ev| ev.iter().any(&f))
+/// Waits for the next event that matches `f`. That event and the ones before it are then
+/// done with; later ones stay for the next wait, so two waits in a row see events in order.
+fn wait_event(h: &mut Sim, f: impl Fn(&MachineEvent) -> bool) -> bool {
+    let mut at = None;
+    let found = h.wait_for(T, |_, ev| {
+        at = ev.iter().position(&f);
+        at.is_some()
+    });
+    if let Some(i) = at {
+        h.unseen.drain(..=i);
+    }
+    found
 }
 
-fn ready(h: &mut MachineHandle) {
+fn ready(h: &mut Sim) {
     let ok = h.wait_for(T, |s, _| s.state == LaserState::Ready);
     if !ok {
         for c in h.console() {
@@ -39,7 +98,7 @@ fn ready(h: &mut MachineHandle) {
 
 #[test]
 fn real_links_are_refused_without_consent_and_in_tests() {
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     let real = ConnectSpec { link: Link::Serial { port: "COM3".into(), baud: 115_200 }, config: ConnectConfig::default() };
     assert!(matches!(h.connect(&real, None), Err(MachineError::Refused(_))));
     assert!(matches!(h.connect(&real, Some(RealLinkConsent::from_user_click())), Err(MachineError::Refused(_))));
@@ -51,7 +110,7 @@ fn real_links_are_refused_without_consent_and_in_tests() {
 
 #[test]
 fn commands_fail_cleanly_when_not_connected() {
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     assert_eq!(h.stop(), Err(MachineError::NotConnected));
     assert_eq!(h.pause(), Err(MachineError::NotConnected));
     assert_eq!(h.home(), Err(MachineError::NotConnected));
@@ -115,7 +174,7 @@ fn grbl_pause_resume_stop() {
 fn grbl_home_jog_move_origin_and_position() {
     let mut s = spec(Family::Grbl, 200.0);
     s.config.sim_homing = true;
-    let mut h = MachineHandle::new();
+    let mut h = Sim::new();
     h.connect(&s, None).unwrap();
     assert!(h.wait_for(T, |s, _| s.state == LaserState::Alarm), "homing enabled: locked until homed");
     assert!(matches!(h.jog_step(JogSpec { dx: 1.0, feed: 100.0, ..Default::default() }), Err(MachineError::Alarm)));
@@ -219,6 +278,20 @@ fn ruida_simulator_runs_a_job_with_progress() {
 }
 
 #[test]
+fn events_that_arrive_together_are_each_waited_for_in_turn() {
+    // What one poll can hand a slow test thread: the start and the end of a job together.
+    let mut h = Sim::new();
+    h.unseen = vec![MachineEvent::FilesListed, MachineEvent::JobStarted, MachineEvent::JobFinished(JobProgress::default()), MachineEvent::Homed];
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobStarted)));
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::JobFinished(_))), "the end is still there after waiting for the start");
+    assert!(matches!(h.unseen[..], [MachineEvent::Homed]), "matched events are used up, later ones stay: {:?}", h.unseen);
+    // A wait on the state leaves the events alone.
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Disconnected));
+    assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::Homed)));
+    assert!(h.unseen.is_empty());
+}
+
+#[test]
 fn ruida_job_outside_the_bed_and_gcode_are_refused() {
     let mut h = connected(Family::Ruida, 20.0);
     ready(&mut h);
@@ -255,6 +328,29 @@ fn ruida_pause_resume_stop() {
 }
 
 #[test]
+fn ruida_stop_with_no_job_does_not_report_a_stopped_job() {
+    let mut h = connected(Family::Ruida, 0.2);
+    ready(&mut h);
+    // Stops, and says how many jobs were reported as stopped up to the controller's answer.
+    fn stop(h: &mut Sim) -> usize {
+        h.unseen.clear();
+        h.stop().unwrap();
+        assert!(h.wait_for(T, |_, ev| ev.iter().any(|e| matches!(e, MachineEvent::Stopped))));
+        h.unseen.iter().filter(|e| matches!(e, MachineEvent::JobAborted(_))).count()
+    }
+    assert_eq!(stop(&mut h), 0, "nothing ran, so no job was stopped; the stop itself still went out");
+    let mut job = simulator_square(Family::Ruida, 30.0);
+    if let JobData::Rd(j) = &mut job.data {
+        for i in 0..400 {
+            j.layers[0].ops.push(ruida::RdOp::Cut { to: Point::new(20.0 + (i % 2) as f64, 20.0), power: None, speed: None });
+        }
+    }
+    h.start_job(job).unwrap();
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Busy));
+    assert_eq!(stop(&mut h), 1, "a running job is reported as stopped");
+}
+
+#[test]
 fn ruida_home_jog_move_and_position() {
     let mut h = connected(Family::Ruida, 20.0);
     ready(&mut h);
@@ -273,6 +369,10 @@ fn ruida_home_jog_move_and_position() {
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::Error(m) if m.contains("outside"))), "the driver reports the bounds error");
     h.frame_rect(Rect::new(10.0, 10.0, 40.0, 30.0), FrameSpec::default()).unwrap();
     assert!(wait_event(&mut h, |e| matches!(e, MachineEvent::FrameStarted)));
+    // The Pulse key is refused on top of the frame; it works once the frame is over.
+    assert!(matches!(h.fire(5.0, 0.2), Err(MachineError::Busy)));
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Framing));
+    assert!(h.wait_for(T, |s, _| s.state == LaserState::Ready));
     h.fire(5.0, 0.2).unwrap();
     assert!(h.wait_for(T, |s, _| s.fire_on));
     assert!(h.wait_for(T, |s, _| !s.fire_on));
@@ -350,4 +450,23 @@ fn disconnect_clears_and_reset_reconnects() {
     h.disconnect();
     assert!(!h.is_connected());
     assert_eq!(h.stop(), Err(MachineError::NotConnected));
+}
+
+#[test]
+fn an_absurd_fire_time_is_refused_not_a_crash() {
+    // A time no clock can hold used to stop the program in its tracks (a panic while
+    // converting it), for GRBL and for the other G-code controllers alike.
+    let links = [Link::SimulatorGrbl, Link::SimulatorGcode(crate::gcode_machines::SimGcode::Marlin)];
+    for link in links {
+        let mut h = Sim::new();
+        let mut s = ConnectSpec::simulator(Family::Grbl);
+        s.link = link.clone();
+        h.connect(&s, None).unwrap();
+        assert!(h.wait_for(T, |s, _| s.connected()), "{link:?} connects");
+        ready(&mut h);
+        for secs in [1.0e300, f64::INFINITY, f64::NAN, -1.0, 0.0] {
+            assert!(matches!(h.fire(5.0, secs), Err(MachineError::Invalid(_))), "{link:?} {secs}");
+        }
+        assert!(!h.snapshot().fire_on);
+    }
 }

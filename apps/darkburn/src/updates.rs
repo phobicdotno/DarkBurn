@@ -97,8 +97,35 @@ fn allowed_address(url: &str) -> bool {
     if url.starts_with("https://") {
         return true;
     }
-    // Plain http only to this machine (the tests' loopback server).
-    ["http://127.0.0.1", "http://localhost", "http://[::1]"].iter().any(|p| url.strip_prefix(p).is_some_and(|rest| rest.starts_with([':', '/'])))
+    // Plain http only to this machine (the tests' loopback server). The host is everything up
+    // to the path: "http://localhost:80@example.com/" names example.com, with "localhost:80"
+    // as a user name, so anything but a port number after the host is refused.
+    let Some(rest) = url.strip_prefix("http://") else { return false };
+    let authority = rest.split(['/', '?', '#', '\\']).next().unwrap_or("");
+    ["127.0.0.1", "localhost", "[::1]"].iter().any(|host| {
+        authority.strip_prefix(host).is_some_and(|port| match port.strip_prefix(':') {
+            Some(digits) => !digits.is_empty() && digits.len() <= 5 && digits.bytes().all(|b| b.is_ascii_digit()),
+            None => port.is_empty(),
+        })
+    })
+}
+
+/// Where a redirect from `from` to `location` leads, when the check may go there: the address
+/// rule holds for every hop, and a secure address never steps down to plain http (not to this
+/// computer either: a server on the internet has no business pointing the check at it).
+fn next_hop(from: &str, location: &str) -> Result<String, String> {
+    let location = location.trim();
+    let to = if location.starts_with('/') && !location.starts_with("//") {
+        let after_scheme = from.find("://").map_or(0, |i| i + 3);
+        let origin_end = from[after_scheme..].find('/').map_or(from.len(), |i| after_scheme + i);
+        format!("{}{location}", &from[..origin_end])
+    } else {
+        location.to_owned()
+    };
+    if !allowed_address(&to) || (from.starts_with("https://") && !to.starts_with("https://")) {
+        return Err("the update address sent the check on to an address that does not start with https://".into());
+    }
+    Ok(to)
 }
 
 /// Read a releases document.
@@ -106,7 +133,8 @@ pub fn parse_release(body: &str, current: &str) -> Outcome {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
         return Outcome::Unreadable("not JSON".into());
     };
-    let text = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_str())).map(str::trim).filter(|s| !s.is_empty());
+    // The first of `keys` that holds some text: an empty "tag_name" does not hide a "version".
+    let text = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_str()).map(str::trim).filter(|s| !s.is_empty()));
     let Some(latest) = text(&["tag_name", "version"]) else {
         return Outcome::Unreadable("no version in it".into());
     };
@@ -136,12 +164,32 @@ pub fn check(url: &str, current: &str) -> Outcome {
         .timeout_global(Some(Duration::from_secs(10)))
         .timeout_connect(Some(Duration::from_secs(5)))
         .user_agent(USER_AGENT)
-        .max_redirects(3)
+        // Redirects are followed here, one at a time, so every hop is checked (`next_hop`).
+        .max_redirects(0)
+        .max_redirects_will_error(false)
         .build()
         .into();
-    let mut response = match agent.get(url).header("Accept", "application/json").call() {
-        Ok(r) => r,
-        Err(e) => return Outcome::Failed(e.to_string()),
+    let mut url = url.to_owned();
+    let mut hops = 0;
+    let mut response = loop {
+        let response = match agent.get(&url).header("Accept", "application/json").call() {
+            Ok(r) => r,
+            Err(e) => return Outcome::Failed(e.to_string()),
+        };
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            break response;
+        }
+        let Some(location) = response.headers().get("location").and_then(|l| l.to_str().ok()) else {
+            return Outcome::Failed(format!("HTTP {} without an address to go to", response.status().as_u16()));
+        };
+        hops += 1;
+        if hops > 3 {
+            return Outcome::Failed("the update address sent the check on too many times".into());
+        }
+        url = match next_hop(&url, location) {
+            Ok(to) => to,
+            Err(e) => return Outcome::Failed(e),
+        };
     };
     let status = response.status().as_u16();
     match status {
@@ -347,6 +395,33 @@ mod tests {
         assert!(!is_newer("garbage", "0.0.24"));
     }
 
+    /// Plain http is for this computer only. An address that only starts like a local one
+    /// ("localhost:80@" is a user name) goes somewhere else and is refused.
+    #[test]
+    fn plain_http_is_only_allowed_to_this_computer() {
+        for ok in ["http://127.0.0.1:8080/releases", "http://localhost/x", "http://localhost:80", "http://[::1]:9/", "https://example.com/x"] {
+            assert!(allowed_address(ok), "{ok}");
+        }
+        for bad in [
+            "http://localhost:80@example.com/latest",
+            "http://127.0.0.1:80@example.com/",
+            "http://localhost:@example.com/",
+            "http://127.0.0.1.example.com/",
+            "http://localhost:80a/",
+            "http://example.com/",
+            "ftp://localhost/",
+        ] {
+            assert!(!allowed_address(bad), "{bad} is not this computer");
+            assert!(matches!(check(bad, "0.0.24"), Outcome::Failed(_)), "{bad} was asked");
+        }
+    }
+
+    #[test]
+    fn a_release_with_an_empty_tag_is_read_from_its_version() {
+        let o = parse_release(r#"{"tag_name":"","version":"9.0.0","html_url":" ","url":"https://example.com/get"}"#, "0.0.24");
+        assert!(matches!(&o, Outcome::Available { latest, url, .. } if latest == "9.0.0" && url == "https://example.com/get"), "{o:?}");
+    }
+
     #[test]
     fn links_that_could_run_commands_are_refused() {
         assert!(safe_link("https://github.com/phobicdotno/DarkBurn/releases/tag/v0.0.25").is_some());
@@ -416,6 +491,67 @@ mod tests {
         assert!(matches!(check("ftp://127.0.0.1/x", "0.0.24"), Outcome::Failed(_)));
     }
 
+    /// A loopback server that answers every request with a redirect to `to`.
+    fn redirect_to(to: String) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                let Ok((mut s, _)) = listener.accept() else { return };
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        format!("http://127.0.0.1:{}/releases/latest", addr.port())
+    }
+
+    /// The address rule holds for every hop: a server cannot send the check on to an address
+    /// that would have been refused as the setting. The "other" address here is this computer
+    /// under a name the rule does not allow (127.0.0.2), so nothing leaves it.
+    #[test]
+    fn a_redirect_to_an_address_that_is_not_allowed_is_not_followed() {
+        let Ok(listener) = TcpListener::bind("127.0.0.2:0") else { return };
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let target = format!("http://127.0.0.2:{port}/releases/latest");
+        assert!(!allowed_address(&target));
+        let o = check(&redirect_to(target), "0.0.24");
+        assert!(matches!(&o, Outcome::Failed(m) if m.contains("https")), "{o:?}");
+        assert!(listener.accept().is_err(), "the check went on to the address it was redirected to");
+    }
+
+    #[test]
+    fn a_redirect_to_an_allowed_address_is_followed() {
+        let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0"}"#, 1);
+        let o = check(&redirect_to(url), "0.0.24");
+        assert!(matches!(&o, Outcome::Available { latest, .. } if latest == "99.0.0"), "{o:?}");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        // A chain that never ends is given up.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let me = format!("http://127.0.0.1:{}/x", listener.local_addr().unwrap().port());
+        let to = me.clone();
+        std::thread::spawn(move || {
+            for _ in 0..10 {
+                let Ok((mut s, _)) = listener.accept() else { return };
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        assert!(matches!(check(&me, "0.0.24"), Outcome::Failed(_)));
+    }
+
+    #[test]
+    fn a_secure_address_never_steps_down_to_plain_http() {
+        assert!(next_hop("https://example.com/a", "https://example.org/b").is_ok());
+        assert_eq!(next_hop("https://example.com/a/b", "/c").unwrap(), "https://example.com/c");
+        assert!(next_hop("https://example.com/a", "http://example.com/a").is_err());
+        assert!(next_hop("https://example.com/a", "http://127.0.0.1:8080/a").is_err(), "a server cannot point the check at this computer");
+        assert!(next_hop("http://127.0.0.1:5/a", "http://127.0.0.1:6/a").is_ok());
+        assert!(next_hop("http://127.0.0.1:5/a", "ftp://x/a").is_err());
+    }
+
     #[test]
     fn the_address_comes_from_the_setting_or_the_default() {
         // The environment variable is not touched here (tests run in parallel); only the setting.
@@ -444,5 +580,138 @@ mod tests {
     #[test]
     fn the_setting_is_off_by_default() {
         assert!(!crate::prefs::Prefs::default().opts.check_updates);
+    }
+
+    /// Run frames until the check that `frame` started has answered.
+    fn frames_until_answer(app: &mut DarkBurn) {
+        let ctx = Context::default();
+        let end = std::time::Instant::now() + Duration::from_secs(10);
+        frame(&ctx, app);
+        while app.extras.updates.running() {
+            assert!(std::time::Instant::now() < end, "no answer");
+            std::thread::sleep(Duration::from_millis(20));
+            frame(&ctx, app);
+        }
+    }
+
+    #[test]
+    fn with_the_setting_on_a_start_checks_once_and_only_a_newer_version_opens_the_dialog() {
+        // A newer release: the dialog opens by itself.
+        let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0","html_url":"https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0"}"#, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::Available { .. })));
+        assert!(app.extras.updates.open, "a newer version is shown");
+        assert!(app.note.is_none(), "no status note for a check nobody asked for");
+        // Later frames do not check again.
+        frames_until_answer(&mut app);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+
+        // The same version: the answer is kept, nothing pops up.
+        let body: &'static str = Box::leak(format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION")).into_boxed_str());
+        let (url, seen) = serve("200 OK", body, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::UpToDate { .. })));
+        assert!(!app.extras.updates.open, "up to date: no dialog at start");
+
+        // A server that cannot be reached, or a private repository: silence at start.
+        let (url, _) = serve("404 Not Found", r#"{"message":"Not Found"}"#, 1);
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        app.prefs.opts.check_updates = true;
+        app.prefs.opts.update_url = url;
+        frames_until_answer(&mut app);
+        assert!(matches!(app.extras.updates.result, Some(Outcome::NotVisible { status: 404 })));
+        assert!(!app.extras.updates.open);
+    }
+
+    #[test]
+    fn no_check_at_start_with_the_setting_off_or_in_safe_mode() {
+        for (setting, safe) in [(false, false), (true, true)] {
+            let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0"}"#, 1);
+            let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+            app.prefs.opts.check_updates = setting;
+            app.safe_mode = safe;
+            app.prefs.opts.update_url = url;
+            let ctx = Context::default();
+            for _ in 0..5 {
+                frame(&ctx, &mut app);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert!(!app.extras.updates.running() && app.extras.updates.result.is_none());
+            assert!(!app.extras.updates.open);
+            assert!(seen.lock().unwrap().is_empty(), "nothing was asked of the server");
+        }
+    }
+
+    #[test]
+    fn the_dialog_shows_the_new_version_and_opens_only_a_safe_download_page() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::Available {
+                current: "0.0.24".into(),
+                latest: "99.0.0".into(),
+                url: "https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0".into(),
+                notes: "Faster previews.".into(),
+            });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        assert!(g.window_titles().contains(&"Check for Updates".to_string()), "{:?}", g.window_titles());
+        let texts = g.visible_texts().join(" | ");
+        assert!(texts.contains("99.0.0") && texts.contains("Faster previews."), "{texts}");
+        assert!(texts.contains("Nothing is downloaded"), "{texts}");
+        g.screenshot("update-available");
+        crate::help::take_opened();
+        g.click_label("Open the download page");
+        assert_eq!(crate::help::take_opened(), ["https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0"]);
+        assert!(!g.app().extras.updates.open, "the dialog closed");
+
+        // A link that is not a plain web address is never handed to the system.
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::Available {
+                current: "0.0.24".into(),
+                latest: "99.0.0".into(),
+                url: "file:///C:/Windows/System32/calc.exe".into(),
+                notes: String::new(),
+            });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        g.click_label("Open the download page");
+        assert_eq!(crate::help::take_opened(), [RELEASES_PAGE]);
+
+        // Up to date: no download button, Close closes.
+        {
+            let mut a = g.app();
+            a.extras.updates.result = Some(Outcome::UpToDate { current: "0.0.24".into() });
+            a.extras.updates.open = true;
+        }
+        g.frames(2);
+        assert!(!g.has_text("Open the download page"));
+        assert!(g.visible_texts().join(" ").contains("up to date"));
+        g.close_dialogs();
+        assert!(!g.app().extras.updates.open);
+    }
+
+    #[test]
+    fn help_menu_check_for_updates_opens_the_dialog() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        g.open_menu("Help", "Check for Updates");
+        g.frames(2);
+        assert!(g.app().extras.updates.open);
+        assert!(g.window_titles().contains(&"Check for Updates".to_string()));
+        // Under test the network is never touched: the dialog says the check failed.
+        assert!(matches!(g.app().extras.updates.result, Some(Outcome::Failed(_))));
+        g.close_dialogs();
     }
 }

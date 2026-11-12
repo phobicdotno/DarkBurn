@@ -157,7 +157,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
         go(app, "device.select", json!({ "id": id }));
     }
     // Port [LASER-18, LASER-20]
-    if dev.connection == crate::devices::ConnectionKind::Serial && !dev.is_simulator() {
+    if matches!(dev.connection, crate::devices::ConnectionKind::Serial | crate::devices::ConnectionKind::Bluetooth) && !dev.is_simulator() {
         port_picker(ui, app);
     } else if !dev.is_simulator() && !design_only {
         ui.label(RichText::new(format!("Connection: {}", dev.connection.label())).size(t.font_small).color(t.text_dim));
@@ -168,15 +168,26 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     {
         app.machine.rescan_ports();
     }
+    crate::connections::laser_panel_rows(ui, app);
 
     // Mode status [LASER-22]
     ui.add_space(t.space_6);
-    let mut rot = app.machine.rotary_on;
-    let mut cyl = app.machine.cylinder_on;
-    ui_kit::checkbox(ui, "Rotary", &mut rot);
-    ui_kit::checkbox(ui, "Cylinder correction", &mut cyl);
-    app.machine.rotary_on = rot;
-    app.machine.cylinder_on = cyl;
+    // The boxes are the project's rotary and cylinder setup itself (what the job is built
+    // with), not a note beside it.
+    let setup = crate::vision_state::VisionState::from_doc(&app.editor.doc);
+    let (mut rot, mut cyl) = (setup.rotary.enabled, setup.cylinder.enabled);
+    if ui_kit::checkbox(ui, "Rotary", &mut rot).changed()
+        && let Err(e) = crate::vision_cmds::rotary_set(app, &json!({ "enabled": rot }))
+    {
+        app.machine.fail(e);
+    }
+    if ui_kit::checkbox(ui, "Cylinder correction", &mut cyl).changed()
+        && let Err(e) = crate::vision_cmds::cylinder_set(app, &json!({ "enabled": cyl }))
+    {
+        app.machine.fail(e);
+    }
+    let setup = crate::vision_state::VisionState::from_doc(&app.editor.doc);
+    let (rot, cyl) = (setup.rotary.enabled, setup.cylinder.enabled);
     ui.label(RichText::new(mode_status(rot, cyl, dev.settings.dsp.u_axis || family == Family::Grbl)).size(t.font_small).color(t.text_dim));
 
     ui.add_space(t.space_6);
@@ -373,12 +384,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Position [MOVE-08]
     ui_kit::section_heading(ui, "Position");
-    let p = snap.work_pos;
-    let pos = if snap.has_position {
-        format!("X {:.3}   Y {:.3}   Z {:.3}   U {:.3}", p[0], p[1], p[2], p[3])
-    } else {
-        "X ?   Y ?   Z ?   U ?".to_string()
-    };
+    let pos = position_text(snap.has_position.then_some(snap.work_pos), inches);
     ui.label(RichText::new(pos).monospace().size(t.font_small));
     if btn(ui, "Get position", "Ask the laser where it is", snap.connected()) {
         go(app, "machine.get_position", json!({}));
@@ -386,6 +392,9 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
 
     // Move to [MOVE-09, MOVE-11, MOVE-12]
     ui_kit::section_heading(ui, "Move to");
+    if inches {
+        ui.add(egui::Label::new(RichText::new("In inches; a unit can be typed (25 mm).").size(t.font_small).color(t.text_dim)).wrap());
+    }
     ui_kit::row(ui, "X", |ui| {
         ui_kit::field(ui, &mut app.machine.jog.goto_x);
     });
@@ -401,14 +410,14 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             let j = &app.machine.jog;
             let mut a = json!({ "machine_coords": j.from_machine_zero, "feed": j.speed * 60.0 });
             for (k, v) in [("x", &j.goto_x), ("y", &j.goto_y), ("z", &j.goto_z)] {
-                if let Some(n) = ui_kit::parse_number(v) {
+                if let Some(n) = typed_mm(v, inches) {
                     a[k] = json!(n);
                 }
             }
             go(app, "machine.move_to", a);
         }
-        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && ui_kit::parse_number(&app.machine.jog.goto_z).is_some()) {
-            let z = ui_kit::parse_number(&app.machine.jog.goto_z).unwrap_or(0.0);
+        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && typed_mm(&app.machine.jog.goto_z, inches).is_some()) {
+            let z = typed_mm(&app.machine.jog.goto_z, inches).unwrap_or(0.0);
             go(
                 app,
                 "machine.move_to",
@@ -421,15 +430,17 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Saved positions");
     if btn(ui, "Save position", "Remember the position above", true) {
         let j = &app.machine.jog;
-        let (x, y) = (ui_kit::parse_number(&j.goto_x).unwrap_or(0.0), ui_kit::parse_number(&j.goto_y).unwrap_or(0.0));
-        let z = ui_kit::parse_number(&j.goto_z);
+        let (x, y) = (typed_mm(&j.goto_x, inches).unwrap_or(0.0), typed_mm(&j.goto_y, inches).unwrap_or(0.0));
+        let z = typed_mm(&j.goto_z, inches);
         let n = j.saved.len() + 1;
         app.machine.jog.saved.push(machine_ui::SavedPos { name: format!("Position {n}"), x, y, z: z.unwrap_or(0.0), use_z: z.is_some() });
     }
     let mut action: Option<(usize, &str)> = None;
     for (i, sp) in app.machine.jog.saved.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            ui_kit::field(ui, &mut sp.name);
+        // The name takes the panel's width, so the buttons go on a line of their own (in one
+        // row with it they pushed the panel wider than its dock).
+        ui.push_id(("saved_position", i), |ui| ui_kit::field(ui, &mut sp.name));
+        ui.horizontal_wrapped(|ui| {
             ui_kit::checkbox(ui, "Z", &mut sp.use_z);
             if btn(ui, "Go", "Move there", free) {
                 action = Some((i, "go"));
@@ -479,7 +490,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             go(app, "machine.clear_origin", json!({}));
         }
         if btn(ui, "Set finish position", "Return here when a job ends", snap.has_position) {
-            app.machine.jog.finish = Some((snap.work_pos[0], snap.work_pos[1]));
+            set_finish_here(app);
         }
         if app.machine.jog.finish.is_some() && btn(ui, "Clear finish", "Leave the head where the job ends", true) {
             app.machine.jog.finish = None;
@@ -489,7 +500,9 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui.label(RichText::new("A DSP controller keeps its origin on its own panel.").size(t.font_small).color(t.text_dim));
     }
     if let Some((x, y)) = app.machine.jog.finish {
-        ui.label(RichText::new(format!("Finish position: X {x:.2}, Y {y:.2}")).size(t.font_small).color(t.text_dim));
+        let (unit, k) = if inches { ("in", 1.0 / 25.4) } else { ("mm", 1.0) };
+        let text = format!("Finish position: X {:.2}, Y {:.2} {unit} from machine zero", x * k, y * k);
+        ui.label(RichText::new(text).size(t.font_small).color(t.text_dim));
     }
 
     // Fire [MOVE-15]
@@ -544,10 +557,37 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
 }
 
+/// A position typed into the Move to fields, in millimetres. A bare number is in the unit the
+/// panel shows (inches with the inch setting on); a typed unit or a sum is worked out
+/// (`10in/4`, `25 mm`). None for an empty field or text that is not a length.
+pub fn typed_mm(text: &str, inches: bool) -> Option<f64> {
+    let unit_mm = if inches { 25.4 } else { 1.0 };
+    let text = text.replace('\u{2212}', "-");
+    let v = darkburn_core::expr::eval_in(&text, unit_mm).or_else(|| ui_kit::parse_number(&text))?;
+    v.is_finite().then_some(v * unit_mm)
+}
+
+/// The Position line: the laser's place in the unit the panel works in, with the unit named.
+pub fn position_text(pos: Option<[f64; 4]>, inches: bool) -> String {
+    let (unit, scale) = if inches { ("in", 1.0 / 25.4) } else { ("mm", 1.0) };
+    match pos {
+        Some(p) => format!("X {:.3}   Y {:.3}   Z {:.3} {unit}   U {:.3}", p[0] * scale, p[1] * scale, p[2] * scale, p[3]),
+        None => format!("X ?   Y ?   Z ? {unit}   U ?"),
+    }
+}
+
+/// "Set finish position": jobs end where the head is now. Kept as a place on the bed (machine
+/// coordinates), so setting or clearing the origin later does not move it.
+pub fn set_finish_here(app: &mut DarkBurn) {
+    let snap = app.machine.handle.snapshot();
+    if snap.has_position {
+        app.machine.jog.finish = Some((snap.machine_pos[0], snap.machine_pos[1]));
+    }
+}
+
 /// Click on an arrow: a step, or the start of a continuous jog.
 fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
-    let origin = app.machine.active().origin;
-    let (ax, ay) = machine_ui::arrow_to_axes(dx, dy, origin, app.machine.jog.invert_keypad);
+    let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let feed = app.machine.jog.speed * 60.0;
     if app.machine.jog.continuous {
         go(app, "machine.jog_start", json!({ "x": ax, "y": ay, "feed": feed }));
@@ -619,6 +659,7 @@ fn console(ui: &mut Ui, app: &mut DarkBurn) {
                 .hint_text(if can_send { "Type a command" } else { "Console is for G-code machines" })
                 .desired_width(ui.available_width() - 60.0),
         );
+        crate::a11y::text(ui, &r, "Console command");
         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             send = true;
             r.request_focus();
@@ -645,6 +686,13 @@ fn console(ui: &mut Ui, app: &mut DarkBurn) {
         for i in 0..6 {
             let text = app.machine.active().state.macros[i].clone();
             let label = macro_label(i, &text);
+            // A button that does not fit moves to the next row; squeezed into what is left of this
+            // one it would break its label in the middle of a word.
+            let t = Tokens::get();
+            let need = ui.painter().layout_no_wrap(label.clone(), egui::FontId::proportional(t.font_label), t.text).size().x + 2.0 * t.space_12;
+            if ui.available_size_before_wrap().x < need {
+                ui.end_row();
+            }
             let r = ui.add_enabled_ui(can_send && !text.trim().is_empty(), |ui| {
                 ui_kit::button(ui, label, Button::Small).backing_on_hover_text(if text.trim().is_empty() {
                     "Empty. Right-click to edit.".to_string()

@@ -272,8 +272,10 @@ pub fn read_bytes(name: &Path, bytes: &[u8], opts: &ReadOptions) -> Result<ReadO
 
 fn read_inner(name: &Path, name_text: Option<&str>, bytes: &[u8], opts: &ReadOptions) -> Result<ReadOutcome, String> {
     if crate::rd_import::is_rd(name) {
-        let imported = crate::rd_import::import(bytes)?;
-        let loaded = convert(imported, opts, false);
+        let (imported, cuts) = crate::rd_import::import_with_settings(bytes)?;
+        let items = imported.items.len();
+        let mut loaded = convert(imported, opts, false);
+        crate::rd_import::carry_cut_settings(&mut loaded, &cuts, items);
         if loaded.imported.shapes.is_empty() {
             return Err("there is nothing in it to import".into());
         }
@@ -413,8 +415,20 @@ impl Converter<'_> {
                     },
                     ..Default::default()
                 };
-                let transform = if outline.is_some() {
-                    // The outline is already in drawing coordinates.
+                // The outline is in drawing coordinates; a text keeps its letters in its own, so
+                // that it stays where it is when it is rendered again.
+                let local = outline.as_ref().and_then(|o| {
+                    let mut l = o.clone();
+                    l.apply_affine(t.transform.inverse());
+                    (t.transform.determinant().abs() > 1e-12 && l.is_finite()).then_some(l)
+                });
+                let transform = if let Some(l) = local {
+                    text.backup = Some(l);
+                    // The file's letters hold what the file cannot say (bold, spacing, a path to
+                    // follow): they stay until the text is changed.
+                    crate::text_render::keep_letters(&mut text);
+                    t.transform
+                } else if outline.is_some() {
                     text.backup = outline;
                     Affine::IDENTITY
                 } else {
@@ -881,7 +895,8 @@ pub fn doc_items(doc: &Document, ids: Option<&[ShapeId]>, text_as_paths: bool) -
 fn mode_name(m: Mode) -> &'static str {
     match m {
         Mode::Line => "Cut",
-        Mode::Fill | Mode::FillLine => "Scan",
+        Mode::Fill => "Scan",
+        Mode::FillLine => "Scan+Cut",
         Mode::Image => "Image",
         Mode::OffsetFill => "Offset",
     }
@@ -902,6 +917,9 @@ fn layer_settings_for(doc: &Document, used: &[usize]) -> Vec<di::LayerSettings> 
             values.insert("angle".to_string(), n(m.scan_angle));
             values.insert("bidir".to_string(), u8::from(m.bidirectional).to_string());
             values.insert("crossHatch".to_string(), u8::from(m.cross_hatch).to_string());
+            values.insert("kerf".to_string(), n(m.kerf));
+            values.insert("zOffset".to_string(), n(m.z_offset));
+            values.insert("enableAirAssist".to_string(), u8::from(l.air).to_string());
             values.insert("doOutput".to_string(), u8::from(l.output).to_string());
             values.insert("hide".to_string(), u8::from(!l.show).to_string());
             let prio = doc.layer_order.iter().position(|x| *x == i).unwrap_or(i);

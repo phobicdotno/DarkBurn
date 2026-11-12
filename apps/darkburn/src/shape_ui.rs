@@ -886,8 +886,9 @@ fn show_error(ui: &mut Ui, app: &DarkBurn) {
 fn window(ctx: &Context, title: &str, add: impl FnOnce(&mut Ui)) -> bool {
     let mut open = true;
     let screen = ctx.content_rect();
+    let id = Id::unique(("shape_dialog", title));
     egui::Window::new(title)
-        .id(Id::unique(("shape_dialog", title)))
+        .id(id)
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -895,7 +896,7 @@ fn window(ctx: &Context, title: &str, add: impl FnOnce(&mut Ui)) -> bool {
         .default_width(300.0)
         .show(ctx, add);
     // Escape closes the dialog, as it does for every other window in the app.
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if crate::escape::closes(ctx, id) {
         open = false;
     }
     open
@@ -1509,7 +1510,7 @@ fn toast(ctx: &Context, app: &mut DarkBurn) {
     }
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
     let screen = ctx.content_rect();
-    egui::Area::new(Id::unique("shape_status_toast"))
+    egui::Area::new(Id::unique(crate::escape::TOAST))
         .fixed_pos(pos2(screen.left() + 70.0, screen.bottom() - 70.0))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {

@@ -21,6 +21,70 @@ pub const FILE_EXTENSION: &str = "dbclb";
 /// A library with changes is saved to its file (or the auto-save file) this long after the change.
 pub const AUTOSAVE_AFTER: Duration = Duration::from_secs(20);
 
+/// What an entry is for, shown as a small icon before it in the list [LIB-04].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    Line,
+    Fill,
+    Image,
+}
+
+/// The side of the type icon in points.
+const KIND_ICON: f32 = 14.0;
+
+impl EntryKind {
+    /// Line, image, or one of the fills (fill, fill and line, offset fill).
+    pub fn of(mode: Mode) -> EntryKind {
+        match mode {
+            Mode::Line => EntryKind::Line,
+            Mode::Image => EntryKind::Image,
+            Mode::Fill | Mode::FillLine | Mode::OffsetFill => EntryKind::Fill,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            EntryKind::Line => "line",
+            EntryKind::Fill => "fill",
+            EntryKind::Image => "image",
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            EntryKind::Line => tr("library.kind_line", "Line"),
+            EntryKind::Fill => tr("library.kind_fill", "Fill"),
+            EntryKind::Image => tr("library.kind_image", "Image"),
+        }
+    }
+}
+
+/// The type icon: an outline for a line entry, a solid block for a fill, a framed picture
+/// (sun and hill) for an image.
+fn paint_kind_icon(p: &egui::Painter, r: egui::Rect, kind: EntryKind, ink: egui::Color32) {
+    use egui::{Stroke, StrokeKind, pos2};
+    let b = r.shrink(2.0);
+    let stroke = Stroke::new(1.5, ink);
+    match kind {
+        EntryKind::Line => {
+            p.rect_stroke(b, 1.0, stroke, StrokeKind::Inside);
+        }
+        EntryKind::Fill => {
+            p.rect_filled(b, 1.0, ink);
+        }
+        EntryKind::Image => {
+            p.rect_stroke(b, 1.0, Stroke::new(1.0, ink), StrokeKind::Inside);
+            p.circle_filled(pos2(b.left() + b.width() * 0.3, b.top() + b.height() * 0.32), 1.4, ink);
+            let hill = vec![
+                pos2(b.left() + 1.0, b.bottom() - 1.0),
+                pos2(b.left() + b.width() * 0.62, b.top() + b.height() * 0.42),
+                pos2(b.right() - 1.0, b.bottom() - 1.0),
+            ];
+            p.add(egui::Shape::convex_polygon(hill, ink, Stroke::NONE));
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Entry {
@@ -125,7 +189,16 @@ impl Library {
         if value.get("format").and_then(|f| f.as_str()) != Some(FILE_FORMAT) {
             return Err(tr("library.bad_file", "This is not a cut library"));
         }
-        serde_json::from_value(value).map_err(|e| bad(e.to_string()))
+        let mut lib: Library = serde_json::from_value(value).map_err(|e| bad(e.to_string()))?;
+        // As for a project file: only what the Cut Settings editor could have made.
+        for e in &mut lib.entries {
+            e.settings.truncate(darkburn_core::MAX_SUB_LAYERS);
+            if e.settings.is_empty() {
+                e.settings.push(CutSetting::default());
+            }
+            e.settings.iter_mut().for_each(CutSetting::sanitise);
+        }
+        Ok(lib)
     }
 
     /// Save to `path`, keeping the previous file as `<name>.dbclb.bak`.
@@ -135,14 +208,7 @@ impl Library {
             bak.push(".bak");
             let _ = std::fs::copy(path, PathBuf::from(bak));
         }
-        let mut tmp = path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
-        std::fs::write(&tmp, self.to_json()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, path).map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+        crate::files::write_atomic(path, self.to_json().as_bytes()).map_err(|e| e.to_string())
     }
 
     pub fn load(path: &Path) -> Result<Library, String> {
@@ -261,6 +327,29 @@ pub struct LibraryState {
     /// The device whose library is shown; each device remembers its own file.
     pub device: String,
     pub loaded: bool,
+    /// The settings folder: where a library without a file of its own is kept.
+    pub settings_dir: Option<PathBuf>,
+}
+
+/// The file a library without a file of its own is kept in, one per device.
+pub fn autosave_file(dir: &Path, device: &str) -> PathBuf {
+    let slug: String = device.trim().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+    let name = if slug.is_empty() { format!("library-autosave.{FILE_EXTENSION}") } else { format!("library-autosave-{slug}.{FILE_EXTENSION}") };
+    dir.join(name)
+}
+
+/// Load the library of the active device once, before the panel or a command first uses it.
+pub fn ensure_loaded(app: &mut DarkBurn) {
+    let st = &mut app.extras.library;
+    if st.loaded {
+        return;
+    }
+    st.loaded = true;
+    st.settings_dir = app.settings_dir.clone();
+    if !st.is_dirty() {
+        let dev = st.device.clone();
+        st.switch_device(&dev, &app.prefs);
+    }
 }
 
 impl LibraryState {
@@ -272,19 +361,30 @@ impl LibraryState {
         self.dirty_since.is_some()
     }
 
-    /// Switch to the library of `device` (the path remembered for it, else an empty library).
+    /// Switch to the library of `device`: the file remembered for it, else the library kept for
+    /// it in the settings folder, else an empty one. Changes to the library shown are written
+    /// first, so switching never drops them.
     pub fn switch_device(&mut self, device: &str, prefs: &crate::prefs::Prefs) {
+        self.flush();
         self.device = device.to_string();
-        match prefs.library_paths.get(device).map(PathBuf::from).filter(|p| p.is_file()) {
-            Some(p) => {
-                let _ = self.open(&p);
-            }
-            None => {
-                self.lib = Library { device: device.to_string(), ..Default::default() };
-                self.path = None;
-                self.dirty_since = None;
-                self.selected = None;
-            }
+        self.editing = None;
+        if let Some(p) = prefs.library_paths.get(device).map(PathBuf::from).filter(|p| p.is_file())
+            && self.open(&p).is_ok()
+        {
+            return;
+        }
+        let kept = self.settings_dir.as_deref().map(|d| autosave_file(d, device)).filter(|p| p.is_file()).and_then(|p| Library::load(&p).ok());
+        self.lib = kept.filter(|l| l.device == device).unwrap_or_else(|| Library { device: device.to_string(), ..Default::default() });
+        self.path = None;
+        self.dirty_since = None;
+        self.selected = None;
+    }
+
+    /// Write unsaved changes now (to the library's file, or the one kept in the settings folder).
+    pub fn flush(&mut self) {
+        if let Some(since) = self.dirty_since {
+            let dir = self.settings_dir.clone();
+            self.autosave(dir.as_deref(), since + AUTOSAVE_AFTER);
         }
     }
 
@@ -305,7 +405,7 @@ impl LibraryState {
     }
 
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
-        let path = path.with_extension(FILE_EXTENSION);
+        let path = crate::files::with_ending(path, FILE_EXTENSION);
         self.lib.save(&path)?;
         self.path = Some(path);
         self.dirty_since = None;
@@ -313,7 +413,8 @@ impl LibraryState {
     }
 
     /// Auto-save: a changed library is written some seconds after the change, to its file or, if
-    /// it has none, to `library-autosave.dbclb` in the settings folder.
+    /// it has none, to the device's `library-autosave` file in the settings folder (which is read
+    /// back the next time the device's library is loaded).
     pub fn autosave(&mut self, settings_dir: Option<&Path>, now: Instant) {
         let Some(since) = self.dirty_since else { return };
         if now.duration_since(since) < AUTOSAVE_AFTER {
@@ -323,7 +424,7 @@ impl LibraryState {
             (Some(p), _) => self.lib.save(p).is_ok(),
             (None, Some(dir)) => {
                 let _ = std::fs::create_dir_all(dir);
-                self.lib.save(&dir.join(format!("library-autosave.{FILE_EXTENSION}"))).is_ok()
+                self.lib.save(&autosave_file(dir, &self.device)).is_ok()
             }
             _ => false,
         };
@@ -399,6 +500,15 @@ pub fn duplicate_entry(app: &mut DarkBurn, index: usize) -> Result<usize, String
 /// Replace entry `index` by `entry`; layers linked to the old name follow the new one.
 pub fn replace_entry(app: &mut DarkBurn, index: usize, entry: Entry) -> Result<(), String> {
     let old = app.extras.library.lib.entries.get(index).map(Entry::link_name).ok_or_else(|| tr("library.no_entry", "No such entry"))?;
+    // The name stays the entry's own (layers are linked by it): a number is put after it if
+    // another entry is called the same, as when an entry is added.
+    let base = entry.description.clone();
+    let mut entry = entry;
+    let mut n = 1;
+    while app.extras.library.lib.entries.iter().enumerate().any(|(i, e)| i != index && e.link_name() == entry.link_name()) {
+        n += 1;
+        entry.description = if base.is_empty() { format!("{n}") } else { format!("{base} {n}") };
+    }
     let new = entry.link_name();
     app.extras.library.lib.entries[index] = entry;
     app.extras.library.touch();
@@ -431,19 +541,14 @@ fn btn(ui: &mut Ui, text: &str, tip: &str, enabled: bool) -> bool {
 pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     let inches = app.prefs.numeric_inches;
-    if !app.extras.library.loaded {
-        app.extras.library.loaded = true;
-        let dev = app.extras.library.device.clone();
-        let prefs = app.prefs.clone();
-        app.extras.library.switch_device(&dev, &prefs);
-    }
+    ensure_loaded(app);
     let mut st = std::mem::take(&mut app.extras.library);
     let mut status = None;
 
     ui.horizontal(|ui| {
         let mut name = st.lib.name.clone();
         ui.label(RichText::new(tr("library.name", "Library")).size(t.font_small).color(t.text_dim));
-        if ui_kit::field(ui, &mut name) {
+        if ui_kit::named_control(ui, "Library name", |ui| ui_kit::field(ui, &mut name)) {
             st.lib.name = name;
             st.touch();
         }
@@ -463,7 +568,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             st.path = None;
             st.selected = None;
             st.editing = None;
+            // Changed: the empty library replaces the one kept for this device.
             st.dirty_since = None;
+            st.touch();
         }
         if btn(ui, &tr("library.load", "Load"), &tr("library.load_tip", "Open a library file"), true)
             && let Some(p) = rfd::FileDialog::new().add_filter("Cut library", &[FILE_EXTENSION]).pick_file()
@@ -497,7 +604,8 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
         }
     });
     ui.add_space(t.space_6);
-    ui_kit::hint_field(ui, &mut st.filter, &tr("library.search", "Search the library"));
+    let search = tr("library.search", "Search the library");
+    ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut st.filter, &search));
     ui.add_space(t.space_6);
 
     // The grouped list.
@@ -522,20 +630,22 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             ui.label(RichText::new(format!("  {heading}")).size(t.font_small).color(t.text_dim));
             for &i in entries {
                 let e = &st.lib.entries[i];
-                let kind = match e.mode() {
-                    Mode::Image => "IMG",
-                    Mode::Line => "LINE",
-                    _ => "FILL",
-                };
-                let mut text = format!(
-                    "    [{kind}] {}",
-                    if e.description.is_empty() { tr("library.no_description", "(no description)") } else { e.description.clone() }
-                );
+                let kind = EntryKind::of(e.mode());
+                let mut text = if e.description.is_empty() { tr("library.no_description", "(no description)") } else { e.description.clone() };
                 if linked.contains(&e.link_name()) {
                     text += &format!("  - {}", tr("library.linked", "linked"));
                 }
                 let selected = st.selected == Some(i);
-                if ui.selectable_label(selected, text).on_hover_text(e.link_name()).clicked() {
+                let mut clicked = false;
+                ui.horizontal(|ui| {
+                    ui.add_space(t.space_12);
+                    let (icon, r) = ui.allocate_exact_size(egui::vec2(KIND_ICON, KIND_ICON), egui::Sense::click());
+                    paint_kind_icon(ui.painter(), icon, kind, if selected { t.text } else { t.text_dim });
+                    solidcraft_ui_registry::publish_target(&format!("library:kind:{}:{i}", kind.id()), icon);
+                    clicked |= r.on_hover_text(kind.label()).clicked();
+                    clicked |= ui.selectable_label(selected, text).on_hover_text(format!("{} ({})", e.link_name(), kind.label())).clicked();
+                });
+                if clicked {
                     st.selected = Some(i);
                 }
             }
@@ -829,5 +939,48 @@ mod tests {
         st.switch_device("diode", &prefs);
         assert_eq!(st.lib.entries.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A library that was never given a file is kept in the settings folder, per device, and is
+    /// there again after a restart or after a look at another device.
+    #[test]
+    fn a_library_without_a_file_comes_back_after_a_restart() {
+        let dir = std::env::temp_dir().join(format!("darkburn-lib-kept-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let prefs = Prefs::default();
+        let mut st = LibraryState { settings_dir: Some(dir.clone()), ..Default::default() };
+        st.switch_device("diode", &prefs);
+        st.lib.add(entry("Card", None, "Engrave", 300.0));
+        st.touch();
+        st.autosave(Some(&dir), Instant::now() + AUTOSAVE_AFTER + Duration::from_secs(1));
+        assert!(!st.is_dirty(), "it was written");
+        // The next start.
+        let mut again = LibraryState { settings_dir: Some(dir.clone()), ..Default::default() };
+        again.switch_device("diode", &prefs);
+        assert_eq!(again.lib.entries.len(), 1, "the auto-saved library is read back");
+        // Another device starts empty; its entries do not replace the first device's.
+        again.switch_device("co2", &prefs);
+        assert!(again.lib.entries.is_empty());
+        again.lib.add(entry("Acrylic", Some(3.0), "Cut", 8.0));
+        again.lib.add(entry("Acrylic", Some(5.0), "Cut", 4.0));
+        again.touch();
+        again.switch_device("diode", &prefs);
+        assert_eq!(again.lib.entries.len(), 1, "the diode's library");
+        again.switch_device("co2", &prefs);
+        assert_eq!(again.lib.entries.len(), 2, "changes made just before switching are not dropped");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An entry made by a command before the Library panel was ever shown is still there when
+    /// the panel first draws.
+    #[test]
+    fn entries_made_before_the_panel_was_shown_stay() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        g.exec("library.create_from_layer", serde_json::json!({ "layer": 2, "material": "Birch", "thickness": 3.0, "description": "Cut" }));
+        g.click_id("panel:tab:library");
+        g.frames(2);
+        assert_eq!(g.app().extras.library.lib.entries.len(), 1);
+        assert!(g.visible_texts().join(" ").contains("Birch"), "{:?}", g.visible_texts());
     }
 }

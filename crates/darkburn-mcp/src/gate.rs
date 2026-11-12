@@ -29,6 +29,26 @@ use crate::types::*;
 use crate::util::{random_hex, validate_instance};
 
 const MAX_LOG: usize = 10_000;
+/// Confirmation dialogs that may wait for the user at one time.
+const MAX_WAITING: usize = 8;
+/// The longest argument text a confirmation dialog shows. A command with more is refused: the
+/// user must be able to read all of what they confirm.
+const MAX_SHOWN_ARGS: usize = 1500;
+/// The longest tool name, command id or path the log keeps.
+const MAX_NAME: usize = 120;
+
+/// `s` as one short line for the log: no control characters, no line or direction marks, at
+/// most `max` characters.
+fn one_line(s: &str, max: usize) -> String {
+    let hidden = |c: char| {
+        c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+    };
+    let mut out: String = s.chars().take(max).map(|c| if hidden(c) { ' ' } else { c }).collect();
+    if s.chars().nth(max).is_some() {
+        out.push_str("...");
+    }
+    out
+}
 
 enum ConfirmState {
     Waiting,
@@ -38,6 +58,8 @@ enum ConfirmState {
 
 struct Confirmation {
     command: String,
+    args: Value,
+    scope: String,
     args_hash: String,
     summary: String,
     created: Instant,
@@ -46,7 +68,8 @@ struct Confirmation {
 
 struct Token {
     command: String,
-    args_hash: String,
+    args: Value,
+    scope: String,
     issued: Instant,
     confirmation: String,
 }
@@ -105,6 +128,10 @@ impl<B: Backend> Gate<B> {
         self.seq += 1;
         e.seq = self.seq;
         e.ts_ms = now_ms();
+        // Names come from the client: keep them to one short line each, so a call cannot forge
+        // log lines or fill the log with megabytes.
+        e.tool = one_line(&e.tool, MAX_NAME);
+        e.command = one_line(&e.command, MAX_NAME);
         if self.log.len() >= MAX_LOG {
             self.log.pop_front();
         }
@@ -196,18 +223,49 @@ impl<B: Backend> Gate<B> {
 
     /// Open a confirmation for a command and ask the app to show its dialog.
     fn open_confirmation(&mut self, info: &CommandInfo, params: &Value) -> CommandError {
-        let pid = format!("c{}", random_hex(4));
-        let mut shown = params.to_string();
-        if shown.len() > 200 {
-            shown = format!("{}...", shown.chars().take(200).collect::<String>());
+        let shown = params.to_string();
+        if shown.chars().nth(MAX_SHOWN_ARGS).is_some() {
+            return CommandError::denied(format!(
+                "`{}` needs the user's confirmation, and its arguments are too long to show the user in full (over {MAX_SHOWN_ARGS} characters): nothing was asked. Use shorter arguments.",
+                info.id
+            ));
         }
+        let scope = self.inner.confirmation_scope();
+        let waiting = |c: &Confirmation| matches!(c.state, ConfirmState::Waiting);
+        // The same request again does not open a second dialog: it is the one already waiting.
+        let again = self.confirmations.iter().find(|(_, c)| waiting(c) && c.command == info.id && c.args == *params && c.scope == scope);
+        if let Some((pid, _)) = again {
+            return CommandError {
+                code: ErrorCode::ConfirmationRequired,
+                message: format!(
+                    "`{}` is already waiting for the user's confirmation in DarkBurn: call `pending` with id `{pid}`, then repeat this call with `confirmation_token` set.",
+                    info.id
+                ),
+                pending_id: Some(pid.clone()),
+            };
+        }
+        if self.confirmations.values().filter(|c| waiting(c)).count() >= MAX_WAITING {
+            return CommandError::denied(format!(
+                "`{}` needs the user's confirmation, but {MAX_WAITING} confirmations are already waiting for the user: nothing was asked. Wait for the user to answer those.",
+                info.id
+            ));
+        }
+        let pid = format!("c{}", random_hex(4));
         let summary = format!("{} ({}) with {shown}", info.title, info.id);
         if let Err(e) = self.inner.request_confirmation(&pid, &info.id, &summary) {
             return CommandError::denied(format!("`{}` needs the user's confirmation but the app could not show the dialog: {}", info.id, e.message));
         }
         self.confirmations.insert(
             pid.clone(),
-            Confirmation { command: info.id.clone(), args_hash: args_hash(params), summary, created: Instant::now(), state: ConfirmState::Waiting },
+            Confirmation {
+                command: info.id.clone(),
+                args: params.clone(),
+                scope,
+                args_hash: args_hash(params),
+                summary,
+                created: Instant::now(),
+                state: ConfirmState::Waiting,
+            },
         );
         self.push(Event {
             seq: 0,
@@ -231,7 +289,8 @@ impl<B: Backend> Gate<B> {
     }
 
     /// Check a token without consuming it.
-    fn peek_token(&self, token: &str, info: &CommandInfo, params: &Value) -> Result<(), CommandError> {
+    fn peek_token(&mut self, token: &str, info: &CommandInfo, params: &Value) -> Result<(), CommandError> {
+        let scope = self.inner.confirmation_scope();
         let t = self.tokens.get(token).ok_or_else(|| {
             CommandError::new(
                 ErrorCode::ConfirmationInvalid,
@@ -244,10 +303,16 @@ impl<B: Backend> Gate<B> {
                 "the confirmation_token expired: repeat the call without a token to ask the user again",
             ));
         }
-        if t.command != info.id || t.args_hash != args_hash(params) {
+        if t.command != info.id || t.args != *params {
             return Err(CommandError::new(
                 ErrorCode::ConfirmationInvalid,
                 "the confirmation_token was issued for a different command or different arguments: the user must confirm exactly what runs",
+            ));
+        }
+        if t.scope != scope {
+            return Err(CommandError::new(
+                ErrorCode::ConfirmationInvalid,
+                "the design, the selection or the machine changed after the user was asked: the user must confirm what runs now. Repeat the call without a token to ask again",
             ));
         }
         Ok(())
@@ -272,8 +337,14 @@ impl<B: Backend> Gate<B> {
         if approved {
             let token = random_hex(16);
             c.state = ConfirmState::Approved { token: token.clone(), issued: Instant::now() };
-            self.tokens
-                .insert(token, Token { command: command.clone(), args_hash: hash.clone(), issued: Instant::now(), confirmation: pending_id.into() });
+            let t = Token {
+                command: command.clone(),
+                args: c.args.clone(),
+                scope: c.scope.clone(),
+                issued: Instant::now(),
+                confirmation: pending_id.into(),
+            };
+            self.tokens.insert(token, t);
         } else {
             c.state = ConfirmState::Denied;
         }
@@ -328,6 +399,8 @@ impl<B: Backend> Gate<B> {
         self.purge();
         let mut clean = Vec::with_capacity(steps.len());
         let mut used: Vec<String> = Vec::new();
+        // For each step: the state the user confirmed it in, when it needed a confirmation.
+        let mut confirmed: Vec<Option<String>> = Vec::with_capacity(steps.len());
         for (i, s) in steps.iter().enumerate() {
             let at =
                 |e: CommandError| CommandError { message: format!("batch rejected, nothing ran. Step {i} (`{}`): {}", s.command, e.message), ..e };
@@ -335,7 +408,7 @@ impl<B: Backend> Gate<B> {
             let params = Self::check_params(&info, &s.params).map_err(at)?;
             match self.verdict(&info) {
                 Verdict::Deny(m) => return Err(at(CommandError::denied(m))),
-                Verdict::Allow => {}
+                Verdict::Allow => confirmed.push(None),
                 Verdict::NeedsConfirmation => match s.confirmation_token.as_deref() {
                     None => return Err(at(self.open_confirmation(&info, &params))),
                     Some(t) => {
@@ -347,6 +420,7 @@ impl<B: Backend> Gate<B> {
                         }
                         self.peek_token(t, &info, &params).map_err(at)?;
                         used.push(t.to_string());
+                        confirmed.push(self.tokens.get(t).map(|t| t.scope.clone()));
                     }
                 },
             }
@@ -355,7 +429,56 @@ impl<B: Backend> Gate<B> {
         for t in &used {
             self.consume_token(t);
         }
-        self.inner.batch(&clean, all_or_nothing)
+        // Run the steps one by one. An earlier step may have changed what a later one is (another
+        // device selected, the design edited after the user confirmed it), so each step is
+        // judged again just before it runs.
+        let checkpoint = if all_or_nothing { self.inner.checkpoint()? } else { None };
+        let mut out = BatchResult { ok: true, ..Default::default() };
+        for (i, s) in clean.iter().enumerate() {
+            let r = match self.judge_again(&s.command, confirmed[i].as_deref()) {
+                Ok(()) => self.inner.execute(&s.command, s.params.clone()),
+                Err(e) => Err(e),
+            };
+            match r {
+                Ok(result) => out.steps.push(StepResult { index: i, command: s.command.clone(), ok: true, result, error: None }),
+                Err(e) => {
+                    out.steps.push(StepResult { index: i, command: s.command.clone(), ok: false, result: Value::Null, error: Some(e) });
+                    out.ok = false;
+                    out.failed_step = Some(i);
+                    out.skipped = clean.len() - i - 1;
+                    break;
+                }
+            }
+        }
+        if let Some(cp) = checkpoint {
+            if out.ok {
+                self.inner.discard_checkpoint(&cp);
+            } else {
+                out.rolled_back = self.inner.restore(&cp).is_ok();
+            }
+        }
+        Ok(out)
+    }
+
+    /// The policy check of one batch step, repeated just before the step runs. `confirmed` is
+    /// the state the user confirmed the step in, for a step that came with a token.
+    fn judge_again(&mut self, id: &str, confirmed: Option<&str>) -> Result<(), CommandError> {
+        let info = self.lookup(id)?;
+        let changed = "an earlier step of the batch changed";
+        match self.verdict(&info) {
+            Verdict::Deny(m) => Err(CommandError::denied(m)),
+            Verdict::Allow => Ok(()),
+            Verdict::NeedsConfirmation => match confirmed {
+                None => Err(CommandError::denied(format!("`{id}` now needs the user's confirmation: {changed} what it does. Run it on its own."))),
+                Some(scope) if scope != self.inner.confirmation_scope() => Err(CommandError::new(
+                    ErrorCode::ConfirmationInvalid,
+                    format!(
+                        "`{id}`: {changed} the design, the selection or the machine after the user confirmed: the user must confirm what runs now"
+                    ),
+                )),
+                Some(_) => Ok(()),
+            },
+        }
     }
 }
 

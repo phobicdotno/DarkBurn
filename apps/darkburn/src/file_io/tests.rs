@@ -520,6 +520,37 @@ fn preferences_export_import_and_backups_work_through_commands() {
     assert_eq!(b.prefs.theme, "nord", "a bad file changes nothing");
 }
 
+/// A preferences file carries the work area of the machine it was made on. The job is built for
+/// the active device, so the canvas must go on showing that device's bed after an import.
+#[test]
+fn imported_preferences_do_not_change_the_work_area_of_the_active_device() {
+    use crate::devices::{Device, DeviceType};
+    let dir = TempDir::new("prefsarea");
+    let file = dir.file("other.dbprefs");
+    let mut other = app();
+    other.prefs.page_width = 900.0;
+    other.prefs.page_height = 600.0;
+    other.prefs.origin = crate::view::Origin::FrontLeft;
+    other.prefs.theme = "nord".into();
+    run(&mut other, "project.prefs_export", json!({ "path": path_arg(&file) })).unwrap();
+
+    let mut a = app();
+    let mut d = Device::new(DeviceType::Grbl);
+    d.width_mm = 300.0;
+    d.height_mm = 200.0;
+    d.origin = darkburn_job::Corner::TopRight;
+    let id = a.machine.devices.add(d);
+    a.machine.select_device(id);
+    crate::machine_ui::adopt_device_state(&mut a);
+    assert_eq!((a.prefs.page_width, a.prefs.page_height), (300.0, 200.0));
+    run(&mut a, "project.prefs_import", json!({ "path": path_arg(&file) })).unwrap();
+    assert_eq!(a.prefs.theme, "nord", "the preferences came in");
+    assert_eq!((a.prefs.page_width, a.prefs.page_height), (300.0, 200.0), "the canvas still shows the device's bed");
+    assert_eq!(a.prefs.origin, crate::view::Origin::RearRight);
+    let dev = a.machine.devices.get(id).unwrap();
+    assert_eq!((dev.width_mm, dev.height_mm), (300.0, 200.0), "and the device is untouched");
+}
+
 // ----- The worker thread -----
 
 fn wait_for_job(a: &mut DarkBurn) {
@@ -570,6 +601,48 @@ fn opening_in_the_background_replaces_the_project_with_a_lightburn_file() {
     wait_for_job(&mut a);
     assert_eq!(a.editor.doc.len(), 2);
     assert_eq!(a.editor.doc.notes, "from the old file");
+}
+
+/// File > Open reads artwork on a worker thread and the window stays usable meanwhile. What is
+/// done to the project in that time is not thrown away without a question.
+#[test]
+fn edits_made_while_a_file_is_read_are_asked_about_before_it_opens() {
+    use crate::ui_harness::Gui;
+    let mut g = Gui::standard();
+    let f = g.temp("a.lbrn");
+    std::fs::write(&f, LBRN_V0.as_bytes()).unwrap();
+    let rect = json!({ "x": 20, "y": 30, "width": 40, "height": 20, "layer": 1 });
+    let open_and_edit = |g: &mut Gui| {
+        {
+            let mut a = g.app();
+            start_open(&mut a, f.clone());
+            run(&mut a, "shape.add_rect", rect.clone()).unwrap();
+        }
+        for _ in 0..500 {
+            g.frames(1);
+            if g.app().fio.job.is_none() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the file was never read");
+    };
+    open_and_edit(&mut g);
+    assert_eq!(g.app().editor.doc.len(), 1, "the rectangle drawn while the file was read is still there");
+    assert_eq!(crate::files::asking(&g.app()), Some(&crate::files::Then::OpenRead));
+    g.frames(2);
+    g.click_label("Cancel");
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.len(), 1, "Cancel keeps the project");
+    assert!(g.app().fio.held.is_none() && crate::files::asking(&g.app()).is_none());
+    // Again, and this time the project is let go.
+    open_and_edit(&mut g);
+    assert_eq!(g.app().editor.doc.len(), 2);
+    g.frames(2);
+    g.click_label("Don't save");
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.notes, "from the old file");
+    assert_eq!(g.app().editor.doc.len(), 2, "the two shapes of the file");
 }
 
 #[test]
@@ -674,7 +747,11 @@ fn damaged_files_of_every_kind_never_crash_the_reader() {
             }
             let mut o = opts.clone();
             o.pdf_page = Some(if round % 2 == 0 { PageChoice::Page(1) } else { PageChoice::All });
-            let _ = formats::read_bytes(&path, &b, &o);
+            // `read_bytes` turns a panic inside a reader into this error, so "it returned" alone
+            // proves nothing: a reader that panics on a damaged file is a bug too.
+            if let Err(e) = formats::read_bytes(&path, &b, &o) {
+                assert!(!e.contains("internal error"), "{path:?} round {round}: a reader panicked (its message is above)");
+            }
             cases += 1;
         }
     }

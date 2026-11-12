@@ -405,7 +405,7 @@ fn spin_channel(ui: &mut Ui, name: &str, tip: Option<&str>, value: &mut f64, spi
                 egui::DragValue::new(value)
                     .range(0.0..=max)
                     .speed(speed)
-                    .custom_parser(super::parse_number)
+                    .custom_parser(super::typed_number(ui.ctx(), ""))
                     .custom_formatter(move |v, _| format!("{v:.decimals$}")),
             );
             response.widget_info(|| {

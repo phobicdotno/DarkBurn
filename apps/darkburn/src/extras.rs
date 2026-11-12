@@ -57,6 +57,10 @@ impl Extras {
 /// (renderer, canvas input, menus) and apply the ones egui itself owns.
 pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     app.prefs.opts.sanitise();
+    if ui_kit::number_parser(ctx).is_none() {
+        // Sums and units in every number field of the dialogs and panels [CUT-10].
+        ui_kit::install_number_parser(ctx, std::sync::Arc::new(|text: &str, unit_mm: f64| darkburn_core::expr::eval_in(text, unit_mm)));
+    }
     options::publish(&app.prefs.opts);
     keymap::publish(&app.prefs.hotkeys);
     i18n::set_language(&app.prefs.language);
@@ -78,6 +82,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     }
     let dir = app.settings_dir.clone();
     app.extras.library.autosave(dir.as_deref(), std::time::Instant::now());
+    art_library::frame(app);
     app.extras.last_hover = app.extras.hover_topic.take();
     crate::updates::frame(ctx, app);
     if app.extras.library.is_dirty() || !app.extras.art.libs.is_empty() {
@@ -100,7 +105,10 @@ pub fn shared_defaults(settings_dir: Option<&Path>) -> Option<crate::prefs::Pref
     if let Some(dir) = settings_dir {
         candidates.push(dir.join(DEFAULTS_FILE));
     }
-    candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())
+    let mut prefs = candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())?;
+    // AI agent access is switched on by the person at this computer, never by a file.
+    prefs.mcp = Default::default();
+    Some(prefs)
 }
 
 /// Preferences from a `.dbprefs` file; an error when it is not a preferences object.
@@ -140,7 +148,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
             }
         }
         "help.camera" => {
-            app.extras.help_topic = "camera".into();
+            app.extras.help_topic = "camera_selection".into();
             app.extras.help_open = true;
         }
         "help.updates" | "help.check_updates" => crate::updates::run_command(app),
@@ -170,10 +178,18 @@ fn txt<'a>(a: &'a Value, key: &str) -> Result<&'a str, String> {
 
 /// The commands for libraries, art and hotkeys that take arguments; None for any other id.
 pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
+    if id.starts_with("library.") {
+        // The device's own library, as the panel would show it.
+        library::ensure_loaded(app);
+    }
     Some(match id {
         "library.new" => {
-            app.extras.library.lib = library::Library::default();
+            app.extras.library.lib = library::Library { device: app.extras.library.device.clone(), ..Default::default() };
             app.extras.library.path = None;
+            app.extras.library.selected = None;
+            app.extras.library.editing = None;
+            app.extras.library.dirty_since = None;
+            app.extras.library.touch();
             Ok(json!({ "ok": true }))
         }
         "library.open" => {
@@ -279,6 +295,10 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
     let mut new: options::Options = serde_json::from_value(all).map_err(|e| format!("{key}: {e}"))?;
     new.sanitise();
     app.prefs.opts = new;
+    if key == "show_rotary_toggles" {
+        // The rotary and cylinder toggles are the Modes toolbar.
+        app.prefs.toolbars.insert("modes".into(), app.prefs.opts.show_rotary_toggles);
+    }
     Ok(())
 }
 
@@ -370,7 +390,8 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
 fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     ui.set_min_width(560.0);
-    ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &tr("hotkeys.search", "Search commands"));
+    let search = tr("hotkeys.search", "Search commands");
+    ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &search));
     ui.add_space(t.space_6);
     let clashes = keymap::conflicts(&app.prefs.hotkeys);
     for (key, ids) in &clashes {
@@ -506,6 +527,22 @@ mod tests {
         assert_eq!(got.page_width, 600.0);
         std::fs::write(dir.join(DEFAULTS_FILE), "[1,2]").unwrap();
         assert!(read_prefs_file(&dir.join(DEFAULTS_FILE)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_defaults_never_switch_ai_agent_access_on() {
+        let dir = std::env::temp_dir().join(format!("darkburn-defaults-mcp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut p = Prefs { page_width: 600.0, ..Default::default() };
+        p.mcp.enabled = true;
+        p.mcp.allow_hardware = true;
+        p.mcp.allow_gweike = true;
+        p.mcp.require_confirmation = false;
+        std::fs::write(dir.join(DEFAULTS_FILE), p.to_json()).unwrap();
+        let got = shared_defaults(Some(&dir)).expect("found in the settings folder");
+        assert_eq!(got.page_width, 600.0);
+        assert_eq!(got.mcp, crate::mcp_ui::McpPrefs::default(), "a defaults file switched agent access on");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

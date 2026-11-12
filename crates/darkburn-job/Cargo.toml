@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 kurbo = { version = "0.13", features = ["serde"] }
+darkburn-geom = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

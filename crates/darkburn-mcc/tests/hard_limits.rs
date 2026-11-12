@@ -262,8 +262,8 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
     for port in 1..=10 {
         all.push(command::do_off(port).unwrap());
     }
-    all.extend(command::stop_sequence(&p, false, 0, 0, &[5, 6, 9]).unwrap());
-    all.extend(command::stop_sequence(&p, true, 0, 0b100, &[5, 6, 9]).unwrap());
+    all.extend(command::stop_sequence(&p, false, 0, 0, &[5, 6, 9]));
+    all.extend(command::stop_sequence(&p, true, 0, 0b100, &[5, 6, 9]));
     for w in all {
         assert_ne!(w.policy(), Policy::Laser, "{}", w.name());
         assert!(matches!(w.register(), 0x65..=0x67), "{}", w.name());
@@ -271,4 +271,54 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
         assert_ne!(w.words(), [0x66], "{}", w.name());
         assert!(registers::BLOCKS.iter().any(|b| b.start == w.register()));
     }
+}
+
+#[test]
+fn follower_and_pierce_records_cannot_ride_in_a_fifo_frame() {
+    // The same records are refused as 0x65 commands ([103, ..] follower move, [104, ..] follow,
+    // [118, ..] pierce). Inside a FIFO frame they are just as much the vendor interlocks' job:
+    // they decode, so the simulator can model them, but no write can be built from them.
+    let item = |op: u32, payload: &[u32]| {
+        let mut w = vec![1u32, ((payload.len() as u32 * 4) << 16) | op];
+        w.extend_from_slice(payload);
+        w
+    };
+    let cases = [
+        item(103, &[1000, 0]),
+        item(104, &[1, 2]),
+        item(104, &[1, 2, 0, 0, 0, 0, 0, 0]),
+        item(105, &[0, 0, 0, 0]),
+        item(106, &[0, 0, 0, 0, 0, 0]),
+        item(108, &[0, 0, 0, 0]),
+        item(109, &[0, 0]),
+        item(118, &[5, 0, 0]),
+        item(2001, &[0, 0]),
+    ];
+    for words in &cases {
+        assert!(darkburn_mcc::fifo::parse_fifo_words(words).is_ok(), "{words:?} is in the grammar");
+        assert!(SafeWrite::try_from_raw(0x66, words).is_err(), "{words:?} must not be a write this crate can build");
+        // The same through a datagram decoded off the wire.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0x66u32.to_le_bytes());
+        payload.extend_from_slice(&(words.len() as u16).to_le_bytes());
+        for w in words {
+            payload.extend_from_slice(&w.to_le_bytes());
+        }
+        let mut tail = vec![];
+        tail.extend_from_slice(&((2 + payload.len()) as u16).to_be_bytes());
+        tail.push(0);
+        tail.push(0x40);
+        tail.extend_from_slice(&payload);
+        let crc = darkburn_mcc::crc16_modbus(&tail);
+        let mut frame = vec![0u8, 9];
+        frame.extend_from_slice(&darkburn_mcc::crc::crc_bytes(crc, CrcOrder::HiFirst));
+        frame.extend_from_slice(&tail);
+        assert!(Request::decode(&frame).is_err(), "{words:?} decoded into a request");
+    }
+    // A dry frame next to them still builds.
+    let mut dry = vec![1u32];
+    for i in [FifoItem::boundary(), FifoItem::mode(4), FifoItem::tick(3, -3)] {
+        dry.extend(i.words());
+    }
+    assert_eq!(SafeWrite::try_from_raw(0x66, &dry).unwrap().policy(), Policy::Motion);
 }

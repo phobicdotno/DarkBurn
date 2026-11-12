@@ -84,7 +84,7 @@ impl FifoItem {
         FifoItem { opcode: OP_BOUNDARY, payload: vec![] }
     }
 
-    /// A mode record.
+    /// A mode record. Only 4 and 5 pass the frame check; any other value is refused there.
     pub fn mode(mode: u32) -> FifoItem {
         FifoItem { opcode: OP_MODE, payload: vec![mode] }
     }
@@ -205,7 +205,7 @@ pub fn parse_fifo_words(words: &[u32]) -> Result<FifoFrame, FifoParseError> {
 }
 
 /// Classify a parsed frame for the gate: `Motion` for dry content, `Laser` if any item carries
-/// laser data, or an error for items outside the allow-list.
+/// laser data or is a follower or pierce record, or an error for items outside the allow-list.
 pub fn classify_frame(frame: &FifoFrame) -> Result<Policy, Forbidden> {
     let mut laser = false;
     for item in &frame.items {
@@ -226,7 +226,15 @@ pub fn classify_frame(frame: &FifoFrame) -> Result<Policy, Forbidden> {
                 _ => return Err(Forbidden::FifoFrame(format!("9999 sub-record {sub} not allowed"))),
             }
         }
-        if item.is_laser() {
+        // A mode record carries one word, and only the two values seen in a stream.
+        if item.opcode == OP_MODE && !matches!(item.payload[..], [4] | [5]) {
+            return Err(Forbidden::FifoFrame(format!("mode record {:?} not allowed (only 4 and 5)", item.payload)));
+        }
+        // Follower moves, follow and pierce records (103..=109, 118) and 2001 belong to the
+        // vendor's height-follower and pierce logic. Like laser data they decode, so a simulator
+        // can model them, but they take the level no public constructor reaches.
+        let vendor_only = !matches!(item.opcode, OP_TICK | OP_BOUNDARY | OP_MODE | OP_MISC);
+        if item.is_laser() || vendor_only {
             laser = true;
         }
     }
@@ -523,9 +531,9 @@ mod tests {
         // unknown 9999 sub-record
         let w = [1, 0x000C_270F, 16, 0, 0];
         assert!(classify_frame(&parse_fifo_words(&w).unwrap()).is_err());
-        // follower records are in the grammar and decode
+        // follower records are in the grammar and decode, but are not motion-level data
         let w = [1, 0x0008_0067, 1000, 0];
-        assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Motion));
+        assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Laser));
     }
 
     #[test]

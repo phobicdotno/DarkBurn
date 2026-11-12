@@ -17,6 +17,8 @@
 //! No real USB device is ever opened unless the `usb` feature is on and
 //! `UsbTransport::open` is called by the application.
 
+// The lint named below is new; an older clippy does not know it and would stop on the name.
+#![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub mod codec;
@@ -32,13 +34,13 @@ pub mod transport;
 
 pub use codec::{Command, ListCmd, ListPacket, Reply, SingleCmd, packetize, unpacketize};
 pub use cor::{CorError, CorTable};
-pub use emulator::{EmulatorConfig, EmulatorLog, GalvoEmulator, Motion};
+pub use emulator::{EmulatorConfig, EmulatorLog, GalvoEmulator, Motion, PointShot};
 pub use ezcad::{EzcadImport, ImportError};
 pub use field::{Field, FieldConfig, FieldOrigin, GalvoCal, LensTestPattern, OutOfField};
 pub use geom::Wobble;
 pub use job::{
-    AngleMode, CompileError, CompileOptions, CompiledFrame, CompiledJob, Estimate, FillGrouping, FillSettings, FrameSpec, Job, Layer, LayerMode,
-    RepeatMarking, RotaryConfig, RotaryMode, SlicedImage, Step, bounds_key, compile, compile_frame,
+    AngleMode, CompileError, CompileOptions, CompiledFrame, CompiledJob, DrillSettings, Estimate, FillGrouping, FillSettings, FrameSpec, Job, Layer,
+    LayerMode, RepeatMarking, RotaryConfig, RotaryMode, SlicedImage, Step, bounds_key, compile, compile_frame, drill_points,
 };
 pub use machine::{Activity, ConnectOptions, ConnectionState, Event, GalvoError, GalvoMachine, Inputs, JobProgress, Snapshot, StartOptions};
 pub use settings::{DeviceSettings, LaserSource, LightSettings, MarkParams, PortConfig, Timings};

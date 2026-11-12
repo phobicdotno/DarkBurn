@@ -114,6 +114,8 @@ fn handshake_flavors() {
         (EmulatorFlavor::FluidNc, FirmwareKind::FluidNc, 128, false),
         (EmulatorFlavor::Grbl11e, FirmwareKind::Grbl, 128, true),
         (EmulatorFlavor::Grbl09, FirmwareKind::Grbl, 128, true),
+        // No reset when the port opens: the driver's soft reset brings the banner.
+        (EmulatorFlavor::GrblLpc, FirmwareKind::Grbl, 8192, false),
     ];
     for (flavor, kind, rx, m3) in cases {
         let emu = emulator(EmulatorConfig::flavor(flavor).with_time_scale(50.0));
@@ -202,6 +204,35 @@ fn synchronous_mode_sends_one_line_at_a_time() {
     wait_event(&m, |e| matches!(e, Event::JobFinished(_)));
     assert!(m.snapshot().rx_in_flight_peak <= longest);
     emu.with(|e| assert!(e.stats().rx_peak <= longest));
+}
+
+/// Without laser mode (`$32=0`) a feed hold leaves the spindle output, the laser, on: the
+/// pause has to switch it off, and the resume brings it back.
+#[test]
+fn pause_without_laser_mode_switches_the_laser_off() {
+    let emu = emulator(EmulatorConfig::atomstack().with_setting(32, 0.0).with_time_scale(20.0));
+    let m = connect(&emu, ConnectOptions::default());
+    let job = Job::from_text("G21 G90\nM3 S500\nG1 X300 F3000\nG1 Y300\nG1 X0\nG1 Y0\nM5");
+    m.start_job(job).unwrap();
+    wait_emu(&emu, "running with laser", |e| e.state_name() == "Run" && e.laser_on());
+    m.pause().unwrap();
+    wait_snap(&m, "Hold:0", |s| s.status.state == MachineState::Hold(0));
+    wait_emu(&emu, "laser off in the pause", |e| !e.laser_on());
+    // It stays off however long the pause lasts (the stop byte is a toggle).
+    std::thread::sleep(Duration::from_millis(300));
+    emu.with(|e| {
+        assert_eq!(e.state_name(), "Hold:0");
+        assert!(!e.laser_on(), "laser off for the whole pause");
+    });
+    m.resume().unwrap();
+    wait_emu(&emu, "running again", |e| e.state_name() == "Run" && e.laser_on());
+    // A second pause switches it off again.
+    m.pause().unwrap();
+    wait_snap(&m, "Hold:0 again", |s| s.status.state == MachineState::Hold(0));
+    wait_emu(&emu, "laser off in the second pause", |e| !e.laser_on());
+    m.resume().unwrap();
+    wait_event(&m, |e| matches!(e, Event::JobFinished(_)));
+    emu.with(|e| assert!(!e.laser_on()));
 }
 
 #[test]
@@ -492,7 +523,9 @@ fn fire_button_turns_itself_off() {
 
 #[test]
 fn frame_rectangle_with_and_without_laser() {
-    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(50.0));
+    // Slow enough that the framing state lasts well over half a second of real time: at 50x
+    // the whole frame took 120 ms and a loaded machine could miss it.
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(10.0));
     let m = connect(&emu, ConnectOptions::default());
     m.frame_rect(Rect::new(10.0, 20.0, 110.0, 70.0), FrameOptions::default()).unwrap();
     wait_snap(&m, "framing", |s| s.activity == Activity::Framing);
@@ -505,7 +538,7 @@ fn frame_rectangle_with_and_without_laser() {
         assert!(e.stats().lines.contains(&"G1 X110 Y20 F3000".to_owned()));
     });
 
-    let opts = FrameOptions { feed: 6000.0, laser_percent: Some(1.0) };
+    let opts = FrameOptions { feed: 6000.0, laser_percent: Some(1.0), return_to: None };
     m.frame_outline(&[Point::new(0.0, 0.0), Point::new(50.0, 0.0), Point::new(25.0, 40.0)], opts).unwrap();
     wait_event(&m, |e| matches!(e, Event::JobFinished(_)));
     emu.with(|e| {
@@ -647,4 +680,292 @@ fn eta_hook_is_used() {
     m.start_job(job).unwrap();
     let Event::JobFinished(p) = wait_event(&m, |e| matches!(e, Event::JobFinished(_))) else { unreachable!() };
     assert_eq!(p.eta, Some(Duration::ZERO));
+}
+
+#[test]
+fn homing_turns_the_fire_button_off_first() {
+    let emu = emulator(EmulatorConfig::atomstack().with_setting(22, 1.0).with_time_scale(50.0));
+    let opts = ConnectOptions { max_fire_duration: Duration::from_secs(60), ..Default::default() };
+    let m = connect(&emu, opts);
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.fire(1.0, Duration::from_secs(30)).unwrap();
+    wait_emu(&emu, "laser on", |e| e.laser_on());
+    wait_snap(&m, "fire flag", |s| s.fire_on);
+    m.home().unwrap();
+    wait_event(&m, |e| matches!(e, Event::Homed));
+    emu.with(|e| {
+        let lines = &e.stats().lines;
+        let home = lines.iter().rposition(|l| l == "$H").expect("homing was sent");
+        let fire = lines.iter().rposition(|l| l.contains("M3")).expect("fire was sent");
+        assert!(lines[fire..home].iter().any(|l| l.starts_with("M5")), "the laser must be switched off before homing starts: {:?}", &lines[fire..]);
+    });
+    wait_snap(&m, "fire flag cleared", |s| !s.fire_on);
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
+#[test]
+fn stop_during_homing_acts_at_once() {
+    let mut cfg = EmulatorConfig::atomstack().with_setting(22, 1.0);
+    cfg.homing_seconds = 30.0;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+    m.home().unwrap();
+    wait_emu(&emu, "homing", |e| e.state_name() == "Home");
+    let t = Instant::now();
+    m.stop().unwrap();
+    wait_emu(&emu, "reset", |e| e.stats().soft_resets >= 1);
+    assert!(t.elapsed() < Duration::from_secs(1), "Stop took {:?} to reach the controller while homing", t.elapsed());
+    wait_event(&m, |e| matches!(e, Event::Stopped));
+    wait_snap(&m, "idle driver", |s| s.activity == Activity::Idle);
+    // Homing was aborted, so the controller is locked; unlocking makes it usable again.
+    m.unlock().unwrap();
+    wait_snap(&m, "unlocked", |s| !s.alarm_locked && s.status.state == MachineState::Idle);
+}
+
+#[test]
+fn stop_on_grbl_09_holds_first_and_waits_for_the_machine_to_stand_still() {
+    // Real time, and a machine that needs 0.7 s to slow down: a reset before it stands still
+    // raises "ALARM: Abort during cycle" and loses the position.
+    let mut cfg = EmulatorConfig::flavor(EmulatorFlavor::Grbl09);
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    wait_emu(&emu, "M5 after reset", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    emu.with(|e| {
+        assert!(!e.laser_on());
+        assert_eq!(e.stats().soft_resets, 1);
+        assert!(e.stats().realtime.contains(&rt::FEED_HOLD));
+        assert_eq!(e.state_name(), "Idle");
+    });
+    wait_snap(&m, "idle after stop", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+}
+
+#[test]
+fn stop_on_grbl_11_waits_out_a_slow_feed_hold() {
+    let mut cfg = EmulatorConfig::atomstack();
+    cfg.decel_seconds = 0.7;
+    let emu = emulator(cfg);
+    let m = connect(&emu, ConnectOptions::default());
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on() && e.machine_position()[0] > 2.0);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "Stop left the controller in alarm: {events:?}");
+    emu.with(|e| assert!(!e.laser_on()));
+}
+
+#[test]
+fn stop_after_jog_pause_or_start_leaves_no_alarm() {
+    let emu = emulator(EmulatorConfig::atomstack().with_time_scale(5.0));
+    let m = connect(&emu, ConnectOptions::default());
+    m.jog(JogStep { dx: 300.0, feed: 3000.0, ..Default::default() }).unwrap();
+    wait_emu(&emu, "jogging", |e| e.state_name() == "Jog");
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after a pause, while still decelerating.
+    m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+    wait_emu(&emu, "cutting", |e| e.laser_on());
+    m.pause().unwrap();
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop: {events:?}");
+    wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+    // Stop right after starting, many times.
+    for i in 0..15 {
+        m.start_job(Job::from_text("G21 G90\nM3 S800\nG1 X300 F3000\nG1 Y300\nG1 X0\nM5")).unwrap();
+        std::thread::sleep(Duration::from_millis(i * 7));
+        m.stop().unwrap();
+        let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+        assert!(!events.iter().any(|e| matches!(e, Event::Alarm { .. })), "alarm after stop {i}: {events:?}");
+        wait_snap(&m, "idle", |s| s.activity == Activity::Idle && s.status.state == MachineState::Idle && !s.alarm_locked);
+        emu.with(|e| assert!(!e.laser_on()));
+    }
+}
+
+#[test]
+fn not_a_number_is_refused() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let m = connect(&emu, ConnectOptions::default());
+    wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
+    assert!(matches!(m.jog(JogStep { dx: 1.0, feed: f64::NAN, ..Default::default() }), Err(GrblError::InvalidArgument(_))));
+    assert!(m.jog(JogStep { dx: f64::NAN, feed: 100.0, ..Default::default() }).is_err());
+    assert!(m.jog(JogStep { dz: f64::INFINITY, feed: 100.0, ..Default::default() }).is_err());
+    assert!(matches!(
+        m.frame_rect(Rect::new(1.0, 1.0, 5.0, 5.0), FrameOptions { feed: f64::NAN, ..Default::default() }),
+        Err(GrblError::InvalidArgument(_))
+    ));
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: Some(f64::NAN), feed: 100.0, coords: Coords::Work }).is_err());
+    assert!(m.move_to(MoveTarget { x: Some(1.0), y: None, z: None, feed: f64::INFINITY, coords: Coords::Work }).is_err());
+    std::thread::sleep(Duration::from_millis(200));
+    emu.with(|e| assert!(!e.stats().lines.iter().any(|l| l.to_ascii_lowercase().contains("nan") || l.contains("inf")), "{:?}", e.stats().lines));
+}
+
+// ----- a link that can lose things -----
+
+/// What a [`Lossy`] link does to the traffic of the emulator behind it.
+#[derive(Default)]
+struct LinkFaults {
+    /// Start-up messages (`Grbl ...`) from the controller are lost.
+    swallow_banner: std::sync::atomic::AtomicBool,
+    /// Nothing gets through in either direction; the link itself stays open.
+    silent: std::sync::atomic::AtomicBool,
+    /// What the driver wrote while the link was silent.
+    unheard: std::sync::Mutex<Vec<u8>>,
+    /// The driver let the link go (a real port would be free again).
+    released: std::sync::atomic::AtomicBool,
+}
+
+struct Lossy<T: Transport> {
+    inner: T,
+    faults: std::sync::Arc<LinkFaults>,
+    line: Vec<u8>,
+    ready: std::collections::VecDeque<u8>,
+}
+
+impl<T: Transport> Lossy<T> {
+    fn new(inner: T) -> (Self, std::sync::Arc<LinkFaults>) {
+        let faults = std::sync::Arc::new(LinkFaults::default());
+        (Self { inner, faults: faults.clone(), line: Vec::new(), ready: Default::default() }, faults)
+    }
+}
+
+impl<T: Transport> Transport for Lossy<T> {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        if self.faults.silent.load(std::sync::atomic::Ordering::SeqCst) {
+            self.faults.unheard.lock().unwrap().extend_from_slice(data);
+            Ok(())
+        } else {
+            self.inner.write_all(data)
+        }
+    }
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.faults.silent.load(SeqCst) {
+            std::thread::sleep(timeout);
+            return Ok(0);
+        }
+        if self.ready.is_empty() {
+            let mut raw = [0u8; 512];
+            let n = self.inner.read(&mut raw, timeout)?;
+            for &b in &raw[..n] {
+                self.line.push(b);
+                if b == b'\n' {
+                    let banner = self.line.starts_with(b"Grbl") || self.line.starts_with(b"\r\nGrbl");
+                    if !(banner && self.faults.swallow_banner.load(SeqCst)) {
+                        self.ready.extend(self.line.iter().copied());
+                    }
+                    self.line.clear();
+                }
+            }
+        }
+        let n = buf.len().min(self.ready.len());
+        for slot in &mut buf[..n] {
+            *slot = self.ready.pop_front().unwrap_or(b'\n');
+        }
+        Ok(n)
+    }
+    fn set_dtr(&mut self, level: bool) -> std::io::Result<()> {
+        self.inner.set_dtr(level)
+    }
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+}
+
+impl<T: Transport> Drop for Lossy<T> {
+    fn drop(&mut self) {
+        self.faults.released.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn connect_lossy(emu: &EmulatorHandle, opts: ConnectOptions) -> (GrblMachine, std::sync::Arc<LinkFaults>) {
+    let (link, faults) = Lossy::new(emu.transport());
+    let m = GrblMachine::connect(Box::new(link), opts);
+    wait_event(&m, |e| matches!(e, Event::Connected(_)));
+    (m, faults)
+}
+
+/// Many short, slow moves: more than the planner holds, so lines stay in flight.
+fn slow_job(lines: usize) -> Job {
+    let mut text = String::from("G21 G90\nM4 S100\n");
+    for i in 1..=lines {
+        text.push_str(&format!("G1 X{}.{} Y{} F300\n", i / 10, i % 10, i % 3));
+    }
+    Job::from_text(&text)
+}
+
+#[test]
+fn a_stop_whose_reset_is_not_answered_still_frees_the_send_buffer() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    assert!(m.wait_until(T, |s| s.rx_in_flight > 60), "lines wait in the controller's buffer");
+    // The controller resets, but its start-up message never arrives.
+    faults.swallow_banner.store(true, std::sync::atomic::Ordering::SeqCst);
+    m.stop().unwrap();
+    let events = collect_until(&m, |e| matches!(e, Event::Stopped));
+    assert!(events.iter().any(|e| matches!(e, Event::JobAborted { .. })));
+    emu.with(|e| assert_eq!(e.stats().soft_resets, 1, "the controller did reset"));
+    // The controller answered a status request after the reset, so its buffer is empty: the
+    // laser-off line goes out and commands are sent again.
+    wait_emu(&emu, "M5 after the stop", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    assert!(m.wait_until(T, |s| s.rx_in_flight == 0), "nothing counted as in flight: {}", m.snapshot().rx_in_flight);
+    wait_snap(&m, "idle after the stop", |s| s.activity == Activity::Idle);
+    m.send_console("G4 P0").unwrap();
+    wait_emu(&emu, "the next command arrives", |e| e.stats().lines.last().is_some_and(|l| l == "G4 P0"));
+}
+
+#[test]
+fn disconnecting_from_a_silent_controller_does_not_hang_the_caller() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    faults.silent.store(true, std::sync::atomic::Ordering::SeqCst);
+    let t = Instant::now();
+    m.disconnect();
+    let took = t.elapsed();
+    assert!(took < Duration::from_secs(2), "disconnect took {took:?}");
+}
+
+#[test]
+fn disconnecting_from_a_silent_controller_frees_the_port_at_once() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    faults.silent.store(true, SeqCst);
+    m.disconnect();
+    // Connecting again to the same port right away must find it free.
+    assert!(faults.released.load(SeqCst), "the worker still holds the link after disconnect gave up waiting");
+    // The last thing sent to the controller that did not answer is a reset: it turns the laser off.
+    let unheard = faults.unheard.lock().unwrap().clone();
+    assert_eq!(unheard.last(), Some(&0x18), "{unheard:?}");
+}
+
+#[test]
+fn disconnecting_from_a_controller_that_answers_still_stops_cleanly() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    m.start_job(slow_job(400)).unwrap();
+    wait_emu(&emu, "moving", |e| e.state_name() == "Run");
+    m.disconnect();
+    assert!(faults.released.load(std::sync::atomic::Ordering::SeqCst));
+    emu.with(|e| {
+        assert_eq!(e.stats().soft_resets, 1, "hold, then one reset");
+        assert_eq!(e.stats().lines.last().map(String::as_str), Some("M5 S0"));
+        assert!(!e.laser_on());
+    });
 }

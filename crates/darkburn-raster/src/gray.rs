@@ -74,12 +74,16 @@ pub struct GrayF {
     pub width: u32,
     pub height: u32,
     pub data: Vec<f32>,
+    /// The fully transparent pixels (row by row, `true` = nothing there); empty when the image
+    /// has none. Their value in `data` is white, and they never burn, whatever the adjustments
+    /// or a negative do to the tones.
+    pub clear: Vec<bool>,
 }
 
 impl GrayF {
     /// A `width × height` image filled with `value`.
     pub fn new(width: u32, height: u32, value: f32) -> Self {
-        Self { width, height, data: vec![value; width as usize * height as usize] }
+        Self { width, height, data: vec![value; width as usize * height as usize], clear: Vec::new() }
     }
 
     /// Builds an image from a function of `(x, y)`.
@@ -90,7 +94,22 @@ impl GrayF {
                 data.push(f(x, y));
             }
         }
-        Self { width, height, data }
+        Self { width, height, data, clear: Vec::new() }
+    }
+
+    /// True when pixel `(x, y)` is fully transparent.
+    #[inline]
+    pub fn is_clear(&self, x: u32, y: u32) -> bool {
+        !self.clear.is_empty() && self.clear[y as usize * self.width as usize + x as usize]
+    }
+
+    /// The `width × height` part of the image whose top-left pixel is `(x0, y0)`.
+    pub fn window(&self, x0: u32, y0: u32, width: u32, height: u32) -> Self {
+        let mut out = Self::from_fn(width, height, |x, y| self.get(x0 + x, y0 + y));
+        if !self.clear.is_empty() {
+            out.clear = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).map(|(x, y)| self.is_clear(x0 + x, y0 + y)).collect();
+        }
+        out
     }
 
     #[inline]
@@ -114,10 +133,14 @@ impl GrayF {
         let (width, height) = (img.width(), img.height());
         let high_depth =
             !matches!(img, DynamicImage::ImageLuma8(_) | DynamicImage::ImageLumaA8(_) | DynamicImage::ImageRgb8(_) | DynamicImage::ImageRgba8(_));
+        let mut clear: Vec<bool> = Vec::new();
         let data = match img {
             DynamicImage::ImageLuma8(g) => g.as_raw().iter().map(|&v| f32::from(v) / 255.0).collect(),
             _ if high_depth => {
                 let rgba = img.to_rgba32f();
+                if rgba.pixels().any(|p| p.0[3] <= 0.0) {
+                    clear = rgba.pixels().map(|p| p.0[3] <= 0.0).collect();
+                }
                 rgba.pixels()
                     .map(|p| {
                         let [r, g, b, a] = p.0;
@@ -129,6 +152,9 @@ impl GrayF {
             }
             _ => {
                 let rgba = img.to_rgba8();
+                if rgba.pixels().any(|p| p.0[3] == 0) {
+                    clear = rgba.pixels().map(|p| p.0[3] == 0).collect();
+                }
                 rgba.pixels()
                     .map(|p| {
                         let [r, g, b, a] = p.0;
@@ -145,12 +171,12 @@ impl GrayF {
                     .collect()
             }
         };
-        Self { width, height, data }
+        Self { width, height, data, clear }
     }
 
     /// From an 8-bit grey image.
     pub fn from_luma8(img: &GrayImage) -> Self {
-        Self { width: img.width(), height: img.height(), data: img.as_raw().iter().map(|&v| f32::from(v) / 255.0).collect() }
+        Self { width: img.width(), height: img.height(), data: img.as_raw().iter().map(|&v| f32::from(v) / 255.0).collect(), clear: Vec::new() }
     }
 
     /// To an 8-bit grey image (rounded).

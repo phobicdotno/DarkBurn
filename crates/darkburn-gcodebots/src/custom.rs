@@ -55,6 +55,7 @@ pub fn config(p: &DeviceProfile) -> LineConfig {
         feed_override: String::new(),
         persist: String::new(),
     };
+    c.laser_frames = g.laser_on_when_framing;
     c.power = frame_options(p);
     c
 }

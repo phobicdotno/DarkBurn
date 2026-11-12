@@ -180,3 +180,51 @@ fn state_serialises() {
     let d: VariableState = serde_json::from_str("{}").unwrap();
     assert_eq!(d.serial.current, 1);
 }
+
+/// A date format that asks for a time zone cannot be filled in from the local clock reading:
+/// the format is shown as typed, like any other format that does not work. It used to crash.
+#[test]
+fn a_date_format_with_a_time_zone_does_not_crash() {
+    let s = VariableState::default();
+    for fmt in ["%z", "%Z", "%:z", "%+", "%Y %z"] {
+        assert_eq!(s.evaluate(&format!("{{date:{fmt}}}"), &ctx()), fmt, "{fmt}");
+        assert_eq!(s.evaluate_kind(VarKind::DateTime, fmt, &ctx()), fmt, "{fmt}");
+    }
+    assert_eq!(s.evaluate("{date:%d.%m.%Y}", &ctx()), "09.03.2026", "ordinary formats still work");
+}
+
+/// Serial limits as far apart as whole numbers go: Next and Previous still wrap, without a crash.
+#[test]
+fn serial_numbers_at_the_limits_of_whole_numbers_wrap() {
+    let half = 1i64 << 62;
+    let s = serial(-half, half, half, -1, 0);
+    assert_eq!(s.previous().serial.current, -half, "counting down, the step before the top is the bottom");
+    let s = serial(i64::MIN, i64::MAX, i64::MIN, 1, 0);
+    assert_eq!(s.previous().serial.current, i64::MAX);
+    assert_eq!(serial(i64::MIN, i64::MAX, i64::MAX, 1, 0).next().serial.current, i64::MIN);
+    let s = serial(i64::MIN, i64::MAX, i64::MAX, -3, 0);
+    let p = s.previous().serial.current;
+    assert!((i128::from(i64::MAX) - i128::from(p)) % 3 == 0, "{p}");
+    // The everyday cases are unchanged.
+    assert_eq!(serial(10, 32, 10, 5, 0).previous().serial.current, 30);
+    assert_eq!(serial(10, 7, 10, -1, 0).previous().serial.current, 7);
+}
+
+/// Copy 50 000 of an array with a long CSV file: the rows are not copied again for every step
+/// (that took minutes and froze the window while it drew).
+#[test]
+fn many_steps_with_a_long_csv_file_are_quick() {
+    let csv: String = (0..5000).map(|i| format!("name {i},code {i},{i}\n")).collect();
+    let mut s = serial(1, 1_000_000, 1, 1, 0);
+    s.merge = MergeSource::from_csv_str(&csv, false).unwrap();
+    let started = std::time::Instant::now();
+    let far = s.advanced(50_000);
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "50 000 steps took {:?}", started.elapsed());
+    assert_eq!((far.serial.current, far.merge.current_row), (50_001, 0));
+    assert_eq!(far.evaluate("{serial} {csv:1}", &ctx()), "50001 code 0");
+    let back = far.stepped(-50_000);
+    assert_eq!(back, s);
+    // A current row past the end of a file that got shorter still steps inside the file.
+    s.merge.current_row = 7000;
+    assert!(s.next().merge.current_row < 5000 && s.previous().merge.current_row < 5000);
+}

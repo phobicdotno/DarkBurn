@@ -1,5 +1,512 @@
 # Changelog
 
+## v0.0.528 (build 6)
+- Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
+- Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
+- Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
+- Fix: the shape commands no longer make shapes without size, and a line on a layer that does not exist is refused
+- Fix: text made by a command is held to the same height, spacing and offset ranges as the text fields
+- Fix: tooltips show the shortcut you set, not the default one, and no empty brackets when a shortcut is removed
+- Fix: tool tooltips, the Settings and About windows and their Close buttons follow the chosen language
+- Fix: an AI agent can now switch the laser off and stop a jog on a real machine too
+- Fix: importing preferences or shared defaults never switches AI agent access on
+- Fix: a GRBL controller with laser mode switched off no longer burns along the travel moves of a job
+- Fix: a LinuxCNC file runs its end script again (the program used to end before it), and Marlin and Smoothieware files no longer end with a command they do not know
+- Fix: the G-code an AI agent is shown for a job is now the G-code of the selected laser
+- Fix: recent projects on a drive that is not plugged in are no longer forgotten
+- Fix: Check for Updates no longer follows a server that sends it on to an address without https
+- Fix: "Home when a job starts" on the first page of Device Settings now does what it says
+- Fix: showing inches on the screen no longer changes the G-code sent to Marlin, Smoothieware, Snapmaker, LinuxCNC and custom machines
+- Fix: a device list that cannot be read is kept as a copy instead of being lost
+- Fix: Rubber band frame no longer goes round a picture that is left out of the job
+- Fix: Frame with a tool layer follows the job when print and cut or rotary moves it
+- Fix: Frame from the current position puts the head back where it started, so the job lands on what was framed
+- Fix: Pausing a Marlin or fan-controlled laser in the middle of a cut switches the laser off until you resume
+- Fix: Lines in some DXF files came in mirrored
+- Fix: Fitted and aligned DXF text came in at the wrong end
+- Fix: Text from a LightBurn file jumped to the corner when the job was made
+- Fix: Fill+Line layers came back as Fill from a LightBurn file
+- Fix: Kerf, Z offset and air assist were missing from exported LightBurn files
+- Fix: Bold, spaced or bent text from a LightBurn file lost its look when the job was made
+- Fix: A damaged cut library file could put impossible power or speed on a layer
+- Fix: A failed auto-save was not tried again until the next change
+- Fix: pausing a custom G-code machine in the middle of a cut switches the laser off, and resume switches it back on
+- Fix: a G-code file that ends without switching the laser off no longer burns a line on the way to the finish position
+- Fix: Rotary on a galvo no longer marks a line twice when it sits right where two bands meet
+- Fix: Drilling on a galvo rotary no longer skips the top points of a tall shape
+- Fix: Door protection on a galvo now also waits for the door before every slice of a 3D sliced image
+- Fix: A galvo job that needs an axis move the board cannot make is refused at start instead of stopping half way with a link error
+- Fix: a turned, mirrored or cropped picture on a galvo is now engraved the way it looks on screen
+- Fix: pausing a GRBL machine that runs without laser mode now switches the laser off while it waits
+- Fix: saving a project or a library no longer overwrites a file that happens to be called the same with .tmp after it, and very long file names can be saved
+- Fix: Saving a cut or art library under a name with a dot in it ("Birch 3.5") keeps the whole name
+- Fix: Editing a cut library entry so it gets the same name as another one no longer mixes the two up
+- Fix: An art library opened from a file not ending in .dbart is saved back to that same file
+- Fix: A Gweike craft with a value the machine does not allow (gas pressure, speed, frequency, missing pierce stage) is no longer stored or written to the craft table file
+- Fix: A device file with a short Gweike craft table no longer crashes the craft editor
+- Fix: Framing the material test, or a rectangle by numbers, with the job set to start from the current position now brings the head back to where it was
+- Fix: A galvo job with a Z move too long for the board is refused instead of being marked at the wrong height
+- Fix: Resuming a paused galvo job gives the fibre source its warm-up wait before marking goes on
+- Fix: A galvo job now says so when shapes on an Image layer are left out
+- Fix: A red-light frame that was nudged or scaled no longer counts as framing the job when framing is required
+- Fix: The saved preview image shows crossing burns the same way the preview window does
+- Fix: A simulated Gweike run that does not finish in time now says so instead of looking done
+- Fix: A Gweike plan no longer accepts an acceleration above what the machine allows
+- Fix: With the Fire button switched off in Device Settings, the fire command no longer fires either
+- Fix: "Hide Start" for a DSP device now also holds the Start shortcut and menu, not only the button
+- Fix: A move typed in machine coordinates is refused when it lies outside the machine (Smoothieware)
+- Fix: With a work origin set, a move to a position is still checked against the machine (Marlin, Smoothieware and custom devices)
+- Fix: With a work origin set, a frame is still checked against the machine (Marlin, Smoothieware and custom devices)
+- Fix: Disconnecting or pressing Stop while the Fire button is on now switches the laser off on a Ruida controller, and a job no longer starts with it still on
+- Fix: On a galvo, Stop pressed right after Start now always wins
+- Fix: A galvo job reads the door switch again at the moment it starts
+- Fix: Resume on a galvo reads the door switch again first
+- Fix: A galvo job that waits for the foot switch no longer starts on an old press
+- Fix: Disarming a galvo while a job is marking now stops the job
+- Fix: Go to origin on Smoothieware, Marlin and custom G-code machines no longer runs to an origin outside the machine
+- Fix: On Marlin, a jog, move or frame after Set origin no longer runs past the end of the machine
+- Fix: On the Gweike, a jog key held down no longer keeps the head moving once the card asks for a restart
+- Fix: On a Ruida controller, a jog, move, home or frame now ends the Fire button first
+- Fix: After a lost connection the app no longer shows the laser as firing
+- Fix: A job or frame started while the head still jogs is refused, instead of losing its first lines
+- Fix: DSP controllers: Fire, moves and a second Start are refused right after Start too, not only once the job shows as running
+- Fix: Ruida: Fire and Start are refused while a frame is on its way or running
+- Fix: A device with the Fire button switched off refuses to fire in the driver too
+- Fix: A frame with the laser on is refused in the driver unless the device allows it
+- Fix: Convert to Bitmap no longer puts the picture on a layer that does not exist
+- Fix: An ellipse or rounded rectangle with an absurd size no longer eats all the memory
+- Fix: A picture placed absurdly far off the page no longer crashes the job
+- Fix: A command that changes nothing no longer leaves an empty undo step or marks the project as changed
+- Fix: Shapes blown up to kilometres on a fill layer no longer crash the program, they are left out of the job with a warning
+- Fix: Cut Shapes on a few hundred shapes takes a moment instead of most of a minute
+- Fix: A shape can no longer be moved or sized out of this world (past a thousand kilometres), which put "infinity" into the job
+- Fix: A QR code or barcode of an absurd size is refused instead of crashing
+- Fix: An ellipse with a size near the largest number there is no longer takes all the memory
+- Fix: Adding a tab to a shape that has no size is refused instead of quietly breaking undo
+- Fix: Two-Point Rotate / Scale onto one and the same target point no longer shrinks the shape to a dot
+- Fix: Offset with a tolerance below zero no longer takes minutes
+- Fix: A damaged project file with a shape that has no number opens with the shapes numbered again
+- Fix: A job that was paused when the cable dropped no longer shows as paused afterwards
+- Fix: Disconnecting or closing in the middle of a jog now stops the move first
+- Fix: A machine that reports an alarm now always ends the running job, also when its alarm message never arrived
+- Fix: Pressing Fire right after Home on a GRBL laser no longer switches the laser on after homing and leaves it on
+- Fix: Opening the door on a GRBL laser ends the Fire button, so closing the door and pressing Resume no longer lights the laser again
+- Fix: A GRBL job or frame that the door has stopped, and a paused frame, now show Resume instead of Pause
+- Fix: A Smoothieware or custom machine that halts in the middle of a job no longer goes on with the job after Unlock
+- Fix: the Preview window keeps its size instead of growing as wide as the whole app
+- Fix: Shade by power, Show travel moves and Invert in the Preview can be seen and clicked, and a narrow Preview puts its boxes and buttons on more rows
+- Fix: the Preview follows the pointer when you resize it by a corner or an edge, and no longer gets a little shorter every time you take hold of it
+- Fix: Restore in the Preview puts the window back where it was, at the size it had
+- Fix: the Preview and the Cut Settings Editor no longer open on top of the menus at the top of the app, also in a small window, and a maximised Preview leaves the menus free
+- Fix: the hint under the layer list in the Cut Settings Editor is no longer cut off
+- Fix: the Cut Settings Editor shows its settings all the way down to the bottom of the window, and is no longer as tall as the whole app with its lower part empty
+- Fix: Adjust Image and Trace Image are as tall as what is in them, no longer as tall as the whole app, and stay clear of the menus at the top
+- Fix: Ruida over Ethernet: a late answer from the controller could hide a lost key release and leave the Pulse key or a jog key held down; a release is now sent again until its own answer is in
+- Fix: Text in an SVG file no longer disappears on a computer without Arial
+- New: install with one line: a curl line on Linux and macOS, a PowerShell line on Windows
+- New: ready-made packages for Linux (x86_64 and arm64) and macOS (Apple silicon and Intel), next to the Windows installer and the portable zip
+- Fix: A simulated G-code machine could say a job was finished a moment before its last moves had run
+- Fix: Pause and Resume pressed right after each other on a Marlin, Snapmaker or custom G-code laser could leave the laser off for the rest of the job
+- Fix: A pause in the last moments of a job on a Smoothieware, Marlin or custom G-code laser no longer stays on after the job, with the next job refused
+- Fix: Dot mode and the pauses at the start and end of a cut were a thousand times too short on Marlin and Snapmaker lasers
+- Fix: Stop while a Marlin or custom G-code laser is homing no longer reports it as homed
+- Fix: Pause pressed during a stop no longer sends the pause command of a custom G-code device after the stop
+- Fix: Pause, resume and fire-off commands of several lines on a custom G-code device were sent in reverse order
+
+- New front page for the project
+- The ribbon now shrinks to icons and a » menu on narrow windows
+- Panel tabs that do not fit move behind a » menu
+- Cuts / Layers columns are readable at the default panel width
+- Settings has pages for general, display, editing, work area, files, text, devices and shared defaults
+- Lengths in inches or millimetres and speeds in mm/s or mm/min apply everywhere
+- Snapping, click tolerance, nudge distances, curve quality, antialiasing, interface size and icon size are settings
+- Edit Hotkeys: change any shortcut, see clashes, import and export hotkey files
+- F1 explains the panel or dialog you are on
+- Material library: save, load, assign, link and create entries from a layer
+- Art Library: several libraries, folders, thumbnails with hover preview, search and drag-in
+- Norwegian language, switching right away from the Language menu
+- Help menu: documentation link, support data bundle and debug log
+- Export, import and restore preferences, and a shared defaults file for workshops
+- Laser keys work from the keyboard: Alt+S start, Alt+R frame, Alt+Shift+R outline frame, Alt+Shift+S send, Pause and Ctrl+Pause
+- Ctrl+Alt+arrow keys jog the laser head
+- Shortcuts no longer fire when an extra Alt is held (Alt+L used to align left)
+- Default layers can be made the default for this laser or all lasers, loaded and reset from the layer list menu
+- New projects start with the laser's default layers
+- Material test grids now show the units next to the numbers, and Frame frames the test itself
+- Rotary setup can read pulses per rotation and diameter from a Ruida controller
+- Print and Cut targets can take the laser head position
+- Escape closes the Preview, the notes and the camera and rotary windows
+- Escape closes an open window first, even with the node or measure tool picked
+- Screen readers now say what each field, slider and search box is for
+- Side and bottom panels keep the size you drag them to
+- Panels no longer shrink by themselves or get squeezed away in a small window
+- Machine Settings no longer grows wider than the window when a laser is connected
+- Macro buttons in the Console move to the next row instead of breaking their names
+- Tabs you place by hand now leave gaps in the cut
+- Choose where a shape starts cutting and which way it goes; the choice is saved with the project
+- Delete, Backspace and Ctrl+D work while editing nodes
+- Remove rounded corners also works on drawn shapes with curved corners
+- Docking follows the real outline of shapes, not just their boxes
+- Counting text now counts up in real arrays too
+- Comma and period turn the selection 1 degree, with Ctrl 5 degrees and with Alt 10 degrees
+- Open Ruida .rd files and get the cut paths on their own layers
+- SVG clip paths now also cut lines and curves
+- Position Laser tool: click the canvas to move the laser head there
+- Move the selection to the laser, or the laser to one of nine points of the selection
+- Move Selection pop-up on the Arrange tab
+- Toolbars can be shown, hidden and put in a different order in Settings
+- Offset shapes inward, outward or both, with round, bevel or sharp corners and a live preview
+- Weld, union, difference and intersection of shapes
+- Boolean assistant with a preview and a reset button
+- Cut shapes into pieces where they overlap
+- Resize slots in a selection, with the slots highlighted in colours
+- Select all shapes smaller than the selected one
+- Warp the selection with 4 points or deform it with 16
+- Round Corners tool with a radius field, negative for inward notches
+- Start Points tool to choose where each cut begins and which way it runs
+- Convert rectangles, ellipses, polygons and text to paths
+- Close paths, also with a tolerance
+- Auto-join open lines, with a progress bar you can cancel
+- Optimize shapes to fewer nodes, and see the before and after count
+- Delete duplicate shapes and overlapping lines
+- Break apart compound shapes
+- Auto-group shapes that sit inside each other
+- Mirror shapes across a line
+- Two-point rotate and scale
+- Nest the selected shapes inside the work area
+- Dock shapes against their neighbours, with padding
+- Rubber-band outline around the selection
+- Grid array, circular array and copy along a path
+- Virtual arrays that stay editable until you flatten them
+- Alignment helper that explains aligning step by step
+- Edit Nodes tool: move nodes and handles, insert, delete, break, trim, extend and align
+- Add Tabs tool, with the layer's automatic tabs shown too
+- Measure tool for distances, angles, arcs and areas
+- Rectangle corner radius, including inward corners, and Remove Rounded Corners
+- New lines join up with the end of an open line on the same layer
+- Text tool: click, type right on the canvas, double-click text to edit it
+- Edit Text Shapes window with a zoomable preview
+- Font picker with favourites, recent fonts and a live preview
+- Bold, italic, upper case, spacing, alignment and welded text from the Text toolbar
+- Text on a path, and Apply Path to Text
+- Single-line SHX fonts
+- Text now cuts and engraves, and opens on machines without the font
+- QR codes for text, links, Wi-Fi and contacts, still editable afterwards
+- Barcodes: Code 128, Code 39, EAN-13, UPC-A, ITF and Data Matrix
+- Variable Text panel: serial numbers, CSV merge, date and time, auto-advance after a job
+- Pictures show on the canvas as they will burn, with the layer's dither mode
+- Adjust Image: brightness, contrast, gamma, sharpening, denoise, a side-by-side preview and saved presets
+- Trace Image turns a picture into cut lines, with threshold, smoothness and a preview
+- Image layers: threshold, ordered, Atkinson, Floyd-Steinberg, Jarvis, Stucki, newsprint, halftone, sketch, grayscale and pass-through
+- Convert shapes to a bitmap, save the processed bitmap, replace or refresh an image
+- Crop an image with a shape, flatten or remove the crop
+- Scanning offset table for lines that come out shifted, with import and export
+- Open and import DXF, PDF, Illustrator and PLT files
+- Open LightBurn project files, with their layer settings and notes
+- Pick a page when importing a PDF with several pages
+- Import options for DXF units, joining open paths, hidden Illustrator layers and colours to layers
+- See a list of warnings after an import
+- Big files are read in the background, with a Cancel button
+- Drag and drop any of these files onto the window
+- Export to SVG, Illustrator, DXF and pictures, for everything or just the selection
+- Save a copy in the LightBurn .lbrn2 format
+- Export a DXF with one layer per material, and a .nc file, for the Gweike software
+- Print, in black only or in colour, or save the page as a PDF
+- Export and import your preferences, and go back to an earlier backup
+- Preferences are backed up automatically
+- New Window, and an option to keep just one DarkBurn running
+- Tabs you place by hand are now left uncut in the job
+- Shapes can have their own start point and cut direction, and the job keeps them
+- Tool layers marked "frame" are framed with the job
+- The red-dot offset moves the frame so the dot lands where the laser will
+- Reverse Z, relative Z moves and the Z optimise option now change what is sent
+- Fast scan over white space and the scanning offset table are applied to the job
+- The curve tolerance setting changes how finely curves are cut
+- "Return to start when done" is a checkbox in the Laser panel, and the device setting works too
+- Framing checks the work area on controllers that ask for it, and the network timeout is used
+- PWM frequency, U offset, laser 2 power and dot mode go into the files sent to Ruida controllers
+- Speeds and acceleration can be read from the controller to make the time estimate match the machine
+- Fix: Tabs you place by hand now land exactly where you put them, on open lines too
+- Fix: A tab on a shape with a hole only cuts a gap where you placed it
+- Fix: A tab right at the start of a cut is no longer cut short
+- Fix: Tabs placed by hand stay when Skip inner shapes is on
+- Fix: Automatic tabs are cut where the Add Tabs tool shows them
+- Fix: Tabs stay on the outline when you edit nodes
+- New: Each part of a compound shape keeps its own start point
+- New: Partly cut tabs are pulsed using the Tab pulse width from the device settings
+- New: Preview window (Alt+P) with play, speed, power shading, travel moves, invert, time estimate, zoom and pan
+- New: Start here, save from here and save preview image from the preview
+- New: Save G-code with your own start and end scripts and G-code flavor
+- New: Optimization settings saved in the project, with set as default and reset
+- New: Start from, job origin picker, cut selected graphics, use selection origin and show last position
+- New: Warning when the job leaves the work area, with an option to drop those shapes
+- New: Material test generator with presets you can import and export
+- New: Acceleration and speed settings so the time estimate matches your machine
+- Devices dialog with a list you can reorder, sort, duplicate, remove, import and export
+- New Device wizard for GRBL, Ruida and design-only machines
+- Find My Laser lists the serial ports that look like a laser
+- Each device remembers its own units, grid, origin, panels, port and settings backups
+- Device Settings with Basic, GCode, DSP and Additional pages
+- A built-in simulator laser so you can try everything with no hardware
+- Laser panel shows the laser's state, job progress and time left
+- Start, pause, stop, frame, home and go to origin work on the simulators
+- Port picker with an automatic choice and a list of ports to ignore
+- A red REAL MACHINE banner and a confirmation before connecting to a real laser
+- A checklist before each job, if you want one
+- A warning before closing DarkBurn while a job is running
+- Move panel with jog arrows, continuous jog, move to, saved positions and a Fire button
+- Speed and power sliders while a GRBL job runs
+- Console panel with a command line and six macro buttons you edit with a right-click
+- Machine Settings dialog with labels, backups and settings files
+- File List panel for Ruida controllers with upload, run, delete and job time
+- Controller info, dual tube and rotary settings for Ruida controllers
+- GRBL-M3 and GRBL-LPC lasers in the New Device wizard
+- Older GRBL boards get jobs written the way they understand
+- The simulator can act like older GRBL, GRBL-LPC, grblHAL or FluidNC
+- Bluetooth, HTTP and raw USB connections for G-code lasers
+- Network bridge setup for Ruida lasers, with a Rescan button in the Laser panel
+- Automation socket so another program can start a job and ask how it is going
+- DarkBurn tells you when it recognises an Ortur, xTool, Atomstack or Sculpfun laser and can take over its size
+- Find My Laser lists USB devices too
+- A switch to keep DTR on or off while connected
+- Smoothieware, Marlin, Snapmaker, Emblaser and custom G-code lasers in the New Device wizard, each with a simulator
+- G-code is written for the laser you picked, with its start and end scripts, air assist and power style
+- LinuxCNC jobs save as a ready-to-run program
+- DarkBurn tells you if the laser that answers is not the type you chose
+- Galvo lasers: Device Settings for the lens field, calibration, lens file, timing, ports, wobble and axes
+- Galvo lasers: red-light framing with nudge and scale, and an Arm button before anything can fire
+- Galvo lasers: repeat marking, rotary runner, lens test pattern, scale calibration and EZCad import
+- Galvo cut settings in the Advanced tab: frequency, Q-pulse, wobble and timing per layer
+- Gweike craft files (.chf) with a material and craft setting for every layer
+- Gweike card simulator that plans a job and shows the time estimate without moving anything
+- Trocen, TopWisdom, Cubiio and network Emblaser and Snapmaker are listed as waiting for a hardware capture
+- Save RD files for Ruida lasers, from the File menu or the Laser window
+- RD files open with their layers, speeds and powers
+- Ruida over USB uses the laser's own USB port, picked for you
+- Hardware overscan for Ruida fills and images
+- Ruida jobs in bed coordinates now land where they are drawn
+- Ruida power values are sent in finer steps
+- Ruida board names in Controller info, and a list of known boards in Device Settings
+- Trocen and TopWisdom lasers say clearly that they are not supported yet
+- Camera panel: pick a camera or a picture file, see it live, lay it over the bed
+- Camera overlay can be faded, hidden, shifted, resized and shown in black and white
+- Trace a camera picture straight from the panel
+- Camera settings can be saved, exported and imported, and the last camera is remembered
+- Calibrate the camera lens with a dot grid or chessboard, standard or fisheye
+- Line up the camera with the bed using targets drawn by DarkBurn
+- Head-mounted cameras can be lined up and their pictures stitched together
+- Rotary setup with chuck or roller, axis, steps, sizes, mirror and a test turn plan
+- Rotary, cylinder and print and cut switches in the status bar
+- Cylinder correction for outside and inside curves
+- Print and cut: set two targets, align with or without scaling, reset, or use the wizard
+- Focus test and interval test drawn into the design
+- Centre finder for round stock
+- Feeder setup with window plan and step correction
+- Cut selected and Use selection origin now start in the state you picked in Settings
+- Ignore shapes outside the work area now works from Settings
+- New projects can load the device's default layers
+- Job log: every finished or stopped job is added to a CSV file
+- Sounds for finished jobs and errors
+- Excluded serial ports no longer show up in the port list
+- Default text font, height and auto-weld are used for new text
+- The status bar shows the layer and pass while a job runs
+- Try buttons for the error and finished sounds in Settings
+- Stopping a job yourself no longer plays the error sound
+- The job log now has each job's start time, how long it ran and the file, and you can pick its folder
+- Show the job log from Settings
+- Grid spacing can be set in Settings, and each device remembers its own
+- Library entries show an icon for line, fill or image
+- Help > Camera Selection Help explains how to pick a camera and what to check when it is missing
+- Preview: Run from here and Send from here are only offered on machines that can do it
+- A galvo no longer marks the whole job when asked to start part way
+- Material Test (galvo): small filled cells, speed against frequency, sized for the lens field
+- The material test warns when the device cannot do what the grid varies
+- Galvo drill mode: a line layer can fire at points along the outline, with a drill time and point spacing
+- AI agents can now use DarkBurn: draw, edit, change cut settings, preview jobs and take screenshots (off until you turn it on in Settings)
+- New "AI agents (MCP)" settings page with the switches, the connection details and a log of what agents did
+- A small "MCP" tag in the status bar shows when agents are connected
+- Agents can't touch the machine unless you allow it, and starting a job always asks you first
+- DarkBurn can run without a window for scripts and testing
+- Windows installer: installs for you without admin rights, or for everyone on the computer
+- DarkBurn project, device, cut library, art library and hotkey files open with a double-click
+- Start menu and desktop shortcuts
+- Updating the installed version keeps your settings, and so does uninstalling
+- Portable zip that keeps its settings next to the program
+- Check for updates from the Help menu, and an option to check when DarkBurn starts (off by default)
+- Escape closes a dialog instead of clearing your selection behind it
+- The right-hand panels no longer share a button id, which could confuse clicks on their close buttons
+- Art Library buttons wrap to the next row instead of squeezing their words apart
+- Machine Settings fits a narrow window
+- Fixed a slow memory growth while the window stays open
+- Fix: a DXF whose blocks insert each other over and over no longer freezes the import
+- Fix: undo no longer wipes the project notes you typed after the step it undoes
+- Fix: choosing Don't save and then cancelling or failing to open a file no longer makes the project look saved
+- Fix: an extra window no longer removes the first window's auto-saved copy
+- Fix: a drag that is cancelled or ends where it began no longer marks a saved project as changed
+- Fix: a cut library that was never saved to a file of its own is there again the next time DarkBurn starts
+- Fix: library entries made before the Library panel was first opened no longer disappear
+- Fix: a damaged project file with impossible shape numbers or layers opens instead of crashing
+- Fix: starting DarkBurn by opening a file after a crash no longer throws away the copy it offers to restore
+- Fix: shapes with their own power scale keep it when filled together with other shapes
+- Fix: the scanning offset now moves image lines the right way when a job is scanned from the top, and leaves one-way scans alone
+- Fix: a layer without a Z offset no longer runs at the height the layer before it left the head at
+- Fix: Marlin and LinuxCNC jobs no longer switch the laser on for moves too short to write
+- Fix: kerf offset now shrinks a hole that is drawn as its own shape inside another shape
+- Fix: a cropped image now burns only inside its crop
+- Fix: an image set far too fine to scan is left out with a warning instead of running out of memory
+- Fix: Cut selected graphics now also holds on a galvo laser
+- Fix: the material test no longer changes the settings of layers your design already uses
+- Fix: with an origin set on a G-code machine, the job now runs where its frame runs
+- Fix: the material test refuses an absurd number of rows or columns instead of crashing
+- Fix: Start here is forgotten when the design changes, so a changed job no longer starts part way
+- Fix: Boolean, offset and kerf no longer crash on a shape with broken coordinates
+- Fix: Kerf offset no longer drops a figure-of-eight or a closed line from the job
+- Fix: Offset and kerf treat an outline that ends on its start point as a closed shape
+- Fix: Deleting every node of a line inside a bigger shape no longer eats a node of its neighbour
+- Fix: Breaking or deleting lines at several nodes of a closed shape now hits the nodes you picked
+- Fix: Convert to curve or line works with every node of an open line selected
+- Fix: Deleting the last nodes of a shape removes the shape instead of leaving an invisible one
+- Fix: A mistyped array count or spacing gives a message instead of freezing or closing the program
+- Fix: Union, Difference, Weld, Cut Shapes and Offset no longer delete a selected picture or line they did not use
+- Fix: Text no longer vanishes when it is put on a path with no length
+- Fix: Bent text on a path follows the curve on every edge of a letter
+- Fix: Bending very large text on a path no longer closes the program
+- Fix: Optimize Shapes no longer wipes out holes and shapes smaller than its tolerance
+- Fix: Nesting with a very small rotation step no longer closes the program
+- Fix: clicking into a number field and out again no longer rounds the value
+- Fix: layer names with spaces can be typed in the cut settings editor
+- Fix: a hidden Modes toolbar stays hidden when you open the display settings
+- Fix: keys pressed while a dialog is open no longer move or delete shapes behind it
+- Fix: Preview works from the right-click menu on the canvas
+- Fix: the status bar shows the selection in the same coordinates as the rulers when the origin is not front left
+- Fix: scrolling in a window or menu no longer zooms the drawing behind it
+- Fix: Tab steps through the shapes again and no longer switches the other keys off
+- Fix: the work area size and origin set in Settings are now the ones the job uses
+- Fix: The fire button now switches off before homing or any other command starts
+- Fix: Stop during homing now stops the machine right away
+- Fix: Stop on old GRBL 0.9 controllers no longer ends in an alarm
+- Fix: Disconnecting in the middle of a job on Marlin and Smoothieware machines now stops the cut right away
+- Fix: A job started while the fire button was on no longer loses its laser part-way through
+- Fix: Ruida over network: a late answer from the controller can no longer hide a lost piece of a job
+- Fix: Stop on a Ruida laser no longer waits behind other commands or an unanswered overwrite question
+- Fix: Closing the program while it asks whether to overwrite a file on a Ruida controller no longer hangs
+- Fix: A galvo device set up with a port bit above 15 is now refused with a clear message instead of never finishing its connect
+- Fix: A galvo frequency too low for the board now gives the lowest frequency it can do, not a much higher one
+- Fix: An absurd fire time typed into a command no longer crashes the program
+- Fix: a LightBurn file with odd letters inside its path data no longer fails to open
+- Fix: SVG parts placed with a use element that has its own transform land in the right spot
+- Fix: PDF outlines that continue after a closed part keep their parts apart
+- Fix: PDF pages with a user unit come in at their real size
+- Fix: a damaged PDF layer entry that points at itself no longer closes DarkBurn
+- Fix: a PDF image whose mask points at itself no longer closes DarkBurn
+- Fix: a PDF fax image with an absurd width is skipped instead of closing DarkBurn
+- Fix: Same Width against a line with no width no longer flattens the other shapes
+- Fix: deleting a layer with its shapes keeps the other shapes of a group
+- Fix: a shape with a broken coordinate can no longer make a saved project impossible to open
+- Fix: changes made while a file is still being opened are asked about instead of thrown away
+- Fix: importing preferences no longer shows another machine's work area on the canvas
+- Fix: art libraries are saved when DarkBurn closes and are open again at the next start
+- Fix: Camera alignment no longer accepts targets that sit on one line or were clicked twice
+- Fix: Focus test, interval test and feeder plan refuse absurd step counts instead of crashing
+- Fix: Changing a camera slider now counts as a change to save
+- Fix: Print and Cut now works on machines whose origin is not at the front left
+- Fix: The centre finder mark lands under the laser on machines whose origin is not at the front left
+- Fix: Head camera alignment no longer applies the lens correction twice to the clicked marks
+- Fix: Convert to Path leaves a text of only spaces alone instead of making an invisible shape
+- Fix: "Weld text automatically" also applies to text made with the text tool
+- Fix: A warning when a hole or part is smaller than the kerf offset and gets left out
+- Fix: Tabs never take more than half of a small shape, so there is always something left to cut
+- Fix: Tabs and start points can be set on shapes inside a group
+- Fix: A picture that cannot be read no longer keeps the processor busy while it is on screen
+- Fix: A text whose letters are all deleted while typing is removed instead of staying as an invisible shape
+- Fix: a Ruida move or frame with a broken coordinate is refused instead of going to zero
+- Fix: disconnecting from a GRBL laser that stopped answering no longer freezes the window
+- Fix: after a stop that the controller did not confirm, commands go through again
+- Fix: switching air assist no longer turns the fire button off
+- Fix: a Ruida job now warns when a layer's pauses or cut-through cannot be sent
+- Fix: Run G-code no longer runs a saved job in the wrong place when the machine has an origin set; it says why instead
+- Fix: galvo jobs now follow a shape's power scale, cut order priority, kerf offset and start point
+- Fix: the Rotary and Cylinder correction boxes in the Laser panel now really switch them for the job
+- Fix: Set finish position works: the job ends there
+- Fix: saved positions in the Move panel are remembered, one list per device
+- Fix: jog arrows, Position Laser and move-to-selection follow negative coordinates and swapped axes like the job does
+- Fix: Kerf offset on a cut sub-layer no longer grows the fill of the same layer
+- Fix: Each cut sub-layer now uses its own kerf offset
+- Fix: Scanning offsets now also apply to fills
+- Fix: The time estimate now counts the fast whitespace scan
+- Fix: Images burn the way Adjust Image shows them in Sketch mode and with noise reduction
+- Fix: Cropped-away and transparent parts of an image no longer burn when the image is negative or darkened, and crop edges stay sharp
+- Fix: Perforation mode now leaves a bridge on shapes shorter than the cut length too
+- Fix: Reduce travel moves now also shortens the path between shapes that are not grouped
+- Fix: The order of Layer, Group and Priority in Order by now counts: group first finishes each group before the next
+- Fix: A picture is now placed and framed by its own rectangle, white edges included, instead of by its first and last dot
+- Fix: Offset fill no longer burns across holes, and fills a shape inside a hole only once
+- Fix: Offset fill now fills letters and other shapes with arms or narrow necks completely, with rings around holes
+- Fix: a job start you confirmed for an AI agent no longer starts if the design or the machine was changed after you clicked Confirm
+- Fix: the confirmation window for an AI agent shows the whole command, and an agent cannot stack up confirmation windows
+- Fix: an AI agent cannot get to a Gweike machine by switching devices in the middle of a batch
+- Fix: an AI agent cannot write fake lines into the AI agents log
+- Fix: an AI agent's pause can no longer set a paused job going again, and emergency stop is always open to an agent
+- Fix: an AI agent cannot change devices, connections or the start and end G-code until you allow it to control machines
+- Fix: a command from an AI agent that timed out, or whose agent was closed, no longer runs later on its own
+- Fix: commands with absurdly large numbers from an AI agent are refused instead of breaking the design
+- Fix: keys pressed while a dialog is open no longer delete nodes or type into a text behind it
+- Fix: closing an art library with unsaved changes asks before they are lost
+- Fix: the finish position is remembered for each laser, also after a restart
+- Fix: with inches on, Move to and the position readout are in inches too
+- Fix: a saved position no longer squeezes the Move panel out of view
+- Fix: the camera alignment is dropped when the lens correction changes, with a note to run it again
+- Fix: adding a new laser or removing the one in use ends the open connection, so a job is never built for one machine and sent to another
+- Fix: "Use current layers as defaults" in Device Settings belongs to the laser you are editing, and Cancel takes it back
+- Fix: looking at Adjust Image and cancelling no longer marks the project as changed
+- Fix: Cancel in the Cut Settings Editor no longer leaves the project marked as changed
+- Fix: number fields in the panels and dialogs take sums and units (20 + 22, 10in/4, 7 mm), not only plain numbers
+- Fix: Plan test in Rotary Setup only shows the plan; it no longer switches rotary on or keeps the settings behind your back
+- Fix: Distribute and Move Together now work right when one shape overlaps or reaches past the others
+- Fix: Moving a layer several places up or down the list keeps the others in order
+- Fix: Copy or Cut with nothing selected no longer empties the clipboard
+- Fix: Copy Along Path follows the shape you selected last
+- Fix: A moved array changed to a circular one turns about the page centre
+- Fix: Shapes of a deleted layer no longer come back inside an editable array
+- Fix: Hiding a layer deselects its shapes
+- Fix: Unlocking everything no longer selects shapes on hidden layers
+- Fix: With the system clipboard turned off, Paste no longer takes what other programs copied
+- Fix: Paste takes the newest copy when you copy the same picture or shapes again in another program
+- Fix: Deleting a layer with its pictures no longer leaves their pixels in the project file
+- Fix: Undo back to where you saved no longer counts as unsaved work
+- Fix: Read from the controller only shows for the laser that is connected
+- Fix: New Device wizard keeps the port and address when you click the type again
+- Fix: Barcode OK waits until the data fits the barcode
+- Fix: Focus Test and Interval Test keep their numbers until Create
+- Fix: More number fields take sums
+- Fix: Head camera pictures land right on machines with the origin at the back
+- Fix: Camera alignment clicks are a bit more exact
+- Fix: AI agents are told when a change did nothing
+- Fix: The update check only uses plain http on this computer
+- Fix: Convert to Bitmap keeps pictures that sit inside a group
+- Fix: A date format with a time zone no longer crashes variable text
+- Fix: Big arrays of variable text with a long CSV file no longer freeze
+- Fix: Auto-advance after a job now works
+- Fix: Single-line fonts can be favourites
+- Fix: Tab stays in the open dialog
+- Fix: Enter presses the button you tabbed to
+- Fix: One bad value in the settings file no longer resets all settings
+- Fix: Two DarkBurn windows no longer undo each other's settings
+- Fix: an AI agent can always stop or pause a real machine
+- Fix: an AI agent can no longer end the connection to a real machine by switching device
+- Fix: Stop on a Ruida with nothing running no longer says a job was stopped
+- Fix: reconnecting right after disconnecting from a laser that stopped answering no longer finds the port busy
+- Fix: galvo jobs follow the cut direction of a shape and leave its tabs
+- Fix: the finish position is also written into saved G-code and RD files
+- Fix: a saved Marlin, Smoothieware, Snapmaker, LinuxCNC or custom G-code file is no longer run shifted on a machine with an origin set
+- Fix: dot mode with overcut no longer fires the first dots twice
+- Fix: the frame and the job origin no longer count shapes that are not burned
+- Fix: fine pictures (300 DPI and up) keep the exact size of their dots in G-code
+- Fix: a hole on its own layer is treated as a hole for kerf offset, lead-in side and tabs
+- Fix: offset fill of round shapes is worked out several times faster
+- Fix: old GRBL boards without laser mode no longer burn between shapes
+- Fix: Marlin (M3 and M4 power mode) and custom G-code machines no longer burn between shapes
+
 ## v0.0.24 (build 5)
 - Every action in the app can now be run by a script or an agent
 

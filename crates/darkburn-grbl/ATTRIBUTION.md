@@ -1,5 +1,8 @@
 # darkburn-grbl attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 This crate is DarkBurn's own code, licensed MIT OR Apache-2.0 like the rest of DarkBurn.
 
 ## Protocol documentation (read, not copied)

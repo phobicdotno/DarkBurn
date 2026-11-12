@@ -189,12 +189,31 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
         .get_or_init(|| {
             let mut db = usvg::fontdb::Database::new();
             db.load_system_fonts();
-            db.set_serif_family("Times New Roman");
-            db.set_sans_serif_family("Arial");
-            db.set_monospace_family("Courier New");
+            // The generic families of an SVG ("sans-serif") must name fonts this computer
+            // has, or its text is silently left out: Arial and its kin are not on every Linux.
+            let serif = installed_family(&db, &["Times New Roman", "Liberation Serif", "DejaVu Serif", "Noto Serif", "Times", "FreeSerif"]);
+            let sans = installed_family(&db, &["Arial", "Liberation Sans", "Helvetica", "DejaVu Sans", "Noto Sans", "FreeSans"]);
+            let mono = installed_family(&db, &["Courier New", "Liberation Mono", "DejaVu Sans Mono", "Menlo", "Noto Sans Mono", "Courier"]);
+            db.set_serif_family(serif.clone());
+            db.set_sans_serif_family(sans.clone());
+            db.set_monospace_family(mono);
+            db.set_cursive_family(sans.clone());
+            db.set_fantasy_family(sans);
             Arc::new(db)
         })
         .clone()
+}
+
+/// The first of `wanted` that is installed; failing all of them, any installed family.
+fn installed_family(db: &usvg::fontdb::Database, wanted: &[&str]) -> String {
+    let has = |name: &str| db.faces().any(|f| f.families.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)));
+    wanted
+        .iter()
+        .copied()
+        .find(|n| has(n))
+        .map(str::to_owned)
+        .or_else(|| db.faces().find_map(|f| f.families.first().map(|(n, _)| n.clone())))
+        .unwrap_or_else(|| wanted[0].to_owned())
 }
 
 fn affine(t: usvg::Transform) -> Affine {
@@ -279,7 +298,7 @@ impl SvgReader<'_> {
     fn clip_region(&self, clip: &usvg::ClipPath, m: Affine) -> Clip {
         let m = m * affine(clip.transform());
         let mut paths = Vec::new();
-        self.clip_paths(clip.root(), m, &mut paths);
+        self.clip_paths(clip.root(), m * affine(clip.root().transform()), &mut paths);
         let mut region: Clip = darkburn_geom::boolean::union(&paths, FillRule::NonZero, CLIP_TOLERANCE);
         if let Some(inner) = clip.clip_path() {
             let other = self.clip_region(inner, m);
@@ -288,35 +307,26 @@ impl SvgReader<'_> {
         region
     }
 
+    /// The paths of a clip path's group. `m` maps the group's own coordinates to mm.
     fn clip_paths(&self, g: &usvg::Group, m: Affine, out: &mut Vec<BezPath>) {
         for node in g.children() {
             match node {
-                usvg::Node::Group(g) => self.clip_paths(g, m, out),
-                usvg::Node::Path(p) => out.push(to_bez(p.data(), m * affine(p.abs_transform()))),
-                usvg::Node::Text(t) => self.clip_paths_relative(t.flattened(), m * affine(t.abs_transform()), out),
+                usvg::Node::Group(g) => self.clip_paths(g, m * affine(g.transform()), out),
+                usvg::Node::Path(p) => out.push(to_bez(p.data(), m)),
+                usvg::Node::Text(t) => self.clip_paths(t.flattened(), m, out),
                 usvg::Node::Image(_) => {}
             }
         }
     }
 
-    fn clip_paths_relative(&self, g: &usvg::Group, m: Affine, out: &mut Vec<BezPath>) {
-        for node in g.children() {
-            match node {
-                usvg::Node::Group(g) => self.clip_paths_relative(g, m * affine(g.transform()), out),
-                usvg::Node::Path(p) => out.push(to_bez(p.data(), m)),
-                _ => {}
-            }
-        }
-    }
-
-    /// Read group `g`. `m` maps usvg's absolute coordinates to mm. With `relative`, transforms
-    /// are taken from each group (text outlines, whose absolute transforms usvg does not set).
-    fn group(&mut self, g: &usvg::Group, m: Affine, relative: bool, clip: Option<&Clip>) {
+    /// Read group `g`. `m` maps the coordinates of the group's children to mm: every group's own
+    /// transform is multiplied in on the way down. (usvg's ready-made absolute transforms are not
+    /// used: for a `<use>` with a `transform` they hold that transform twice.)
+    fn group(&mut self, g: &usvg::Group, m: Affine, clip: Option<&Clip>) {
         let own;
         let mut clip = clip;
         if let Some(cp) = g.clip_path() {
-            let at = if relative { m } else { m * affine(g.abs_transform()) };
-            let region = self.clip_region(cp, at);
+            let region = self.clip_region(cp, m);
             own = match clip {
                 Some(outer) => darkburn_geom::boolean::intersection(outer, &region, FillRule::NonZero, CLIP_TOLERANCE),
                 None => region,
@@ -325,25 +335,17 @@ impl SvgReader<'_> {
         }
         for node in g.children() {
             match node {
-                usvg::Node::Group(child) => {
-                    let cm = if relative { m * affine(child.transform()) } else { m };
-                    self.group(child, cm, relative, clip);
-                }
+                usvg::Node::Group(child) => self.group(child, m * affine(child.transform()), clip),
                 usvg::Node::Path(p) => {
                     if !p.is_visible() {
                         continue;
                     }
-                    let pm = if relative { m } else { m * affine(p.abs_transform()) };
-                    self.path(p, pm, clip);
+                    self.path(p, m, clip);
                 }
-                usvg::Node::Text(t) => {
-                    let tm = if relative { m } else { m * affine(t.abs_transform()) };
-                    self.group(t.flattened(), tm, true, clip);
-                }
+                usvg::Node::Text(t) => self.group(t.flattened(), m, clip),
                 usvg::Node::Image(img) => {
                     if img.is_visible() {
-                        let im = if relative { m } else { m * affine(img.abs_transform()) };
-                        self.image(img, im, clip);
+                        self.image(img, m, clip);
                     }
                 }
             }
@@ -398,7 +400,7 @@ impl SvgReader<'_> {
             usvg::ImageKind::WEBP(b) => (b, "webp"),
             usvg::ImageKind::SVG(tree) => {
                 // A nested SVG: its own coordinates map through the image's transform.
-                self.group(tree.root(), m, false, clip);
+                self.group(tree.root(), m * affine(tree.root().transform()), clip);
                 return;
             }
         };
@@ -443,7 +445,7 @@ pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
     let k = 25.4 / dpi as f64;
     let to_mm = Affine::new([k, 0.0, 0.0, -k, 0.0, opts.page.height]);
     let mut reader = SvgReader { opts, out: Imported::default() };
-    reader.group(tree.root(), to_mm, false, None);
+    reader.group(tree.root(), to_mm * affine(tree.root().transform()), None);
     Ok(reader.out)
 }
 
@@ -868,5 +870,118 @@ mod tests {
             }
         }
         s
+    }
+
+    // ----- Hand-computed geometry (bug hunt, pass 2) -----
+
+    /// The bounding box of an import in the SVG's own pixel coordinates (Y down) at 96 DPI.
+    fn px_box(doc: &[u8]) -> Rect {
+        let imp = svg(doc, &opts()).unwrap();
+        let bb = imp.bbox().unwrap();
+        let k = 25.4 / 96.0;
+        Rect::new(bb.x0 / k, (300.0 - bb.y1) / k, bb.x1 / k, (300.0 - bb.y0) / k)
+    }
+
+    fn box_is(got: Rect, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
+        (got.x0 - x0).abs() < 1e-3 && (got.y0 - y0).abs() < 1e-3 && (got.x1 - x1).abs() < 1e-3 && (got.y1 - y1).abs() < 1e-3
+    }
+
+    #[test]
+    fn svg_nested_and_skew_transforms_land_where_the_maths_says() {
+        // (10,0): rotate 90 -> (0,10); scale 2 -> (0,20); translate -> (10,40). (0,0) -> (10,20).
+        let nested = br#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+            <g transform="translate(10,20) scale(2)"><g transform="rotate(90)"><path d="M0 0 L10 0" stroke="black"/></g></g></svg>"#;
+        let b = px_box(nested);
+        assert!(box_is(b, 10.0, 20.0, 10.0, 40.0), "{b:?}");
+        // skewX(45): x' = x + y. (0,10) -> (10,10), (5,0) stays.
+        let skew = br#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+            <path transform="skewX(45)" d="M5 0 L0 10" stroke="black"/></svg>"#;
+        let b = px_box(skew);
+        assert!(box_is(b, 5.0, 0.0, 10.0, 10.0), "{b:?}");
+        // skewY(45) inside matrix(1 0 0 1 3 4): (10,0) -> (10,10) -> (13,14).
+        let skew_y = br#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+            <g transform="matrix(1 0 0 1 3 4)"><path transform="skewY(45)" d="M0 0 L10 0" stroke="black"/></g></svg>"#;
+        let b = px_box(skew_y);
+        assert!(box_is(b, 3.0, 4.0, 13.0, 14.0), "{b:?}");
+        // rotate about a point: rotate(180, 50, 50) maps (0,0)-(10,20) to (90,80)-(100,100).
+        let about = br#"<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+            <rect transform="rotate(180 50 50)" width="10" height="20" stroke="black" fill="none"/></svg>"#;
+        let b = px_box(about);
+        assert!(box_is(b, 90.0, 80.0, 100.0, 100.0), "{b:?}");
+    }
+
+    #[test]
+    fn svg_view_box_and_preserve_aspect_ratio() {
+        let doc = |par: &str| {
+            format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 50 50" {par}>
+                <rect width="50" height="50" stroke="black" fill="none"/></svg>"#
+            )
+        };
+        // Default xMidYMid meet: scale 2, centred across: 50..150 by 0..100.
+        let b = px_box(doc("").as_bytes());
+        assert!(box_is(b, 50.0, 0.0, 150.0, 100.0), "{b:?}");
+        let b = px_box(doc(r#"preserveAspectRatio="none""#).as_bytes());
+        assert!(box_is(b, 0.0, 0.0, 200.0, 100.0), "{b:?}");
+        let b = px_box(doc(r#"preserveAspectRatio="xMaxYMid meet""#).as_bytes());
+        assert!(box_is(b, 100.0, 0.0, 200.0, 100.0), "{b:?}");
+        // Slice: scale 4, 200 x 200, bottom edges aligned: y from -100 to 100.
+        let b = px_box(doc(r#"preserveAspectRatio="xMinYMax slice""#).as_bytes());
+        assert!(box_is(b, 0.0, -100.0, 200.0, 100.0), "{b:?}");
+        // A view box that does not start at zero.
+        let off = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="10 20 50 50">
+            <path d="M10 20 L60 70" stroke="black"/></svg>"#;
+        let b = px_box(off);
+        assert!(box_is(b, 0.0, 0.0, 100.0, 100.0), "{b:?}");
+        // Only a view box: its numbers are the size.
+        let only = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 40"><path d="M0 0 L30 40" stroke="black"/></svg>"#;
+        let b = px_box(only);
+        assert!(box_is(b, 0.0, 0.0, 30.0, 40.0), "{b:?}");
+    }
+
+    #[test]
+    fn svg_percent_and_unit_lengths() {
+        // 50% of 200 px wide, 25% of 80 px high; x in inches, y in points (1 pt = 96/72 px).
+        let doc = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80">
+            <rect x="1in" y="9pt" width="50%" height="25%" stroke="black" fill="none"/></svg>"#;
+        let b = px_box(doc);
+        assert!(box_is(b, 96.0, 12.0, 196.0, 32.0), "{b:?}");
+        // Real units in mm, cm, pc on a page in mm with no view box.
+        let units = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm">
+            <rect x="10mm" y="2cm" width="1pc" height="5mm" stroke="black" fill="none"/></svg>"#;
+        let bb = svg(units, &opts()).unwrap().bbox().unwrap();
+        assert!((bb.x0 - 10.0).abs() < 1e-4 && (bb.width() - 25.4 / 6.0).abs() < 1e-4, "{bb:?}");
+        assert!((bb.y1 - (300.0 - 20.0)).abs() < 1e-4 && (bb.height() - 5.0).abs() < 1e-4, "{bb:?}");
+        // A size in mm with a view box in other numbers: 1 unit = 2 mm.
+        let scaled = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 50 30">
+            <rect x="5" y="10" width="20" height="15" stroke="black" fill="none"/></svg>"#;
+        for dpi in [72.0, 96.0] {
+            let bb = svg(scaled, &Options { svg_dpi: dpi, ..opts() }).unwrap().bbox().unwrap();
+            assert!((bb.x0 - 10.0).abs() < 1e-3 && (bb.width() - 40.0).abs() < 1e-3, "{dpi}: {bb:?}");
+            assert!((bb.y1 - 280.0).abs() < 1e-3 && (bb.height() - 30.0).abs() < 1e-3, "{dpi}: {bb:?}");
+        }
+    }
+
+    #[test]
+    fn svg_use_loops_and_zero_radius_arcs_do_not_hang_or_crash() {
+        let looped = br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100" height="100">
+            <g id="a"><use xlink:href="#b"/><path d="M1 2 L30 40" stroke="black"/></g>
+            <g id="b"><use xlink:href="#a"/></g>
+            <use id="c" xlink:href="#c"/></svg>"##;
+        // Whatever is kept, the reader returns.
+        let _ = svg(looped, &opts());
+        // An arc with a zero radius is a straight line to its end point.
+        let arcs = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+            <path d="M0 0 A0 0 0 0 1 10 20 A5 0 0 1 0 30 20" stroke="black" fill="none"/></svg>"#;
+        let imp = svg(arcs, &opts()).unwrap();
+        let b = px_box(arcs);
+        assert!(box_is(b, 0.0, 0.0, 30.0, 20.0), "{b:?}");
+        assert!(imp.shapes.iter().all(|s| s.bbox().width().is_finite() && s.bbox().height().is_finite()));
+        // A use with its own place and a transform: (2,3)-(12,8) moved by translate(100,0) then x=5,y=6.
+        let used = br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="400" height="100">
+            <defs><rect id="r" x="2" y="3" width="10" height="5" stroke="black" fill="none"/></defs>
+            <use xlink:href="#r" x="5" y="6" transform="translate(100,0)"/></svg>"##;
+        let b = px_box(used);
+        assert!(box_is(b, 107.0, 9.0, 117.0, 14.0), "{b:?}");
     }
 }

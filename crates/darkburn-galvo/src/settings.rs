@@ -114,18 +114,39 @@ impl Default for PortConfig {
 }
 
 impl PortConfig {
+    /// A bit number the port does not have never reads as pressed.
     pub fn foot_pressed(&self, port_bits: u16) -> bool {
         match self.foot_bit {
-            Some(b) => ((port_bits >> b) & 1 == 1) != self.foot_active_low,
+            Some(b) if b < 16 => ((port_bits >> b) & 1 == 1) != self.foot_active_low,
+            _ => false,
+        }
+    }
+
+    /// A bit number the port does not have reads as an open door: a door switch that cannot be
+    /// watched must not pass for a closed door.
+    pub fn door_open(&self, port_bits: u16) -> bool {
+        match self.door_bit {
+            Some(b) if b < 16 => ((port_bits >> b) & 1 == 1) != self.door_open_is_low,
+            Some(_) => true,
             None => false,
         }
     }
 
-    pub fn door_open(&self, port_bits: u16) -> bool {
-        match self.door_bit {
-            Some(b) => ((port_bits >> b) & 1 == 1) != self.door_open_is_low,
-            None => false,
+    /// Checks that every bit number is one the 16-bit port has.
+    pub fn validate(&self) -> Result<(), String> {
+        let bits = [
+            ("red light", Some(self.light_bit)),
+            ("marking", Some(self.mark_bit)),
+            ("foot switch", self.foot_bit),
+            ("door switch", self.door_bit),
+            ("done signal", self.done_bit),
+        ];
+        for (name, bit) in bits {
+            if let Some(b) = bit.filter(|b| *b > 15) {
+                return Err(format!("The {name} port bit is {b}; port bits go from 0 to 15."));
+            }
         }
+        Ok(())
     }
 }
 
@@ -229,7 +250,9 @@ pub fn speed_word(speed_mm_s: f64, units_per_mm: f64) -> u16 {
 /// Frequency word for the source.
 pub fn frequency_word(source: LaserSource, khz: f64) -> u16 {
     let base = if source.is_fiber() { 20000.0 } else { 10000.0 };
-    ((base / khz.max(0.001)).round() as i64 & 0xFFFF) as u16
+    // The lowest frequency the word can hold is base / 65535. Anything lower gets that, never
+    // the value wrapped round to 16 bits, which would be some much higher frequency.
+    (base / khz.max(0.001)).round().clamp(1.0, 65535.0) as u16
 }
 
 /// List commands that set frequency and power for a source.
@@ -296,6 +319,17 @@ mod tests {
         assert_eq!(power_cmds(LaserSource::Uv, 30.0, 20.0, true), vec![ListCmd::MarkFreq(500), ListCmd::MarkPowerRatio(700)]);
         // power is clamped
         assert_eq!(power_cmds(LaserSource::Fiber, 250.0, 20.0, false)[1], ListCmd::MarkCurrent(0xFFF));
+    }
+
+    #[test]
+    fn a_frequency_too_low_for_the_word_gives_the_lowest_one_not_some_other() {
+        // 20000 / 0.2 kHz = 100000 does not fit 16 bits. Wrapped round it would be 34464,
+        // which is 0.58 kHz; 0.1 kHz would even become 5.9 kHz.
+        assert_eq!(frequency_word(LaserSource::Fiber, 0.2), 65535);
+        assert_eq!(frequency_word(LaserSource::Fiber, 0.1), 65535);
+        assert_eq!(frequency_word(LaserSource::Co2, 0.1), 65535);
+        assert_eq!(frequency_word(LaserSource::Fiber, f64::NAN), 65535);
+        assert_eq!(frequency_word(LaserSource::Fiber, 1.0e9), 1);
     }
 
     #[test]

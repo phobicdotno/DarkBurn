@@ -34,6 +34,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::layer_defaults::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::misc_cmds::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }
@@ -148,17 +151,22 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
             let (x, y, w, h) = (num(a, "x")?, num(a, "y")?, num(a, "width")?, num(a, "height")?);
             let layer = opt_layer(a, app.editor.current_layer)?;
             let radius = opt_num(a, "radius").unwrap_or(0.0);
+            sized(w, h)?;
             add(app, "Add rectangle", Shape::rect(Rect::new(x, y, x + w, y + h), radius, layer))
         })(),
         "shape.add_ellipse" => (|| {
             let (x, y, w, h) = (num(a, "x")?, num(a, "y")?, num(a, "width")?, num(a, "height")?);
             let layer = opt_layer(a, app.editor.current_layer)?;
+            sized(w, h)?;
             add(app, "Add ellipse", Shape::ellipse(Rect::new(x, y, x + w, y + h), layer))
         })(),
         "shape.add_polygon" => (|| {
             let (cx, cy, r) = (num(a, "cx")?, num(a, "cy")?, num(a, "radius")?);
             let sides = a.get("sides").and_then(Value::as_u64).ok_or("argument sides must be a whole number")? as u32;
             let layer = opt_layer(a, app.editor.current_layer)?;
+            if r < MIN_DRAWN {
+                return Err("radius must be above zero".into());
+            }
             add(app, "Add polygon", Shape::polygon(Point::new(cx, cy), sides, r, layer))
         })(),
         "shape.add_path" => (|| {
@@ -219,6 +227,7 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                 let mut any = false;
                 for id in &ids {
                     let Some(s) = d.get_mut(*id) else { continue };
+                    let before = s.clone();
                     if let Some(n) = &name {
                         s.name = n.clone();
                     }
@@ -235,12 +244,14 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
                         s.direction = dir;
                     }
                     if let Some(sp) = start {
-                        s.start_point = sp.map(|p| {
+                        let local = sp.map(|p| {
                             let l = s.transform.inverse() * p;
                             [l.x, l.y]
                         });
+                        s.set_start_points(local.as_slice());
                     }
-                    any = true;
+                    // Nothing asked for, or what the shape already had, is not a change.
+                    any |= *s != before;
                 }
                 any
             }))
@@ -274,11 +285,12 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         "layer.delete" => (|| {
             let layer = layer_of(a)?;
             let with = a.get("with_shapes").and_then(Value::as_bool).unwrap_or(false);
-            app.editor.edit("Delete layer", |d, _| {
+            // A layer nobody used or set up has nothing to delete.
+            changed(app.editor.edit("Delete layer", |d, _| {
+                let before = d.clone();
                 d.delete_layer(layer, with);
-                true
-            });
-            changed(true)
+                *d != before
+            }))
         })(),
         "project.info" => Ok(info(app)),
         "project.open" => text(a, "path").and_then(|p| crate::files::open_path(app, Path::new(p))).map(|_| info(app)),
@@ -287,6 +299,16 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         _ if crate::image_ui::handles(id) => crate::image_ui::execute(app, id, a),
         _ => return crate::file_io::with_args(app, id, a).or_else(|| crate::extras::with_args(app, id, a)),
     })
+}
+
+/// The smallest size (mm) the rectangle, ellipse and polygon tools draw; a drag shorter than
+/// this makes no shape, and neither do the commands.
+const MIN_DRAWN: f64 = 1e-3;
+
+/// A width and height a shape can be drawn with (either may be negative: the box then lies on
+/// the other side of its corner).
+fn sized(w: f64, h: f64) -> Result<(), String> {
+    if w.abs() < MIN_DRAWN || h.abs() < MIN_DRAWN { Err("width and height must not be zero".into()) } else { Ok(()) }
 }
 
 fn add(app: &mut DarkBurn, label: &str, shape: Shape) -> Result<Value, String> {
@@ -331,7 +353,7 @@ fn set_param(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     if matches!(v, V::Output(true)) && darkburn_core::layer::is_tool_layer(layer) {
         return Err("tool layers never output".into());
     }
-    let done = app.editor.edit("Layer setting", |d, _| {
+    let done = app.editor.edit("Layer setting", |d, sel| {
         let before = d.layer(layer).clone();
         let l = d.layer_mut(layer);
         match v {
@@ -346,7 +368,12 @@ fn set_param(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
             V::Air(x) => l.air = x,
         }
         l.main_mut().sanitise();
-        *d.layer(layer) != before
+        let changed = *d.layer(layer) != before;
+        // Shapes of a layer that was just hidden are no longer selected.
+        if changed {
+            sel.retain_selectable(d);
+        }
+        changed
     });
     changed(done)
 }
@@ -361,6 +388,16 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "filled" => p.filled = flag()?,
         "smooth" => p.smooth = flag()?,
         "show_grid" => p.show_grid = flag()?,
+        "grid_spacing" => p.grid_spacing = number()?.clamp(0.0, 1000.0) as f32,
+        "grid_contrast" => p.grid_contrast = number()?.clamp(0.0, 1.0) as f32,
+        "backdrop" => {
+            p.backdrop = match value.as_str().map(str::to_ascii_lowercase).as_deref() {
+                Some("theme") => crate::canvas::Backdrop::Theme,
+                Some("light") => crate::canvas::Backdrop::Light,
+                Some("dark") => crate::canvas::Backdrop::Dark,
+                _ => return Err("backdrop needs \"theme\", \"light\" or \"dark\"".into()),
+            }
+        }
         "import_group" => p.import_group = flag()?,
         "import_select" => p.import_select = flag()?,
         "import_tool_layers" => p.import_tool_layers = flag()?,
@@ -370,6 +407,9 @@ fn setting(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         "autosave_minutes" => p.autosave_minutes = number()?.clamp(0.0, 240.0) as f32,
         "svg_dpi" => p.svg_dpi = if number()? <= 72.0 { 72.0 } else { 96.0 },
         other => return crate::extras::set_option(app, other, value).map(|_| json!({ "ok": true })),
+    }
+    if matches!(key, "page_width" | "page_height") {
+        crate::machine_ui::work_area_changed(app);
     }
     Ok(json!({ "ok": true }))
 }

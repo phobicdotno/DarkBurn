@@ -60,6 +60,44 @@ pub fn expressions(ctx: &egui::Context) -> Option<Arc<dyn Expressions>> {
     ctx.data(|data| data.get_temp::<Arc<dyn Expressions>>(expressions_id()))
 }
 
+/// What a number field does with typed text that is not a plain number: the host's sums and
+/// units. It gets the text and the length of the field's unit in millimetres (25.4 for a field
+/// shown in inches, 1 for every other field) and gives the value in the field's unit.
+pub type NumberParser = Arc<dyn Fn(&str, f64) -> Option<f64> + Send + Sync>;
+
+fn number_parser_id() -> egui::Id {
+    egui::Id::unique("db_kit_number_parser")
+}
+
+/// Let every [`number_field`] in `ctx` take sums and units ("20 + 22", "10in/4") through the
+/// host's parser. Without one a number field reads plain numbers only.
+pub fn install_number_parser(ctx: &egui::Context, parser: NumberParser) {
+    ctx.data_mut(|data| data.insert_temp(number_parser_id(), parser));
+}
+
+/// The parser installed with [`install_number_parser`], if any.
+pub fn number_parser(ctx: &egui::Context) -> Option<NumberParser> {
+    ctx.data(|data| data.get_temp::<NumberParser>(number_parser_id()))
+}
+
+/// The parser of a number field that shows `suffix` after its value: a plain number first;
+/// anything else (a sum, a unit) goes to the host's parser when it has installed one. The suffix
+/// may be typed after the value or left off. For a `DragValue` built outside the kit:
+/// `.custom_parser(typed_number(ui.ctx(), " mm"))`.
+pub fn typed_number(ctx: &egui::Context, suffix: &str) -> impl Fn(&str) -> Option<f64> + use<> {
+    let host = number_parser(ctx);
+    let unit = suffix.trim().to_owned();
+    let unit_mm = if unit == "in" { 25.4 } else { 1.0 };
+    move |text: &str| {
+        parse_number(text).or_else(|| {
+            let host = host.as_ref()?;
+            let typed = text.trim();
+            let bare = typed.strip_suffix(unit.as_str()).filter(|_| !unit.is_empty()).map(str::trim_end);
+            bare.and_then(|b| parse_number(b).or_else(|| host(b, unit_mm))).or_else(|| host(typed, unit_mm)).filter(|v| v.is_finite())
+        })
+    }
+}
+
 /// A plain number typed into a field, with a decimal point or a decimal comma (#1347): "2.5"
 /// and "2,5" are both 2.5, as a numeric keypad types either depending on the locale. Spaces are
 /// ignored and "−" is a minus, as in egui's own parser. A comma beside a point ("1.234,5") or a
@@ -1214,7 +1252,7 @@ pub fn number_pair<T: egui::emath::Numeric>(
 /// Retains the established 0.01 step, fractional range and locale parser.
 /// Locale-aware variable-radius position editor. Tokens: `scope control/font tokens`.
 pub fn fraction_field(ui: &mut Ui, value: &mut f64) -> Response {
-    let response = ui.add(egui::DragValue::new(value).speed(0.01).range(0.01..=0.99).fixed_decimals(2).custom_parser(parse_number));
+    let response = ui.add(egui::DragValue::new(value).speed(0.01).range(0.01..=0.99).fixed_decimals(2).custom_parser(typed_number(ui.ctx(), "")));
     solidcraft_ui_registry::publish_target(&format!("dialog:fraction:{}", label(ui)), response.rect);
     response
 }
@@ -1628,8 +1666,9 @@ fn scalar_field_impl(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusi
     ui.style_mut().drag_value_text_style = egui::TextStyle::Monospace;
     let before = *value;
     let parsed = std::cell::Cell::new(false);
+    let typed = typed_number(ui.ctx(), "");
     let field = egui::DragValue::new(value).range(range).speed(0.01).custom_parser(|text| {
-        let value = parse_number(text);
+        let value = typed(text);
         parsed.set(value.is_some());
         value
     });
@@ -1681,7 +1720,7 @@ pub fn angle_field(ui: &mut Ui, value: &mut f64) -> Response {
     if let Some(last) = ui.data(|d| d.get_temp::<f64>(set)).filter(|last| (last - shown).abs() <= 1e-9 * last.abs().max(1.0)) {
         shown = last;
     }
-    let response = ui.add(egui::DragValue::new(&mut shown).speed(1.0).suffix(" deg").custom_parser(parse_number));
+    let response = ui.add(egui::DragValue::new(&mut shown).speed(1.0).suffix(" deg").custom_parser(typed_number(ui.ctx(), " deg")));
     if response.changed() {
         *value = shown;
         ui.data_mut(|d| d.insert_temp(set, shown));
@@ -1759,9 +1798,9 @@ fn bounded_number_field<T: egui::emath::Numeric>(
     suffix: &str,
     clamp_existing: bool,
 ) -> Response {
-    let response = ui.add(
-        egui::DragValue::new(value).range(range).clamp_existing_to_range(clamp_existing).speed(speed).suffix(suffix).custom_parser(parse_number),
-    );
+    let parse = typed_number(ui.ctx(), suffix);
+    let response =
+        ui.add(egui::DragValue::new(value).range(range).clamp_existing_to_range(clamp_existing).speed(speed).suffix(suffix).custom_parser(parse));
     if response.has_focus() {
         super::settings_search::note_key_sink(ui.ctx());
     }
@@ -1994,4 +2033,55 @@ pub fn placement_field_content_size(ui: &Ui, value: &str) -> egui::Vec2 {
     // Retain the native hit target: a taller editor would intercept nearby sketch picks.
     let height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + ui.spacing().extra_text_line_spacing + t.space_4;
     vec2(grown_width(ui, value, &font, t.control_height * 3.0 - t.space_6), height)
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::*;
+
+    /// Type `text` into the one field `draw` shows, in a window of its own, and press Enter.
+    fn type_into(text: &str, mut draw: impl FnMut(&mut Ui) -> Response) {
+        let ctx = egui::Context::default();
+        // A host that reads sums of plain numbers, standing in for the application's own.
+        install_number_parser(&ctx, Arc::new(|t: &str, _| t.split('+').map(parse_number).sum::<Option<f64>>()));
+        let at = std::cell::Cell::new(egui::Pos2::ZERO);
+        let mut frame = |events: Vec<egui::Event>| {
+            let input =
+                egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| at.set(draw(ui).rect.center()));
+            out.textures_delta.clear();
+        };
+        let press =
+            |pressed| egui::Event::PointerButton { pos: at.get(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        let key = |key| egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        frame(Vec::new());
+        frame(vec![egui::Event::PointerMoved(at.get())]);
+        frame(vec![press(true)]);
+        frame(vec![press(false)]);
+        frame(Vec::new());
+        frame(vec![egui::Event::Text(text.to_owned())]);
+        frame(vec![key(egui::Key::Enter)]);
+        frame(Vec::new());
+    }
+
+    /// The scalar, fraction and angle fields take what a number field takes: a sum, and the
+    /// field's own unit typed after the number. They read plain numbers only.
+    #[test]
+    fn the_other_number_editors_take_sums_and_their_unit() {
+        let mut v = 1.0;
+        type_into("2.5", |ui| scalar_field(ui, &mut v, 0.0..=10.0));
+        assert_eq!(v, 2.5, "the test types into the field");
+        type_into("1.5 + 2", |ui| scalar_field(ui, &mut v, 0.0..=10.0));
+        assert_eq!(v, 3.5, "scalar field");
+        let mut f = 0.5;
+        type_into("0.2 + 0.05", |ui| fraction_field(ui, &mut f));
+        assert!((f - 0.25).abs() < 1e-12, "fraction field: {f}");
+        let mut a = 10.0;
+        type_into("30 + 15", |ui| angle_field(ui, &mut a));
+        assert_eq!(a, 45.0, "angle field");
+        type_into("90 deg", |ui| angle_field(ui, &mut a));
+        assert_eq!(a, 90.0, "angle field with its unit typed");
+        type_into("abc", |ui| angle_field(ui, &mut a));
+        assert_eq!(a, 90.0, "not a number: the value stays");
+    }
 }

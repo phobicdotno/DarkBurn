@@ -170,18 +170,89 @@ fn node_edit(e: &mut Editor, a: &Value) -> R {
 
 // ---------------------------------------------------------------- tabs
 
+/// The plain shapes that carry the tabs and start points of `id`, each with its document
+/// transform: the shape itself, or for a group every shape in it (see `Shape::leaves`). The
+/// number is the shape's place among the leaves, for [`nth_leaf_mut`]. Pictures take neither,
+/// and a virtual array is made again from its originals, so it has none of its own.
+fn cut_leaves(doc: &Document, id: ShapeId) -> Vec<(usize, Shape)> {
+    match doc.get(id) {
+        Some(s) if s.array.is_none() => s.leaves().into_iter().enumerate().filter(|(_, l)| !l.is_image() && !l.is_group()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Leaf number `n` of `s`, in the order of `Shape::leaves`.
+fn nth_leaf_mut<'a>(s: &'a mut Shape, n: &mut usize) -> Option<&'a mut Shape> {
+    if s.is_group() {
+        let ShapeKind::Group { children } = &mut s.kind else { return None };
+        for c in children {
+            if let Some(found) = nth_leaf_mut(c, n) {
+                return Some(found);
+            }
+        }
+        return None;
+    }
+    if *n == 0 {
+        Some(s)
+    } else {
+        *n -= 1;
+        None
+    }
+}
+
+fn leaf_mut(doc: &mut Document, id: ShapeId, n: usize) -> Option<&mut Shape> {
+    let mut n = n;
+    nth_leaf_mut(doc.get_mut(id)?, &mut n)
+}
+
+/// Do `f` to every plain shape of `s` (itself, or the shapes in a group) with the transform of
+/// what it sits in; returns whether any call said it changed something.
+fn each_leaf_mut(s: &mut Shape, parent: darkburn_core::kurbo::Affine, f: &mut dyn FnMut(&mut Shape, darkburn_core::kurbo::Affine) -> bool) -> bool {
+    if s.array.is_some() {
+        return false;
+    }
+    let own = s.transform;
+    match &mut s.kind {
+        ShapeKind::Group { children } => children.iter_mut().fold(false, |any, c| each_leaf_mut(c, parent * own, f) | any),
+        ShapeKind::Image(_) => false,
+        _ => f(s, parent),
+    }
+}
+
+/// The outline tabs and start points are placed on: the shape's own, or for a group the
+/// outlines of the plain shapes in it.
+pub fn cut_outline(doc: &Document, id: ShapeId) -> Option<BezPath> {
+    let leaves = cut_leaves(doc, id);
+    (!leaves.is_empty()).then(|| leaves.iter().flat_map(|(_, l)| l.outline()).collect())
+}
+
+/// Where the manual tabs of `id` are (document coordinates), those of shapes in a group too.
+pub fn tab_points(doc: &Document, id: ShapeId) -> Vec<Point> {
+    cut_leaves(doc, id).iter().flat_map(|(_, l)| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1]))).collect()
+}
+
 fn tabs_add(e: &mut Editor, a: &Value) -> R {
     let id = target(e, a)?;
     let at = Point::new(num(a, "x", 0.0), num(a, "y", 0.0));
-    let s = e.doc.get(id).ok_or("no such shape")?;
-    if s.is_group() || s.is_image() {
-        return Err("tabs go on plain shapes".into());
+    e.doc.get(id).ok_or("no such shape")?;
+    let leaves = cut_leaves(&e.doc, id);
+    if leaves.is_empty() {
+        return Err("tabs go on shapes with an outline, not on pictures or arrays".into());
     }
-    let hit = query::nearest_point(&s.outline(), at).ok_or("the shape has no outline")?;
-    let local = s.transform.inverse() * hit.point;
+    // The tab goes on the outline nearest to the point: in a group, on that shape of it.
+    let (n, leaf, hit) = leaves
+        .iter()
+        .filter_map(|(n, l)| query::nearest_point(&l.outline(), at).map(|h| (*n, l, h)))
+        .min_by(|a, b| a.2.distance.total_cmp(&b.2.distance))
+        .ok_or("the shape has no outline")?;
+    let local = leaf.transform.inverse() * hit.point;
+    if !(local.x.is_finite() && local.y.is_finite()) {
+        // A shape squashed to a line or a point has no place on its outline to name.
+        return Err("the shape has no size: it cannot carry a tab".into());
+    }
     let done = e.edit("Add tab", |d, sel| {
         sel.set([id]);
-        match d.get_mut(id) {
+        match leaf_mut(d, id, n) {
             Some(s) if !s.tabs.iter().any(|t| Point::new(t[0], t[1]).distance(local) < 1e-3) => {
                 s.tabs.push([local.x, local.y]);
                 true
@@ -198,10 +269,12 @@ fn tabs_remove(e: &mut Editor, a: &Value) -> R {
     let radius = num(a, "radius", 1.0).max(1e-6);
     let done = e.edit("Remove tab", |d, _| {
         let Some(s) = d.get_mut(id) else { return false };
-        let t = s.transform;
-        let before = s.tabs.len();
-        s.tabs.retain(|p| (t * Point::new(p[0], p[1])).distance(at) > radius);
-        s.tabs.len() != before
+        each_leaf_mut(s, darkburn_core::kurbo::Affine::IDENTITY, &mut |l, parent| {
+            let t = parent * l.transform;
+            let before = l.tabs.len();
+            l.tabs.retain(|p| (t * Point::new(p[0], p[1])).distance(at) > radius);
+            l.tabs.len() != before
+        })
     });
     ok(done, &[id])
 }
@@ -211,12 +284,15 @@ fn tabs_clear(e: &mut Editor, a: &Value) -> R {
     let done = e.edit("Clear tabs", |d, _| {
         let mut any = false;
         for id in &ids {
-            if let Some(s) = d.get(*id)
-                && !s.tabs.is_empty()
-                && let Some(s) = d.get_mut(*id)
-            {
-                s.tabs.clear();
-                any = true;
+            if tab_points(d, *id).is_empty() {
+                continue;
+            }
+            if let Some(s) = d.get_mut(*id) {
+                any |= each_leaf_mut(s, darkburn_core::kurbo::Affine::IDENTITY, &mut |l, _| {
+                    let had = !l.tabs.is_empty();
+                    l.tabs.clear();
+                    had
+                });
             }
         }
         any
@@ -225,32 +301,81 @@ fn tabs_clear(e: &mut Editor, a: &Value) -> R {
 }
 
 /// The gaps the layer's automatic tab settings leave in shape `id` (none when its layer's tabs
-/// are off, unless `force`).
+/// are off, unless `force`, and none on a shape with manual tabs: those replace them). For a
+/// group: the gaps of every shape in it.
 pub fn auto_gaps(doc: &Document, id: ShapeId, force: bool) -> Vec<Gap> {
-    let Some(s) = doc.get(id) else { return Vec::new() };
+    cut_leaves(doc, id).iter().flat_map(|(_, l)| leaf_auto_gaps(doc, l, force)).collect()
+}
+
+fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
     let t = doc.layer(s.layer).main().tabs;
-    if (!t.enabled && !force) || !t.auto_spacing {
+    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() || t.size <= 0.0 {
         return Vec::new();
     }
-    let opts = TabOptions {
-        count: t.min_count.max(1) as usize,
-        spacing: Some(t.spacing.max(0.1)),
-        min_count: t.min_count as usize,
-        max_count: t.max_count.max(1) as usize,
-        size: t.size,
-        skip_shorter_than: None,
-        offset_from_start: 0.0,
-    };
     let subs = gpath::subpaths(&s.outline());
-    let tree = query::containment(&subs, 1e-6);
+    // The closed outlines a shape can lie inside, as the job counts them: every closed outline
+    // of its own layer, and those the other layers cut as lines.
+    let around: Vec<BezPath> = if t.skip_inner { outlines_around(doc, s.layer) } else { Vec::new() };
     let mut out = Vec::new();
-    for (i, sub) in subs.iter().enumerate() {
-        if t.skip_inner && tree.depth.get(i).copied().unwrap_or(0) > 0 {
+    for sub in &subs {
+        if !gpath::is_closed(sub, 0.0) || (t.skip_inner && lies_inside_another(sub, &around)) {
             continue;
         }
+        // The same count and tab length as the job (`darkburn_job::line`): the spacing gives the
+        // count, held between Min tabs and Max tabs (Min wins when it is the larger), and the
+        // tabs together never take more than half of the outline.
+        let l = gpath::length(sub);
+        if l <= 1e-9 {
+            continue;
+        }
+        let n = ((l / t.spacing.max(0.1)).round() as u32).clamp(t.min_count, t.max_count.max(t.min_count)) as usize;
+        if n == 0 {
+            continue;
+        }
+        let opts = TabOptions {
+            count: n,
+            spacing: None,
+            min_count: 0,
+            max_count: usize::MAX,
+            size: t.size.min(l / (2.0 * n as f64)),
+            skip_shorter_than: None,
+            offset_from_start: 0.0,
+        };
         out.extend(tabs::place_tabs(sub, &opts).gaps);
     }
     out
+}
+
+/// The closed outlines that make a shape of `layer` an inner shape when it lies inside one: the
+/// closed outlines of `layer` itself and those of the other layers that are cut as lines.
+fn outlines_around(doc: &Document, layer: usize) -> Vec<BezPath> {
+    let cuts_lines = |l: usize| {
+        let l = doc.layer(l);
+        l.output
+            && l.settings.iter().any(|c| c.enabled && c.passes > 0 && matches!(c.mode, darkburn_core::Mode::Line | darkburn_core::Mode::FillLine))
+    };
+    doc.iter()
+        .flat_map(Shape::leaves)
+        .filter(|l| !l.is_image() && (l.layer == layer || cuts_lines(l.layer)))
+        .flat_map(|l| gpath::subpaths(&l.outline()))
+        .filter(|p| gpath::is_closed(p, 0.0))
+        .collect()
+}
+
+/// Whether the closed outline `sub` lies inside a larger one of `around`.
+fn lies_inside_another(sub: &BezPath, around: &[BezPath]) -> bool {
+    let (Some(bb), Some(first)) = (gpath::bounding_box(sub), gpath::start_point(sub)) else { return false };
+    let area = gpath::signed_area(sub).abs();
+    let nodes: Vec<Point> = gpath::contours(sub).iter().flat_map(|c| c.nodes()).collect();
+    let mid = nodes.get(nodes.len() / 2).copied().unwrap_or(first);
+    around.iter().any(|q| {
+        let Some(qb) = gpath::bounding_box(q) else { return false };
+        let within = bb.x0 >= qb.x0 - 1e-9 && bb.y0 >= qb.y0 - 1e-9 && bb.x1 <= qb.x1 + 1e-9 && bb.y1 <= qb.y1 + 1e-9;
+        within
+            && gpath::signed_area(q).abs() > area
+            && query::point_in_shape(q, first, darkburn_geom::FillRule::EvenOdd)
+            && query::point_in_shape(q, mid, darkburn_geom::FillRule::EvenOdd)
+    })
 }
 
 fn tabs_auto(e: &mut Editor, a: &Value) -> R {
@@ -270,22 +395,69 @@ fn tabs_auto(e: &mut Editor, a: &Value) -> R {
 // ---------------------------------------------------------------- start points, corners
 
 /// The shape's outline as it will be cut: with its forced start point and direction applied.
-/// Used for the start and end markers of the Start Points tool.
+/// Used for the start and end markers of the Start Points tool. For a group: the outlines of
+/// the shapes in it, each with its own.
 pub fn marker_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
-    let s = doc.get(id)?;
-    let mut path = shape_path(doc, id)?;
-    if let Some(st) = s.start_point {
-        path = gpath::set_start_point(&path, s.transform * Point::new(st[0], st[1]), false);
+    let leaves = cut_leaves(doc, id);
+    (!leaves.is_empty()).then(|| leaves.iter().flat_map(|(_, l)| leaf_marker_path(l)).collect())
+}
+
+fn leaf_marker_path(s: &Shape) -> BezPath {
+    let mut path = s.outline();
+    for st in s.start_points() {
+        let p = s.transform * Point::new(st[0], st[1]);
+        // Only closed sub-paths have a start point to choose; the job uses the same rule.
+        let mut subs = gpath::subpaths(&path);
+        if let Some(k) = nearest_closed(&subs, p) {
+            subs[k] = gpath::set_start_point(&subs[k], p, false);
+            path = subs.iter().flat_map(|b| b.elements().iter().copied()).collect();
+        }
     }
-    path = match s.direction {
+    match s.direction {
         CutDirection::Reversed => gpath::reverse(&path),
         CutDirection::Clockwise => gpath::set_direction(&path, gpath::Direction::Clockwise),
         CutDirection::CounterClockwise => gpath::set_direction(&path, gpath::Direction::CounterClockwise),
         CutDirection::Auto => path,
-    };
-    Some(path)
+    }
 }
 
+/// The closed sub-path nearest to `p`.
+fn nearest_closed(subs: &[BezPath], p: Point) -> Option<usize> {
+    subs.iter()
+        .enumerate()
+        .filter(|(_, b)| darkburn_core::shape::path_is_closed(b))
+        .filter_map(|(i, b)| query::nearest_point(b, p).map(|h| (i, h.distance)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// The forced start points (local coordinates) plain shape `s` has after a click at `p`: the
+/// point of its outline nearest to `p` on the nearest closed sub-path (`all`: on every closed
+/// sub-path), and the start points it had on the sub-paths that were not touched. `s` carries
+/// its document transform. None when it has no closed sub-path.
+fn start_points_after(s: &Shape, p: Point, all: bool) -> Option<Vec<[f64; 2]>> {
+    let subs = gpath::subpaths(&s.outline());
+    let clicked = nearest_closed(&subs, p)?;
+    let chosen = |k: usize| darkburn_core::shape::path_is_closed(&subs[k]) && (all || k == clicked);
+    // The clicked sub-path first, then the others set with `all`.
+    let mut new: Vec<Point> = Vec::new();
+    for k in std::iter::once(clicked).chain((0..subs.len()).filter(|k| *k != clicked && chosen(*k))) {
+        if let Some(h) = query::nearest_point(&subs[k], p) {
+            new.push(h.point);
+        }
+    }
+    let (t, inv) = (s.transform, s.transform.inverse());
+    // Start points of the sub-paths that were not touched stay.
+    let kept = s.start_points().map(|q| t * Point::new(q[0], q[1])).filter(|q| nearest_closed(&subs, *q).is_some_and(|k| !chosen(k)));
+    Some(new.iter().copied().chain(kept).map(|q| inv * q).map(|q| [q.x, q.y]).collect())
+}
+
+/// Force where the cut of a closed shape starts: the point of its outline nearest to `x`, `y`.
+/// A compound shape keeps one start point for each closed sub-path: the click sets the one of
+/// the nearest sub-path (`all`: of every sub-path) and leaves the others alone. The points are
+/// kept on the shape, so the cut planner starts there whatever it optimises; a path shape also
+/// gets its nodes reordered, so the start node shows in Edit Nodes. In a group the click sets
+/// the start of the shape nearest to it (`all`: of every shape in the group).
 fn set_start(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let p = Point::new(num(a, "x", 0.0), num(a, "y", 0.0));
@@ -293,27 +465,30 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
     let done = e.edit("Set start point", |d, _| {
         let mut any = false;
         for id in &ids {
-            let Some(path) = shape_path(d, *id) else { continue };
-            let Some(at) = query::nearest_point(&path, p).map(|h| h.point) else { continue };
-            let is_path = d.get(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Path { .. }));
-            if is_path {
-                // Paths keep their own sub-path order: rotate the nearest sub-path (or all).
-                let q = gpath::set_start_point(&path, p, all);
-                if q != path {
-                    any |= set_shape_path(d, *id, q);
+            let leaves = cut_leaves(d, *id);
+            let grouped = d.get(*id).is_some_and(Shape::is_group);
+            // The shapes the click is for: all of them, or the one with the nearest closed outline.
+            let nearest = leaves
+                .iter()
+                .filter_map(|(n, l)| {
+                    let subs = gpath::subpaths(&l.outline());
+                    let k = nearest_closed(&subs, p)?;
+                    query::nearest_point(&subs[k], p).map(|h| (*n, h.distance))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(n, _)| n);
+            for (n, leaf) in leaves.iter().filter(|(n, _)| (all && grouped) || Some(*n) == nearest) {
+                let Some(points) = start_points_after(leaf, p, all) else { continue };
+                if !grouped && matches!(leaf.kind, ShapeKind::Path { .. }) {
+                    let path = leaf.outline();
+                    let q = gpath::set_start_point(&path, p, all);
+                    if q != path {
+                        any |= set_shape_path(d, *id, q);
+                    }
                 }
-                // Remember the point too, so the cut planner keeps it when it orders the job.
-                if let Some(s) = d.get_mut(*id) {
-                    let local = s.transform.inverse() * p;
-                    s.start_point = Some([local.x, local.y]);
-                    any = true;
-                }
-            }
-            if let Some(s) = d.get_mut(*id) {
-                let local = s.transform.inverse() * at;
-                let new = Some([local.x, local.y]);
-                if s.start_point != new {
-                    s.start_point = new;
+                let Some(s) = leaf_mut(d, *id, *n) else { continue };
+                if s.start_points().collect::<Vec<_>>() != points {
+                    s.set_start_points(&points);
                     any = true;
                 }
             }
@@ -373,17 +548,21 @@ fn set_direction(e: &mut Editor, a: &Value) -> R {
     ok(done, &ids)
 }
 
-/// Clear the forced start point of the selected shapes.
+/// Clear the forced start point of the selected shapes (in a group: of every shape in it).
 fn clear_start(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let done = e.edit("Clear start point", |d, _| {
         let mut any = false;
         for id in &ids {
-            if let Some(s) = d.get_mut(*id)
-                && s.start_point.is_some()
-            {
-                s.start_point = None;
-                any = true;
+            if !cut_leaves(d, *id).iter().any(|(_, l)| l.start_points().next().is_some()) {
+                continue;
+            }
+            if let Some(s) = d.get_mut(*id) {
+                any |= each_leaf_mut(s, darkburn_core::kurbo::Affine::IDENTITY, &mut |l, _| {
+                    let had = l.start_points().next().is_some();
+                    l.set_start_points(&[]);
+                    had
+                });
             }
         }
         any
@@ -505,7 +684,13 @@ fn add_line(e: &mut Editor, a: &Value, _env: &Env) -> R {
     if closed {
         path.close_path();
     }
-    let layer = num(a, "layer", e.current_layer as f64).clamp(0.0, 31.0) as usize;
+    let layer = match a.get("layer") {
+        None => e.current_layer,
+        Some(l) => match l.as_u64() {
+            Some(l) if l < darkburn_core::LAYER_COUNT as u64 => l as usize,
+            _ => return Err(format!("layer {l} does not exist (0 to 31)")),
+        },
+    };
     let connect = flag(a, "connect", true) && !closed;
     let tol = num(a, "tolerance", 0.05).max(1e-6);
     let mut result = (ShapeId(0), false);
@@ -678,6 +863,59 @@ mod tests {
         assert_eq!(app.editor.doc.get(r).unwrap().tabs.len(), 1);
         run(&mut app, "shape.set_start_point", json!({ "shape": r.0, "x": 100, "y": 100 })).unwrap();
         assert!(app.editor.doc.get(r).unwrap().start_point.is_some());
+    }
+
+    /// Tabs and start points of a shape inside a group: no need to ungroup first.
+    #[test]
+    fn tabs_and_start_points_reach_shapes_inside_a_group() {
+        let mut app = app();
+        let a = add_rect(&mut app, 0.0, 0.0, 10.0, 10.0, 0);
+        let b = add_rect(&mut app, 50.0, 0.0, 10.0, 10.0, 0);
+        select(&mut app, &[a, b]);
+        run(&mut app, "arrange.group", Value::Null).unwrap();
+        let g = app.editor.selected()[0];
+        // move the group, so the group's own placement matters
+        app.editor.doc.get_mut(g).unwrap().transform =
+            darkburn_core::kurbo::Affine::translate((100.0, 20.0)) * app.editor.doc.get(g).unwrap().transform;
+        let leaves = |app: &crate::shell::DarkBurn| app.editor.doc.get(g).unwrap().leaves();
+        let tabs_of = |app: &crate::shell::DarkBurn| -> Vec<Vec<Point>> {
+            leaves(app).iter().map(|l| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1])).collect()).collect()
+        };
+        // a tab on the bottom edge of the second square (now at 150..160, 20..30)
+        let out = run(&mut app, "tabs.add", json!({ "shape": g.0, "x": 155.0, "y": 19.7 })).unwrap();
+        assert_eq!(out["changed"], true, "{out}");
+        let t = tabs_of(&app);
+        assert!(t[0].is_empty(), "nothing on the first square");
+        assert_eq!(t[1].len(), 1);
+        assert!(t[1][0].distance(Point::new(155.0, 20.0)) < 1e-6, "{:?}", t[1][0]);
+        // the tool sees it, and the automatic tabs of both squares
+        assert_eq!(cut_outline(&app.editor.doc, g).map(|p| gpath::subpaths(&p).len()), Some(2));
+        // a start point on the right edge of the first square (100..110, 20..30)
+        let out = run(&mut app, "shape.set_start_point", json!({ "shape": g.0, "x": 110.3, "y": 25.0 })).unwrap();
+        assert_eq!(out["changed"], true, "{out}");
+        let l = leaves(&app);
+        let start = l[0].start_point.map(|p| l[0].transform * Point::new(p[0], p[1])).unwrap();
+        assert!(start.distance(Point::new(110.0, 25.0)) < 1e-6, "{start:?}");
+        assert!(l[1].start_point.is_none());
+        let m = marker_path(&app.editor.doc, g).unwrap();
+        assert!(gpath::start_point(&gpath::subpaths(&m)[0]).unwrap().distance(Point::new(110.0, 25.0)) < 1e-6, "the marker shows it");
+        // they are in the job: the cut of the first square starts there, the second has its gap
+        let job = crate::job_build::build_job_simple(&crate::job_cmds::build_input(&app)).unwrap();
+        assert!(job.warnings.is_empty(), "{:?}", job.warnings);
+        // undo takes the start point back, then the tab
+        assert!(app.editor.undo() && leaves(&app)[0].start_point.is_none());
+        assert!(app.editor.redo());
+        // take them off again
+        assert_eq!(run(&mut app, "tabs.remove", json!({ "shape": g.0, "x": 155.0, "y": 20.0, "radius": 1.0 })).unwrap()["changed"], true);
+        assert!(tabs_of(&app).iter().all(Vec::is_empty));
+        run(&mut app, "tabs.add", json!({ "shape": g.0, "x": 105.0, "y": 30.0 })).unwrap();
+        assert_eq!(tabs_of(&app)[0].len(), 1);
+        assert_eq!(run(&mut app, "tabs.clear", json!({ "shape": g.0 })).unwrap()["changed"], true);
+        assert!(tabs_of(&app).iter().all(Vec::is_empty));
+        assert_eq!(run(&mut app, "shape.clear_start_point", json!({ "shape": g.0 })).unwrap()["changed"], true);
+        assert!(leaves(&app).iter().all(|l| l.start_point.is_none()));
+        // a picture still takes no tabs
+        assert!(run(&mut app, "tabs.add", json!({ "shape": 999_999, "x": 0, "y": 0 })).is_err());
     }
 
     #[test]

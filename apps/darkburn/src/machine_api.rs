@@ -75,14 +75,25 @@ pub enum Link {
     Tcp { host: String, port: u16 },
     /// Ruida Ethernet.
     Udp { ip: String },
-    /// Ruida FTDI USB (needs the `usb` feature).
-    Usb { serial: Option<String> },
+    /// Ruida over USB: the serial port of the controller's FTDI chip (`port`), or the FTDI chip
+    /// itself by adapter serial number in builds with the `usb` feature.
+    Usb {
+        serial: Option<String>,
+        #[serde(default)]
+        port: Option<String>,
+    },
     /// An in-memory Smoothieware, Marlin, Snapmaker, custom or library-GRBL machine. Safe.
     SimulatorGcode(crate::gcode_machines::SimGcode),
     /// The in-memory galvo board. Safe.
     SimulatorGalvo,
     /// A galvo board over USB. Not built into this version: simulator only.
     GalvoUsb,
+    /// G-code sent as one HTTP request per line.
+    Http { host: String, port: u16, path: String },
+    /// G-code over two bulk endpoints of a USB device (needs the `rawusb` feature).
+    RawUsb { vid: u16, pid: u16, serial: Option<String>, interface: u8, ep_out: u8, ep_in: u8 },
+    /// Ruida through a network bridge: TCP to the bridge, which relays to the controller.
+    Bridge { host: String, port: u16 },
 }
 
 impl Link {
@@ -91,8 +102,10 @@ impl Link {
     }
     pub fn family(&self) -> Family {
         match self {
-            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) => Family::Grbl,
-            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } => Family::Ruida,
+            Link::SimulatorGrbl | Link::Serial { .. } | Link::Tcp { .. } | Link::SimulatorGcode(_) | Link::Http { .. } | Link::RawUsb { .. } => {
+                Family::Grbl
+            }
+            Link::SimulatorRuida | Link::Udp { .. } | Link::Usb { .. } | Link::Bridge { .. } => Family::Ruida,
             Link::SimulatorGalvo | Link::GalvoUsb => Family::Galvo,
         }
     }
@@ -106,7 +119,10 @@ impl Link {
             Link::Serial { port, baud } => format!("{port} @ {baud}"),
             Link::Tcp { host, port } => format!("tcp://{host}:{port}"),
             Link::Udp { ip } => format!("udp://{ip}"),
-            Link::Usb { serial } => format!("USB {}", serial.as_deref().unwrap_or("(first FTDI)")),
+            Link::Usb { serial, port } => format!("USB {}", port.as_deref().or(serial.as_deref()).unwrap_or("(first FTDI)")),
+            Link::Http { host, port, path } => format!("http://{host}:{port}{path}"),
+            Link::RawUsb { vid, pid, interface, .. } => format!("USB {vid:04X}:{pid:04X} interface {interface}"),
+            Link::Bridge { host, port } => format!("bridge tcp://{host}:{port}"),
         }
     }
 }
@@ -151,6 +167,8 @@ pub struct ConnectConfig {
     pub gcode: Option<Arc<darkburn_gcodebots::DeviceProfile>>,
     /// The galvo board's settings.
     pub galvo: Option<Arc<crate::galvo_settings::GalvoDeviceSettings>>,
+    /// GRBL simulator only: which firmware the in-memory controller pretends to be.
+    pub sim_firmware: crate::connections::SimFirmware,
 }
 
 impl Default for ConnectConfig {
@@ -170,6 +188,7 @@ impl Default for ConnectConfig {
             net_timeout_ms: None,
             gcode: None,
             galvo: None,
+            sim_firmware: crate::connections::SimFirmware::default(),
         }
     }
 }
@@ -348,6 +367,8 @@ pub struct Snapshot {
     pub air_on: bool,
     /// The galvo board's state.
     pub galvo: Option<crate::galvo_machine::GalvoStatus>,
+    /// A known diode laser recognised from what the controller printed [GRBL-12].
+    pub detected: Option<grbl::DetectedLaser>,
 }
 
 impl Snapshot {
@@ -469,11 +490,14 @@ pub struct FrameSpec {
     pub feed: f64,
     /// Laser on at this power while tracing (GRBL) or red light (Ruida).
     pub laser_percent: Option<f64>,
+    /// Where the head goes when the frame is done, in the coordinates of the frame points. A job
+    /// that starts from the current position needs the head back where it was.
+    pub return_to: Option<Point>,
 }
 
 impl Default for FrameSpec {
     fn default() -> Self {
-        Self { feed: 3000.0, laser_percent: None }
+        Self { feed: 3000.0, laser_percent: None, return_to: None }
     }
 }
 
@@ -760,6 +784,10 @@ impl MachineHandle {
                 self.snapshot.link = LinkState::Disconnected;
             }
             self.snapshot.job = None;
+            // Nothing of the old link is still on: a flag left set would be shown as a laser
+            // that fires, and be met again by the next connection.
+            self.snapshot.fire_on = false;
+            self.snapshot.air_on = false;
         }
         events
     }
@@ -919,7 +947,7 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
                     ruida::RdOp::Cut { to: Point::new(10.0, 10.0), power: None, speed: None },
                 ],
             };
-            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer] });
+            let mut j = JobRequest::rd(ruida::RdJob { layers: vec![layer], ..Default::default() });
             j.bounds = Some(Rect::new(10.0, 10.0, 10.0 + s, 10.0 + s));
             j
         }
@@ -946,21 +974,21 @@ pub fn simulator_square(family: Family, size: f64) -> JobRequest {
 // Opening adapters
 // ============================================================================================
 
+/// The fire button's time as a duration. A time that is not a number, not above zero or longer
+/// than an hour is refused here: converting such a value would stop the program (the drivers
+/// have their own, much lower, limit).
+pub(crate) fn fire_time(secs: f64) -> Result<Duration, MachineError> {
+    if secs.is_finite() && secs > 0.0 && secs <= 3600.0 {
+        Ok(Duration::from_secs_f64(secs))
+    } else {
+        Err(MachineError::Invalid("Fire time must be a number of seconds above 0.".into()))
+    }
+}
+
 /// Build the adapter for `spec`. The only place a real link can be opened.
 pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Result<Box<dyn DriverAdapter>, MachineError> {
     match &spec.link {
-        Link::SimulatorGrbl => {
-            let mut cfg = grbl::EmulatorConfig::atomstack().with_time_scale(spec.config.sim_time_scale.max(0.1));
-            cfg.record_lines = true;
-            if spec.config.sim_homing {
-                cfg = cfg.with_setting(22, 1.0);
-            }
-            if let Some((w, h)) = spec.config.bed {
-                cfg = cfg.with_setting(130, w).with_setting(131, h);
-            }
-            let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(cfg));
-            Ok(Box::new(GrblAdapter::new(Box::new(emu.transport()), &spec.config, true, Some(emu))))
-        }
+        Link::SimulatorGrbl => Ok(Box::new(crate::connections::grbl_simulator(&spec.config).0)),
         Link::SimulatorRuida => {
             let mut cfg = ruida::EmulatorConfig { step_mode: true, ..Default::default() };
             if let Some((w, h)) = spec.config.bed {
@@ -974,7 +1002,8 @@ pub fn open_adapter(spec: &ConnectSpec, consent: Option<RealLinkConsent>) -> Res
         Link::SimulatorGcode(kind) => crate::gcode_machines::open_simulator(*kind, &spec.config),
         Link::SimulatorGalvo => crate::galvo_machine::open_simulator(&spec.config),
         real => {
-            if cfg!(test) {
+            // Tests may only reach a listener they started themselves on this computer.
+            if cfg!(test) && !crate::connections::loopback_only(real) {
                 return Err(MachineError::Refused("Real connections are disabled in test builds.".into()));
             }
             if consent.is_none() {
@@ -1011,13 +1040,13 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
             let t = ruida::UdpTransport::connect(ip)?;
             Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
         }
-        #[cfg(feature = "usb")]
-        Link::Usb { serial } => {
-            let t = ruida::transport::UsbTransport::open(serial.as_deref())?;
-            Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
+        Link::Usb { serial, port } => open_ruida_usb(serial.as_deref(), port.as_deref(), config),
+        Link::Http { host, port, path } => crate::connections::open_http(host, *port, path, config),
+        Link::RawUsb { vid, pid, serial, interface, ep_out, ep_in } => {
+            let addr = grbl::RawUsbAddress { vid: *vid, pid: *pid, serial: serial.clone(), interface: *interface, ep_out: *ep_out, ep_in: *ep_in };
+            crate::connections::open_raw_usb(&addr, config)
         }
-        #[cfg(not(feature = "usb"))]
-        Link::Usb { .. } => Err(MachineError::Unsupported("this build has no raw USB support".into())),
+        Link::Bridge { host, port } => crate::connections::open_bridge(host, *port, config),
         Link::GalvoUsb => Err(MachineError::Unsupported(
             "the galvo USB link is not built into this version. Use the galvo simulator until the hardware checks in docs/hardware-checks-galvo.md are done."
                 .into(),
@@ -1027,6 +1056,31 @@ fn open_real(link: &Link, config: &ConnectConfig) -> Result<Box<dyn DriverAdapte
         }
     }
 }
+
+/// Ruida over USB. The controller's FTDI chip normally shows up as a serial port (a COM port on
+/// Windows), which is what gets opened; builds with the `usb` feature can also claim the chip
+/// directly. Reached only through [`open_real`].
+fn open_ruida_usb(serial: Option<&str>, port: Option<&str>, config: &ConnectConfig) -> Result<Box<dyn DriverAdapter>, MachineError> {
+    #[cfg(feature = "serial")]
+    if let Some(p) = port {
+        let t = ruida::transport::SerialTransport::open(p)?;
+        return Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)));
+    }
+    #[cfg(feature = "usb")]
+    {
+        let _ = port;
+        let t = ruida::transport::UsbTransport::open(serial)?;
+        Ok(Box::new(RuidaAdapter::new(Box::new(t), config, false, None)))
+    }
+    #[cfg(not(feature = "usb"))]
+    {
+        let _ = (serial, port, config);
+        Err(MachineError::Unsupported(NO_RUIDA_USB_PORT.into()))
+    }
+}
+
+/// Shown when no serial port of a Ruida controller's USB chip is found.
+pub const NO_RUIDA_USB_PORT: &str = "No USB serial port of a Ruida controller was found. Plug the controller in, install the FTDI driver if Windows does not show a COM port for it, then press Rescan. You can also type the port (like COM5) in Device Settings.";
 
 // ============================================================================================
 // GRBL
@@ -1135,6 +1189,7 @@ impl GrblAdapter {
         s.fire_on = g.fire_on;
         s.alarm = g.last_alarm.as_ref().filter(|_| g.alarm_locked || g.status.state.is_alarm()).map(|(_, m)| m.clone());
         s.grbl_settings = g.settings.clone();
+        s.detected = g.detected.clone();
         let job = g.job.as_ref().map(|p| self.progress(p));
         self.snap.job = job;
     }
@@ -1221,8 +1276,10 @@ impl DriverAdapter for GrblAdapter {
             C::Pause => Ok(m.pause()?),
             C::Resume => Ok(m.resume()?),
             C::Stop => Ok(m.stop()?),
-            C::FrameRect(r, f) => Ok(m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent })?),
-            C::FrameOutline(p, f) => Ok(m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent })?),
+            C::FrameRect(r, f) => Ok(m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to })?),
+            C::FrameOutline(p, f) => {
+                Ok(m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to })?)
+            }
             C::FrameOnController => unsupported("Framing on the controller"),
             C::JogStep(j) => {
                 if j.du != 0.0 {
@@ -1245,7 +1302,7 @@ impl DriverAdapter for GrblAdapter {
             C::SetUserOrigin => Ok(m.set_user_origin()?),
             C::ClearUserOrigin => Ok(m.clear_user_origin()?),
             C::GetPosition => Ok(m.request_status()?),
-            C::Fire { percent, secs } => Ok(m.fire(percent, Duration::from_secs_f64(secs.max(0.0)))?),
+            C::Fire { percent, secs } => Ok(m.fire(percent, fire_time(secs)?)?),
             C::FireOff => Ok(m.fire_off()?),
             C::SetOverrides { feed, power, rapid } => {
                 if let Some(f) = feed {
@@ -1282,7 +1339,8 @@ impl DriverAdapter for GrblAdapter {
             C::ReadLaser2 | C::WriteLaser2(_) => unsupported("Laser 2 settings"),
             C::ReadUAxis | C::WriteUAxis(_) => unsupported("U axis settings"),
             C::EmergencyStop => Ok(m.stop()?),
-            C::Air(on) => Ok(m.run_macro(if on { "M8" } else { "M9" })?),
+            // Not a macro: a macro switches the fire button off before it runs.
+            C::Air(on) => Ok(m.run_accessory(if on { "M8" } else { "M9" })?),
             C::PersistSettings | C::WriteGcodeSetting { .. } => Err(MachineError::Unsupported("GRBL settings are written with $N=value".into())),
             C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {
                 Err(MachineError::Unsupported("that is a galvo command; this is a GRBL machine".into()))
@@ -1321,6 +1379,9 @@ enum Op {
 pub struct RuidaAdapter {
     h: ruida::RuidaHandle,
     simulator: bool,
+    /// The link has the jog port (Ethernet only): the Fire button and the controller's own
+    /// Frame need it.
+    jog_port: bool,
     sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     snap: Snapshot,
     pending: HashMap<u64, Op>,
@@ -1345,6 +1406,9 @@ impl RuidaAdapter {
         simulator: bool,
         sim: Option<(Arc<Mutex<ruida::RuidaEmulator>>, f64)>,
     ) -> Self {
+        use ruida::Transport as _;
+        let jog_port = transport.framing() == ruida::Framing::Udp;
+        let described = transport.describe();
         let machine = ruida::RuidaMachine::new(
             transport,
             ruida::MachineConfig {
@@ -1364,13 +1428,14 @@ impl RuidaAdapter {
             simulator,
             link: LinkState::Connecting,
             state: LaserState::Connecting,
-            port: if simulator { "Simulator (Ruida)".into() } else { String::new() },
+            port: if simulator { "Simulator (Ruida)".into() } else { described },
             bed: cfg.bed,
             ..Default::default()
         };
         Self {
             h,
             simulator,
+            jog_port,
             sim,
             snap,
             pending,
@@ -1387,6 +1452,14 @@ impl RuidaAdapter {
             closed: false,
             out: Vec::new(),
         }
+    }
+
+    /// Let the controller's Pulse key go if the Fire button holds it down.
+    fn release_fire(&mut self) {
+        if self.fire.take().is_some() {
+            let _ = self.h.request(ruida::Request::PanelKey { key: ruida::PanelKey::Pulse, down: false });
+        }
+        self.snap.fire_on = false;
     }
 
     fn req(&mut self, r: ruida::Request, op: Op) -> Result<(), MachineError> {
@@ -1640,7 +1713,14 @@ impl DriverAdapter for RuidaAdapter {
         if !self.snap.connected() && !always {
             return Err(MachineError::NotConnected);
         }
-        let working = self.snap.state.is_working();
+        // A job that was asked for counts from that moment, not from the first status report
+        // that shows it: until then the controller would be sent a second job, a move or the
+        // Pulse key on top of it.
+        // The same for a frame: it runs from the request on.
+        let working = self.snap.state.is_working()
+            || self.job_started.is_some()
+            || self.framing_until.is_some_and(|t| Instant::now() < t)
+            || self.pending.values().any(|o| matches!(o, Op::Job | Op::Other("frame")));
         let busy = |w: bool| if w { Err(MachineError::Busy) } else { Ok(()) };
         match cmd {
             C::StartJob(req) => {
@@ -1653,6 +1733,8 @@ impl DriverAdapter for RuidaAdapter {
                         b.x0, b.x1, b.y0, b.y1
                     )));
                 }
+                // Never a job under a Pulse key the Fire button still holds down.
+                self.release_fire();
                 self.job_estimated = req.estimated;
                 self.job_name = req.name.clone();
                 let options = ruida::SendOptions { auto_increment: req.auto_increment_name, start_immediately: req.start_immediately };
@@ -1674,29 +1756,56 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::Stop => {
                 self.note(ConsoleKind::Sent, "Stop");
-                self.job_started = None;
+                // The stop itself always goes out; a job is only reported as stopped when one
+                // (or a frame) was under way.
+                let had_job = self.job_started.take().is_some() || working;
                 self.framing_until = None;
                 self.snap.job = None;
-                self.out.push(MachineEvent::JobAborted("stopped".into()));
+                self.release_fire();
+                if had_job {
+                    self.out.push(MachineEvent::JobAborted("stopped".into()));
+                }
                 self.req(R::Stop, Op::Other("stop"))
             }
             C::FrameRect(r, f) => {
                 busy(working)?;
+                // Nothing moves the head under a Pulse key the Fire button still holds down.
+                self.release_fire();
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
-                self.req(R::FrameRect { rect: r, light: f.laser_percent.is_some() }, Op::Other("frame"))?;
+                let light = f.laser_percent.is_some();
+                let request = match f.return_to {
+                    // The same lap as the rectangle, then one more rapid move back.
+                    Some(back) => {
+                        let (a, b, c, d) = (Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1));
+                        R::FrameOutline { points: vec![a, b, c, d, a, back], light }
+                    }
+                    None => R::FrameRect { rect: r, light },
+                };
+                self.req(request, Op::Other("frame"))?;
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }
-            C::FrameOutline(points, f) => {
+            C::FrameOutline(mut points, f) => {
                 busy(working)?;
+                self.release_fire();
+                // The frame is a run of rapid moves: one more takes the head back.
+                points.extend(f.return_to);
                 self.framing_until = Some(Instant::now() + Duration::from_millis(300));
                 self.req(R::FrameOutline { points, light: f.laser_percent.is_some() }, Op::Other("frame"))?;
                 self.out.push(MachineEvent::FrameStarted);
                 Ok(())
             }
-            C::FrameOnController => self.req(R::FrameOnController, Op::Other("frame")),
+            C::FrameOnController if !self.jog_port => Err(MachineError::Unsupported(
+                "the controller's own Frame needs the Ethernet connection. Over USB, use Frame in DarkBurn or the Frame key on the controller."
+                    .into(),
+            )),
+            C::FrameOnController => {
+                self.release_fire();
+                self.req(R::FrameOnController, Op::Other("frame"))
+            }
             C::JogStep(j) => {
                 busy(working)?;
+                self.release_fire();
                 for (axis, d) in [(Axis::X, j.dx), (Axis::Y, j.dy), (Axis::Z, j.dz), (Axis::U, j.du)] {
                     if d != 0.0 {
                         self.req(R::JogStep { axis, distance_mm: d }, Op::Other("jog"))?;
@@ -1706,6 +1815,7 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::JogStart { dir, .. } => {
                 busy(working)?;
+                self.release_fire();
                 for (axis, d) in [Axis::X, Axis::Y, Axis::Z, Axis::U].into_iter().zip(dir) {
                     if d != 0 {
                         self.req(R::JogStart { axis, positive: d > 0 }, Op::Other("jog"))?;
@@ -1722,15 +1832,18 @@ impl DriverAdapter for RuidaAdapter {
             }
             C::Home => {
                 busy(working)?;
+                self.release_fire();
                 self.req(R::Home(ruida::HomeAxes::XY), Op::Other("home"))
             }
             C::Unlock => Ok(()),
             C::GoToOrigin => {
                 busy(working)?;
+                self.release_fire();
                 self.req(R::GoToOrigin, Op::Other("go to origin"))
             }
             C::MoveTo(t) => {
                 busy(working)?;
+                self.release_fire();
                 let cur = self.snap.machine_pos;
                 let to = Point::new(t.x.unwrap_or(cur[0]), t.y.unwrap_or(cur[1]));
                 if t.x.is_some() || t.y.is_some() {
@@ -1748,6 +1861,9 @@ impl DriverAdapter for RuidaAdapter {
                 Err(MachineError::Unsupported("set the origin on the controller panel; this is not confirmed on real controllers yet".into()))
             }
             C::GetPosition => self.req(R::Status, Op::Other("status")),
+            C::Fire { .. } if !self.jog_port => {
+                Err(MachineError::Unsupported("the Fire button needs the Ethernet connection. Over USB, use the Pulse key on the controller.".into()))
+            }
             C::Fire { percent, secs } => {
                 let _ = percent;
                 busy(working)?;
@@ -1759,6 +1875,7 @@ impl DriverAdapter for RuidaAdapter {
                 self.snap.fire_on = true;
                 Ok(())
             }
+            C::FireOff if !self.jog_port => Ok(()),
             C::FireOff => {
                 self.fire = None;
                 self.snap.fire_on = false;
@@ -1784,6 +1901,7 @@ impl DriverAdapter for RuidaAdapter {
             C::ListFiles => self.req(R::ListFiles, Op::Other("list")),
             C::RunFile(i) => {
                 busy(working)?;
+                self.release_fire();
                 self.job_started = Some(Instant::now());
                 self.saw_running = false;
                 self.out.push(MachineEvent::JobStarted);
@@ -1817,7 +1935,10 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
-            C::EmergencyStop => self.req(R::Stop, Op::Other("stop")),
+            C::EmergencyStop => {
+                self.release_fire();
+                self.req(R::Stop, Op::Other("stop"))
+            }
             C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
                 Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
             }
@@ -1833,6 +1954,7 @@ impl DriverAdapter for RuidaAdapter {
         }
         self.closed = true;
         if self.snap.connected() {
+            self.release_fire();
             let _ = self.h.request(ruida::Request::Stop);
             let _ = self.h.request(ruida::Request::Disconnect);
         }

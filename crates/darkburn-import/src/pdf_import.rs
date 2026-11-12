@@ -254,6 +254,8 @@ struct PathBuilder {
     path: BezPath,
     current: Option<Point>,
     start: Option<Point>,
+    /// The last part was closed: the next segment starts a new part at the current point.
+    reopen: bool,
 }
 
 impl<'a> Interp<'a> {
@@ -271,7 +273,9 @@ impl<'a> Interp<'a> {
             270 => Affine::new([0.0, 1.0, -1.0, 0.0, h, 0.0]),
             _ => Affine::IDENTITY,
         };
-        let base = Affine::scale(PT_TO_MM) * rot * Affine::translate((-x0, -y0));
+        // UserUnit (PDF 1.6): the size of one unit in 1/72 inch, for pages larger than 200 inches.
+        let unit = dict_get(doc, page, b"UserUnit").and_then(num).filter(|u| *u > 0.0).unwrap_or(1.0);
+        let base = Affine::scale(PT_TO_MM * unit) * rot * Affine::translate((-x0, -y0));
         let mut dicts = Vec::new();
         if let Ok((inline, ids)) = doc.get_page_resources(page_id) {
             if let Some(d) = inline {
@@ -308,7 +312,8 @@ impl<'a> Interp<'a> {
         let doc = self.doc;
         let mut gs = gs0;
         let mut stack: Vec<GState> = Vec::new();
-        let mut pb = PathBuilder { path: BezPath::new(), current: None, start: None };
+        let mut unsaved = 0usize;
+        let mut pb = PathBuilder { path: BezPath::new(), current: None, start: None, reopen: false };
         let mut clip_pending = false;
         // Marked-content stack: Some((layer name, hidden)) for optional content.
         let mut mc: Vec<Option<(String, bool)>> = mc0;
@@ -325,10 +330,15 @@ impl<'a> Interp<'a> {
                 "q" => {
                     if stack.len() < 256 {
                         stack.push(gs.clone());
+                    } else {
+                        // Too deep to keep: its `Q` must not restore an outer level instead.
+                        unsaved += 1;
                     }
                 }
                 "Q" => {
-                    if let Some(s) = stack.pop() {
+                    if unsaved > 0 {
+                        unsaved -= 1;
+                    } else if let Some(s) = stack.pop() {
                         gs = s;
                     }
                 }
@@ -341,6 +351,7 @@ impl<'a> Interp<'a> {
                     pb.path.move_to(p);
                     pb.current = Some(p);
                     pb.start = Some(p);
+                    pb.reopen = false;
                 }
                 "l" if n.len() >= 2 => {
                     let p = t(&gs, n[0], n[1]);
@@ -371,6 +382,7 @@ impl<'a> Interp<'a> {
                     if pb.current.is_some() {
                         pb.path.close_path();
                         pb.current = pb.start;
+                        pb.reopen = true;
                     }
                 }
                 "re" if n.len() >= 4 => {
@@ -382,6 +394,7 @@ impl<'a> Interp<'a> {
                     pb.path.close_path();
                     pb.current = Some(t(&gs, x, y));
                     pb.start = pb.current;
+                    pb.reopen = true;
                 }
                 "S" | "s" | "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "n" => {
                     let o = op.operator.as_str();
@@ -397,6 +410,7 @@ impl<'a> Interp<'a> {
                     let path = std::mem::take(&mut pb.path);
                     pb.current = None;
                     pb.start = None;
+                    pb.reopen = false;
                     if (stroke || fill) && path.elements().len() > 1 && path.is_finite() {
                         let mut item = Item::path(path, stroke.then_some(gs.stroke), fill.then_some(gs.fill));
                         if let ItemKind::Path(p) = &mut item.kind {
@@ -441,7 +455,7 @@ impl<'a> Interp<'a> {
                 }
                 "BMC" => mc.push(None),
                 "BDC" => {
-                    let entry = if a.first().and_then(name) == Some(b"OC") { a.get(1).and_then(|p| self.ocg_layer(p, &res)) } else { None };
+                    let entry = if a.first().and_then(name) == Some(b"OC") { a.get(1).and_then(|p| self.ocg_layer(p, &res, 0)) } else { None };
                     mc.push(entry);
                 }
                 "EMC" => {
@@ -455,7 +469,7 @@ impl<'a> Interp<'a> {
                 "BI" => {
                     if let Some(Object::Stream(s)) = a.first() {
                         if self.opts.include_images {
-                            let img = decode_image(doc, &s.dict, &s.content, gs.fill, &res, true);
+                            let img = decode_image(doc, &s.dict, &s.content, gs.fill, &res, true, false);
                             self.place_image(img, &gs, &mc);
                         }
                     } else {
@@ -486,7 +500,11 @@ impl<'a> Interp<'a> {
     }
 
     /// Layer name and hidden state of an optional-content property (name or inline dict).
-    fn ocg_layer(&self, prop: &Object, res: &Res<'a>) -> Option<(String, bool)> {
+    fn ocg_layer(&self, prop: &Object, res: &Res<'a>, depth: u32) -> Option<(String, bool)> {
+        // A membership dictionary can name another one, or in a damaged file itself.
+        if depth > 8 {
+            return None;
+        }
         let doc = self.doc;
         let (obj, id) = match prop {
             Object::Name(nm) => res.lookup(doc, b"Properties", nm)?,
@@ -500,7 +518,7 @@ impl<'a> Interp<'a> {
                 Object::Array(a) => a.first()?,
                 _ => ocgs,
             };
-            return self.ocg_layer(first, res);
+            return self.ocg_layer(first, res, depth + 1);
         }
         let label = dict_get(doc, d, b"Name").and_then(|n| n.as_str().ok()).map(pdf_string).unwrap_or_else(|| "Layer".into());
         let hidden = id.is_some_and(|i| self.off.contains(&i));
@@ -544,7 +562,7 @@ impl<'a> Interp<'a> {
                 // Optional content on the form itself.
                 let mut mc2 = mc.to_vec();
                 if let Ok(oc) = stream.dict.get(b"OC") {
-                    mc2.push(self.ocg_layer(oc, res));
+                    mc2.push(self.ocg_layer(oc, res, 0));
                 }
                 self.run(&content, inner, g, depth + 1, mc2);
             }
@@ -552,7 +570,7 @@ impl<'a> Interp<'a> {
                 if !self.opts.include_images {
                     return;
                 }
-                let img = decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false);
+                let img = decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false, true);
                 self.place_image(img, gs, mc);
             }
             _ => {}
@@ -570,12 +588,22 @@ impl<'a> Interp<'a> {
     }
 }
 
+/// Makes sure a segment has a part to go into: a new one at the origin when nothing was drawn
+/// yet, a new one at the current point when the last part was closed (`h` or `re`).
 fn ensure_start(pb: &mut PathBuilder) {
-    if pb.current.is_none() {
-        pb.path.move_to(Point::ZERO);
-        pb.current = Some(Point::ZERO);
-        pb.start = pb.current;
+    match pb.current {
+        None => {
+            pb.path.move_to(Point::ZERO);
+            pb.current = Some(Point::ZERO);
+            pb.start = pb.current;
+        }
+        Some(p) if pb.reopen => {
+            pb.path.move_to(p);
+            pb.start = Some(p);
+        }
+        Some(_) => {}
     }
+    pb.reopen = false;
 }
 
 fn inherited<'a>(doc: &'a Document, page: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
@@ -680,8 +708,18 @@ fn expand_filter(n: &[u8]) -> &[u8] {
     }
 }
 
-/// Decodes an image XObject or inline image into an RGB(A) or gray image.
-fn decode_image(doc: &Document, dict: &Dictionary, raw: &[u8], fill: Rgb, res: &Res<'_>, inline: bool) -> Result<DynamicImage, String> {
+/// Decodes an image XObject or inline image into an RGB(A) or gray image. `soft_mask` says
+/// whether the image's own soft mask is read too; a soft mask has none of its own, and one that
+/// names itself or its image in a damaged file must not be followed.
+fn decode_image(
+    doc: &Document,
+    dict: &Dictionary,
+    raw: &[u8],
+    fill: Rgb,
+    res: &Res<'_>,
+    inline: bool,
+    soft_mask: bool,
+) -> Result<DynamicImage, String> {
     let width = get_abbr(doc, dict, b"W", b"Width").and_then(num).unwrap_or(0.0);
     let height = get_abbr(doc, dict, b"H", b"Height").and_then(num).unwrap_or(0.0);
     if !(width >= 1.0 && height >= 1.0) || width * height > MAX_PIXELS as f64 {
@@ -722,6 +760,10 @@ fn decode_image(doc: &Document, dict: &Dictionary, raw: &[u8], fill: Rgb, res: &
             let pd = parms.and_then(|o| o.as_dict().ok());
             let k = pd.and_then(|d| dict_get(doc, d, b"K")).and_then(num).unwrap_or(0.0);
             let cols = pd.and_then(|d| dict_get(doc, d, b"Columns")).and_then(num).unwrap_or(1728.0) as u32;
+            // The column count comes from the file and sizes the pixel buffer.
+            if u64::from(cols.max(1)) * u64::from(h) > MAX_PIXELS {
+                return Err("bad image size".into());
+            }
             let black_is_1 = pd.and_then(|d| dict_get(doc, d, b"BlackIs1")).and_then(|o| o.as_bool().ok()).unwrap_or(false);
             let samples = decode_ccitt(&bytes, k, cols.max(1), h, black_is_1)?;
             samples_to_image(&samples, cols.max(1), h, 1, &Cs::Gray, is_mask, fill, decode_array(doc, dict), true)?
@@ -744,9 +786,9 @@ fn decode_image(doc: &Document, dict: &Dictionary, raw: &[u8], fill: Rgb, res: &
         }
     };
     // Soft mask -> alpha.
-    if !inline
+    if soft_mask
         && let Some(sm) = dict_get(doc, dict, b"SMask").and_then(|o| o.as_stream().ok())
-        && let Ok(mask) = decode_image(doc, &sm.dict, &sm.content, Rgb::BLACK, res, false)
+        && let Ok(mask) = decode_image(doc, &sm.dict, &sm.content, Rgb::BLACK, res, false, false)
     {
         let mask = mask.to_luma8();
         let mut rgba = img.to_rgba8();

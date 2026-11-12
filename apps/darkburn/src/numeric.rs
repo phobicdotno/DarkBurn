@@ -82,10 +82,13 @@ pub fn field_sized(ui: &mut Ui, value: &mut f64, num: &Num, width: Option<f32>) 
     let t = Tokens::get();
     let before = *value;
     let parsed = std::cell::Cell::new(false);
+    // The text read back is the text the field showed: nothing was typed.
+    let untouched = std::cell::Cell::new(false);
     let suffix = num.suffix.clone();
     let unit_mm = num.unit_mm;
     let decimals = num.decimals;
     let mixed = num.mixed;
+    let shown = format!("{before:.decimals$}");
     let drag = egui::DragValue::new(value)
         .range(num.range.clone())
         .clamp_existing_to_range(false)
@@ -94,6 +97,7 @@ pub fn field_sized(ui: &mut Ui, value: &mut f64, num: &Num, width: Option<f32>) 
         .custom_parser(|text| {
             let v = parse(text, &suffix, unit_mm);
             parsed.set(v.is_some());
+            untouched.set(text.trim() == shown || text.trim() == format!("{shown}{suffix}"));
             v
         })
         .custom_formatter(move |v, _| if mixed { String::new() } else { format!("{v:.decimals$}") })
@@ -101,6 +105,13 @@ pub fn field_sized(ui: &mut Ui, value: &mut f64, num: &Num, width: Option<f32>) 
     let w = width.unwrap_or_else(|| ui.available_width().max(0.0));
     let response = ui.add_sized(vec2(w, t.control_height), drag);
     t.input_bevel(ui, &response);
+    // The field is named after its row ("Speed"), not after its unit ("mm/s").
+    crate::a11y::name_from_row(ui, &response, egui::Role::SpinButton);
+    // Leaving a field without typing reads its own text back, which is the value rounded to the
+    // decimals shown: that is not an edit, and the exact value stays.
+    if untouched.get() && !num.mixed {
+        *value = before;
+    }
     let changed = (*value != before) || (num.mixed && parsed.get());
     Edited { response, changed }
 }

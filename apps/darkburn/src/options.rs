@@ -3,7 +3,7 @@
 //! the preferences. Code far from the settings window (the renderer, the canvas input, the cut
 //! panel) reads them through [`get`], a snapshot refreshed once per frame by [`publish`].
 
-use std::sync::RwLock;
+use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
@@ -102,6 +102,8 @@ pub struct Options {
     pub sound_error: bool,
     pub sound_done: bool,
     pub job_log: bool,
+    /// The folder the job log is written to (empty: DarkBurn's settings folder).
+    pub job_log_dir: String,
     pub system_clipboard: bool,
     /// Arrow key nudge distances in mm: plain, with Ctrl, with Shift.
     pub nudge: f64,
@@ -154,6 +156,7 @@ impl Default for Options {
             sound_error: false,
             sound_done: false,
             job_log: false,
+            job_log_dir: String::new(),
             system_clipboard: true,
             nudge: 1.0,
             nudge_ctrl: 0.1,
@@ -231,25 +234,37 @@ impl Options {
     }
 }
 
-static CURRENT: RwLock<Option<Options>> = RwLock::new(None);
+thread_local! {
+    // One snapshot per thread that draws an app: every reader is on that thread, and two apps
+    // in one process (the UI tests, side by side) do not see each other's settings.
+    static CURRENT: RefCell<Option<Options>> = const { RefCell::new(None) };
+}
 
 /// The snapshot code outside the settings window reads.
 pub fn get() -> Options {
-    CURRENT.read().ok().and_then(|o| o.clone()).unwrap_or_default()
+    CURRENT.with(|c| c.borrow().clone()).unwrap_or_default()
 }
 
 /// Refresh the snapshot from the preferences (once per frame).
 pub fn publish(o: &Options) {
-    if let Ok(mut c) = CURRENT.write()
-        && c.as_ref() != Some(o)
-    {
-        *c = Some(o.clone());
-    }
+    CURRENT.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.as_ref() != Some(o) {
+            *c = Some(o.clone());
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_snapshot_is_not_shared_with_an_app_on_another_thread() {
+        publish(&Options { nudge: 7.0, ..Default::default() });
+        std::thread::spawn(|| publish(&Options { nudge: 3.0, ..Default::default() })).join().unwrap();
+        assert_eq!(get().nudge, 7.0, "another app's settings replaced this one's");
+    }
 
     #[test]
     fn nudge_distances_follow_the_modifiers() {

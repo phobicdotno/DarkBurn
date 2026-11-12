@@ -10,7 +10,7 @@ use solidcraft_theme::Tokens;
 
 use crate::numeric::{self, Num};
 use crate::palette::layer_colour;
-use crate::shell::DarkBurn;
+use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 
 /// The device has a Z axis (otherwise the Z settings are greyed out).
 const DEVICE_HAS_Z: bool = false;
@@ -29,6 +29,12 @@ struct Session {
     /// The sub-layer shown.
     sub: usize,
     advanced: bool,
+    /// The project had no unsaved changes when the editor opened: the number of undo steps then.
+    clean_at: Option<usize>,
+    /// The project was saved while the editor's live edits were in it.
+    saved_since: bool,
+    /// A live edit was made.
+    edited: bool,
 }
 
 fn session_id() -> Id {
@@ -171,7 +177,13 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         selected: vec![open],
         sub: 0,
         advanced: false,
+        clean_at: (!app.editor.is_modified()).then(|| app.editor.history.len()),
+        saved_since: false,
+        edited: false,
     });
+    if s.edited && !app.editor.is_modified() {
+        s.saved_since = true;
+    }
     if s.opened_for != open {
         // Another layer was double-clicked while the editor is open.
         s.opened_for = open;
@@ -180,11 +192,17 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         s.sub = 0;
     }
     let title = "Cut Settings Editor";
+    // The editor opens in the middle of the room under the application bar. Where the kit puts a
+    // window that is given no place, two and a half rows above the middle of the main window,
+    // the top of this tall one lay over the bar and its menus in most main windows.
+    let middle = crate::shell::room_under_the_bar(ctx).center();
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
         .cards(2.7)
         .fields()
+        .placed(Align2::CENTER_CENTER, middle)
         .actions("OK", "Cancel", None)
         .show(ctx, true, |ui| body(ui, app, &mut s));
+    s.edited |= app.editor.doc.layers != s.original;
     match (closed, action) {
         (_, ui_kit::Action::Ok) => {
             finish(app, &s, true);
@@ -211,7 +229,13 @@ fn close(ctx: &egui::Context, app: &mut DarkBurn) {
 fn finish(app: &mut DarkBurn, s: &Session, keep: bool) {
     let e = &mut app.editor;
     let edited = e.doc.layers.clone();
+    // With the layers as they were at the start, a project that had no unsaved changes then has
+    // none now, unless it was saved or something else was done or undone meanwhile.
+    let saved_again = s.clean_at == Some(e.history.len()) && !s.saved_since && e.is_modified();
     if edited == s.original {
+        if s.edited && saved_again {
+            e.mark_saved();
+        }
         return;
     }
     e.doc.layers = s.original.clone();
@@ -222,6 +246,9 @@ fn finish(app: &mut DarkBurn, s: &Session, keep: bool) {
         });
     } else {
         e.touch();
+        if saved_again {
+            e.mark_saved();
+        }
     }
 }
 
@@ -234,10 +261,20 @@ fn listed_layers(app: &DarkBurn, s: &Session) -> Vec<usize> {
     v
 }
 
+/// The tallest the editor's two columns are, in points. A small main window gives them less.
+const BODY_HEIGHT: f32 = 720.0;
+/// The fields keep this much height however little room there is; the window scrolls then.
+const FIELDS_MIN_HEIGHT: f32 = 160.0;
+
 fn body(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let t = Tokens::get();
     let list_w = 130.0;
-    ui.horizontal_top(|ui| {
+    // The columns have a height of their own. The rule between them takes all the height it is
+    // offered: offered all a window may have, it made the editor as tall as the main window,
+    // whatever was in it. In a small main window they leave the height of the application bar
+    // unused, so the editor fits under the bar.
+    let height = (ui.available_height() - APP_BAR_HEIGHT).clamp(0.0, BODY_HEIGHT);
+    ui.allocate_ui_with_layout(vec2(ui.available_width(), height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
         // Layer list.
         ui.allocate_ui_with_layout(vec2(list_w, ui.available_height().max(300.0)), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(list_w);
@@ -284,7 +321,7 @@ fn body(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
                 }
             }
             ui.add_space(t.space_6);
-            ui.label(RichText::new("Ctrl+click to change several layers at once.").size(t.font_micro).color(t.text_dim));
+            ui.add(egui::Label::new(RichText::new("Ctrl+click to change several layers at once.").size(t.font_micro).color(t.text_dim)).wrap());
         });
         ui.separator();
         ui.vertical(|ui| editor_side(ui, app, s));
@@ -377,12 +414,15 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let mut c = before.clone();
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
-    egui::ScrollArea::vertical().id_salt("cse_fields").max_height(460.0).auto_shrink([false, true]).show(ui, |ui| {
+    // The fields go down to the bottom of the columns, less the row of the button under them.
+    let under = if c.mode == Mode::Image && s.advanced { t.control_height + t.form_gap_y } else { 0.0 };
+    let room = (ui.available_height() - under).max(FIELDS_MIN_HEIGHT);
+    egui::ScrollArea::vertical().id_salt("cse_fields").max_height(room).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = t.form_gap_y;
         if s.advanced {
             advanced(ui, &mut c);
         } else {
-            common(ui, &mut c, &modes, &layer, &mut output, &mut air, &mut name, s.sub);
+            common(ui, &mut c, &modes, &layer, &mut output, &mut air, &mut name, (l, s.sub));
         }
         if galvo_device && s.advanced {
             galvo(ui, &mut c);
@@ -395,7 +435,9 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         app.images.offsets_open = true;
     }
     let lay = app.editor.doc.layer(l);
-    if (output, air, name.trim()) != (lay.output, lay.air, lay.name.as_str()) {
+    // An emptied name field is a name half typed, not a change.
+    let renamed = !name.trim().is_empty() && name.trim() != lay.name;
+    if (output, air) != (lay.output, lay.air) || renamed {
         for &other in &s.selected {
             let lay = app.editor.doc.layer_mut(other);
             if !lay.is_tool() {
@@ -403,7 +445,7 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
             }
             lay.air = air;
         }
-        if !name.trim().is_empty() {
+        if renamed {
             app.editor.doc.layer_mut(l).name = name.trim().to_string();
         }
         app.editor.touch();
@@ -484,12 +526,41 @@ fn scan_angle_rows(ui: &mut Ui, c: &mut CutSetting) {
 
 /// The Common tab.
 #[allow(clippy::too_many_arguments)]
-fn common(ui: &mut Ui, c: &mut CutSetting, modes: &[Mode], layer: &Layer, output: &mut bool, air: &mut bool, name: &mut String, sub: usize) {
+fn common(
+    ui: &mut Ui,
+    c: &mut CutSetting,
+    modes: &[Mode],
+    layer: &Layer,
+    output: &mut bool,
+    air: &mut bool,
+    name: &mut String,
+    (l, sub): (usize, usize),
+) {
     let t = Tokens::get();
     ui_kit::section_heading(ui, "Layer");
-    ui_kit::row(ui, "Layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(name)));
+    ui_kit::row(ui, "Layer name", |ui| {
+        // The layer takes the name without the spaces round it. While the field has the keyboard
+        // it shows what was typed, not the layer's name read back: else a space would vanish as
+        // soon as it is typed, and the field could never be emptied to type another name.
+        let typing = Id::unique("cse_layer_name_typing");
+        let typed = ui.data(|d| d.get_temp::<(usize, String)>(typing)).filter(|(of, _)| *of == l);
+        let mut text = typed.map_or_else(|| name.clone(), |(_, text)| text);
+        let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut text));
+        crate::a11y::text(ui, &r, "Layer name");
+        if r.has_focus() {
+            ui.data_mut(|d| d.insert_temp(typing, (l, text.clone())));
+        } else {
+            ui.data_mut(|d| d.remove_temp::<(usize, String)>(typing));
+        }
+        if r.changed() {
+            *name = text;
+        }
+    });
     if sub > 0 || layer.is_multi() {
-        ui_kit::row(ui, "Sub-layer name", |ui| ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name)));
+        ui_kit::row(ui, "Sub-layer name", |ui| {
+            let r = ui.add_sized(vec2(ui.available_width(), t.control_height), egui::TextEdit::singleline(&mut c.name));
+            crate::a11y::text(ui, &r, "Sub-layer name");
+        });
         ui_kit::checkbox(ui, "Sub-layer on", &mut c.enabled);
     }
     let mode_opts: Vec<(Mode, &str)> = modes.iter().map(|m| (*m, m.label())).collect();
@@ -668,6 +739,14 @@ fn lead(ui: &mut Ui, label: &str, l: &mut darkburn_core::layer::Lead) {
 fn galvo(ui: &mut Ui, c: &mut CutSetting) {
     let g = &mut c.galvo;
     ui_kit::section_heading(ui, "Galvo");
+    if c.mode == Mode::Line {
+        ui_kit::checkbox(ui, "Drill mode (fire at points along the outline)", &mut g.drill);
+        if g.drill {
+            num(ui, "Drill time", &mut g.drill_dwell_ms, Num::new(0.01..=60_000.0, 2, " ms"));
+            num(ui, "Point spacing", &mut g.drill_spacing_mm, mm(0.0, 1000.0));
+            ui_kit::caption(ui, "Point spacing", "0 drills only the corners and ends.");
+        }
+    }
     num(ui, "Frequency", &mut g.frequency_khz, Num::new(1.0..=4000.0, 1, " kHz"));
     num(ui, "Q-pulse width", &mut g.q_pulse_ns, Num::new(1.0..=10_000.0, 0, " ns"));
     num(ui, "Pause before", &mut g.pause_before_ms, Num::new(0.0..=60_000.0, 0, " ms"));
@@ -849,7 +928,7 @@ mod tests {
             d.add(Shape::rect(KRect::new(0.0, 0.0, 1.0, 1.0), 0.0, 2));
             true
         });
-        let session = Session { opened_for: 2, original: app.editor.doc.layers.clone(), primary: 2, selected: vec![2, 5], sub: 0, advanced: false };
+        let session = Session { opened_for: 2, original: app.editor.doc.layers.clone(), primary: 2, selected: vec![2, 5], ..Default::default() };
         // Two live edits, applied to both selected layers.
         for speed in [50.0, 60.0] {
             let before = app.editor.doc.layer(2).main().clone();

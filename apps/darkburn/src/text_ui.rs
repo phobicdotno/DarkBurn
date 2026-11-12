@@ -472,7 +472,12 @@ pub fn begin_typing(app: &mut DarkBurn, id: ShapeId, new_shape: bool) {
 /// Place a new, empty text at `at` and start typing.
 pub fn place_text(app: &mut DarkBurn, at: Point) {
     finish_typing(app);
-    let t = TextShape { font: text_cmds::default_font(app), height: app.prefs.fonts.default_size.max(0.1), ..Default::default() };
+    let t = TextShape {
+        font: text_cmds::default_font(app),
+        height: app.prefs.fonts.default_size.max(0.1),
+        welded: app.prefs.opts.auto_weld,
+        ..Default::default()
+    };
     let layer = app.editor.current_layer;
     app.editor.checkpoint("Add text");
     let id = app.editor.doc.add(Shape::new(ShapeKind::Text(t), Affine::translate(at.to_vec2()), layer));
@@ -480,7 +485,8 @@ pub fn place_text(app: &mut DarkBurn, at: Point) {
     begin_typing(app, id, true);
 }
 
-/// End the typing session. An empty new text is taken back; an unchanged one leaves no undo step.
+/// End the typing session. An empty new text is taken back; an unchanged one leaves no undo
+/// step; a text that was typed away to nothing is taken out of the design (undo brings it back).
 pub fn finish_typing(app: &mut DarkBurn) {
     let Some(t) = app.text.typing.take() else { return };
     let text = text_mut(app, t.id).map(|x| x.text.clone());
@@ -489,6 +495,11 @@ pub fn finish_typing(app: &mut DarkBurn) {
     let unchanged = !t.new_shape && text.as_deref() == Some(t.original.as_str());
     if alone && (empty && t.new_shape || unchanged) {
         app.editor.drop_checkpoint();
+        app.editor.selection.retain_existing(&app.editor.doc);
+    } else if empty && text.is_some() {
+        // Nothing left to draw: an empty text would stay as a shape nobody can see or click.
+        app.editor.doc.remove(&[t.id]);
+        app.editor.touch();
         app.editor.selection.retain_existing(&app.editor.doc);
     } else if let Some(font) = text_mut(app, t.id).map(|x| x.font.clone()) {
         app.prefs.fonts.touch(&font);
@@ -557,6 +568,11 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, xf: &Xf, raw: 
             Some(id) => open_code_dialog(app, id),
             None => place_text(app, p),
         }
+    }
+    // A dialog, window or menu over the canvas has the keyboard: what is typed there is not for
+    // the text behind it. Typing goes on when it has closed.
+    if crate::escape::window_open(&ctx) {
+        return;
     }
     if let Some(ty) = &mut app.text.typing {
         ty.frames += 1;
@@ -711,6 +727,17 @@ pub fn font_label(font: &str) -> String {
     }
 }
 
+/// The sections of the font drop-down for the search text `query`: favourites, recent fonts,
+/// the single-line fonts and all installed fonts. A single-line font is found by the name the
+/// list shows, and it can be a favourite or a recent font like any other.
+fn picker_sections(prefs: &FontPrefs, installed: &[String], shx: &[String], query: &str) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    let q = query.to_lowercase();
+    let found = |f: &String| q.is_empty() || font_label(f).to_lowercase().contains(&q);
+    let known = |f: &String| installed.iter().chain(shx).any(|i| i.eq_ignore_ascii_case(f));
+    let pick = |list: &[String]| list.iter().filter(|f| known(f) && found(f)).cloned().collect::<Vec<_>>();
+    (pick(&prefs.favourites), pick(&prefs.recent), pick(shx), pick(installed))
+}
+
 /// A font drop-down with search, favourites, recent fonts and a live preview. Returns the
 /// font picked this frame.
 pub fn font_picker(
@@ -735,6 +762,7 @@ pub fn font_picker(
             ui.set_min_width(width.max(280.0));
             let mut query: String = ui.data_mut(|d| d.get_temp(id.with("q"))).unwrap_or_default();
             let edit = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search fonts").desired_width(f32::INFINITY));
+            crate::a11y::text(ui, &edit, "Search fonts");
             if edit.changed() {
                 ui.data_mut(|d| d.insert_temp(id.with("q"), query.clone()));
             }
@@ -743,14 +771,7 @@ pub fn font_picker(
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::hover());
             ui.painter().rect_filled(rect, t.radius_sm, t.control_fill);
             paint_preview(ui.painter(), rect.shrink(6.0), &preview_lines(&shown_font, &sample), t.text);
-            let (favs, recent, all) = {
-                let lib = render::lib();
-                let installed = darkburn_text::list_families(&lib);
-                let l = prefs.listing(&installed, &query, false);
-                (l.favourites, l.recent, l.all)
-            };
-            let shx_list: Vec<String> =
-                shx.iter().filter(|s| query.is_empty() || font_label(s).to_lowercase().contains(&query.to_lowercase())).cloned().collect();
+            let (favs, recent, shx_list, all) = picker_sections(prefs, &darkburn_text::list_families(&render::lib()), shx, &query);
             let mut new_hover = None;
             let mut toggle = None;
             egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
@@ -854,6 +875,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                     let ed = ui
                         .push_id("text_height", |ui| numeric::field_sized(ui, &mut h, &Num::new(0.1..=10_000.0, 2, " mm").speed(0.1), Some(90.0)))
                         .inner;
+                    crate::a11y::number(ui, &ed.response, "Text height");
                     if ed.changed {
                         if live {
                             next = Some(json!({ "height": h.max(0.1) }));
@@ -913,6 +935,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                                     numeric::field_sized(ui, &mut x, &Num::new(-100.0..=1000.0, 2, " mm").speed(0.05), Some(90.0))
                                 })
                                 .inner;
+                            crate::a11y::number(ui, &ed.response, &format!("{name} spacing"));
                             if ed.changed {
                                 next = Some(json!({ key: x }));
                             }
@@ -981,6 +1004,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                         let ed = ui
                             .push_id("text_var_offset", |ui| numeric::field_sized(ui, &mut o, &Num::new(-100_000.0..=100_000.0, 0, ""), Some(90.0)))
                             .inner;
+                        crate::a11y::number(ui, &ed.response, "Index offset");
                         if ed.changed {
                             next = Some(json!({ "offset": numeric::whole(o) }));
                         }
@@ -1227,10 +1251,8 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
     let title = if q.editing.is_some() { "Edit Code" } else { "Create QR Code" };
     let args = q.args();
     let (payload_len, error, matrix) = qr_preview(&q);
-    let (closed, action) = ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(
-        ctx,
-        error.is_none() || q.barcode,
-        |ui| {
+    let (closed, action) =
+        ui_kit::Window::new(Id::unique("db_qr_dialog"), "db_qr", title).cards(2.4).actions("OK", "Cancel", None).show(ctx, error.is_none(), |ui| {
             if q.editing.is_none() {
                 let mut i = q.barcode as usize;
                 if ui_kit::segmented(ui, &mut i, &["QR code", "Barcode"], ui_kit::Segments::default()) {
@@ -1300,8 +1322,7 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
             let (rect, _) = ui.allocate_exact_size(vec2(160.0, 160.0), Sense::hover());
             ui.painter().rect_filled(rect, tk.radius_sm, Color32::WHITE);
             paint_matrix(ui.painter(), rect.shrink(6.0), &matrix);
-        },
-    );
+        });
     match action {
         ui_kit::Action::Ok => {
             let cmd = match (q.barcode, q.editing) {
@@ -1340,6 +1361,10 @@ type Matrix = Vec<Vec<bool>>;
 fn qr_preview(q: &QrDialog) -> (usize, Option<String>, Matrix) {
     if q.barcode {
         let kind = BARCODES[q.code.min(BARCODES.len() - 1)].1;
+        if q.variable {
+            // Tokens turn into something else when the code is made: do not judge the data here.
+            return (q.data.len(), None, Vec::new());
+        }
         let spec = darkburn_text::BarcodeSpec { kind, data: q.data.clone(), ..Default::default() };
         return match spec.generate() {
             Ok(r) => {
@@ -1466,9 +1491,11 @@ pub fn variable_panel(ui: &mut Ui, app: &mut DarkBurn) {
         ui_kit::hint_field(ui, &mut p, "No file");
     });
     let mut header = v.merge.header;
-    if ui_kit::checkbox(ui, "First row holds column names", &mut header).changed() && !path.is_empty() {
-        run_cmd(app, "variable.csv_load", &json!({ "path": path, "header": header }));
-    } else if header != v.merge.header {
+    let ticked = ui_kit::checkbox(ui, "First row holds column names", &mut header).changed();
+    // Read the file again when it is still there; the rows kept in the project otherwise.
+    let read_again =
+        ticked && !path.is_empty() && crate::api::execute_headless(app, "variable.csv_load", &json!({ "path": path, "header": header })).is_ok();
+    if !read_again && header != v.merge.header {
         app.editor.edit("CSV header", |d, _| {
             d.variables.merge.header = header;
             true
@@ -1548,6 +1575,70 @@ pub fn settings_section(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single-line (SHX) font that is starred or was used shows under Favourites and Recent
+    /// like any other font; the list used to drop it there because it is not an installed font.
+    #[test]
+    fn single_line_fonts_can_be_favourites_and_recent_fonts() {
+        let installed = vec!["Arial".to_string(), "IBM Plex Sans".to_string()];
+        let shx = vec![format!("{}C:/fonts/romans.shx", render::SHX_PREFIX)];
+        let mut prefs = FontPrefs::default();
+        prefs.toggle_favourite(&shx[0]);
+        prefs.toggle_favourite("Arial");
+        prefs.touch(&shx[0]);
+        prefs.touch("Gone Font");
+        let (favs, recent, single, all) = picker_sections(&prefs, &installed, &shx, "");
+        assert_eq!(favs, [shx[0].clone(), "Arial".to_string()], "the starred single-line font is missing");
+        assert_eq!(recent, [shx[0].clone()], "a font that is no longer there is left out, a single-line font is not");
+        assert_eq!((single, all), (shx.clone(), installed.clone()));
+        // Search goes by the name the list shows, not by the folder the file is in.
+        let (favs, _, single, all) = picker_sections(&prefs, &installed, &shx, "roman");
+        assert_eq!((favs, single, all.len()), (shx.clone(), shx.clone(), 0));
+        let (favs, _, single, _) = picker_sections(&prefs, &installed, &shx, "fonts");
+        assert!(favs.is_empty() && single.is_empty(), "the folder name is not the font's name");
+    }
+
+    /// Typing a text away to nothing takes the text out; it does not stay as a shape nobody can see.
+    #[test]
+    fn a_text_emptied_while_typing_is_taken_out() {
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let out =
+            crate::api::execute_headless(&mut app, "text.add", &json!({ "text": "Ab", "x": 10, "y": 10, "height": 10, "font": "IBM Plex Sans" }))
+                .unwrap();
+        let id = ShapeId(out["id"].as_u64().unwrap());
+        // the text tool clicked on it
+        app.editor.checkpoint("Edit text");
+        app.editor.touch();
+        begin_typing(&mut app, id, false);
+        // Backspace twice
+        let mut ty = app.text.typing.take().unwrap();
+        let mut s = text_mut(&mut app, id).unwrap().text.clone();
+        ty.caret.backspace(&mut s);
+        ty.caret.backspace(&mut s);
+        assert!(s.is_empty());
+        text_mut(&mut app, id).unwrap().text = s;
+        render::refresh(&mut app.editor.doc);
+        app.editor.touch();
+        ty.rev = app.editor.revision();
+        app.text.typing = Some(ty);
+        finish_typing(&mut app);
+        assert!(app.editor.doc.get(id).is_none(), "the emptied text is gone");
+        assert!(app.editor.selected().is_empty());
+        assert!(app.editor.undo(), "one undo step");
+        assert_eq!(text_cmds::find_text(&app.editor.doc, id).map(|t| t.text.as_str()), Some("Ab"), "undo brings the text back");
+    }
+
+    /// "Weld text automatically" (Settings, Text) also holds for text made with the text tool.
+    #[test]
+    fn the_text_tool_follows_weld_text_automatically() {
+        for auto in [false, true] {
+            let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+            app.prefs.opts.auto_weld = auto;
+            place_text(&mut app, Point::new(20.0, 20.0));
+            let id = app.text.typing.as_ref().unwrap().id;
+            assert_eq!(text_cmds::find_text(&app.editor.doc, id).unwrap().welded, auto);
+        }
+    }
 
     /// The Text Options toolbar changes text through `apply` (-> `text.set`); every control's
     /// arguments are exercised on a selected text shape, then the ribbon is drawn with them.

@@ -317,6 +317,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             Some((rl, text)) if *rl == l => {
                 let mut buf = text.clone();
                 let edit = ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(Id::unique(("cuts_rename_edit", l))).font(font.clone()));
+                crate::a11y::text(ui, &edit, "Layer name");
                 if !edit.has_focus() && !edit.lost_focus() {
                     edit.request_focus();
                 }
@@ -429,7 +430,11 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                     Switch::Show => "Show layer",
                     Switch::Air => "Air assist",
                 };
-                e.edit(label, |d, _| toggle(d, l, which));
+                e.edit(label, |d, sel| {
+                    let changed = toggle(d, l, which);
+                    sel.retain_selectable(d);
+                    changed
+                });
             }
             Act::Reorder(l, to) => {
                 e.edit("Layer order", |d, _| reorder(d, l, to));
@@ -460,7 +465,11 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             }
             Act::Header(cmd) => {
-                e.edit("Layers", |d, _| header_command(d, cmd));
+                e.edit("Layers", |d, sel| {
+                    let changed = header_command(d, cmd);
+                    sel.retain_selectable(d);
+                    changed
+                });
             }
             Act::Run(id) => run_later.push(id),
         }

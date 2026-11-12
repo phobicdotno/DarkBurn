@@ -63,17 +63,88 @@ pub struct ShapeInput {
     pub priority: i32,
     /// Power scale, 0..=1 (1 = full layer power).
     pub power_scale: f64,
-    /// Forced start point: the cut starts at the path point nearest to this.
+    /// Forced start point: the cut of the closed sub-path nearest to it starts at the path point
+    /// nearest to it.
     pub start_point: Option<Point>,
+    /// Forced start points of further sub-paths of a compound shape (same rule as `start_point`).
+    pub extra_start_points: Vec<Point>,
     pub direction: Option<ForcedDirection>,
-    /// Manually placed tabs (line mode). Each point snaps to the nearest point on the path.
+    /// Manually placed tabs (line mode). Each point snaps to the nearest point on the nearest
+    /// sub-path, open or closed. A shape with manual tabs gets no automatic ones.
     pub tabs: Vec<Point>,
+    /// Outlines that line cuts follow instead of `path`, as `(index into the layer's settings,
+    /// outline)`: the kerf offset of that sub-layer. Fills (and the fill of Fill + Line) always
+    /// use `path`. An empty outline means that sub-layer has nothing of this shape to cut.
+    pub line_paths: Vec<(usize, BezPath)>,
 }
 
 impl ShapeInput {
     pub fn new(path: BezPath) -> Self {
-        Self { path, group: None, priority: 0, power_scale: 1.0, start_point: None, direction: None, tabs: Vec::new() }
+        Self {
+            path,
+            group: None,
+            priority: 0,
+            power_scale: 1.0,
+            start_point: None,
+            extra_start_points: Vec::new(),
+            direction: None,
+            tabs: Vec::new(),
+            line_paths: Vec::new(),
+        }
     }
+
+    /// The outline line cuts follow under setting `setting` of the layer.
+    pub fn line_path(&self, setting: usize) -> &BezPath {
+        self.line_paths.iter().find(|(i, _)| *i == setting).map_or(&self.path, |(_, p)| p)
+    }
+
+    /// Every outline of this shape that the layer's `settings` burn: what the job bounds and
+    /// the frame are made of. A line setting cuts its own (kerf) outline or the drawn one; a
+    /// fill fills the closed sub-paths of the drawn one; an image setting burns no outline.
+    /// Empty when nothing of the shape burns (an open shape on a Fill layer, a vector shape on
+    /// an Image layer).
+    pub fn outlines_used(&self, settings: &[CutSettings]) -> Vec<BezPath> {
+        let (mut whole, mut closed) = (false, false);
+        let mut out: Vec<BezPath> = Vec::new();
+        for (i, s) in settings.iter().enumerate().filter(|(_, s)| s.enabled && s.passes > 0) {
+            if matches!(s.mode, CutMode::Line | CutMode::FillLine) {
+                match self.line_paths.iter().find(|(k, _)| *k == i) {
+                    Some((_, p)) => out.push(p.clone()),
+                    None => whole = true,
+                }
+            }
+            closed |= matches!(s.mode, CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill);
+        }
+        if whole {
+            out.insert(0, self.path.clone());
+        } else if closed {
+            let part = closed_part(&self.path);
+            if !part.elements().is_empty() {
+                out.insert(0, part);
+            }
+        }
+        out
+    }
+}
+
+/// The closed sub-paths of `path` (what a fill fills), by the rule of [`crate::geom::flatten`].
+fn closed_part(path: &BezPath) -> BezPath {
+    let mut out = BezPath::new();
+    let mut sub = BezPath::new();
+    let take = |sub: &mut BezPath, out: &mut BezPath| {
+        if crate::geom::flatten(sub, 0.05).iter().any(|p| p.closed) {
+            out.extend(sub.elements().iter().copied());
+        }
+        *sub = BezPath::new();
+    };
+    for el in path.elements() {
+        if matches!(el, kurbo::PathEl::MoveTo(_)) {
+            take(&mut sub, &mut out);
+        }
+        sub.push(*el);
+    }
+    take(&mut sub, &mut out);
+    out
 }
 
 /// One raster scanline already in millimetres, in the image's scan frame.
@@ -94,11 +165,20 @@ pub struct ImageInput {
     pub transform: Affine,
     pub group: Option<u32>,
     pub priority: i32,
+    /// Scanning offset, mm: how far apart the machine burns the two directions of a
+    /// bidirectional scan at this speed. Lines scanned forward (towards +X of the scan frame)
+    /// are moved back by half of it and lines scanned in reverse forward by half, whichever
+    /// way the planner ends up scanning each line. Not used for one-way scans.
+    pub direction_offset: f64,
+    /// The outline of the picture in design coordinates (its corners). When given, the job
+    /// bounds take the picture from here, white parts included, so where the job lands does
+    /// not depend on where the first dot is. Empty: the scan lines bound it.
+    pub outline: Vec<Point>,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0 }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new() }
     }
 }
 
@@ -230,7 +310,7 @@ pub struct DotMode {
     pub spacing: f64,
 }
 
-/// Tabs (bridges) on closed shapes.
+/// Tabs (bridges): automatic ones on closed shapes, manual ones wherever they were placed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TabSettings {
     pub enabled: bool,
@@ -242,11 +322,15 @@ pub struct TabSettings {
     pub size: f64,
     /// Power for partly cut tabs (percent). `None` = laser off over tabs.
     pub tab_power: Option<f64>,
-    /// No tabs on shapes inside other shapes.
+    /// No automatic tabs on shapes inside other shapes (manual tabs stay).
     pub skip_inner: bool,
     /// Space tabs evenly on shapes without manual tabs. Off: only manually placed tabs count.
     #[serde(default = "yes")]
     pub auto: bool,
+    /// Partly cut tabs are made of full-power pulses of this length (mm) with pauses between
+    /// them, so that the average is `tab_power`. 0: cut the tab at `tab_power` instead.
+    #[serde(default)]
+    pub pulse_width: f64,
 }
 
 fn yes() -> bool {
@@ -255,7 +339,17 @@ fn yes() -> bool {
 
 impl Default for TabSettings {
     fn default() -> Self {
-        Self { enabled: false, spacing: 50.0, min_count: 2, max_count: 10, size: 0.5, tab_power: None, skip_inner: false, auto: true }
+        Self {
+            enabled: false,
+            spacing: 50.0,
+            min_count: 2,
+            max_count: 10,
+            size: 0.5,
+            tab_power: None,
+            skip_inner: false,
+            auto: true,
+            pulse_width: 0.0,
+        }
     }
 }
 
@@ -343,6 +437,10 @@ pub struct FillSettings {
     pub ramp_outer_edge: bool,
     /// Gaps longer than this inside a scan line are crossed with a rapid move, mm.
     pub rapid_gap: f64,
+    /// Scanning offset, mm: how far apart the machine burns the two directions of a
+    /// bidirectional scan at this speed (see [`ImageInput::direction_offset`]).
+    #[serde(default)]
+    pub direction_offset: f64,
 }
 
 impl Default for FillSettings {
@@ -360,6 +458,7 @@ impl Default for FillSettings {
             ramp_length: 0.0,
             ramp_outer_edge: true,
             rapid_gap: 10.0,
+            direction_offset: 0.0,
         }
     }
 }

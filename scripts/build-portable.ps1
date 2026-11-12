@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build the portable zip: dist/darkburn-<version>-windows-x64-portable.zip
+  Build the portable zip: dist/darkburn-<version>-windows-x64-portable.zip (and its .sha256)
 
 .DESCRIPTION
   darkburn.exe, darkburn-mcp.exe, the licences, and a portable.txt marker. With portable.txt
@@ -41,5 +41,6 @@ try {
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $entry, 'Optimal')
   }
 } finally { $archive.Dispose() }
+Write-Sha256File $Zip
 Get-Item $Zip | Format-Table Name, Length
 Write-Output "Zip: $Zip"

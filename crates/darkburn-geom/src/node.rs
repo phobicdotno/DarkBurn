@@ -348,11 +348,11 @@ fn extract(c: &Contour, u0: f64, u1: f64) -> Vec<PathSeg> {
     }
     let k0 = u0.floor().max(0.0) as usize;
     let k1 = (u1.ceil() as usize).min(c.segs.len());
-    for k in k0..k1 {
+    for (k, seg) in c.segs.iter().enumerate().take(k1).skip(k0) {
         let t0 = (u0 - k as f64).max(0.0);
         let t1 = (u1 - k as f64).min(1.0);
         if t1 - t0 > 1e-9 {
-            out.push(if t0 <= 0.0 && t1 >= 1.0 { c.segs[k] } else { c.segs[k].subsegment(t0..t1) });
+            out.push(if t0 <= 0.0 && t1 >= 1.0 { *seg } else { seg.subsegment(t0..t1) });
         }
     }
     out

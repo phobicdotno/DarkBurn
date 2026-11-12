@@ -1,57 +1,150 @@
-# Format, lints and tests on Windows. Runs on pushes and pull requests; nothing is published.
+# Format, lints and tests on Windows, Linux and macOS. Runs on every push to main and on every
+# pull request. It can also be started by hand (Actions > ci > Run workflow), for all systems
+# or for one. release.yml runs these same jobs before it drafts a release for a tag.
+# Nothing is published from here.
+#
+# While the repository is private, a push or a pull request leaves macOS out. A private
+# repository has a small monthly allowance of runner time, and macOS uses it up fastest.
+# A run by hand and the tests of a tag still run macOS. The workflow reads this from GitHub
+# itself: once the repository is public, every run has all three systems.
 name: ci
 
 on:
   push:
     branches: [main]
+    # Not for a push that changes only the front page or the documents: nothing that is built
+    # or tested reads them. The one exception is docs/PARITY-CHECKLIST.md, which is built into
+    # darkburn-mcp. Other .md files stay in, because some are built in or packaged.
+    paths: ["**", "!README.md", "!docs/**", "docs/PARITY-CHECKLIST.md"]
+  # No paths here. A check that is required for merging must report on every pull request,
+  # and one that is filtered away never does.
   pull_request:
   workflow_dispatch:
+    inputs:
+      only:
+        description: Run the lints and tests on one system only
+        type: choice
+        options: [all, windows, linux, macos]
+        default: all
+  # release.yml starts these jobs for a tag, for all systems.
+  workflow_call:
+    inputs:
+      only:
+        description: Run the lints and tests on one system only (all, windows, linux or macos)
+        type: string
+        default: all
 
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request replaces the run that is under way. A run
+# started by hand does not get in the way of one started by a push, and two runs by hand for
+# different systems do not get in each other's way. The tests of a tag (started by
+# release.yml) are never cancelled.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only || 'all' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # Test programs without debug information are many times smaller, and a runner's disk is small.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  windows:
-    runs-on: windows-latest
-    timeout-minutes: 60
+  format:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      # The same test as in the matrix of the job below.
+      - name: Say that macOS is left out
+        if: (inputs.only || 'all') == 'all' && github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
+        run: echo "::notice title=No macOS in this run::The repository is private, so a push or a pull request does not run the macOS tests. Start them by hand with Actions, ci, Run workflow, only macos."
 
-      # DarkBurn uses SolidCraft's small UI crates by path (../solidcraft). The repository is
-      # private, so the clone needs a token in the SOLIDCRAFT_TOKEN secret (read access).
-      - name: Check out SolidCraft next to this repository
-        shell: pwsh
-        env:
-          SOLIDCRAFT_TOKEN: ${{ secrets.SOLIDCRAFT_TOKEN }}
-          SOLIDCRAFT_REF: ${{ vars.SOLIDCRAFT_REF || 'main' }}
-        run: |
-          if (-not $env:SOLIDCRAFT_TOKEN) { throw 'The SOLIDCRAFT_TOKEN secret is not set.' }
-          $dest = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'solidcraft'
-          git clone --depth 1 --branch $env:SOLIDCRAFT_REF "https://x-access-token:$($env:SOLIDCRAFT_TOKEN)@github.com/phobicdotno/solidcraft.git" $dest
-          if ($LASTEXITCODE -ne 0) { throw 'could not clone SolidCraft' }
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Install Rust
-        shell: pwsh
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
-          rustc --version
-
-      - uses: Swatinem/rust-cache@v2
+      # cargo fmt reads the workspace, and the workspace reaches for ../solidcraft.
+      - uses: ./.github/actions/prepare
+        with:
+          components: rustfmt
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: cargo fmt -- --check
+
+      # The installers are the first thing a visitor runs, and no test reads them.
+      - name: The shell scripts parse and lint clean
+        if: ${{ !cancelled() }}
+        run: |
+          for f in scripts/*.sh; do sh -n "$f"; done
+          shellcheck scripts/*.sh
+
+      # Parsed only, never run. The Windows job below does the same under Windows PowerShell 5.1.
+      - name: The PowerShell scripts parse (PowerShell 7)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/parse-ps1.ps1
+
+  test:
+    name: Clippy and tests (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The one system a run by hand asks for, else all three. While the repository is
+        # private, a push or a pull request leaves macOS out (see the top of this file).
+        system: ${{ fromJSON((inputs.only || 'all') != 'all' && format('["{0}"]', inputs.only) || (github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag') && '["windows", "linux"]' || '["windows", "linux", "macos"]') }}
+    # macOS is an Apple silicon runner: its GPU (Metal) draws the UI tests. The macOS job is new
+    # and has passed once. It is not allowed to fail quietly.
+    runs-on: ${{ matrix.system == 'windows' && 'windows-2025' || matrix.system == 'linux' && 'ubuntu-24.04' || 'macos-26' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # libclang: the camera crate makes its Linux bindings with it while building.
+      # mesa-vulkan-drivers: a GPU in software (lavapipe). The UI tests draw the real app
+      # offscreen and need a GPU; a runner has none. No display is needed.
+      # Fonts: a few tests read the system's fonts.
+      - name: Install what the Linux build and tests need
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
+
+      # "irm ... | iex" on a fresh Windows runs install.ps1 under Windows PowerShell 5.1, which
+      # does not know the newer syntax. Parsed only, never run.
+      - name: The PowerShell scripts parse (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./.github/parse-ps1.ps1
+
+      - uses: ./.github/actions/prepare
+        with:
+          components: clippy
+          cache-key: ci-${{ matrix.system }}
 
       - name: Clippy
+        id: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      # The tests are built and run when clippy has something to say too, so one run shows both.
+      - name: Build the tests
+        id: build-tests
+        if: ${{ !cancelled() && steps.clippy.conclusion != 'skipped' }}
+        run: cargo test --workspace --locked --no-run
+
+      # Everything is built by now, so this step is the tests alone and takes a few minutes.
+      # A test that hangs is stopped here, long before the limit of the whole job.
       - name: Tests
-        run: cargo test --workspace --locked
+        if: ${{ !cancelled() && steps.build-tests.conclusion == 'success' }}
+        timeout-minutes: 30
+        # --no-fail-fast: one run shows every crate that fails, not only the first.
+        run: cargo test --workspace --locked --no-fail-fast

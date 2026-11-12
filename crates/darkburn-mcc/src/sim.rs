@@ -870,7 +870,7 @@ impl SimLink {
         }
         let params = crate::command::MachineParams::default();
         let do_word = self.gate.last_do_word.unwrap_or(0);
-        let Ok(seq) = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &[5, 6, 9]) else { return 0 };
+        let seq = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &[5, 6, 9]);
         seq.iter().filter(|w| self.write(w).is_ok()).count()
     }
 
@@ -991,9 +991,12 @@ mod tests {
         l.write(&command::home_axis(1).unwrap()).unwrap();
         l.advance(ms(400));
         l.gate.homed = true;
+        // the gate wants a status no older than a second before anything moves
+        l.poll_status().unwrap();
         l.write(&command::go_to(430.178, 174.097, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!((l.sim.axis_position(0), l.sim.axis_position(1)), (430_178, 174_097));
+        l.poll_status().unwrap();
         l.write(&command::move_axis_absolute(0, 100.0, &p()).unwrap()).unwrap();
         l.advance(ms(400));
         assert_eq!(l.sim.axis_position(0), 100_000);
@@ -1065,8 +1068,12 @@ mod tests {
         assert_eq!(l.sim.ticks_consumed(), 100);
         assert_eq!(l.sim.pulse_position(), (200, -100));
         assert_eq!(l.sim.fifo_depth(), 150);
-        // and the busy rule while streaming
+        // the gate keeps a jog away from a running stream
+        assert_eq!(l.write(&command::jog_step(0, 1.0, &p()).unwrap()), Err(LinkError::Refused(GateRefusal::StreamRunning)));
+        // and the card's own busy rule while streaming, with the gate looking away
+        l.gate.fifo_running = false;
         assert_eq!(l.write(&command::jog_step(0, 1.0, &p()).unwrap()), Err(LinkError::Card { func: 0x40, code: EXC_BUSY }));
+        l.gate.fifo_running = true;
         l.advance(Duration::from_micros(250 * 200));
         assert_eq!(l.sim.ticks_consumed(), 250);
         assert_eq!(l.sim.pulse_position(), (500, -250));
@@ -1241,6 +1248,30 @@ mod tests {
         assert!(!l.sim.commands().iter().any(|c| c.as_slice() == [101]));
         // pwm off reaches the status words
         assert_eq!(l.sim.reg(Status::PwmDuty.addr()), 0);
+    }
+
+    #[test]
+    fn an_emergency_stop_with_the_gas_on_still_sends_every_stop_step() {
+        let mut l = armed();
+        // Gas valve on (port 2), as during a cut.
+        l.write(&command::SafeWrite::try_from_raw(0x65, &[9999, 2, 0b10, 0b10]).unwrap()).unwrap();
+        assert_eq!(l.poll_status().unwrap().word(Status::Do) & 0xFFFF, 0b10);
+        // The card reports an E-stop: the gate latches, disarms and the stop sequence goes out.
+        l.sim.inject_alarm(Some(1 << 30), None);
+        let before = l.sim.commands().len();
+        l.poll_status().unwrap();
+        assert!(l.gate.arming.estop_latched());
+        let sent: Vec<Vec<u32>> = l.sim.commands()[before..].to_vec();
+        // Whatever form it takes, the laser ports 5, 6 and 9 are told to switch off.
+        for port in [5u32, 6, 9] {
+            let bit = 1 << (port - 1);
+            assert!(
+                sent.iter().any(|c| c.len() == 4 && c[0] == 9999 && c[1] == 2 && c[2] & bit != 0 && c[3] & bit == 0),
+                "nothing switched laser port {port} off: {sent:?}"
+            );
+        }
+        // And the gas stays as it was: a stop never switches anything on.
+        assert_eq!(l.sim.outputs() & 0b10, 0b10);
     }
 
     #[test]

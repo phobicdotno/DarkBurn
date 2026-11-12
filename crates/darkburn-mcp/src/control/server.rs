@@ -3,10 +3,10 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -59,7 +59,17 @@ struct Job {
     method: String,
     params: Value,
     reply: SyncSender<Result<Value, CommandError>>,
+    /// [`QUEUED`], then either [`RUNNING`] (the UI thread took it) or [`ABANDONED`] (its
+    /// connection gave up first). Whoever changes it from `QUEUED` wins, so a request the client
+    /// was told had failed can never run afterwards.
+    state: Arc<AtomicU8>,
 }
+
+const QUEUED: u8 = 0;
+const RUNNING: u8 = 1;
+const ABANDONED: u8 = 2;
+/// How often a connection that waits for the UI thread looks whether its client is still there.
+const WATCH: Duration = Duration::from_millis(100);
 
 pub struct ControlServer {
     addr: SocketAddr,
@@ -132,6 +142,10 @@ impl ControlServer {
         while n < max {
             match self.rx.try_recv() {
                 Ok(job) => {
+                    if job.state.compare_exchange(QUEUED, RUNNING, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+                        // Its client timed out or went away while it waited: it is not run.
+                        continue;
+                    }
                     let r = dispatch(backend, &job.method, job.params);
                     let _ = job.reply.send(r);
                     n += 1;
@@ -191,7 +205,8 @@ fn accept_loop(
                 let a2 = active.clone();
                 let spawned = std::thread::Builder::new().name("darkburn-control-conn".into()).spawn(move || {
                     connection(stream, tx, &token, &refused, &cfg);
-                    // Close the socket for real: the server's list holds a second handle to it.
+                    // The connection has ended and closed its side in an orderly way; drop the
+                    // server's second handle to the socket so it is really closed.
                     let mut list = my_streams.lock().unwrap_or_else(|e| e.into_inner());
                     if let Some(i) = list.iter().position(|(id, _)| *id == my_id) {
                         let (_, s) = list.swap_remove(i);
@@ -209,10 +224,56 @@ fn accept_loop(
     }
 }
 
+/// How long a closing connection may stay quiet before the server stops waiting for the client.
+const LINGER_IDLE: Duration = Duration::from_millis(250);
+/// The longest a closing connection is kept, however busy the client still is.
+const LINGER_MAX: Duration = Duration::from_secs(2);
+
 fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
+    serve(&mut stream, tx, token, refused, cfg);
+    linger_close(stream);
+}
+
+/// Closes a connection so that the last reply arrives.
+///
+/// Closing a socket that still holds unread input makes the system send a reset instead of a
+/// normal end of stream, and a reset can throw away a reply the client has not read yet (it
+/// does on Windows). So: end our side of the stream, which sends everything written so far,
+/// then read and discard what the client has sent until it closes too or goes quiet, and only
+/// then let go of the socket.
+fn linger_close(mut stream: TcpStream) {
+    use std::io::Read;
+    if stream.shutdown(std::net::Shutdown::Write).is_err() {
+        return;
+    }
+    let _ = stream.set_read_timeout(Some(LINGER_IDLE));
+    let end = Instant::now() + LINGER_MAX;
+    let mut sink = [0u8; 16 * 1024];
+    // Ends on end of stream, on a quiet client (the read times out), on any error and at the
+    // overall limit, so a client that never stops sending cannot hold the connection open.
+    while Instant::now() < end && matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+}
+
+/// Whether the client closed or lost its connection (nothing is read from it).
+fn peer_gone(stream: &TcpStream) -> bool {
+    use std::io::ErrorKind::{Interrupted, TimedOut, WouldBlock};
+    if stream.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let mut byte = [0u8; 1];
+    let gone = match stream.peek(&mut byte) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => !matches!(e.kind(), WouldBlock | TimedOut | Interrupted),
+    };
+    let _ = stream.set_nonblocking(false);
+    gone
+}
+
+fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
     // Handshake: the first frame is a small hello with the token, within five seconds.
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let hello = read_frame(&mut stream, HELLO_MAX);
+    let hello = read_frame(stream, HELLO_MAX);
     let ok = match hello {
         Ok(Some(v)) => v["hello"]["token"].as_str().is_some_and(|t| ct_eq(t.as_bytes(), token.as_bytes())),
         _ => false,
@@ -222,24 +283,22 @@ fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &Ato
         // A pause makes guessing slow; the reply says nothing about which part was wrong.
         std::thread::sleep(Duration::from_millis(100));
         let _ = write_frame(
-            &mut stream,
+            stream,
             &json!({"ok": false, "error": "authentication failed: missing or wrong token (read it from DarkBurn's control.json)"}),
         );
-        let _ = stream.shutdown(std::net::Shutdown::Both);
         return;
     }
-    if write_frame(&mut stream, &json!({"ok": true, "server": "DarkBurn", "version": PROTOCOL})).is_err() {
+    if write_frame(stream, &json!({"ok": true, "server": "DarkBurn", "version": PROTOCOL})).is_err() {
         return;
     }
     let _ = stream.set_read_timeout(None);
     loop {
-        let req = match read_frame(&mut stream, cfg.max_frame) {
+        let req = match read_frame(stream, cfg.max_frame) {
             Ok(Some(v)) => v,
             Ok(None) => return,
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::InvalidData {
-                    let _ =
-                        write_frame(&mut stream, &json!({"id": null, "ok": false, "error": {"code": "invalid_params", "message": e.to_string()}}));
+                    let _ = write_frame(stream, &json!({"id": null, "ok": false, "error": {"code": "invalid_params", "message": e.to_string()}}));
                 }
                 return;
             }
@@ -249,15 +308,40 @@ fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &Ato
             None => Err(CommandError::invalid("request has no `method`")),
             Some(m) => {
                 let (rtx, rrx) = mpsc::sync_channel(1);
-                if tx.send(Job { method: m.to_string(), params: req.get("params").cloned().unwrap_or(Value::Null), reply: rtx }).is_err() {
+                let state = Arc::new(AtomicU8::new(QUEUED));
+                let job = Job { method: m.to_string(), params: req.get("params").cloned().unwrap_or(Value::Null), reply: rtx, state: state.clone() };
+                if tx.send(job).is_err() {
                     return;
                 }
                 if let Some(w) = &cfg.waker {
                     w();
                 }
-                match rrx.recv_timeout(cfg.request_timeout) {
-                    Ok(r) => r,
-                    Err(_) => Err(CommandError::new(ErrorCode::Timeout, "DarkBurn did not answer in time (the app may be frozen or closed)")),
+                let deadline = Instant::now() + cfg.request_timeout;
+                loop {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    match rrx.recv_timeout(WATCH.min(left)) {
+                        Ok(r) => break r,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    }
+                    let gone = peer_gone(stream);
+                    if !gone && Instant::now() < deadline {
+                        continue;
+                    }
+                    if state.compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                        if gone {
+                            return;
+                        }
+                        break Err(CommandError::new(
+                            ErrorCode::Timeout,
+                            "DarkBurn did not answer in time (the app may be frozen or closed). The request was dropped: it did not run and will not run later.",
+                        ));
+                    }
+                    // The UI thread is running it at this moment: what it answers is what happened.
+                    match rrx.recv() {
+                        Ok(r) if !gone => break r,
+                        _ => return,
+                    }
                 }
             }
         };
@@ -265,7 +349,7 @@ fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &Ato
             Ok(v) => json!({"id": id, "ok": true, "result": v}),
             Err(e) => json!({"id": id, "ok": false, "error": e}),
         };
-        if write_frame(&mut stream, &frame).is_err() {
+        if write_frame(stream, &frame).is_err() {
             return;
         }
     }

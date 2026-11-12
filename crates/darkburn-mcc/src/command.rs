@@ -603,21 +603,33 @@ pub fn fifo_packed_frame(frame_id: u32, frame: &fifo::PackedFrame) -> Result<Saf
 }
 
 /// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then outputs off. The follower stop
-/// `[101]` of the vendor sequence is deliberately absent (project rule).
-pub fn stop_sequence(
-    params: &MachineParams,
-    fifo_running: bool,
-    v_last_word: i64,
-    current_do_word: u32,
-    laser_ports: &[u32],
-) -> Result<Vec<SafeWrite>, Forbidden> {
-    let mut seq = vec![if fifo_running { fifo_stop()? } else { stop_all(v_last_word, params)? }];
-    seq.push(pwm_off(1234, MISC_PWM)?);
-    seq.push(pwm_off(1234, MISC_PWM_5V)?);
-    seq.push(da_zero(1)?);
-    seq.push(da_zero(2)?);
-    seq.push(do_bulk_off(current_do_word, laser_ports)?);
-    Ok(seq)
+/// `[101]` of the vendor sequence is deliberately absent (project rule). Every write in it has
+/// [`Policy::Always`].
+///
+/// A stop is never held back by one step: a step that cannot be built (a port number the card
+/// does not have, say) is left out and every other step is still returned. If the motion stop
+/// itself cannot be built, the card's plain stop-all takes its place.
+pub fn stop_sequence(params: &MachineParams, fifo_running: bool, v_last_word: i64, current_do_word: u32, laser_ports: &[u32]) -> Vec<SafeWrite> {
+    let mut seq = Vec::new();
+    let motion = if fifo_running { fifo_stop() } else { stop_all(v_last_word, params) };
+    seq.extend(motion.or_else(|_| stop_all_no_decel()));
+    seq.extend(pwm_off(1234, MISC_PWM));
+    seq.extend(pwm_off(1234, MISC_PWM_5V));
+    seq.extend(da_zero(1));
+    seq.extend(da_zero(2));
+    // Every step of a stop must be one the gate lets through in any arming state: after an alarm
+    // or an E-stop the gate is disarmed. The bulk write is that only while no lamp or gas port
+    // stays on in it (keeping one on counts as a motion write). With one on, the laser ports are
+    // switched off one by one instead, which touches no other port and needs no arming.
+    match do_bulk_off(current_do_word, laser_ports) {
+        Ok(w) if w.policy() == Policy::Always => seq.push(w),
+        _ => {
+            for &port in laser_ports {
+                seq.extend(do_off(port));
+            }
+        }
+    }
+    seq
 }
 
 #[cfg(test)]
@@ -715,12 +727,36 @@ mod tests {
 
     #[test]
     fn stop_sequence_has_no_follower_stop() {
-        let seq = stop_sequence(&p(), false, 0, 0b1_0001_0000, &[5, 9]).unwrap();
+        let seq = stop_sequence(&p(), false, 0, 0b1_0001_0000, &[5, 9]);
         assert_eq!(seq[0].name(), "stop_all");
         assert!(seq.iter().all(|w| w.policy() == Policy::Always));
         assert!(seq.iter().all(|w| w.words() != [101]));
-        let seq = stop_sequence(&p(), true, 0, 0, &[5, 9]).unwrap();
+        let seq = stop_sequence(&p(), true, 0, 0, &[5, 9]);
         assert_eq!(seq[0].name(), "fifo_stop");
+        // With the lamp (1) and the gas (2) on as well, every step is still one the gate lets
+        // through in any arming state, and the laser ports are still switched off.
+        let seq = stop_sequence(&p(), true, 0, 0b1_0001_0011, &[5, 9]);
+        assert!(seq.iter().all(|w| w.policy() == Policy::Always), "{:?}", seq.iter().map(|w| (w.name(), w.policy())).collect::<Vec<_>>());
+        for bit in [1u32 << 4, 1 << 8] {
+            assert!(seq.iter().any(|w| matches!(w.words(), [9999, 2, mask, value] if mask & bit != 0 && value & bit == 0)));
+        }
+    }
+
+    #[test]
+    fn a_stop_still_sends_every_step_it_can_build() {
+        // The lamp is on, so the laser ports are switched off one by one, and one of the ports
+        // named is not a port of the card: every other step must still be there.
+        let seq = stop_sequence(&p(), false, 0, 0b1_0001_0011, &[5, 11, 9]);
+        assert_eq!(seq[0].name(), "stop_all");
+        assert_eq!(seq.iter().filter(|w| w.name() == "pwm_off").count(), 2);
+        assert_eq!(seq.iter().filter(|w| w.name() == "da_zero").count(), 2);
+        for bit in [1u32 << 4, 1 << 8] {
+            assert!(seq.iter().any(|w| matches!(w.words(), [9999, 2, mask, 0] if *mask == bit)), "port bit {bit:#x} is switched off");
+        }
+        assert!(seq.iter().all(|w| w.policy() == Policy::Always));
+        // A stop is never empty.
+        assert!(!stop_sequence(&p(), true, 0, 0, &[]).is_empty());
+        assert!(!stop_sequence(&p(), false, i64::MAX, u32::MAX, &[0, 99]).is_empty());
     }
 
     #[test]

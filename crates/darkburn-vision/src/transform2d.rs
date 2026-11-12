@@ -1,6 +1,5 @@
 //! Least-squares 2D transform fits: similarity (Umeyama, 1991), full affine.
 
-use crate::linalg::{Matrix, solve};
 use kurbo::{Affine, Point};
 
 /// Rotation (radians, counter-clockwise), uniform scale and translation.
@@ -52,6 +51,9 @@ pub fn fit_similarity(src: &[Point], dst: &[Point], allow_scale: bool) -> Option
     let (s, c) = angle.sin_cos();
     let tx = mb.x - scale * (c * ma.x - s * ma.y);
     let ty = mb.y - scale * (s * ma.x + c * ma.y);
+    if !(angle.is_finite() && tx.is_finite() && ty.is_finite()) {
+        return None;
+    }
     Some(Similarity { scale, angle, translation: (tx, ty) })
 }
 
@@ -60,18 +62,32 @@ pub fn fit_affine(src: &[Point], dst: &[Point]) -> Option<Affine> {
     if src.len() != dst.len() || src.len() < 3 {
         return None;
     }
-    let mut a = Matrix::zeros(src.len(), 3);
-    for (i, p) in src.iter().enumerate() {
-        a.set(i, 0, p.x);
-        a.set(i, 1, p.y);
-        a.set(i, 2, 1.0);
+    // Least squares about the centroids: the linear part from the spread of the points, then the shift.
+    let (ma, mb) = (centroid(src), centroid(dst));
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    let (mut bxx, mut bxy, mut byx, mut byy) = (0.0, 0.0, 0.0, 0.0);
+    for (p, q) in src.iter().zip(dst) {
+        let (x, y) = (p.x - ma.x, p.y - ma.y);
+        let (u, v) = (q.x - mb.x, q.y - mb.y);
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+        bxx += u * x;
+        bxy += u * y;
+        byx += v * x;
+        byy += v * y;
     }
-    let g = a.gram();
-    let bx: Vec<f64> = dst.iter().map(|p| p.x).collect();
-    let by: Vec<f64> = dst.iter().map(|p| p.y).collect();
-    let row_x = solve(&g, &a.t_mul_vec(&bx))?;
-    let row_y = solve(&g, &a.t_mul_vec(&by))?;
-    Some(Affine::new([row_x[0], row_y[0], row_x[1], row_y[1], row_x[2], row_y[2]]))
+    // Points on one line (or all the same) have no area: the spread matrix cannot be inverted.
+    let det = sxx * syy - sxy * sxy;
+    let spread = sxx + syy;
+    if !(det > 1e-12 * spread * spread) {
+        return None;
+    }
+    let (a, c) = ((bxx * syy - bxy * sxy) / det, (bxy * sxx - bxx * sxy) / det);
+    let (b, d) = ((byx * syy - byy * sxy) / det, (byy * sxx - byx * sxy) / det);
+    let (tx, ty) = (mb.x - a * ma.x - c * ma.y, mb.y - b * ma.x - d * ma.y);
+    let out = [a, b, c, d, tx, ty];
+    out.iter().all(|v| v.is_finite()).then(|| Affine::new(out))
 }
 
 #[cfg(test)]
@@ -116,6 +132,42 @@ mod tests {
         assert!(fit_affine(&src[..2], &dst[..2]).is_none());
         let line = [Point::new(0.0, 0.0), Point::new(1.0, 1.0), Point::new(2.0, 2.0)];
         assert!(fit_affine(&line, &line).is_none());
+    }
+
+    #[test]
+    fn points_on_a_line_give_no_affine_whatever_their_values() {
+        // not whole numbers, so the sums are not exactly singular
+        let line = [Point::new(0.1, 0.3), Point::new(0.2, 0.6), Point::new(0.7, 2.1), Point::new(1.3, 3.9)];
+        let dst = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0), Point::new(0.0, 10.0)];
+        assert!(fit_affine(&line, &dst).is_none());
+        let far = [Point::new(1000.1, 2000.3), Point::new(1100.2, 2100.4), Point::new(1250.35, 2250.55)];
+        assert!(fit_affine(&far, &dst[..3]).is_none());
+        // repeated points: only two different ones
+        let two = [Point::new(3.3, 1.1), Point::new(3.3, 1.1), Point::new(7.7, 4.9)];
+        assert!(fit_affine(&two, &dst[..3]).is_none());
+    }
+
+    #[test]
+    fn affine_far_from_the_origin_is_still_exact() {
+        let truth = Affine::new([0.25, 0.01, -0.02, -0.25, 12.0, 300.0]);
+        let src = [Point::new(5000.0, 4000.0), Point::new(5100.0, 4003.0), Point::new(5098.0, 4060.0)];
+        let dst: Vec<Point> = src.iter().map(|p| truth * *p).collect();
+        let f = fit_affine(&src, &dst).unwrap();
+        for (p, d) in src.iter().zip(&dst) {
+            assert!((f * *p - *d).hypot() < 1e-6, "{:?}", f * *p - *d);
+        }
+    }
+
+    #[test]
+    fn values_that_are_not_numbers_give_no_fit() {
+        let src = [Point::new(0.0, 0.0), Point::new(f64::NAN, 0.0), Point::new(5.0, 5.0)];
+        let dst = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(5.0, 5.0)];
+        for scale in [true, false] {
+            assert!(fit_similarity(&src, &dst, scale).is_none());
+            assert!(fit_similarity(&dst, &src, scale).is_none());
+        }
+        assert!(fit_affine(&src, &dst).is_none());
+        assert!(fit_affine(&dst, &src).is_none());
     }
 
     #[test]

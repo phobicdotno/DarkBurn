@@ -586,6 +586,35 @@ mod tests {
     }
 
     #[test]
+    fn targets_on_one_line_or_clicked_twice_are_refused() {
+        // four marks along the front edge of the bed, clicked along one row of the picture
+        let line: Vec<AlignmentTarget> = (0..4)
+            .map(|i| AlignmentTarget { image: Point::new(100.0 + 300.0 * i as f64, 600.0), bed: Point::new(20.0 + 100.0 * i as f64, 20.0) })
+            .collect();
+        assert_eq!(CameraAlignment::solve(&line, ImageOrientation::default(), (1280, 720)), Err(AlignError::Degenerate));
+        // the same spot clicked for two different targets
+        let mut twice = targets(4);
+        twice[3].image = twice[2].image;
+        assert_eq!(CameraAlignment::solve(&twice, ImageOrientation::default(), (1280, 720)), Err(AlignError::Degenerate));
+        // three targets on a line (the affine case)
+        assert_eq!(CameraAlignment::solve(&line[..3], ImageOrientation::default(), (1280, 720)), Err(AlignError::Degenerate));
+    }
+
+    #[test]
+    fn alignment_maps_picture_to_bed_and_back() {
+        // 0.5 mm per pixel, picture Y down, bed Y up, picture corner (0, 599) at the bed origin
+        let t: Vec<AlignmentTarget> = [(0.0, 599.0), (799.0, 599.0), (799.0, 0.0), (0.0, 0.0)]
+            .iter()
+            .map(|&(x, y)| AlignmentTarget { image: Point::new(x, y), bed: Point::new(x * 0.5, (599.0 - y) * 0.5) })
+            .collect();
+        let al = CameraAlignment::solve(&t, ImageOrientation::default(), (800, 600)).unwrap();
+        let bed = al.image_to_bed(Point::new(200.0, 499.0)).unwrap();
+        assert!((bed - Point::new(100.0, 50.0)).hypot() < 1e-6, "{bed:?}");
+        let px = al.bed_to_image(Point::new(100.0, 50.0)).unwrap();
+        assert!((px - Point::new(200.0, 499.0)).hypot() < 1e-6, "{px:?}");
+    }
+
+    #[test]
     fn alignment_with_four_and_five_targets() {
         for n in [4, 5] {
             let al = CameraAlignment::solve(&targets(n), ImageOrientation::default(), (1280, 720)).unwrap();

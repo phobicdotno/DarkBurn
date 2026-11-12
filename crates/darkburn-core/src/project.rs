@@ -121,7 +121,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
             px_height: d.px_height,
         })
         .collect();
-    let json = ProjectJson {
+    let mut json = ProjectJson {
         format: FORMAT_NAME.into(),
         version: FORMAT_VERSION,
         app_version: app_version.into(),
@@ -136,7 +136,21 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         variables: doc.variables.clone(),
         vision_settings: doc.vision_settings.clone(),
     };
-    let text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    let mut text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    // A number that is not a number is written as `null`, and a file with one never opens again.
+    // So what is written is read back first; shapes that do not survive that are left out (they
+    // cannot be drawn or burned either), and anything else that stops it refuses the save.
+    if serde_json::from_slice::<ProjectJson>(&text).is_err() {
+        json.shapes = json.shapes.iter().filter_map(readable).collect();
+        for l in &mut json.layers {
+            for s in &mut l.settings {
+                s.sanitise();
+            }
+        }
+        text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+        serde_json::from_slice::<ProjectJson>(&text)
+            .map_err(|e| ProjectError::Damaged(format!("the project holds a value that cannot be written ({e})")))?;
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
@@ -154,11 +168,48 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
     Ok(zip.finish().map_err(zerr)?.into_inner())
 }
 
+/// `shape` as it can be written and read back: a group keeps its readable children, anything
+/// else that does not come back from its own JSON (a coordinate that is not a number) is `None`.
+fn readable(shape: &Shape) -> Option<Shape> {
+    let round_trips = |s: &Shape| serde_json::to_vec(s).ok().is_some_and(|t| serde_json::from_slice::<Shape>(&t).is_ok());
+    if round_trips(shape) {
+        return Some(shape.clone());
+    }
+    if let crate::shape::ShapeKind::Group { children } = &shape.kind {
+        let kept: Vec<Shape> = children.iter().filter_map(readable).collect();
+        if !kept.is_empty() {
+            let mut group = shape.clone();
+            group.kind = crate::shape::ShapeKind::Group { children: kept };
+            return round_trips(&group).then_some(group);
+        }
+    }
+    None
+}
+
+/// The most a project may unpack to (its description and every image together). A file's
+/// packed size says nothing about this: a few kilobytes can unpack to gigabytes.
+pub const MAX_UNPACKED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Read a project from its file bytes.
 pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
+    load_within(bytes, MAX_UNPACKED_BYTES)
+}
+
+/// Read one zip entry, taking its size off `budget`.
+fn read_entry(mut f: impl Read, budget: &mut u64) -> Result<Vec<u8>, ProjectError> {
+    let mut data = Vec::new();
+    let n = f.by_ref().take(*budget + 1).read_to_end(&mut data)? as u64;
+    if n > *budget {
+        return Err(ProjectError::Damaged("it unpacks to more than a project can hold".into()));
+    }
+    *budget -= n;
+    Ok(data)
+}
+
+fn load_within(bytes: &[u8], max_unpacked: u64) -> Result<Loaded, ProjectError> {
+    let mut budget = max_unpacked;
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| ProjectError::NotAProject(e.to_string()))?;
-    let mut text = Vec::new();
-    zip.by_name("project.json").map_err(|_| ProjectError::NotAProject("no project.json".into()))?.read_to_end(&mut text)?;
+    let text = read_entry(zip.by_name("project.json").map_err(|_| ProjectError::NotAProject("no project.json".into()))?, &mut budget)?;
     let json: ProjectJson = serde_json::from_slice(&text).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     if json.format != FORMAT_NAME {
         return Err(ProjectError::NotAProject(format!("format is {:?}", json.format)));
@@ -191,21 +242,52 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, ProjectError> {
     }
     doc.layer_order = order;
     for entry in json.images {
-        let mut data = Vec::new();
-        let Ok(mut f) = zip.by_name(&entry.file) else { continue };
-        f.read_to_end(&mut data)?;
+        let Ok(f) = zip.by_name(&entry.file) else { continue };
+        let data = read_entry(f, &mut budget)?;
         doc.images.insert(
             entry.key,
             Arc::new(ImageData { format: entry.format, bytes: Arc::from(data), px_width: entry.px_width, px_height: entry.px_height }),
         );
     }
-    doc.shapes = json.shapes.into_iter().map(Arc::new).collect();
-    doc.set_next_id(json.next_id);
-    let thumbnail = zip.by_name("thumbnail.png").ok().and_then(|mut f| {
-        let mut v = Vec::new();
-        f.read_to_end(&mut v).ok().map(|_| v)
-    });
+    let mut shapes = json.shapes;
+    // A damaged or hand-edited file: layers that do not exist, ids used twice, missing (0 stands for
+    // "no shape") or too large to count on from.
+    let mut ids = Vec::new();
+    for s in &mut shapes {
+        tidy(s, &mut ids);
+    }
+    let count = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    let renumber = ids.len() != count || ids.first() == Some(&0) || ids.last().is_some_and(|id| *id >= MAX_ID);
+    if renumber {
+        for s in &mut shapes {
+            doc.renumber(s);
+        }
+    }
+    doc.shapes = shapes.into_iter().map(Arc::new).collect();
+    doc.set_next_id(if renumber { 0 } else { json.next_id.min(MAX_ID) });
+    let thumbnail = zip.by_name("thumbnail.png").ok().and_then(|f| read_entry(f, &mut budget).ok());
     Ok(Loaded { doc, newer_version: json.version > FORMAT_VERSION, app_version: json.app_version, thumbnail })
+}
+
+/// Ids at or above this are not trusted (JSON numbers stop being exact there).
+const MAX_ID: u64 = 1 << 53;
+
+/// Put `s` and its children on layers that exist, and collect their ids.
+fn tidy(s: &mut Shape, ids: &mut Vec<u64>) {
+    s.layer = s.layer.min(LAYER_COUNT - 1);
+    ids.push(s.id.0);
+    if let crate::shape::ShapeKind::Group { children } = &mut s.kind {
+        for c in children {
+            tidy(c, ids);
+        }
+    }
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            c.layer = c.layer.min(LAYER_COUNT - 1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -245,26 +327,99 @@ mod tests {
     }
 
     #[test]
+    fn a_coordinate_that_is_not_a_number_does_not_make_the_saved_project_unopenable() {
+        let mut d = Document::new();
+        let good = d.add(Shape::rect(Rect::new(0.0, 0.0, 20.0, 10.0), 0.0, 3));
+        // A transform, a size and a path point that are not numbers.
+        d.add(Shape::new(ShapeKind::Rect { width: 5.0, height: 5.0, radius: 0.0 }, Affine::new([1.0, 0.0, 0.0, 1.0, f64::NAN, 0.0]), 1));
+        d.add(Shape::new(ShapeKind::Ellipse { rx: f64::NAN, ry: 2.0 }, Affine::IDENTITY, 1));
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((f64::INFINITY, 1.0));
+        let kids = vec![Shape::path(p, 2), Shape::rect(Rect::new(2.0, 0.0, 3.0, 1.0), 0.0, 2)];
+        let group = d.add(Shape::new(ShapeKind::Group { children: kids }, Affine::IDENTITY, 2));
+        let bytes = save(&d, "test", None).expect("the save goes through");
+        let back = load(&bytes).expect("and the file opens again").doc;
+        assert_eq!(back.len(), 2, "the rectangle and the group");
+        assert_eq!(back.get(good).unwrap().bbox(), Rect::new(0.0, 0.0, 20.0, 10.0));
+        match &back.get(group).unwrap().kind {
+            ShapeKind::Group { children } => assert_eq!(children.len(), 1, "the broken path is left out of the group"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn start_and_direction_overrides_round_trip_and_old_files_load() {
         use crate::shape::CutDirection;
         let mut d = Document::new();
         let mut r = Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1);
         r.start_point = Some([5.0, 0.0]);
         r.direction = CutDirection::Clockwise;
+        r.extra_start_points = vec![[7.0, 10.0], [0.0, 3.0]];
         r.tabs = vec![[1.0, 2.0]];
         let id = d.add(r);
+        // Inside a group too.
+        let mut child = Shape::rect(Rect::new(0.0, 0.0, 4.0, 4.0), 0.0, 2);
+        child.start_point = Some([2.0, 0.0]);
+        child.direction = CutDirection::Reversed;
+        child.tabs = vec![[-2.0, 0.0], [2.0, 1.0]];
+        let gid = d.add(Shape::new(ShapeKind::Group { children: vec![child.clone()] }, Affine::translate((30.0, 0.0)), 2));
         let bytes = save(&d, "t", None).unwrap();
         let back = load(&bytes).unwrap().doc;
         let s = back.get(id).unwrap();
         assert_eq!(s.start_point, Some([5.0, 0.0]));
+        assert_eq!(s.extra_start_points, vec![[7.0, 10.0], [0.0, 3.0]]);
+        assert_eq!(s.start_points().collect::<Vec<_>>(), vec![[5.0, 0.0], [7.0, 10.0], [0.0, 3.0]]);
         assert_eq!(s.direction, CutDirection::Clockwise);
         assert_eq!(s.tabs, vec![[1.0, 2.0]]);
+        assert_eq!(back.get(id), d.get(id));
+        let ShapeKind::Group { children } = &back.get(gid).unwrap().kind else { panic!("a group") };
+        assert_eq!(children[0], Shape { id: children[0].id, ..child });
         // A version 2 file has neither field and opens with defaults.
         let mut d2 = Document::new();
         let id2 = d2.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 1));
         let b2 = save(&d2, "t", None).unwrap();
         let s2 = load(&b2).unwrap().doc;
         assert!(s2.get(id2).unwrap().start_point.is_none() && s2.get(id2).unwrap().direction == CutDirection::Auto);
+    }
+
+    /// A project written before shapes had tabs, start points or a cut direction (format
+    /// version 2) still opens, and a shape without them is written exactly as it was then.
+    #[test]
+    fn a_project_from_before_start_points_and_tabs_opens() {
+        let old = r#"{
+          "format": "darkburn-project", "version": 2, "app_version": "0.1.0", "next_id": 3,
+          "shapes": [
+            { "id": 1, "name": "", "kind": { "type": "rect", "width": 20.0, "height": 10.0, "radius": 0.0 },
+              "transform": [1.0, 0.0, 0.0, 1.0, 15.0, 25.0], "layer": 1, "locked": false, "priority": 0, "power_scale": 100.0 },
+            { "id": 2, "kind": { "type": "group", "children": [
+                { "id": 3, "kind": { "type": "ellipse", "rx": 4.0, "ry": 4.0 }, "transform": [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], "layer": 2 } ] },
+              "transform": [1.0, 0.0, 0.0, 1.0, 50.0, 50.0], "layer": 2 }
+          ]
+        }"#;
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file("project.json", zip::write::SimpleFileOptions::default()).unwrap();
+        w.write_all(old.as_bytes()).unwrap();
+        let loaded = load(&w.finish().unwrap().into_inner()).unwrap();
+        assert!(!loaded.newer_version);
+        let doc = loaded.doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter().flat_map(|s| s.leaves()) {
+            assert!(s.tabs.is_empty() && s.start_point.is_none() && s.extra_start_points.is_empty());
+            assert_eq!(s.direction, crate::shape::CutDirection::Auto);
+        }
+        let r = doc.get(crate::ShapeId(1)).unwrap();
+        assert_eq!(r.bbox(), Rect::new(5.0, 20.0, 25.0, 30.0));
+        // Saving it again writes none of the new fields.
+        let again = save(&doc, "t", None).unwrap();
+        let mut zip = zip::ZipArchive::new(Cursor::new(&again[..])).unwrap();
+        let mut text = String::new();
+        zip.by_name("project.json").unwrap().read_to_string(&mut text).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let rect = json["shapes"][0].as_object().unwrap();
+        for key in ["tabs", "start_point", "extra_start_points", "direction"] {
+            assert!(!rect.contains_key(key), "{key} is only written when set");
+        }
     }
 
     #[test]
@@ -312,5 +467,67 @@ mod tests {
         assert!(loaded.newer_version);
         assert_eq!(loaded.doc.len(), d.len());
         assert!(matches!(load(b"not a zip"), Err(ProjectError::NotAProject(_))));
+    }
+
+    fn zipped(json: &str) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        w.start_file("project.json", zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated)).unwrap();
+        w.write_all(json.as_bytes()).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    /// A hand-edited or damaged file with the largest possible shape id, a layer that does not
+    /// exist and duplicate ids opens (or is refused) without a crash, and new shapes get ids.
+    #[test]
+    fn odd_ids_and_layers_in_a_file_do_not_crash() {
+        let json = r#"{ "format": "darkburn-project", "version": 3, "next_id": 18446744073709551615,
+          "shapes": [
+            { "id": 18446744073709551615, "kind": { "type": "rect", "width": 2.0, "height": 1.0, "radius": 0.0 }, "layer": 99 },
+            { "id": 1, "kind": { "type": "group", "children": [ { "id": 1, "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 4000000000 } ] } }
+          ] }"#;
+        let mut doc = load(&zipped(json)).unwrap().doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter().flat_map(|s| s.leaves()) {
+            assert!(s.layer < LAYER_COUNT, "layer {} is put on a real layer", s.layer);
+        }
+        assert_eq!(doc.used_layers().len(), 1);
+        let new = doc.add(Shape::rect(kurbo::Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 0));
+        assert!(doc.get(new).is_some());
+        save(&doc, "t", None).unwrap();
+    }
+
+    /// A shape without an id in the file (a hand-edited or damaged one) does not come in with id
+    /// 0, the number that stands for "no shape": the shapes are numbered again.
+    #[test]
+    fn a_shape_without_an_id_in_the_file_gets_one() {
+        let json = r#"{ "format": "darkburn-project", "version": 3, "next_id": 4,
+          "shapes": [
+            { "kind": { "type": "rect", "width": 2.0, "height": 1.0, "radius": 0.0 }, "layer": 1 },
+            { "id": 2, "kind": { "type": "group", "children": [ { "id": 3, "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 2 } ] } }
+          ] }"#;
+        let doc = load(&zipped(json)).unwrap().doc;
+        assert_eq!(doc.len(), 2);
+        for s in doc.iter() {
+            assert!(s.id.0 != 0 && s.id.0 < doc.next_id(), "shape id {} with next id {}", s.id.0, doc.next_id());
+        }
+        let child = r#"{ "format": "darkburn-project", "version": 3, "next_id": 4,
+          "shapes": [
+            { "id": 2, "kind": { "type": "group", "children": [ { "kind": { "type": "ellipse", "rx": 1.0, "ry": 1.0 }, "layer": 2 } ] } }
+          ] }"#;
+        let doc = load(&zipped(child)).unwrap().doc;
+        let ShapeKind::Group { children } = &doc.iter().next().unwrap().kind else { panic!("not a group") };
+        assert!(children[0].id.0 != 0, "a child of a group came in with id 0");
+    }
+
+    /// A small file that unpacks to something enormous is refused instead of filling the memory.
+    #[test]
+    fn a_file_that_unpacks_too_large_is_refused() {
+        let mut json = String::from(r#"{ "format": "darkburn-project", "version": 3, "notes": ""#);
+        json.push_str(&" ".repeat(3_000_000));
+        json.push_str(r#"" }"#);
+        let bytes = zipped(&json);
+        assert!(bytes.len() < 20_000, "{} bytes on disk", bytes.len());
+        assert!(load_within(&bytes, 4_000_000).is_ok());
+        assert!(matches!(load_within(&bytes, 1_000_000), Err(ProjectError::Damaged(_))));
     }
 }

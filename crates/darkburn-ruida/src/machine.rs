@@ -113,12 +113,32 @@ pub struct RuidaMachine<T: Transport = Box<dyn Transport>> {
     pub bytes_sent: usize,
     /// Resends performed, for diagnostics.
     pub resends: usize,
+    /// Copies of a datagram that were sent and never answered in time. Each may still be
+    /// acknowledged late; such an acknowledge must not be taken for the next datagram's.
+    late_acks: usize,
+    /// The same on the jog port: how many answers to key commands may still arrive (copies
+    /// sent, less answers seen), and the time after which they are given up.
+    panel_owed: usize,
+    panel_owed_until: Instant,
 }
 
 impl<T: Transport> RuidaMachine<T> {
     pub fn new(transport: T, cfg: MachineConfig) -> Self {
         let swz = Swizzler::new(cfg.magic.unwrap_or_default());
-        RuidaMachine { t: transport, cfg, swz, inbox: VecDeque::new(), stream_buf: Vec::new(), info: None, bed_um: None, bytes_sent: 0, resends: 0 }
+        RuidaMachine {
+            t: transport,
+            cfg,
+            swz,
+            inbox: VecDeque::new(),
+            stream_buf: Vec::new(),
+            info: None,
+            bed_um: None,
+            bytes_sent: 0,
+            resends: 0,
+            late_acks: 0,
+            panel_owed: 0,
+            panel_owed_until: Instant::now(),
+        }
     }
 
     pub fn config(&self) -> &MachineConfig {
@@ -165,27 +185,84 @@ impl<T: Transport> RuidaMachine<T> {
         self.info = None;
     }
 
-    /// Find the controller's magic by asking for the card ID with every candidate.
-    /// The common values (0x88, 0x11, 0x38) are tried first.
+    /// Find the controller's magic by asking for the card ID with candidate values, the common
+    /// ones (0x88, 0x11, 0x38) first and twice.
+    ///
+    /// Answers are judged by what they hold, never by when they arrive: on a busy network (and
+    /// on Windows loopback) a datagram can be hundreds of milliseconds late, later than the
+    /// answers to the probes sent after it. So:
+    /// * the one-byte acknowledge a controller sends for every datagram comes back scrambled
+    ///   with the controller's own magic, whichever magic the probe used, and so names it;
+    /// * a card ID reply names its magic through its first byte;
+    /// * a magic found this way is then checked with a fresh question at the normal timeout
+    ///   and with the normal resends, and whatever is still queued is thrown away afterwards.
     pub fn detect_magic(&mut self) -> Result<Magic> {
         let mut order: Vec<Magic> = Magic::COMMON.to_vec();
+        order.extend(Magic::COMMON);
         order.extend((0..=255u8).map(Magic).filter(|m| !Magic::COMMON.contains(m)));
-        let (timeout, retries) = (self.cfg.timeout, self.cfg.retries);
-        self.cfg.timeout = self.cfg.probe_timeout;
-        self.cfg.retries = 0;
-        let mut found = None;
+        let udp = self.t.framing() == Framing::Udp;
+        let probe = Command::GetSetting { addr: addr::CARD_ID }.encode()?;
+        let mut refuted = [false; 256];
         for m in order {
             self.swz = Swizzler::new(m);
             self.inbox.clear();
             self.stream_buf.clear();
-            if let Ok(Command::SettingReply { .. }) = self.query_once(&Command::GetSetting { addr: addr::CARD_ID }, addr::CARD_ID) {
-                found = Some(m);
+            let wire = self.swz.swizzle(&probe);
+            if self.t.send(Channel::Data, &if udp { frame(&wire) } else { wire }).is_err() {
+                continue;
+            }
+            let deadline = Instant::now() + self.cfg.probe_timeout;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let Ok(Some(d)) = self.t.recv(Channel::Data, left) else { break };
+                let candidate = if !udp {
+                    // A stream has no acknowledge: only the right magic gets an answer.
+                    self.stream_buf.extend(self.swz.unswizzle(&d));
+                    self.drain_stream();
+                    self.inbox.iter().any(|c| matches!(c, Command::SettingReply { addr: a, .. } if *a == addr::CARD_ID)).then_some(m)
+                } else if let [ack] = d.as_slice() {
+                    Some(crate::swizzle::magic_from_wire(*ack, 0xCC))
+                } else {
+                    // A reply: it starts with DA under the magic it was scrambled with.
+                    d.first().map(|b| crate::swizzle::magic_from_wire(*b, 0xDA)).filter(
+                        |k| matches!(Command::decode(&Swizzler::new(*k).unswizzle(&d)), Command::SettingReply { addr: a, .. } if a == addr::CARD_ID),
+                    )
+                };
+                if let Some(k) = candidate.filter(|k| !refuted[k.0 as usize]) {
+                    if self.confirm_magic(k) {
+                        return Ok(k);
+                    }
+                    refuted[k.0 as usize] = true;
+                    self.swz = Swizzler::new(m);
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+            }
+        }
+        Err(RuidaError::Timeout("no answer to a card ID probe with any magic value".into()))
+    }
+
+    /// Ask for the card ID with magic `m` at the normal timeout and resends. On success the
+    /// driver keeps `m` and nothing stale is left queued.
+    fn confirm_magic(&mut self, m: Magic) -> bool {
+        self.swz = Swizzler::new(m);
+        self.inbox.clear();
+        self.stream_buf.clear();
+        let ok = matches!(self.read_setting_raw(addr::CARD_ID), Ok(Command::SettingReply { .. }));
+        self.discard_queued();
+        self.inbox.clear();
+        self.stream_buf.clear();
+        ok
+    }
+
+    /// Throw away whatever is waiting on the data channel (answers that came too late).
+    fn discard_queued(&mut self) {
+        for _ in 0..64 {
+            if !matches!(self.t.recv(Channel::Data, Duration::from_millis(1)), Ok(Some(_))) {
                 break;
             }
         }
-        self.cfg.timeout = timeout;
-        self.cfg.retries = retries;
-        found.ok_or_else(|| RuidaError::Timeout("no answer to a card ID probe with any magic value".into()))
     }
 
     // ---- packet layer ---------------------------------------------------------------------
@@ -221,10 +298,14 @@ impl<T: Transport> RuidaMachine<T> {
     }
 
     fn send_datagram(&mut self, datagram: &[u8], first: bool) -> Result<()> {
+        self.drain_late_acks()?;
         let mut attempt = 0;
         loop {
             self.t.send(Channel::Data, datagram)?;
             let outcome = self.wait_ack()?;
+            if matches!(outcome, Ack::Timeout) {
+                self.late_acks += 1;
+            }
             match outcome {
                 Ack::Ok => return Ok(()),
                 Ack::Timeout if attempt < self.cfg.retries => {}
@@ -237,6 +318,32 @@ impl<T: Transport> RuidaMachine<T> {
             attempt += 1;
             self.resends += 1;
         }
+    }
+
+    /// Datagrams carry no number, so an acknowledge cannot be matched to the datagram it is
+    /// for. After a datagram went unanswered and was sent again, the answer to the earlier copy
+    /// may still be on its way; it is waited for here (at most the normal timeout) before a new
+    /// datagram goes out. Otherwise it would be taken as the acknowledge of that new datagram,
+    /// which could then be lost without anyone noticing.
+    fn drain_late_acks(&mut self) -> Result<()> {
+        if self.late_acks == 0 {
+            return Ok(());
+        }
+        let deadline = Instant::now() + self.cfg.timeout;
+        while self.late_acks > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let Some(d) = self.t.recv(Channel::Data, left)? else { break };
+            let logical = self.swz.unswizzle(&d);
+            match logical.as_slice() {
+                [0xCC] | [0xCF] | [0xCD] => self.late_acks -= 1,
+                _ => self.inbox.extend(parse_commands(&logical)),
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+        }
+        self.late_acks = 0;
+        Ok(())
     }
 
     fn wait_ack(&mut self) -> Result<Ack> {
@@ -294,9 +401,22 @@ impl<T: Transport> RuidaMachine<T> {
         let n = slices.len();
         for (i, s) in slices.into_iter().enumerate() {
             let c = Command::decode(s);
-            let complete = match &c {
-                Command::Raw(_) => false,
-                Command::FileName { .. } | Command::SettingReplyRaw { .. } => s.last() == Some(&0),
+            // A USB serial port hands a reply over in pieces. The last slice may be a reply
+            // that is still arriving, and some partial replies decode as something shorter.
+            let complete = match (s, &c) {
+                // A setting reply is DA 01 and two address bytes, then five value bytes, or for
+                // the firmware version a NUL-terminated string of any length (so its first 9 or
+                // 14 bytes must not be taken for a number or a settings write).
+                ([0xDA, 0x01, hi, lo, rest @ ..], _) => {
+                    let a = (u16::from(*hi & 0x7F) << 7) | u16::from(*lo & 0x7F);
+                    if a == addr::FIRMWARE { rest.last() == Some(&0) } else { rest.len() >= 5 }
+                }
+                ([0xDA, 0x01, ..], _) => false,
+                (_, Command::Raw(_)) => false,
+                // E8 01, two index bytes, the name, NUL. The first four bytes alone read as the
+                // request for a name, which a controller never sends.
+                (_, Command::GetFileName(_)) => false,
+                (_, Command::FileName { .. }) => s.len() >= 5 && s.last() == Some(&0),
                 _ => true,
             };
             if i + 1 == n && !complete {
@@ -305,12 +425,6 @@ impl<T: Transport> RuidaMachine<T> {
                 self.inbox.push_back(c);
             }
         }
-    }
-
-    fn query_once(&mut self, cmd: &Command, a: u16) -> Result<Command> {
-        let pred = move |c: &Command| matches!(c, Command::SettingReply { addr, .. } | Command::SettingReplyRaw { addr, .. } if *addr == a);
-        self.send_commands(std::slice::from_ref(cmd))?;
-        self.wait_reply(&pred)?.ok_or_else(|| RuidaError::Timeout(format!("no reply to setting 0x{a:03X}")))
     }
 
     /// Send `cmd` and wait for a reply matching `pred`, resending on timeout.
@@ -331,17 +445,45 @@ impl<T: Transport> RuidaMachine<T> {
 
     /// Send one command on the jog / wireless-panel port and wait for its `CC`.
     /// Only on UDP; on USB use the data-channel equivalents.
+    ///
+    /// A key release is held to more than a key press. The answers carry no number, so the
+    /// answer to an earlier command that was sent twice may still arrive and cannot be told
+    /// from the answer to this one. For a press the worst case is a key that was not pressed.
+    /// A release that is lost while such a leftover answer passes for its own leaves the key
+    /// held down on the controller (the laser firing, an axis moving) with nobody the wiser.
+    /// So a release counts as answered only once more answers have come than earlier commands
+    /// can still be owed. It is never held back for that: it goes out at once, and is sent
+    /// again while its answer is in doubt, which does no harm.
     pub fn send_panel(&mut self, cmd: PanelCommand) -> Result<()> {
         if self.t.framing() != Framing::Udp {
             return Err(RuidaError::Unsupported("the jog port exists only over Ethernet".into()));
         }
+        let release = matches!(cmd, PanelCommand::KeyUp(_));
+        if Instant::now() >= self.panel_owed_until {
+            self.panel_owed = 0;
+        }
+        // What waits on the port now was sent before this command went out: not its answer.
+        while self.t.recv(Channel::Jog, Duration::ZERO)?.is_some() {
+            self.panel_owed = self.panel_owed.saturating_sub(1);
+        }
+        // Answers of earlier commands that may still come, and answers seen since this one
+        // first went out.
+        let earlier = self.panel_owed;
+        let mut seen = 0;
         let mut attempt = 0;
         loop {
             self.t.send(Channel::Jog, &cmd.encode())?;
+            self.panel_owed += 1;
+            self.panel_owed_until = Instant::now() + self.cfg.timeout;
             if let Some(r) = self.t.recv(Channel::Jog, self.cfg.timeout)?
                 && r.first() == Some(&0xCC)
             {
-                return Ok(());
+                self.panel_owed = self.panel_owed.saturating_sub(1);
+                seen += 1;
+                if !release || seen > earlier {
+                    return Ok(());
+                }
+                // A release, and this answer may be an earlier command's: sent again at once.
             }
             if attempt >= self.cfg.retries {
                 return Err(RuidaError::Timeout("no reply on the jog port".into()));
@@ -518,6 +660,10 @@ impl<T: Transport> RuidaMachine<T> {
     }
 
     fn check_bounds(&self, p: Point) -> Result<()> {
+        // `NaN < 0.0` and `NaN > bed` are both false, and NaN turns into 0 µm when it is encoded.
+        if !p.x.is_finite() || !p.y.is_finite() {
+            return Err(RuidaError::Encode("the position is not a number".into()));
+        }
         if let Some((bx, by)) = self.bed_size_mm()
             && (p.x < 0.0 || p.y < 0.0 || p.x > bx || p.y > by)
         {
@@ -556,7 +702,11 @@ impl<T: Transport> RuidaMachine<T> {
             Axis::Z => s.z,
             Axis::U => s.u,
         };
-        let target = cur + mm_to_um(distance_mm);
+        if !distance_mm.is_finite() {
+            return Err(RuidaError::Encode("the jog distance is not a number".into()));
+        }
+        let target =
+            cur.checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
         if matches!(axis, Axis::X | Axis::Y) {
             let p = if axis == Axis::X { Point::new(um_to_mm(target), um_to_mm(s.y)) } else { Point::new(um_to_mm(s.x), um_to_mm(target)) };
             self.check_bounds(p)?;
@@ -698,8 +848,9 @@ impl<T: Transport> RuidaMachine<T> {
     /// UNCERTAIN: the result address (0x390 + index) and its unit (taken as ms) come from
     /// MeerK40t's emulator and need checking.
     pub fn calc_time(&mut self, index: u16) -> Result<Duration> {
+        let result = addr::FILE_TIME_BASE.checked_add(index).ok_or_else(|| RuidaError::NoSuchFile(format!("there is no file number {index}")))?;
         self.send_commands(&[Command::CalcFileTime(index)])?;
-        let ms = self.read_setting(addr::FILE_TIME_BASE + index)?;
+        let ms = self.read_setting(result)?;
         Ok(Duration::from_millis(ms as u64))
     }
 }

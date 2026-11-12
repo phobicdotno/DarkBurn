@@ -311,6 +311,34 @@ fn repeat_waits_for_the_foot_switch_each_time() {
     });
 }
 
+/// A frame that was shifted or scaled showed another place than the job marks: it does not
+/// count as framing the job.
+#[test]
+fn a_nudged_or_scaled_frame_does_not_count_as_framing_the_job() {
+    let mut d = dev();
+    d.require_framing = true;
+    let mut r = rig(d.clone());
+    let job = small_job(&d);
+    r.m.arm().unwrap();
+    let mut j = Job::new();
+    j.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, -10.0, 20.0, 20.0)]));
+    let as_is = FrameSpec::from_job_bounds(&j, 0.01).unwrap();
+    for (nudge, scale) in [((5.0, 0.0), 100.0), ((0.0, -3.0), 100.0), ((0.0, 0.0), 150.0)] {
+        let mut spec = as_is.clone();
+        spec.nudge_mm = nudge;
+        spec.scale_pct = scale;
+        let laps = r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count();
+        r.m.start_frame(compile_frame(&spec, &d).unwrap(), false).unwrap();
+        assert!(r.wait(|r| r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count() > laps));
+        assert_eq!(r.m.start_job(job.clone(), StartOptions::default()), Err(GalvoError::FramingRequired), "nudge {nudge:?}, scale {scale}");
+    }
+    let laps = r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count();
+    r.m.start_frame(compile_frame(&as_is, &d).unwrap(), false).unwrap();
+    assert!(r.wait(|r| r.events.iter().filter(|e| matches!(e, Event::FrameStopped)).count() > laps));
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::JobFinished { .. })));
+}
+
 #[test]
 fn require_framing_before_start() {
     let mut d = dev();
@@ -390,6 +418,32 @@ fn manual_axis_move_and_out_of_range() {
 }
 
 #[test]
+fn a_job_with_an_axis_move_the_board_cannot_make_is_refused_before_it_marks() {
+    let mut r = rig(dev());
+    // Windows up to 690 mm along the rotary: 69000 steps, more than the 16-bit position word.
+    let mut job = Job::new();
+    job.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, 0.0, 20.0, 700.0)]));
+    job.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: 20.0, axis: 0 });
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    r.m.arm().unwrap();
+    let started = r.m.start_job(c, StartOptions::default());
+    assert!(matches!(started, Err(GalvoError::Invalid(_))), "{started:?}");
+    // Nothing was marked, and the link is still fine.
+    std::thread::sleep(Duration::from_millis(50));
+    r.wait(|_| true);
+    assert!(!r.emu(|e| e.ever_emitted()));
+    assert_eq!(r.m.snapshot().connection, ConnectionState::Connected, "{:?}", r.events);
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+    // A repeat step on an axis the board does not have is refused the same way.
+    let mut job = Job::new();
+    job.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, -10.0, 20.0, 20.0)]));
+    job.repeat = RepeatMarking { count: 2, axis_step: Some((4, 1.0)), wait_foot_each: false };
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    assert!(matches!(r.m.start_job(c, StartOptions::default()), Err(GalvoError::Invalid(_))));
+    assert!(!r.emu(|e| e.ever_emitted()));
+}
+
+#[test]
 fn sliced_image_moves_z_and_returns() {
     let mut r = rig(dev());
     let img = SlicedImage {
@@ -414,6 +468,81 @@ fn sliced_image_moves_z_and_returns() {
         assert_eq!(e.z_data(), 0);
         assert!(e.log().singles.contains(&SingleCmd::SetZData(50)));
     });
+}
+
+/// A Z move longer than the board's 16-bit word holds was cut short to 65535 steps without a
+/// word, so the slices after it were marked at the wrong height. The job is refused instead.
+#[test]
+fn a_job_with_a_z_move_the_board_cannot_make_is_refused_before_it_marks() {
+    let mut r = rig(dev());
+    let img = SlicedImage {
+        width_px: 2,
+        height_px: 2,
+        depth: vec![255, 120, 255, 120],
+        origin: kurbo::Point::new(-1.0, -1.0),
+        size_mm: (2.0, 2.0),
+        slices: 2,
+        // 700 mm at 100 steps per mm: 70000 steps.
+        z_step_mm: 700.0,
+        interval_mm: 1.0,
+        bidirectional: true,
+        cleanup: None,
+    };
+    let mut job = Job::new();
+    job.layers.push(Layer::new("3D", LayerMode::Sliced(img), MarkParams::default(), vec![]));
+    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    r.m.arm().unwrap();
+    let started = r.m.start_job(c, StartOptions::default());
+    assert!(matches!(started, Err(GalvoError::Invalid(_))), "{started:?}");
+    std::thread::sleep(Duration::from_millis(50));
+    r.wait(|_| true);
+    r.emu(|e| {
+        assert!(!e.ever_emitted());
+        assert!(!e.log().singles.iter().any(|c| matches!(c, SingleCmd::SetZData(_))), "no Z word was sent");
+    });
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+}
+
+/// A job start opens the fibre source and then waits `open_mo_delay_units` (inside the list)
+/// before the first mark. A resume opened the source and restarted the list at once.
+#[test]
+fn resume_gives_the_source_its_wait_after_opening_it() {
+    // 60000 units of 10 us: 0.6 s.
+    let d = DeviceSettings { open_mo_delay_units: 60000, ..dev() };
+    let mut r = rig_with(d.clone(), EmulatorConfig { cmds_per_poll: 2, ..Default::default() }, opts());
+    let job = long_job(&d);
+    let n = marks_in(&job);
+    r.m.arm().unwrap();
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 3)));
+    r.m.pause().unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::Paused)));
+    let frozen = r.emu(|e| e.log().motions.len());
+    let t0 = Instant::now();
+    r.m.resume().unwrap();
+    // The source opens, the list stays held.
+    assert!(r.wait(|r| r.emu(|e| e.mo_open())));
+    std::thread::sleep(Duration::from_millis(200));
+    r.emu(|e| assert!(e.is_paused() && e.log().motions.len() == frozen, "the list restarted {:?} after the source opened", t0.elapsed()));
+    assert!(r.wait_event(|e| matches!(e, Event::Resumed)));
+    assert!(t0.elapsed() >= Duration::from_millis(600), "resumed after {:?}", t0.elapsed());
+    // A pause during the wait calls the resume off: the source closes and the list stays held.
+    r.m.pause().unwrap();
+    assert!(r.wait(|r| r.events.iter().filter(|e| matches!(e, Event::Paused)).count() == 2));
+    let frozen = r.emu(|e| e.log().motions.len());
+    r.m.resume().unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.mo_open())));
+    r.m.pause().unwrap();
+    assert!(r.wait(|r| r.emu(|e| !e.mo_open())));
+    std::thread::sleep(Duration::from_millis(800));
+    r.wait(|_| true);
+    r.emu(|e| assert!(e.is_paused() && !e.mo_open() && e.log().motions.len() == frozen));
+    assert_eq!(r.events.iter().filter(|e| matches!(e, Event::Resumed)).count(), 1, "the second resume was called off");
+    assert_eq!(r.m.snapshot().activity, Activity::Paused);
+    // And it still resumes and finishes with every mark.
+    r.m.resume().unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::JobFinished { .. })));
+    r.emu(|e| assert_eq!(e.emitting_marks(), n));
 }
 
 #[test]
@@ -480,4 +609,66 @@ fn no_answer_fails_the_connection() {
     }
     assert!(matches!(m.snapshot().connection, ConnectionState::Failed(_)));
     assert_eq!(m.arm(), Err(GalvoError::NotConnected));
+}
+
+#[test]
+fn drill_job_fires_at_each_point_and_only_when_armed() {
+    let mut job = Job::new();
+    job.layers.push(Layer::new(
+        "D",
+        LayerMode::Drill(DrillSettings { dwell_ms: 3.0, spacing_mm: 5.0 }),
+        MarkParams { power_pct: 80.0, ..Default::default() },
+        vec![rect(-10.0, -10.0, 20.0, 20.0)],
+    ));
+    let compiled = compile(&job, &dev(), &CompileOptions::default()).unwrap();
+    let mut r = rig(dev());
+    assert_eq!(r.m.start_job(compiled.clone(), StartOptions::default()), Err(GalvoError::NotArmed));
+    r.emu(|e| assert!(e.log().shots.is_empty()));
+    r.m.arm().unwrap();
+    r.m.start_job(compiled, StartOptions::default()).unwrap();
+    assert!(r.wait_event(|e| matches!(e, Event::JobFinished { .. })), "{:?}", r.events);
+    r.emu(|e| {
+        let log = e.log();
+        assert_eq!(log.shots.len(), 16, "80 mm round every 5 mm");
+        assert_eq!(log.points, 16);
+        assert!(log.shots.iter().all(|s| s.emitting && s.dwell == 300), "3 ms each, laser on: {:?}", log.shots);
+        assert_eq!(e.emitting_marks(), 0, "nothing is drawn between the points");
+        // 16 different places.
+        let mut places: Vec<(u16, u16)> = log.shots.iter().map(|s| s.at).collect();
+        places.sort();
+        places.dedup();
+        assert_eq!(places.len(), 16);
+        // 80 % power on a fibre source.
+        assert_eq!(log.shots[0].current, (0.8f64 * 4095.0).round() as u16);
+        assert!(log.time_us >= 16.0 * 3000.0, "the dwell is counted in the run time");
+        assert!(!e.laser_enabled() && !e.mo_open(), "all off afterwards");
+    });
+}
+
+#[test]
+fn a_port_bit_the_port_does_not_have_is_refused_at_connect() {
+    // The port word has bits 0 to 15. A door switch on "bit 16" would, unchecked, either end the
+    // worker or watch some other input.
+    for ports in [
+        PortConfig { door_bit: Some(16), ..Default::default() },
+        PortConfig { foot_bit: Some(200), ..Default::default() },
+        PortConfig { light_bit: 16, ..Default::default() },
+        PortConfig { mark_bit: 99, ..Default::default() },
+        PortConfig { done_bit: Some(16), ..Default::default() },
+    ] {
+        let settings = DeviceSettings { ports, ..Default::default() };
+        let (t, emu) = MemoryTransport::new(GalvoEmulator::new(EmulatorConfig::default()));
+        let m = GalvoMachine::connect(Box::new(t), settings, opts());
+        let end = Instant::now() + Duration::from_secs(5);
+        while m.snapshot().connection == ConnectionState::Connecting && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let s = m.snapshot();
+        assert!(matches!(&s.connection, ConnectionState::Failed(why) if why.contains("0 to 15")), "{ports:?}: {:?}", s.connection);
+        assert!(!emu.lock().unwrap().laser_enabled(), "{ports:?}");
+    }
+    // Out-of-range bits never read as "door closed" or "foot pressed".
+    let p = PortConfig { door_bit: Some(16), foot_bit: Some(16), ..Default::default() };
+    assert!(p.door_open(0xFFFF) && p.door_open(0));
+    assert!(!p.foot_pressed(0xFFFF) && !p.foot_pressed(0));
 }

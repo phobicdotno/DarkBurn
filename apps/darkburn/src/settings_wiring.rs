@@ -1,9 +1,9 @@
 //! Behaviour settings that used to be stored only [SET-15, SET-16, SET-18, SET-20, SET-22,
-//! SET-23, SET-28, SET-36, SB-05]: the pure rules, so they can be tested without a window, and
+//! SET-23, SET-28, SET-36, SB-05, LASER-25, LASER-26]: the pure rules, so they can be tested without a window, and
 //! the few functions the shell calls.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use darkburn_core::Document;
 use darkburn_grbl::PortInfo;
@@ -85,23 +85,43 @@ pub fn filter_ports(ports: &mut Vec<PortInfo>, excluded: &[String]) {
     ports.retain(|p| !excluded.iter().any(|e| !e.trim().is_empty() && e.trim().eq_ignore_ascii_case(&p.name)));
 }
 
-// ----- Job log (SET-23) ----------------------------------------------------------------------
+// ----- Job log (SET-23, LASER-26) and sounds (SET-22, LASER-25) --------------------------------
 
-/// One finished or stopped job.
+/// One run job: a row of the log.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobLogEntry {
-    pub project: String,
+    /// The project file (its full path), or "Untitled".
+    pub file: String,
     pub device: String,
-    /// "finished" or "stopped".
+    /// "finished", "stopped" (by the user) or "failed".
     pub result: String,
+    /// Why it stopped or failed; empty for a finished job.
     pub detail: String,
+    /// How long the job ran.
     pub seconds: f64,
     pub lines: usize,
     pub errors: usize,
 }
 
 pub const JOB_LOG_FILE: &str = "job_log.csv";
-pub const JOB_LOG_HEADER: &str = "time (UTC),project,device,result,detail,seconds,lines,errors";
+pub const JOB_LOG_HEADER: &str = "start (UTC),duration (s),file,device,result,detail,lines,errors";
+
+/// The job under way, noted when it starts, so its row has the start time and the duration
+/// even when it is stopped half way.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JobRun {
+    started: Option<(u64, Instant)>,
+    /// The job handed to the machine last was made from the project (not a G-code file run as
+    /// it is): when it finishes, variable text moves on if the project asks for that.
+    pub from_project: bool,
+}
+
+#[cfg(test)]
+impl JobRun {
+    pub fn is_running(&self) -> bool {
+        self.started.is_some()
+    }
+}
 
 fn csv_field(s: &str) -> String {
     if s.contains([',', '"', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() }
@@ -125,86 +145,188 @@ pub fn utc_text(unix_secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", rem / 3600, (rem / 60) % 60, rem % 60)
 }
 
-pub fn log_line(time: &str, e: &JobLogEntry) -> String {
+/// One row: when the job started, then the entry.
+pub fn log_line(start: &str, e: &JobLogEntry) -> String {
     [
-        csv_field(time),
-        csv_field(&e.project),
+        csv_field(start),
+        format!("{:.1}", e.seconds),
+        csv_field(&e.file),
         csv_field(&e.device),
         csv_field(&e.result),
         csv_field(&e.detail),
-        format!("{:.1}", e.seconds),
         e.lines.to_string(),
         e.errors.to_string(),
     ]
     .join(",")
 }
 
+/// The folder the job log is written to: the one chosen in Settings, else the settings folder.
+pub fn job_log_dir(opts: &Options, settings_dir: Option<&Path>) -> Option<PathBuf> {
+    let chosen = opts.job_log_dir.trim();
+    if chosen.is_empty() { settings_dir.map(Path::to_path_buf) } else { Some(PathBuf::from(chosen)) }
+}
+
+/// The job log file, whether or not it exists yet.
+pub fn job_log_path(app: &DarkBurn) -> Option<PathBuf> {
+    job_log_dir(&app.prefs.opts, app.settings_dir.as_deref()).map(|d| d.join(JOB_LOG_FILE))
+}
+
+/// A log written with other columns (an older DarkBurn) is kept under a free
+/// `job_log-old.csv`, `job_log-old-2.csv`, ... name, so one file never mixes two layouts.
+fn set_aside_other_layout(dir: &Path, path: &Path) -> std::io::Result<()> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Ok(()) };
+    match text.lines().next() {
+        None => return Ok(()),
+        Some(first) if first.trim_start_matches('\u{feff}') == JOB_LOG_HEADER => return Ok(()),
+        Some(_) => {}
+    }
+    let mut n = 1;
+    loop {
+        let name = if n == 1 { "job_log-old.csv".to_string() } else { format!("job_log-old-{n}.csv") };
+        let to = dir.join(name);
+        if !to.exists() {
+            return std::fs::rename(path, to);
+        }
+        n += 1;
+    }
+}
+
 /// Append `entry` to `dir/job_log.csv`, writing the header first when the file is new.
-pub fn append_job_log(dir: &Path, entry: &JobLogEntry, unix_secs: u64) -> std::io::Result<PathBuf> {
+/// `start_unix` is when the job started.
+pub fn append_job_log(dir: &Path, entry: &JobLogEntry, start_unix: u64) -> std::io::Result<PathBuf> {
     use std::io::Write;
     std::fs::create_dir_all(dir)?;
     let path = dir.join(JOB_LOG_FILE);
+    set_aside_other_layout(dir, &path)?;
     let fresh = !path.exists() || std::fs::metadata(&path).map_or(true, |m| m.len() == 0);
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
     if fresh {
         writeln!(f, "{JOB_LOG_HEADER}")?;
     }
-    writeln!(f, "{}", log_line(&utc_text(unix_secs), entry))?;
+    writeln!(f, "{}", log_line(&utc_text(start_unix), entry))?;
     Ok(path)
+}
+
+/// The rows of a job log (without the header), each split into its fields.
+pub fn read_job_log(path: &Path) -> std::io::Result<Vec<Vec<String>>> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(parse_csv(&text).into_iter().skip(1).collect())
+}
+
+/// Split CSV text into rows of fields (quoted fields, doubled quotes, line breaks in quotes).
+pub fn parse_csv(text: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push(c);
+            }
+            continue;
+        }
+        match c {
+            '"' => quoted = true,
+            ',' => row.push(std::mem::take(&mut field)),
+            '\r' => {}
+            '\n' => {
+                row.push(std::mem::take(&mut field));
+                rows.push(std::mem::take(&mut row));
+            }
+            _ => field.push(c),
+        }
+    }
+    if !field.is_empty() || !row.is_empty() {
+        row.push(field);
+        rows.push(row);
+    }
+    rows
 }
 
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
-/// What the shell does with the machine's job events: the job log and the sounds.
+/// A job the user ended on purpose (not a failure: no error sound, logged as "stopped").
+pub fn stopped_by_user(reason: &str) -> bool {
+    let r = reason.trim().to_ascii_lowercase();
+    r == "stopped" || r == "cancelled" || r.starts_with("stopped by")
+}
+
+/// What the shell does with the machine's job events: the job log and the sounds. A batch of
+/// events plays each sound at most once (an error that also ends the job is one buzz, not two).
 pub fn on_machine_events(app: &mut DarkBurn, events: &[crate::machine_api::MachineEvent]) {
     use crate::machine_api::MachineEvent as E;
+    use crate::sounds::Sound;
     let opts = app.prefs.opts.clone();
+    let mut done = false;
+    let mut error = false;
     for e in events {
-        let (entry, sound) = match e {
-            E::JobFinished(p) => (
-                JobLogEntry {
-                    project: project_name(app),
-                    device: app.machine.active().name.clone(),
-                    result: "finished".into(),
-                    detail: String::new(),
-                    seconds: p.elapsed.as_secs_f64(),
-                    lines: p.lines_done,
-                    errors: p.errors,
-                },
-                crate::sounds::Sound::JobDone,
-            ),
-            E::JobAborted(r) => (
-                JobLogEntry {
-                    project: project_name(app),
-                    device: app.machine.active().name.clone(),
-                    result: "stopped".into(),
-                    detail: r.to_string(),
-                    seconds: 0.0,
-                    lines: 0,
-                    errors: 0,
-                },
-                crate::sounds::Sound::Error,
-            ),
+        let (result, detail, progress) = match e {
+            E::JobStarted => {
+                app.job_run.started = Some((now_secs(), Instant::now()));
+                continue;
+            }
+            E::JobFinished(p) => {
+                done = true;
+                // Auto-advance of the Variable Text panel: the next serial number or CSV row.
+                if std::mem::take(&mut app.job_run.from_project) {
+                    crate::text_cmds::after_job(app);
+                }
+                ("finished", String::new(), Some(p))
+            }
+            E::JobAborted(r) => {
+                app.job_run.from_project = false;
+                let by_user = stopped_by_user(r);
+                error |= !by_user;
+                (if by_user { "stopped" } else { "failed" }, r.to_string(), None)
+            }
             E::Error(_) | E::Alarm(_) | E::ConnectFailed(_) => {
-                crate::sounds::play_if(&opts, crate::sounds::Sound::Error);
+                error = true;
                 continue;
             }
             _ => continue,
         };
-        crate::sounds::play_if(&opts, sound);
+        // A job whose start was not seen is logged as starting now, with the time it reports.
+        let (start, ran) = match app.job_run.started.take() {
+            Some((unix, at)) => (unix, at.elapsed().as_secs_f64()),
+            None => (now_secs(), 0.0),
+        };
+        let entry = JobLogEntry {
+            file: project_file(app),
+            device: app.machine.active().name.clone(),
+            result: result.into(),
+            detail,
+            seconds: progress.map_or(ran, |p| p.elapsed.as_secs_f64()),
+            lines: progress.map_or(0, |p| p.lines_done),
+            errors: progress.map_or(0, |p| p.errors),
+        };
         if opts.job_log
-            && let Some(dir) = app.settings_dir.clone()
-            && let Err(err) = append_job_log(&dir, &entry, now_secs())
+            && let Some(dir) = job_log_dir(&opts, app.settings_dir.as_deref())
+            && let Err(err) = append_job_log(&dir, &entry, start)
         {
             log::warn!("could not write the job log: {err}");
         }
     }
+    if done {
+        crate::sounds::play_if(&opts, Sound::JobDone);
+    }
+    if error {
+        crate::sounds::play_if(&opts, Sound::Error);
+    }
 }
 
-fn project_name(app: &DarkBurn) -> String {
-    app.project_path.as_deref().and_then(Path::file_name).map_or_else(|| "Untitled".to_string(), |n| n.to_string_lossy().into_owned())
+fn project_file(app: &DarkBurn) -> String {
+    app.project_path.as_deref().map_or_else(|| "Untitled".to_string(), |p| p.display().to_string())
 }
 
 // ----- Status bar progress (SB-05) -----------------------------------------------------------
@@ -322,7 +444,7 @@ mod tests {
 
     #[test]
     fn excluded_ports_are_not_listed() {
-        let p = |n: &str| PortInfo { name: n.into(), vid: None, pid: None, manufacturer: None, product: None, serial_number: None };
+        let p = |n: &str| PortInfo { name: n.into(), ..Default::default() };
         let mut ports = vec![p("COM3"), p("COM9"), p("COM4")];
         filter_ports(&mut ports, &["com9".into(), " ".into()]);
         assert_eq!(ports.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["COM3", "COM4"]);
@@ -334,44 +456,168 @@ mod tests {
         assert_eq!(utc_text(1_709_210_096), "2024-02-29 12:34:56");
     }
 
-    #[test]
-    fn job_log_is_csv_with_one_header() {
-        let dir = std::env::temp_dir().join(format!("darkburn-joblog-{}", std::process::id()));
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("darkburn-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let e = JobLogEntry {
-            project: "a, \"b\".dbrn".into(),
+        dir
+    }
+
+    fn entry() -> JobLogEntry {
+        JobLogEntry {
+            file: "C:\\jobs\\a, \"b\".dbrn".into(),
             device: "Simulator".into(),
             result: "finished".into(),
             detail: String::new(),
             seconds: 12.34,
             lines: 100,
             errors: 0,
-        };
+        }
+    }
+
+    #[test]
+    fn job_log_is_csv_with_one_header() {
+        let dir = temp("joblog");
+        let e = entry();
         append_job_log(&dir, &e, 0).unwrap();
         let p = append_job_log(&dir, &e, 60).unwrap();
-        let text = std::fs::read_to_string(p).unwrap();
+        let text = std::fs::read_to_string(&p).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], JOB_LOG_HEADER);
-        assert_eq!(lines[1], "1970-01-01 00:00:00,\"a, \"\"b\"\".dbrn\",Simulator,finished,,12.3,100,0");
+        assert_eq!(lines[1], "1970-01-01 00:00:00,12.3,\"C:\\jobs\\a, \"\"b\"\".dbrn\",Simulator,finished,,100,0");
         assert!(lines[2].starts_with("1970-01-01 00:01:00"));
+        // Read back: one row per job, the quoted file name whole again.
+        let rows = read_job_log(&p).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], ["1970-01-01 00:00:00", "12.3", e.file.as_str(), "Simulator", "finished", "", "100", "0"]);
+        assert_eq!(rows[0].len(), JOB_LOG_HEADER.split(',').count());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn a_finished_job_event_writes_the_log_only_when_on() {
-        let dir = std::env::temp_dir().join(format!("darkburn-joblog2-{}", std::process::id()));
+    fn csv_parsing_handles_quotes_and_line_breaks() {
+        let rows = parse_csv("a,\"b,1\",\"say \"\"hi\"\"\"\r\n\"two\nlines\",,x\n");
+        assert_eq!(rows, [vec!["a", "b,1", "say \"hi\""], vec!["two\nlines", "", "x"]]);
+        assert_eq!(parse_csv("no,newline"), [vec!["no", "newline"]]);
+        assert!(parse_csv("").is_empty());
+    }
+
+    #[test]
+    fn a_log_with_other_columns_is_set_aside_not_mixed() {
+        let dir = temp("joblog-old");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = "time (UTC),project,device,result,detail,seconds,lines,errors\n2026-01-01 00:00:00,a,b,finished,,1.0,2,0\n";
+        std::fs::write(dir.join(JOB_LOG_FILE), old).unwrap();
+        let p = append_job_log(&dir, &entry(), 0).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("job_log-old.csv")).unwrap(), old);
+        assert_eq!(read_job_log(&p).unwrap().len(), 1);
+        // A second old-layout file gets the next free name.
+        std::fs::write(dir.join(JOB_LOG_FILE), old).unwrap();
+        append_job_log(&dir, &entry(), 0).unwrap();
+        assert!(dir.join("job_log-old-2.csv").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_log_goes_to_the_chosen_folder_or_the_settings_folder() {
+        let mut o = Options::default();
+        let settings = Path::new("settings-here");
+        assert_eq!(job_log_dir(&o, Some(settings)), Some(settings.to_path_buf()));
+        assert_eq!(job_log_dir(&o, None), None);
+        o.job_log_dir = "  elsewhere ".into();
+        assert_eq!(job_log_dir(&o, Some(settings)), Some(PathBuf::from("elsewhere")));
+        assert_eq!(job_log_dir(&o, None), Some(PathBuf::from("elsewhere")));
+    }
+
+    #[test]
+    fn a_job_event_writes_the_log_only_when_on() {
+        let dir = temp("joblog2");
         let mut a = DarkBurn::new(crate::prefs::Prefs::default());
         a.settings_dir = Some(dir.clone());
-        let ev = [crate::machine_api::MachineEvent::JobAborted("Stopped by the user".into())];
+        let ev = [crate::machine_api::MachineEvent::JobAborted("Stopped".into())];
         on_machine_events(&mut a, &ev);
         assert!(!dir.join(JOB_LOG_FILE).exists());
         a.prefs.opts.job_log = true;
         on_machine_events(&mut a, &ev);
-        let text = std::fs::read_to_string(dir.join(JOB_LOG_FILE)).unwrap();
-        assert!(text.contains("stopped") && text.contains("Stopped by the user"), "{text}");
+        let rows = read_job_log(&dir.join(JOB_LOG_FILE)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0][2].as_str(), rows[0][4].as_str(), rows[0][5].as_str()), ("Untitled", "stopped", "Stopped"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_row_has_the_start_time_the_duration_the_file_and_the_device() {
+        use crate::machine_api::MachineEvent as E;
+        let dir = temp("joblog3");
+        let other = temp("joblog3-chosen");
+        let mut a = DarkBurn::new(crate::prefs::Prefs::default());
+        a.settings_dir = Some(dir.clone());
+        a.prefs.opts.job_log = true;
+        a.project_path = Some(PathBuf::from("plates").join("door sign.dbrn"));
+        let before = now_secs();
+        on_machine_events(&mut a, &[E::JobStarted]);
+        assert!(a.job_run.is_running());
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        // A failure half way: the duration is the time since the start.
+        on_machine_events(&mut a, &[E::JobAborted("Connection lost".into())]);
+        assert!(!a.job_run.is_running());
+        // A finished job reports its own time and line count; this one goes to the chosen folder.
+        a.prefs.opts.job_log_dir = other.display().to_string();
+        let p =
+            crate::machine_api::JobProgress { elapsed: std::time::Duration::from_millis(61_500), lines_done: 42, errors: 1, ..Default::default() };
+        on_machine_events(&mut a, &[E::JobStarted, E::JobFinished(p)]);
+        let first = read_job_log(&dir.join(JOB_LOG_FILE)).unwrap();
+        assert_eq!(first.len(), 1);
+        let r = &first[0];
+        assert!(r[0] >= utc_text(before) && r[0] <= utc_text(now_secs()), "start time {}", r[0]);
+        let secs: f64 = r[1].parse().unwrap();
+        assert!((0.1..5.0).contains(&secs), "ran for {secs} s");
+        assert!(r[2].ends_with("door sign.dbrn") && r[2].contains("plates"), "{}", r[2]);
+        assert_eq!(r[3], a.machine.active().name);
+        assert_eq!((r[4].as_str(), r[5].as_str()), ("failed", "Connection lost"));
+        let second = read_job_log(&job_log_path(&a).unwrap()).unwrap();
+        assert_eq!(job_log_path(&a).unwrap(), other.join(JOB_LOG_FILE));
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0][1..], ["61.5", r[2].as_str(), r[3].as_str(), "finished", "", "42", "1"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn sounds_are_asked_for_when_a_job_ends_or_something_fails() {
+        use crate::machine_api::{JobProgress, MachineEvent as E};
+        use crate::sounds::{Sound, take_requests};
+        let mut a = DarkBurn::new(crate::prefs::Prefs::default());
+        let finished = [E::JobStarted, E::JobFinished(JobProgress::default())];
+        let failed = [E::Error("error:9".into()), E::JobAborted("Connection lost".into())];
+        take_requests();
+        // Off by default: nothing is asked for.
+        on_machine_events(&mut a, &finished);
+        on_machine_events(&mut a, &failed);
+        assert!(take_requests().is_empty());
+        a.prefs.opts.sound_done = true;
+        on_machine_events(&mut a, &[E::JobStarted]);
+        assert!(take_requests().is_empty(), "no sound while the job runs");
+        on_machine_events(&mut a, &finished);
+        on_machine_events(&mut a, &failed);
+        assert_eq!(take_requests(), [Sound::JobDone], "only the finished job, once");
+        a.prefs.opts.sound_done = false;
+        a.prefs.opts.sound_error = true;
+        on_machine_events(&mut a, &finished);
+        assert!(take_requests().is_empty());
+        on_machine_events(&mut a, &failed);
+        assert_eq!(take_requests(), [Sound::Error], "an error that ends the job is one sound");
+        for e in [E::Alarm("ALARM:1".into()), E::ConnectFailed("no port".into()), E::Error("error:2".into())] {
+            on_machine_events(&mut a, &[e]);
+            assert_eq!(take_requests(), [Sound::Error]);
+        }
+        // Stopping the job yourself is not an error.
+        for r in ["Stopped", "stopped", "cancelled"] {
+            on_machine_events(&mut a, &[E::JobAborted(r.into())]);
+        }
+        assert!(take_requests().is_empty());
+        on_machine_events(&mut a, &[]);
+        assert!(take_requests().is_empty());
     }
 
     #[test]

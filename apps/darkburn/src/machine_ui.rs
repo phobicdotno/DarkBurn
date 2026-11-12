@@ -8,6 +8,7 @@
 //! * The UI path ([`Source::Ui`]) can reach a real machine only through the Connect confirmation
 //!   dialog, which shows the "REAL MACHINE" banner afterwards. Nothing connects at start-up.
 //! * The agent path ([`Source::Api`]) works on the simulators only. A real machine is refused.
+//!   The one exception is stopping: stop, pause and emergency stop always go through.
 
 #![allow(dead_code, reason = "some helpers are used only by the dialogs and tests")]
 
@@ -136,6 +137,7 @@ pub const COMMANDS: &[Cmd] = &[
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
     crate::machine_ext::handles(id)
+        || crate::connections::handles(id)
         || crate::machine_job::handles(id)
         || id.starts_with("machine.")
         || id.starts_with("device.")
@@ -154,6 +156,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     let ext = crate::machine_ext::checklist(id);
     if !ext.is_empty() {
         return ext;
+    }
+    let conn = crate::connections::checklist(id);
+    if !conn.is_empty() {
+        return conn;
     }
     match id {
         "job.start" => &["LASER-03", "LASER-24"],
@@ -294,10 +300,10 @@ pub struct MachineUi {
     pub upload_name: String,
     /// Closing is allowed although a job runs (the user said so).
     pub close_ok: bool,
-    pub rotary_on: bool,
-    pub cylinder_on: bool,
     /// Dialogs and fields of the G-code, galvo and Gweike pieces (`machine_ext.rs`).
     pub ext: crate::machine_ext::ExtUi,
+    /// The automation socket, the bridge wizard and the detected laser (`connections.rs`).
+    pub conn: crate::connections::ConnUi,
     /// The machine events of the last frame, for tests and the log.
     pub last_events: Vec<MachineEvent>,
     /// When the running job began, for the "elapsed" display of machines that do not report it.
@@ -333,9 +339,8 @@ impl MachineUi {
             file_sel: BTreeSet::new(),
             upload_name: "DARKBURN".into(),
             close_ok: false,
-            rotary_on: false,
-            cylinder_on: false,
             ext: Default::default(),
+            conn: Default::default(),
             last_events: Vec::new(),
             job_log: Vec::new(),
             applied_device: None,
@@ -518,6 +523,23 @@ impl MachineUi {
         self.applied_device = None;
     }
 
+    /// The device list changed (a device was added and made the active one, or the active one was
+    /// removed): when the active device is no longer `was`, an open connection belongs to another
+    /// device than the one the panels and the job builder now work for, so it is ended.
+    pub fn end_link_if_device_changed(&mut self, was: Option<u64>) {
+        if self.devices.active != was && (self.handle.is_connected() || self.handle.is_real_machine()) {
+            self.handle.disconnect();
+        }
+    }
+
+    /// Remove a device from the list [DEV-04]; a connection to it is ended.
+    pub fn remove_device(&mut self, id: u64) -> bool {
+        let was = self.devices.active;
+        let removed = self.devices.remove(id);
+        self.end_link_if_device_changed(was);
+        removed
+    }
+
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
@@ -565,6 +587,23 @@ pub fn arrow_to_axes(dir_x: i8, dir_y: i8, origin: Corner, invert_keypad: bool) 
     (dir_x * sx, dir_y * sy)
 }
 
+/// [`arrow_to_axes`] for a device: the axes are the ones its jobs are built with, so a machine
+/// with negative coordinates or swapped X and Y also jogs the way the arrow points.
+pub fn arrow_to_machine(dir_x: i8, dir_y: i8, dev: &Device, invert_keypad: bool) -> (i8, i8) {
+    let c = dev.job_device().geometry().affine().as_coeffs();
+    let (dx, dy) = (f64::from(dir_x), f64::from(if invert_keypad { -dir_y } else { dir_y }));
+    let sign = |v: f64| {
+        if v > 0.5 {
+            1
+        } else if v < -0.5 {
+            -1
+        } else {
+            0
+        }
+    };
+    (sign(c[0] * dx + c[2] * dy), sign(c[1] * dx + c[3] * dy))
+}
+
 // ----- Commands ------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -583,13 +622,59 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     // Keep the state fresh before acting on it.
     app.machine.tick();
     crate::machine_job::update_head(app);
-    if src == Source::Api && is_hardware(id) && app.machine.handle.is_real_machine() {
-        return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+    if src == Source::Api && app.machine.handle.is_real_machine() {
+        if AGENT_STOPS.contains(&id) {
+            return Some(agent_stop(app, id));
+        }
+        if is_hardware(id) {
+            return Some(Err(format!("{id} was refused: a real machine is connected. Use the window; agents only drive the simulators.")));
+        }
+        if drops_the_link(app, id, a) {
+            return Some(Err(format!(
+                "{id} was refused: a real machine is connected, and this would end its connection. Use the window; agents only drive the simulators."
+            )));
+        }
+    }
+    if let Some(r) = crate::connections::run(app, id, a, src) {
+        return Some(r);
     }
     if let Some(r) = crate::machine_ext::run(app, id, a, src) {
         return Some(r);
     }
     Some(run_command(app, id, a, src))
+}
+
+/// What an agent may do on a real machine too: stop it, switch the laser off and end a jog.
+/// Nothing here ever starts, moves, fires or resumes anything.
+const AGENT_STOPS: &[&str] =
+    &["machine.stop", "job.stop", "machine.pause", "job.pause", "machine.emergency_stop", "machine.fire_off", "machine.jog_stop"];
+
+/// One of [`AGENT_STOPS`] on a real machine. Pause only ever pauses: a job that is already paused
+/// is left alone, since on some controllers a second pause sets it going again.
+fn agent_stop(app: &mut DarkBurn, id: &str) -> Result<Value, String> {
+    if id == "machine.jog_stop" {
+        app.machine.jog.holding = false;
+    }
+    let h = &mut app.machine.handle;
+    match id {
+        "machine.fire_off" => mach(h.fire_off()),
+        "machine.jog_stop" => mach(h.jog_stop()),
+        "machine.pause" | "job.pause" if h.snapshot().state == LaserState::Paused => Ok(json!({ "ok": true, "paused": true })),
+        "machine.pause" | "job.pause" => mach(h.pause()),
+        "machine.emergency_stop" => mach(h.command(MachineCommand::EmergencyStop)),
+        _ => mach(h.stop()),
+    }
+}
+
+/// Whether a device-list command would end the open connection: picking a device always does,
+/// removing the active one does, and the bridge setup makes its new device the active one.
+/// `machine.disconnect` is refused to an agent on a real machine, so these are as well.
+fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
+    match id {
+        "device.select" | "device.bridge_setup" => true,
+        "device.remove" => a.get("id").and_then(Value::as_u64).is_some_and(|d| app.machine.devices.active == Some(d)),
+        _ => false,
+    }
 }
 
 fn num(a: &Value, k: &str) -> Option<f64> {
@@ -618,7 +703,7 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
     };
     Some(match id {
         "job.start" | "machine.start" => {
-            let from_op = op(a).or(app.job.start_op);
+            let from_op = op(a).or(crate::job_cmds::start_op(app));
             start(app, Action::Start { from_op })
         }
         "job.preview_run_from_here" => match op(a) {
@@ -626,7 +711,7 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
             None => Err("argument op_index must be a whole number".into()),
         },
         "job.send" => {
-            let from_op = app.job.start_op;
+            let from_op = crate::job_cmds::start_op(app);
             start(app, Action::Send { from_op })
         }
         "job.preview_send_from_here" => match op(a) {
@@ -635,7 +720,12 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
         },
         "job.pause" => {
             if app.machine.handle.snapshot().state == LaserState::Paused {
-                mach(app.machine.handle.resume())
+                // The button in the window toggles. For an agent, pause only ever pauses: it is
+                // one of the commands that are always allowed, and going on is machine.resume.
+                match src {
+                    Source::Ui => mach(app.machine.handle.resume()),
+                    Source::Api => Ok(json!({ "ok": true, "paused": true })),
+                }
             } else {
                 mach(app.machine.handle.pause())
             }
@@ -684,7 +774,19 @@ fn run_gcode_file(app: &mut DarkBurn, a: &Value, src: Source) -> Result<Value, S
     if app.machine.handle.snapshot().family != Family::Grbl {
         return Err("Run G-code is for G-code machines.".into());
     }
-    match app.machine.begin_start(job)? {
+    // A job DarkBurn saved with absolute coordinates holds bed positions, but the controller
+    // reads them from its origin once one is set: the job would land shifted by that much.
+    let offset = crate::machine_job::work_offset(app);
+    if offset.hypot() > 1e-6 && crate::machine_job::gcode_in_machine_coordinates(&text) {
+        return Err(format!(
+            "This file was saved in bed coordinates, and the machine has an origin set: it would run {:.2} mm, {:.2} mm away from where it was drawn. Use Clear origin first, or start the job from the project.",
+            offset.x, offset.y
+        ));
+    }
+    let outcome = app.machine.begin_start(job)?;
+    // A file run as it is: nothing of the project was burnt.
+    app.job_run.from_project = false;
+    match outcome {
         StartOutcome::Started => Ok(json!({ "ok": true })),
         StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
     }
@@ -694,6 +796,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
     if let Some(r) = run_job_command(app, id, a, src) {
         return r;
     }
+    let from_head = id == "machine.frame" && crate::job_cmds::current_settings(app).start_from == crate::job_build::StartMode::CurrentPosition;
     let m = &mut app.machine;
     match id {
         // ----- dialogs
@@ -740,6 +843,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             Ok(json!({ "ok": true }))
         }
         "machine.reset_connection" => {
+            if src == Source::Api && !m.active().is_simulator() {
+                return Err("An agent may only connect to a simulator. Connect real machines from the Laser panel.".into());
+            }
             m.handle.disconnect();
             m.request_connect()?;
             Ok(json!({ "ok": true, "waiting_for_confirmation": m.dlg.confirm_connect.is_some() }))
@@ -751,7 +857,15 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "machine.stop" => mach(m.handle.stop()),
         "machine.frame" => {
             let r = Rect::new(need(a, "x")?, need(a, "y")?, need(a, "x")? + need(a, "width")?, need(a, "y")? + need(a, "height")?);
-            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent") };
+            // A job from the current position starts where the head is: the frame must leave
+            // the head there, or the job burns from a corner of this rectangle.
+            let s = m.handle.snapshot();
+            let return_to = match s.family {
+                Family::Grbl if from_head => Some(Point::new(s.work_pos[0], s.work_pos[1])),
+                Family::Ruida if from_head => Some(Point::new(s.machine_pos[0], s.machine_pos[1])),
+                _ => None,
+            };
+            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to };
             mach(m.handle.frame_rect(r, spec))
         }
         "machine.home" => mach(m.handle.home()),
@@ -789,6 +903,12 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "machine.get_position" => mach(m.handle.get_position()),
         "machine.fire" => {
+            // The switch in Device Settings hides the button; it also holds the command, which
+            // scripts and agents reach without the button.
+            let d = m.active();
+            if d.family() == Family::Grbl && !d.settings.gcode.fire_button {
+                return Err("The Fire button is switched off for this device. Switch it on in Device Settings first.".into());
+            }
             let percent = num(a, "percent").unwrap_or(m.fire_percent);
             let secs = num(a, "secs").unwrap_or(m.fire_secs);
             mach(m.handle.fire(percent, secs))
@@ -902,7 +1022,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "device.remove" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
-            if m.devices.remove(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
+            if m.remove_device(did) { Ok(json!({ "ok": true })) } else { Err("That device is not there, or it is the last one.".into()) }
         }
         "device.export" => {
             let did = a.get("id").and_then(Value::as_u64).ok_or("argument id must be a whole number")?;
@@ -977,6 +1097,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     sync_job_state(app);
     crate::machine_job::update_head(app);
     let events = app.machine.tick();
+    crate::connections::frame_tick(app);
     crate::settings_wiring::on_machine_events(app, &events);
     let excluded = app.prefs.opts.excluded_ports.clone();
     crate::settings_wiring::filter_ports(&mut app.machine.ports, &excluded);
@@ -1008,6 +1129,36 @@ pub fn view_origin(c: Corner) -> crate::view::Origin {
     }
 }
 
+/// The preferences were replaced as a whole (imported from a file or a backup): the work area
+/// and origin corner they brought belong to whatever machine they came from. The active device
+/// keeps its own, and the canvas shows those again, as it would after the next start.
+pub fn work_area_from_device(app: &mut DarkBurn) {
+    let Some(dev) = app.machine.devices.active.and_then(|id| app.machine.devices.get(id)) else { return };
+    app.prefs.page_width = dev.width_mm as f32;
+    app.prefs.page_height = dev.height_mm as f32;
+    app.prefs.origin = view_origin(dev.origin);
+}
+
+/// The work area was changed in Settings (or by `setting.set`): it is the active device's from
+/// now on, so a job is built for the bed and the origin corner the canvas shows. A galvo's
+/// field comes from its lens; the canvas goes back to it.
+pub fn work_area_changed(app: &mut DarkBurn) {
+    use crate::view::Origin;
+    let Some(dev) = app.machine.devices.active.and_then(|id| app.machine.devices.get_mut(id)) else { return };
+    if dev.family() != Family::Galvo {
+        dev.width_mm = f64::from(app.prefs.page_width);
+        dev.height_mm = f64::from(app.prefs.page_height);
+    }
+    dev.origin = match app.prefs.origin {
+        Origin::FrontLeft => Corner::BottomLeft,
+        Origin::FrontRight => Corner::BottomRight,
+        Origin::RearLeft => Corner::TopLeft,
+        Origin::RearRight => Corner::TopRight,
+    };
+    app.prefs.page_width = dev.width_mm as f32;
+    app.prefs.page_height = dev.height_mm as f32;
+}
+
 /// Put the active device's remembered state into the app when the device changed [DEV-07], and
 /// remember the old device's first.
 pub fn adopt_device_state(app: &mut DarkBurn) {
@@ -1025,6 +1176,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     if remembered {
         p.numeric_inches = dev.state.inches;
         p.show_grid = dev.state.show_grid;
+        p.grid_spacing = dev.state.grid_spacing as f32;
     }
     p.page_width = dev.width_mm as f32;
     p.page_height = dev.height_mm as f32;
@@ -1041,20 +1193,27 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
     p.sanitise();
     // Each device keeps its own material and cut library [LIB-09, LAYER-10].
     app.extras.library.switch_device(&dev.name, &app.prefs);
+    // Its own saved positions (before the capture below, which would hand it the last device's).
+    app.machine.jog.saved = dev.state.saved_positions;
+    app.machine.jog.finish = dev.state.finish_position;
     if !remembered {
         // A device that has never been used takes over the app's current units, grid and panels.
         capture_device_state(app, active);
     }
-    app.machine.rotary_on = false;
-    app.machine.cylinder_on = false;
 }
 
 /// Copy what the app holds for the current device into the device record.
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
+    let spacing = f64::from(app.prefs.grid_spacing);
+    let (saved, finish) = (app.machine.jog.saved.clone(), app.machine.jog.finish);
     if let Some(d) = app.machine.devices.get_mut(id) {
+        d.state.saved_positions = saved;
+        d.state.finish_position = finish;
         d.state.inches = inches;
         d.state.show_grid = grid;
+        // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.
+        d.state.grid_spacing = (spacing * 1000.0).round() / 1000.0;
         d.state.panel_layout = layout;
     }
 }
@@ -1074,7 +1233,12 @@ pub fn save_default_layers(app: &mut DarkBurn) -> bool {
 
 pub fn apply_default_layers(app: &mut DarkBurn) -> bool {
     let Some(text) = app.machine.active().state.default_layers.clone() else { return false };
-    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(&text) else { return false };
+    apply_layers(app, &text)
+}
+
+/// Put stored default layers (a device's `default_layers` text) on the open project, as one undo step.
+pub fn apply_layers(app: &mut DarkBurn, text: &str) -> bool {
+    let Ok(layers) = serde_json::from_str::<Vec<darkburn_core::layer::Layer>>(text) else { return false };
     if layers.len() != app.editor.doc.layers.len() {
         return false;
     }

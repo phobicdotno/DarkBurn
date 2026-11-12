@@ -359,6 +359,26 @@ fn convert_to_path_bakes_variable_text_and_codes() {
 }
 
 #[test]
+fn convert_to_path_leaves_a_text_with_nothing_to_draw_alone() {
+    let mut a = app();
+    let blank = add(&mut a, "   ", json!({}));
+    select(&mut a, &[blank]);
+    let r = run(&mut a, "edit.convert_path", Value::Null).unwrap();
+    assert_eq!(r["converted"], 0, "{r}");
+    assert!(matches!(a.editor.doc.get(blank).unwrap().kind, ShapeKind::Text(_)), "still a text that can be typed into");
+    // together with a text that has letters: only that one becomes a path
+    let word = add(&mut a, "A", json!({}));
+    select(&mut a, &[blank, word]);
+    let r = run(&mut a, "edit.convert_path", Value::Null).unwrap();
+    assert_eq!(r["converted"], 1, "{r}");
+    assert!(matches!(a.editor.doc.get(blank).unwrap().kind, ShapeKind::Text(_)));
+    assert!(matches!(a.editor.doc.get(word).unwrap().kind, ShapeKind::Path { .. }));
+    for s in a.editor.doc.iter() {
+        assert!(!matches!(&s.kind, ShapeKind::Path { path } if path.elements().is_empty()), "no empty path shape is left");
+    }
+}
+
+#[test]
 fn fonts_and_defaults() {
     let mut a = app();
     let r = run(&mut a, "text.fonts", json!({ "query": "plex" })).unwrap();
@@ -379,4 +399,18 @@ fn every_command_has_a_valid_schema() {
             assert!(serde_json::from_str::<Value>(c.args).is_ok(), "{}: {}", c.id, c.args);
         }
     }
+}
+
+#[test]
+fn text_is_not_put_on_a_path_without_length() {
+    let mut a = app();
+    let t = add(&mut a, "Hi", json!({}));
+    let before = bbox(&a, t);
+    assert!(before.width() > 1.0);
+    let dot = run(&mut a, "shape.add_line", json!({ "points": [[5, 5], [5, 5]], "connect": false })).unwrap()["id"].as_u64().unwrap();
+    // The text used to vanish: it stayed in the project with nothing to draw or burn.
+    let err = run(&mut a, "text.on_path", json!({ "text_id": t.0, "path_id": dot })).unwrap_err();
+    assert!(err.contains("no length"), "{err}");
+    assert!(text_of(&a, t).on_path.is_none());
+    assert_eq!(bbox(&a, t), before);
 }

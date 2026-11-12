@@ -38,6 +38,9 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             let inv = select::inverted(&e.doc, &e.selection);
             e.selection.set(inv);
         }
+        // With nothing selected there is nothing to copy: what was copied before stays, here and
+        // on the system clipboard.
+        "edit.copy" | "edit.cut" if ids.is_empty() => {}
         "edit.copy" => {
             e.clipboard.copy(&e.doc, &ids);
             app.clipboard_out = true;
@@ -151,6 +154,8 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             e.edit("Unlock", |d, sel| {
                 let changed = arrange::set_locked(d, &targets, false);
                 sel.set(targets.iter().copied());
+                // Not the ones on hidden layers: they are unlocked, but cannot be seen or clicked.
+                sel.retain_selectable(d);
                 changed
             });
         }
@@ -282,5 +287,157 @@ mod tests {
         assert!(!app.prefs.filled, "filled is the default; the toggle turns it off");
         app.run(&ctx, "tools.rect");
         assert_eq!(app.tool, Tool::Rect);
+    }
+}
+
+/// Every document command, run on a document with every kind of shape: when it changes the
+/// document that is exactly one undo step, Undo gives back the document and selection as they
+/// were, and Redo the changed document again.
+#[cfg(test)]
+mod undo_sweep {
+    use std::sync::Arc;
+
+    use darkburn_core::kurbo::{Affine, BezPath, Rect};
+    use darkburn_core::{CutDirection, ImageData, ImageShape, Shape, ShapeId, ShapeKind, TextShape};
+    use serde_json::json;
+
+    use crate::prefs::Prefs;
+    use crate::shell::DarkBurn;
+
+    const COMMANDS: &[&str] = &[
+        "edit.cut",
+        "edit.duplicate",
+        "edit.paste",
+        "edit.paste_in_place",
+        "edit.delete",
+        "edit.convert_path",
+        "edit.close_path",
+        "edit.auto_join",
+        "edit.optimize",
+        "edit.delete_duplicates",
+        "edit.delete_overlapping",
+        "arrange.group",
+        "arrange.ungroup",
+        "arrange.auto_group",
+        "arrange.flip_h",
+        "arrange.flip_v",
+        "arrange.rotate_cw",
+        "arrange.rotate_ccw",
+        "arrange.align_left",
+        "arrange.align_right",
+        "arrange.align_top",
+        "arrange.align_bottom",
+        "arrange.align_h_centres",
+        "arrange.align_v_centres",
+        "arrange.align_centres",
+        "arrange.distribute_h",
+        "arrange.distribute_v",
+        "arrange.distribute_h_centres",
+        "arrange.distribute_v_centres",
+        "arrange.distribute_h_spacing",
+        "arrange.distribute_v_spacing",
+        "arrange.move_h_together",
+        "arrange.move_v_together",
+        "arrange.same_width",
+        "arrange.same_height",
+        "arrange.dock_left",
+        "arrange.dock_right",
+        "arrange.dock_up",
+        "arrange.dock_down",
+        "arrange.page_centre",
+        "arrange.page_upper_left",
+        "arrange.page_lower_right",
+        "arrange.break_apart",
+        "arrange.forward",
+        "arrange.backward",
+        "arrange.front",
+        "arrange.back",
+        "arrange.lock",
+        "arrange.unlock",
+        "arrange.array_flatten",
+        "arrange.lock_inner",
+        "shape.remove_rounded_corners",
+    ];
+
+    fn sample() -> (DarkBurn, Vec<ShapeId>) {
+        let mut app = DarkBurn::new(Prefs::default());
+        let mut ids = Vec::new();
+        app.editor.edit("Build", |d, _| {
+            let mut r = Shape::rect(Rect::new(10.0, 10.0, 40.0, 30.0), 3.0, 1);
+            r.tabs = vec![[0.0, -10.0]];
+            r.start_point = Some([15.0, 0.0]);
+            r.direction = CutDirection::Clockwise;
+            r.name = "plate".into();
+            r.power_scale = 60.0;
+            r.priority = 2;
+            ids.push(d.add(r));
+            ids.push(d.add(Shape::ellipse(Rect::new(60.0, 15.0, 90.0, 45.0), 2)));
+            let mut open = BezPath::new();
+            open.move_to((100.0, 10.0));
+            open.line_to((130.0, 10.0));
+            open.line_to((130.0, 40.0));
+            ids.push(d.add(Shape::path(open, 3)));
+            let mut two = BezPath::from_svg("M0 0 L10 0 L10 10 Z M20 0 L30 0 L30 10 Z").unwrap();
+            two.apply_affine(Affine::translate((150.0, 60.0)));
+            ids.push(d.add(Shape::path(two, 3)));
+            ids.push(d.add(Shape::polygon((40.0, 80.0).into(), 6, 12.0, 4)));
+            let key = d.add_image(ImageData { format: "png".into(), bytes: Arc::from(&b"\x89PNG not really"[..]), px_width: 4, px_height: 2 });
+            let img = ImageShape { image: key, width: 30.0, height: 15.0, ..Default::default() };
+            ids.push(d.add(Shape::new(ShapeKind::Image(img), Affine::translate((90.0, 90.0)), 5)));
+            let text = TextShape { text: "Hi".into(), backup: Some(BezPath::from_svg("M0 0 L8 0 L8 6 L0 6 Z").unwrap()), ..Default::default() };
+            ids.push(d.add(Shape::new(ShapeKind::Text(text), Affine::translate((20.0, 120.0)), 6)));
+            let kids = vec![Shape::rect(Rect::new(0.0, 0.0, 8.0, 8.0), 0.0, 1), Shape::ellipse(Rect::new(12.0, 0.0, 20.0, 8.0), 7)];
+            ids.push(d.add(Shape::new(ShapeKind::Group { children: kids }, Affine::translate((150.0, 100.0)), 1)));
+            d.notes = "notes".into();
+            true
+        });
+        app.editor.clipboard.copy(&app.editor.doc, &ids[..2]);
+        app.editor.mark_saved();
+        (app, ids)
+    }
+
+    #[test]
+    fn every_document_command_is_one_undo_step_that_undo_and_redo_restore() {
+        let mut problems = Vec::new();
+        for id in COMMANDS {
+            assert!(crate::commands::lookup(id).is_some(), "{id} is not a command");
+            assert!(!crate::commands::hardware(id), "{id} is a hardware command");
+            for pick in ["all", "two", "one", "none"] {
+                let (mut app, ids) = sample();
+                let picked: Vec<ShapeId> = match pick {
+                    "all" => ids.clone(),
+                    "two" => vec![ids[3], ids[0]],
+                    "one" => vec![ids[7]],
+                    _ => Vec::new(),
+                };
+                app.editor.selection.set(picked);
+                let (before, selection, steps) = (app.editor.doc.clone(), app.editor.selection.clone(), app.editor.history.len());
+                let _ = crate::api::execute_headless(&mut app, id, &json!({}));
+                let after = app.editor.doc.clone();
+                let made = app.editor.history.len() - steps;
+                if after == before {
+                    if made != 0 {
+                        problems.push(format!("{id} ({pick}): {made} undo step(s) for no change"));
+                    }
+                    continue;
+                }
+                if made != 1 {
+                    problems.push(format!("{id} ({pick}): changed the document with {made} undo steps"));
+                    continue;
+                }
+                app.editor.undo();
+                if app.editor.doc != before {
+                    problems.push(format!("{id} ({pick}): undo does not give the document back"));
+                }
+                if app.editor.selection != selection {
+                    problems.push(format!("{id} ({pick}): undo does not give the selection back"));
+                }
+                app.editor.redo();
+                if app.editor.doc != after {
+                    problems.push(format!("{id} ({pick}): redo does not give the changed document back"));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 }

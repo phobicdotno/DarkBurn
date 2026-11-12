@@ -142,7 +142,7 @@ fn profile_kind(t: DeviceType) -> gp::DeviceKind {
     t.lib_kind().unwrap_or(match t {
         DeviceType::GrblHal => gp::DeviceKind::GrblHal,
         DeviceType::FluidNc => gp::DeviceKind::FluidNc,
-        DeviceType::Grbl | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl => gp::DeviceKind::Grbl,
+        DeviceType::Grbl | DeviceType::GrblM3 | DeviceType::GrblLpc | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl => gp::DeviceKind::Grbl,
         _ => gp::DeviceKind::DesignOnly,
     })
 }
@@ -203,7 +203,7 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
         relative_moves_only: s.gcode.z_relative_only,
         optimize_moves: s.gcode.z_optimize,
     };
-    p.tab_pulse_width_ms = s.tab_pulse_width;
+    p.tab_pulse_width_mm = s.tab_pulse_width;
     p.checklist = gp::JobChecklist { enabled: s.checklist_on, items: s.checklist.clone() };
     p.overwrite_files = s.overwrite_files;
     p.scanning_offsets = gp::ScanningOffsets {
@@ -231,7 +231,9 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
         g0_for_overscan: g.overscan_as_g0,
         s_with_every_g1: g.s_every_g1,
         constant_power: e.constant_power,
-        units: if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres },
+        // The job is always written in millimetres. Inches on the screen (`state.inches`) is how
+        // sizes are shown, and goes to `state.units` below.
+        units: gp::Units::Millimetres,
         marlin_power: e.marlin_power,
         tool_index: e.tool_index,
         reduce_smoothie_pause_delay: e.reduce_smoothie_pause_delay,
@@ -243,7 +245,7 @@ pub fn to_profile(d: &Device) -> gc::DeviceProfile {
     let a = &s.additional;
     p.simulation =
         gp::SimulationSettings { accel_x: a.accel, accel_y: a.accel, max_speed_x: a.max_speed, max_speed_y: a.max_speed, rapid_speed: a.rapid_speed };
-    p.state.units = p.gcode.units;
+    p.state.units = if d.state.inches { gp::Units::Inches } else { gp::Units::Millimetres };
     p.state.grid_spacing_mm = d.state.grid_spacing;
     p.state.last_port = (!d.state.port.is_empty()).then(|| d.state.port.clone());
     p
@@ -277,7 +279,7 @@ pub fn from_profile(p: &gc::DeviceProfile) -> Device {
     s.z_reverse = p.z.reverse;
     s.gcode.z_relative_only = p.z.relative_moves_only;
     s.gcode.z_optimize = p.z.optimize_moves;
-    s.tab_pulse_width = p.tab_pulse_width_ms;
+    s.tab_pulse_width = p.tab_pulse_width_mm;
     s.checklist_on = p.checklist.enabled;
     s.checklist = p.checklist.items.clone();
     s.overwrite_files = p.overwrite_files;
@@ -306,7 +308,7 @@ pub fn from_profile(p: &gc::DeviceProfile) -> Device {
     s.additional.accel = p.simulation.accel_x;
     s.additional.max_speed = p.simulation.max_speed_x;
     s.additional.rapid_speed = p.simulation.rapid_speed;
-    d.state.inches = pg.units == gp::Units::Inches;
+    d.state.inches = p.state.units == gp::Units::Inches;
     d.state.grid_spacing = p.state.grid_spacing_mm;
     d
 }
@@ -346,6 +348,15 @@ pub fn neutral_gcode(base: &DeviceGcodeSettings) -> DeviceGcodeSettings {
 /// Translate GRBL-style lines for `dev`. LinuxCNC gets a complete `.ngc` program.
 pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     let p = to_profile(dev);
+    // The job builder ends its GRBL-style text with `M2`. The device writes its own end after
+    // it (end script, laser off, and for LinuxCNC the program end), and a controller that knows
+    // `M2` stops reading there: the job's own program end is left out.
+    let is_end = |l: &String| l.trim().eq_ignore_ascii_case("M2") || l.trim().eq_ignore_ascii_case("M30");
+    let last = lines.iter().rposition(|l| !l.trim().is_empty());
+    let lines = match last {
+        Some(i) if is_end(&lines[i]) => &lines[..i],
+        _ => lines,
+    };
     if p.kind == gp::DeviceKind::LinuxCnc {
         let o = gc::linuxcnc::LinuxCncOptions::for_profile(&p);
         return gc::linuxcnc::write_program(lines, &p, &o).lines().map(str::to_owned).collect();
@@ -353,10 +364,12 @@ pub fn translate_for(dev: &Device, lines: &[String]) -> Vec<String> {
     gc::translate::translate(lines, &gc::translate::TranslateOptions::for_profile(&p))
 }
 
-/// The lines to stream to `dev` for `tp`.
-pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec<String> {
+/// The lines to stream to `dev` for `tp`. `laser_mode_off`: the connected GRBL controller says
+/// its laser mode is off (`$32=0`), so it keeps the laser on through rapid moves like an old
+/// one does, and the travel moves switch it off themselves.
+pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings, laser_mode_off: bool) -> Vec<String> {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_lines(tp, base);
+        return crate::job_build::gcode_lines_for(tp, base, dev.m3_only() || laser_mode_off);
     }
     let neutral = crate::job_build::gcode_lines(tp, &neutral_gcode(base));
     translate_for(dev, &neutral)
@@ -365,11 +378,17 @@ pub fn job_lines(dev: &Device, tp: &Toolpath, base: &DeviceGcodeSettings) -> Vec
 /// The text of a G-code file for `dev` (Save G-code). Snapmaker files get their header.
 pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &DeviceGcodeSettings) -> String {
     if !dev.kind.is_translated() {
-        return crate::job_build::gcode_text(job, from_op, base);
+        return crate::job_build::gcode_text_for(job, from_op, base, dev.m3_only());
     }
     let neutral = crate::job_build::gcode_text(job, from_op, &neutral_gcode(base));
     let lines: Vec<String> = neutral.lines().map(str::to_owned).collect();
-    let out = translate_for(dev, &lines);
+    let mut out = translate_for(dev, &lines);
+    // The translation drops comments, and with them the line that says the file is DarkBurn's
+    // (Run G-code reads it to know the file holds bed positions). A LinuxCNC program has its
+    // own title line.
+    if dev.kind.lib_kind() != Some(gp::DeviceKind::LinuxCnc) {
+        out.insert(0, format!("; DarkBurn job for {}", dev.kind.label()));
+    }
     if dev.kind.lib_kind() == Some(gp::DeviceKind::Snapmaker) {
         let p = to_profile(dev);
         let info = gc::snapmaker::JobInfo { bounds: job.bounds, work_speed: 0.0, estimated_seconds: 0.0, power_percent: 0.0 };
@@ -378,6 +397,38 @@ pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &Dev
     let mut text = out.join("\n");
     text.push('\n');
     text
+}
+
+/// A G-code file for `dev` with the move to the Move panel's finish position (a machine
+/// position) at its end, as a started job gets it: after the laser is off and the end script,
+/// before the line that ends the program.
+pub fn with_finish_move(dev: &Device, text: String, finish: Option<(f64, f64)>) -> String {
+    let Some((x, y)) = finish else { return text };
+    let num = |v: f64| {
+        let s = format!("{:.3}", if v.abs() < 0.0005 { 0.0 } else { v });
+        s.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    let go: Vec<String> = if dev.kind.is_translated() {
+        vec!["G90".into(), format!("G0 X{} Y{}", num(x), num(y))]
+    } else {
+        vec![format!("G90 G53 G0 X{} Y{}", num(x), num(y))]
+    };
+    let mut lines: Vec<&str> = text.lines().collect();
+    // A controller stops reading at the first program end, so the move goes before that one.
+    let program_end = lines.iter().position(|l| l.trim().eq_ignore_ascii_case("M2") || l.trim().eq_ignore_ascii_case("M30"));
+    let at = program_end.unwrap_or_else(|| {
+        let mut at = lines.len();
+        while at > 0 && (lines[at - 1].trim().is_empty() || lines[at - 1].trim() == "%") {
+            at -= 1;
+        }
+        at
+    });
+    for (i, l) in go.iter().enumerate() {
+        lines.insert(at + i, l);
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out
 }
 
 /// The start and end scripts the device writes around a job, as the job file shows them
@@ -408,8 +459,18 @@ pub fn guess_type(banner: &str) -> Option<DeviceType> {
 
 /// Whether a device of type `t` is a sensible home for firmware that looks like `guess`.
 fn compatible(t: DeviceType, guess: DeviceType) -> bool {
-    let grbl =
-        |x: DeviceType| matches!(x, DeviceType::Grbl | DeviceType::GrblHal | DeviceType::FluidNc | DeviceType::Emblaser1 | DeviceType::SimulatorGrbl);
+    let grbl = |x: DeviceType| {
+        matches!(
+            x,
+            DeviceType::Grbl
+                | DeviceType::GrblM3
+                | DeviceType::GrblLpc
+                | DeviceType::GrblHal
+                | DeviceType::FluidNc
+                | DeviceType::Emblaser1
+                | DeviceType::SimulatorGrbl
+        )
+    };
     let smoothie = |x: DeviceType| matches!(x, DeviceType::Smoothie | DeviceType::Emblaser2 | DeviceType::SimulatorSmoothie);
     match t {
         DeviceType::CustomGcode | DeviceType::SimulatorCustom => true,
@@ -428,6 +489,10 @@ pub fn mismatch_hint(firmware: &str, chosen: DeviceType) -> String {
     match guess_type(firmware) {
         Some(g) if !compatible(chosen, g) => {
             format!(". This looks like {}, but the device is set to {}. Change the type in Device Settings.", g.label(), chosen.label())
+        }
+        // GRBL before 1.1f has no dynamic power (M4): the GRBL-M3 type writes M3 only [GRBL-02].
+        _ if matches!(chosen, DeviceType::Grbl | DeviceType::Emblaser1) && crate::connections::grbl_is_m3_only(firmware) => {
+            ". This GRBL is older than 1.1f and has constant power only. Change the type to GRBL-M3 in Device Settings.".into()
         }
         _ => String::new(),
     }
@@ -616,8 +681,12 @@ impl DriverAdapter for GcodeAdapter {
             C::Resume => m.resume().map_err(map_err),
             C::Stop => m.stop().map_err(map_err),
             C::EmergencyStop => m.emergency_stop().map_err(map_err),
-            C::FrameRect(r, f) => m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent }).map_err(map_err),
-            C::FrameOutline(p, f) => m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent }).map_err(map_err),
+            C::FrameRect(r, f) => {
+                m.frame_rect(r, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to }).map_err(map_err)
+            }
+            C::FrameOutline(p, f) => {
+                m.frame_outline(&p, grbl::FrameOptions { feed: f.feed, laser_percent: f.laser_percent, return_to: f.return_to }).map_err(map_err)
+            }
             C::FrameOnController => unsupported("Framing on the controller"),
             C::JogStep(j) => {
                 if j.du != 0.0 {
@@ -642,7 +711,7 @@ impl DriverAdapter for GcodeAdapter {
             C::SetUserOrigin => m.set_user_origin().map_err(map_err),
             C::ClearUserOrigin => m.clear_user_origin().map_err(map_err),
             C::GetPosition => m.request_status().map_err(map_err),
-            C::Fire { percent, secs } => m.fire(percent, Duration::from_secs_f64(secs.max(0.0))).map_err(map_err),
+            C::Fire { percent, secs } => m.fire(percent, crate::machine_api::fire_time(secs)?).map_err(map_err),
             C::FireOff => m.fire_off().map_err(map_err),
             C::Air(on) => m.set_air(on).map_err(map_err),
             C::SetOverrides { feed, power, rapid } => {

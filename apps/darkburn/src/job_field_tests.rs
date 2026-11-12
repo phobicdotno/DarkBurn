@@ -260,6 +260,128 @@ fn kerf_offsets_closed_shapes_by_the_given_distance() {
 }
 
 #[test]
+fn kerf_shrinks_a_hole_drawn_as_its_own_shape() {
+    // A 40 mm plate with a 10 mm hole, drawn as two shapes on the same layer.
+    let mut d = line_doc(40.0);
+    sq(&mut d, 0, 25.0, 25.0, 10.0);
+    d.layer_mut(0).main_mut().kerf = 0.5;
+    let b = build(d);
+    let cuts: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+    let span = |inner: bool| {
+        let xs: Vec<f64> =
+            cuts.iter().filter(|s| (s.from.x > 20.0 && s.from.x < 40.0 && s.from.y > 20.0 && s.from.y < 40.0) == inner).map(|s| s.from.x).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let (o0, o1) = span(false);
+    assert!((o0 - 9.5).abs() < 0.05 && (o1 - 50.5).abs() < 0.05, "the plate grows by the kerf: {o0} {o1}");
+    let (i0, i1) = span(true);
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "the hole shrinks by the kerf: {i0} {i1}");
+}
+
+/// Holes are often put on a layer of their own, to cut them before the plate.
+#[test]
+fn kerf_shrinks_a_hole_on_a_layer_of_its_own() {
+    let hole_span = |d: Document| {
+        let b = build(d);
+        let xs: Vec<f64> = segs(&b.toolpath)
+            .into_iter()
+            .filter(|s| s.kind == 'C' && s.power > 0.0 && s.from.x > 20.0 && s.from.x < 40.0 && s.from.y > 20.0 && s.from.y < 40.0)
+            .map(|s| s.from.x)
+            .collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    // A 40 mm plate on layer 0 and a 10 mm hole on layer 1, both cut with a kerf offset.
+    let mut d = line_doc(40.0);
+    sq(&mut d, 1, 25.0, 25.0, 10.0);
+    d.layer_mut(0).main_mut().kerf = 0.5;
+    d.layer_mut(1).main_mut().kerf = 0.5;
+    let (i0, i1) = hole_span(d.clone());
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "the hole shrinks by the kerf: {i0} {i1}");
+    // Only the hole's layer has a kerf: still a hole.
+    d.layer_mut(0).main_mut().kerf = 0.0;
+    let (i0, i1) = hole_span(d.clone());
+    assert!((i0 - 25.5).abs() < 0.05 && (i1 - 34.5).abs() < 0.05, "{i0} {i1}");
+    // A plate that is only engraved (filled) cuts nothing free: the square is a part, and grows.
+    d.layer_mut(0).main_mut().mode = Mode::Fill;
+    let b = build(d.clone());
+    let xs: Vec<f64> =
+        segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0 && (s.from.y - s.to.y).abs() > 1.0).map(|s| s.from.x).collect();
+    let (i0, i1) = (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max));
+    assert!((i0 - 24.5).abs() < 0.05 && (i1 - 35.5).abs() < 0.05, "a part grows by the kerf: {i0} {i1}");
+    // A plate on a layer that is not output does not make it a hole either.
+    d.layer_mut(0).main_mut().mode = Mode::Line;
+    d.layer_mut(0).output = false;
+    let (i0, i1) = hole_span(d);
+    assert!((i0 - 24.5).abs() < 0.05 && (i1 - 35.5).abs() < 0.05, "{i0} {i1}");
+}
+
+#[test]
+fn a_cropped_image_burns_only_inside_its_crop() {
+    use darkburn_core::kurbo::Shape as _;
+    let mut d = image_doc(|s| s.image_mode = layer::ImageMode::Threshold, vec![0u8; 16]);
+    let id = d.iter().next().unwrap().id;
+    // Keep the left half of the 10 x 10 mm picture (local coordinates, centred on the origin).
+    if let ShapeKind::Image(img) = &mut d.get_mut(id).unwrap().kind {
+        img.crop = Some(Rect::new(-5.0, -5.0, 0.0, 5.0).to_path(0.01));
+    }
+    let b = build(d);
+    let burns: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+    assert!(!burns.is_empty());
+    let max_x = burns.iter().map(|s| s.from.x.max(s.to.x)).fold(f64::MIN, f64::max);
+    assert!(max_x < 10.6, "nothing burns right of the crop at x = 10: {max_x}");
+    assert!((burn_len(&b.toolpath) - 100.0).abs() < 15.0, "20 lines of 5 mm: {}", burn_len(&b.toolpath));
+}
+
+/// What a crop (or transparency) takes away never burns, whatever is done to the tones.
+#[test]
+fn outside_its_crop_an_image_burns_nothing_when_made_negative_or_darker() {
+    use darkburn_core::kurbo::Shape as _;
+    let cases: [(&str, u8, bool, f64); 3] = [("negative", 255, true, 0.0), ("darker", 255, false, -100.0), ("plain", 0, false, 0.0)];
+    for (what, grey, negative, brightness) in cases {
+        let mut d = image_doc(
+            |s| {
+                s.image_mode = layer::ImageMode::Threshold;
+                s.negative = negative;
+            },
+            vec![grey; 16],
+        );
+        let id = d.iter().next().unwrap().id;
+        // Keep the left half of the 10 x 10 mm picture (local coordinates, centred on the origin).
+        if let ShapeKind::Image(img) = &mut d.get_mut(id).unwrap().kind {
+            img.crop = Some(Rect::new(-5.0, -5.0, 0.0, 5.0).to_path(0.01));
+            img.adjust.brightness = brightness;
+        }
+        let b = build(d);
+        let burns: Vec<Seg> = segs(&b.toolpath).into_iter().filter(|s| s.kind == 'C' && s.power > 0.0).collect();
+        assert!(!burns.is_empty(), "{what}");
+        let max_x = burns.iter().map(|s| s.from.x.max(s.to.x)).fold(f64::MIN, f64::max);
+        assert!(max_x < 10.6, "{what}: nothing burns right of the crop at x = 10: {max_x}");
+        assert!((burn_len(&b.toolpath) - 100.0).abs() < 15.0, "{what}: 20 lines of 5 mm: {}", burn_len(&b.toolpath));
+    }
+}
+
+#[test]
+fn an_image_too_fine_to_scan_is_left_out_with_the_reason() {
+    // 1000 x 1000 mm at 0.001 mm a line would be a million million dots.
+    let mut d = image_doc(
+        |s| {
+            s.image_mode = layer::ImageMode::Threshold;
+            s.interval = 0.001;
+        },
+        vec![0u8; 16],
+    );
+    let id = d.iter().next().unwrap().id;
+    d.get_mut(id).unwrap().transform = Affine::translate((600.0, 600.0)) * Affine::scale(100.0);
+    d.layer_mut(0).main_mut().mode = Mode::Line;
+    sq(&mut d, 0, 10.0, 10.0, 20.0);
+    let mut i = input(d);
+    i.device = JobDevice::new(2000.0, 2000.0);
+    let b = build_job_simple(&i).unwrap();
+    assert!(b.warnings.iter().any(|w| w.contains("lower the DPI")), "{:?}", b.warnings);
+    assert!((burn_len(&b.toolpath) - 80.0).abs() < 1e-6, "only the square is cut");
+}
+
+#[test]
 fn perforation_cuts_and_skips() {
     let mut d = line_doc(20.0);
     {
@@ -613,6 +735,10 @@ fn fill_and_line_runs_both() {
 // ----- IMGL --------------------------------------------------------------------------------------
 
 pub(crate) fn image_doc(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>) -> Document {
+    image_doc_with(setting, px, darkburn_core::ImageAdjust::default())
+}
+
+pub(crate) fn image_doc_with(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>, adjust: darkburn_core::ImageAdjust) -> Document {
     let mut d = Document::new();
     {
         let s = d.layer_mut(3).main_mut();
@@ -630,11 +756,71 @@ pub(crate) fn image_doc(setting: impl Fn(&mut layer::CutSetting), px: Vec<u8>) -
     image::DynamicImage::ImageLuma8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
     let key = d.add_image(darkburn_core::ImageData { format: "png".into(), bytes: std::sync::Arc::from(png), px_width: 4, px_height: 4 });
     d.add(Shape::new(
-        ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, ..Default::default() }),
+        ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, adjust, ..Default::default() }),
         Affine::translate((10.0, 10.0)),
         3,
     ));
     d
+}
+
+/// What is burned is what Adjust Image showed: the job and the preview read the image settings
+/// the same way.
+#[test]
+fn the_job_burns_an_image_the_way_adjust_image_shows_it() {
+    use layer::ImageMode as M;
+    let px: Vec<u8> = vec![0, 60, 120, 255, 200, 30, 90, 180, 255, 10, 140, 70, 100, 220, 40, 160];
+    let sharpened = darkburn_core::ImageAdjust { enhance_amount: 100.0, enhance_radius: 1.0, enhance_denoise: 30.0, ..Default::default() };
+    for (mode, adjust) in [(M::Sketch, darkburn_core::ImageAdjust::default()), (M::Dither, sharpened), (M::Jarvis, sharpened)] {
+        let d = image_doc_with(|s| s.image_mode = mode, px.clone(), adjust);
+        let shown: f64 =
+            crate::images::try_scan_plans(&d, 3, 0, &crate::scan_offsets::ScanTuning::default()).unwrap().iter().map(|p| p.burn_length()).sum();
+        let burned = burn_len(&build(d).toolpath);
+        assert!(shown > 1.0, "{mode:?} shows something");
+        assert!((burned - shown).abs() < 1e-6, "{mode:?}: the job burns {burned} mm, Adjust Image showed {shown} mm");
+    }
+}
+
+#[test]
+fn the_kerf_of_a_line_sub_layer_leaves_the_fill_of_its_layer_alone() {
+    // Fill a 20 mm square, then cut it out with a 1 mm kerf offset on a sub-layer.
+    let mut d = fill_doc(1.0, 20.0);
+    {
+        let l = d.layer_mut(0);
+        let mut sub = l.settings[0].clone();
+        sub.mode = Mode::Line;
+        sub.kerf = 1.0;
+        sub.max_power = 90.0;
+        l.settings.push(sub);
+    }
+    let b = build(d);
+    let span = |power: f64| {
+        let xs: Vec<f64> = segs(&b.toolpath).iter().filter(|s| s.kind == 'C' && s.power == power).flat_map(|s| [s.from.x, s.to.x]).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    let (f0, f1) = span(40.0);
+    assert!((f0 - 10.0).abs() < 1e-6 && (f1 - 30.0).abs() < 1e-6, "the fill covers the square as drawn: {f0} {f1}");
+    let (c0, c1) = span(90.0);
+    assert!((c0 - 9.0).abs() < 0.05 && (c1 - 31.0).abs() < 0.05, "the cut runs 1 mm outside: {c0} {c1}");
+    assert!((b.bounds.width() - 22.0).abs() < 0.05, "the job is as wide as the cut: {}", b.bounds.width());
+}
+
+#[test]
+fn every_line_sub_layer_cuts_with_its_own_kerf() {
+    let mut d = line_doc(20.0);
+    {
+        let l = d.layer_mut(0);
+        l.settings[0].kerf = 0.5;
+        let mut sub = l.settings[0].clone();
+        sub.kerf = -1.0;
+        sub.max_power = 90.0;
+        l.settings.push(sub);
+    }
+    let b = build(d);
+    let x0 =
+        |power: f64| segs(&b.toolpath).iter().filter(|s| s.kind == 'C' && s.power == power).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((x0(50.0) - 9.5).abs() < 0.05, "{}", x0(50.0));
+    assert!((x0(90.0) - 11.0).abs() < 0.05, "{}", x0(90.0));
+    assert!(b.warnings.is_empty(), "{:?}", b.warnings);
 }
 
 #[test]
@@ -668,6 +854,32 @@ fn image_negative_inverts_the_burn() {
     assert!(a0 < 7.0 && a1 < 11.0, "positive burns the dark left half: {a0} {a1}");
     let (b0, b1) = xs(true);
     assert!(b0 > 9.0 && b1 > 13.0, "negative burns the light right half: {b0} {b1}");
+}
+
+/// An image is placed and framed by its own rectangle, white parts included: where the job
+/// lands must not depend on where the first dot happens to be.
+#[test]
+fn an_image_with_white_margins_is_bounded_by_its_rectangle() {
+    // Left half white, right half black: only x = 10 to 15 burns.
+    let half: Vec<u8> = (0..16).map(|i| if i % 4 < 2 { 255 } else { 0 }).collect();
+    let mut i = input(image_doc(|s| s.image_mode = layer::ImageMode::Threshold, half));
+    let b = build_job_simple(&i).unwrap();
+    let burn_x0 = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((10.0..11.0).contains(&burn_x0), "the burn starts in the middle of the picture: {burn_x0}");
+    assert!((b.bounds.x0 - 5.0).abs() < 1e-6 && (b.bounds.x1 - 15.0).abs() < 1e-6, "the picture's rectangle: {:?}", b.bounds);
+    assert!((b.bounds.y0 - 5.0).abs() < 1e-6 && (b.bounds.y1 - 15.0).abs() < 1e-6, "{:?}", b.bounds);
+    // The rectangle frame goes round the picture, as the rubber band does.
+    let xs = |kind| {
+        let tp = build_frame(&i, kind, 100.0, None).unwrap();
+        let xs: Vec<f64> = tp.ops.iter().filter_map(Op::target).map(|p| p.x).collect();
+        (xs.iter().copied().fold(f64::MAX, f64::min), xs.iter().copied().fold(f64::MIN, f64::max))
+    };
+    assert_eq!(xs(FrameKind::Rectangle), xs(FrameKind::RubberBand));
+    // From the current position the picture's corner, not its first dot, is at the head.
+    i.settings.start_from = StartMode::CurrentPosition;
+    let b = build_job_simple(&i).unwrap();
+    let from_head = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.from.x.min(s.to.x)).fold(f64::MAX, f64::min);
+    assert!((from_head - (burn_x0 - 5.0)).abs() < 1e-6, "the black half starts 5 mm and more right of the head: {from_head}");
 }
 
 #[test]

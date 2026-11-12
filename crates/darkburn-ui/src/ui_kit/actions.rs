@@ -187,6 +187,23 @@ pub fn text_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
     response
 }
 
+fn enter_kept_id() -> egui::Id {
+    egui::Id::unique("db_kit_enter_kept_from_ok")
+}
+
+/// A window with fields takes Enter away before its footer is drawn, so that the Enter that
+/// ends typing in a field does not also press OK. Remembered for this frame: a footer button
+/// that holds the keyboard is pressed by that Enter all the same.
+pub(crate) fn note_enter_kept_from_ok(ctx: &egui::Context) {
+    let stamp = (ctx.cumulative_frame_nr(), ctx.cumulative_pass_nr());
+    ctx.data_mut(|d| d.insert_temp(enter_kept_id(), stamp));
+}
+
+fn enter_kept_from_ok(ctx: &egui::Context) -> bool {
+    let stamp = (ctx.cumulative_frame_nr(), ctx.cumulative_pass_nr());
+    ctx.data(|d| d.get_temp::<(u64, u64)>(enter_kept_id())) == Some(stamp)
+}
+
 /// Esc cancels; unowned Enter submits only when valid. Tokens: `none`.
 pub fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -270,7 +287,7 @@ pub fn footer_with_left(
                     if primary { t.space_24 * 3.0 } else { 0.0 },
                 );
                 actions_left = actions_left.min(response.rect.left());
-                if response.clicked() {
+                if response.clicked() || (response.has_focus() && response.enabled() && enter_kept_from_ok(ui.ctx())) {
                     action = kind;
                 }
             }

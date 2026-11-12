@@ -1,11 +1,14 @@
 # darkburn-mcc: attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 This crate is written for DarkBurn and licensed MIT OR Apache-2.0.
 
 ## The owner's own work, ported
 
 The protocol, register, FIFO, safety and `.chf` knowledge in this crate comes from the owner's own
-clean-room analysis project, **phobicMlaserLinux** (`C:\Users\kk\src\phobicMlaserLinux`), which is the
+clean-room analysis project, **phobicMlaserLinux** (https://github.com/phobicdotno/phobicMlaserLinux), which is the
 owner's work and a separate project of theirs. It was read (never modified) and ported to Rust.
 
 | Source in phobicMlaserLinux | Used for |

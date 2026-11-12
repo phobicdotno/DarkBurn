@@ -69,17 +69,21 @@ impl ScanGrid {
         // A tiny tolerance keeps exact edges from adding an empty row or column.
         let eps = 1e-7;
         let col0 = (x0 / i + eps).floor() as i64;
-        let col1 = ((x1 / i - eps).ceil() as i64).max(col0 + 1);
+        // A position far outside any machine pins the lattice numbers at the ends of their
+        // range: the arithmetic below must not run over there.
+        let col1 = ((x1 / i - eps).ceil() as i64).max(col0.saturating_add(1));
         let row0 = (y0 / i + eps).floor() as i64;
-        let row1 = ((y1 / i - eps).ceil() as i64).max(row0 + 1);
-        Self { interval_mm: i, angle_deg, col0, row_top: row1 - 1, width: (col1 - col0) as u32, height: (row1 - row0) as u32 }
+        let row1 = ((y1 / i - eps).ceil() as i64).max(row0.saturating_add(1));
+        let count = |from: i64, to: i64| u32::try_from(to.saturating_sub(from)).unwrap_or(u32::MAX);
+        Self { interval_mm: i, angle_deg, col0, row_top: row1.saturating_sub(1), width: count(col0, col1), height: count(row0, row1) }
     }
 }
 
 /// Resamples `src` (placed by `image_to_mm`) onto `grid`.
 ///
 /// Returns the sRGB-encoded grey values and, per grid pixel, the fraction covered by the
-/// image (`0` outside it). Area resampling averages in linear light with up to 8×8 samples per
+/// image (`0` outside it and where it is fully transparent, so that no adjustment or negative
+/// can make those places burn). Area resampling averages in linear light with up to 8×8 samples per
 /// cell, so downscaling keeps the true tone; values within half a step of black or white snap
 /// to it.
 pub fn resample_to_grid(src: &GrayF, image_to_mm: Affine, grid: &ScanGrid, mode: Resample) -> (GrayF, Vec<f32>) {
@@ -99,7 +103,7 @@ pub fn resample_to_grid(src: &GrayF, image_to_mm: Affine, grid: &ScanGrid, mode:
             for gy in 0..gh {
                 for gx in 0..gw {
                     let p = m * Point::new(gx as f64 + 0.5, gy as f64 + 0.5);
-                    if p.x >= 0.0 && p.y >= 0.0 && p.x < sw && p.y < sh {
+                    if p.x >= 0.0 && p.y >= 0.0 && p.x < sw && p.y < sh && !src.is_clear(p.x as u32, p.y as u32) {
                         let k = gy * gw + gx;
                         out.data[k] = src.get(p.x as u32, p.y as u32);
                         coverage[k] = 1.0;
@@ -113,7 +117,8 @@ pub fn resample_to_grid(src: &GrayF, image_to_mm: Affine, grid: &ScanGrid, mode:
             let ny = (ay.hypot().ceil() as usize).clamp(1, 8);
             let (w, h) = (src.width as usize, src.height as usize);
             let sample = |x: f64, y: f64| -> Option<f32> {
-                if x < 0.0 || y < 0.0 || x >= sw || y >= sh {
+                // A fully transparent pixel is as much outside the image as the area around it.
+                if x < 0.0 || y < 0.0 || x >= sw || y >= sh || src.is_clear(x as u32, y as u32) {
                     return None;
                 }
                 // Bilinear between pixel centres, clamped at the edges.
@@ -125,8 +130,11 @@ pub fn resample_to_grid(src: &GrayF, image_to_mm: Affine, grid: &ScanGrid, mode:
                 let y1 = (y0 + 1).min(h - 1);
                 let tx = (fx - x0 as f64).min(1.0) as f32;
                 let ty = (fy - y0 as f64).min(1.0) as f32;
-                let a = lin[y0 * w + x0] + (lin[y0 * w + x1] - lin[y0 * w + x0]) * tx;
-                let b = lin[y1 * w + x0] + (lin[y1 * w + x1] - lin[y1 * w + x0]) * tx;
+                // A transparent neighbour has no tone to blend with: the pixel's own is used.
+                let own = lin[y as usize * w + x as usize];
+                let tap = |px: usize, py: usize| if src.clear.is_empty() || !src.clear[py * w + px] { lin[py * w + px] } else { own };
+                let a = tap(x0, y0) + (tap(x1, y0) - tap(x0, y0)) * tx;
+                let b = tap(x0, y1) + (tap(x1, y1) - tap(x0, y1)) * tx;
                 Some(a + (b - a) * ty)
             };
             let inv_n = 1.0 / (nx * ny) as f32;
@@ -174,6 +182,19 @@ mod tests {
     use super::*;
     use crate::placement;
     use kurbo::Size;
+
+    #[test]
+    fn a_picture_placed_absurdly_far_away_still_gets_a_grid() {
+        // Found by the monkey (seed 1025): a picture at x = 5e299 mm overflowed the column count.
+        for far in [5e299, -5e299] {
+            let t = placement(320, 160, Point::new(far, far), Size::new(32.0, 16.0));
+            let g = ScanGrid::for_image(320, 160, t, 0.1, 0.0);
+            let src = GrayF::new(320, 160, 0.5);
+            let (out, coverage) = resample_to_grid(&src, t, &g, Resample::Area);
+            assert_eq!(coverage.len(), (g.width as usize) * (g.height as usize));
+            assert_eq!(out.data.len(), coverage.len());
+        }
+    }
 
     #[test]
     fn grid_matches_image_exactly_when_aligned() {

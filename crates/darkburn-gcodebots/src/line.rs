@@ -9,6 +9,8 @@
 //! latest snapshot and return `Err` straight away; the worker checks again and reports late
 //! refusals as [`MachineEvent::Rejected`]. Events come back over a channel
 //! ([`GcodeMachine::poll_events`]) and the state sits in a shared [`MachineSnapshot`].
+//! The worker hands out the snapshot and the events that belong to it together, so the
+//! snapshot read after an event already shows what the event reports.
 //!
 //! # Streaming
 //!
@@ -25,6 +27,7 @@
 //! runs). Stop uses the controller's quick stop where one exists (`M410` on Marlin, the reset
 //! byte on Smoothieware), then switches the laser off and waits for the answers.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -42,7 +45,7 @@ use kurbo::Point;
 use crate::detect::{FirmwareGuess, identify_lines};
 use crate::machine::{Capabilities, GcodeMachine, MachineError, MachineEvent, MachineFamily, MachineSnapshot};
 use crate::template::{jog_vars, num, render, render_lines};
-use crate::translate::{TranslateOptions, parse_words, translate};
+use crate::translate::{PowerStyle, TranslateOptions, parse_words, translate};
 
 /// How the controller's position and state are polled.
 #[derive(Clone, Debug, PartialEq)]
@@ -165,6 +168,8 @@ pub struct LineConfig {
     pub reports_state: bool,
     /// A halt cannot be cleared without power-cycling (Marlin `M112`).
     pub halt_needs_power_cycle: bool,
+    /// Frames may run with the laser on ("laser on when framing" of the device settings).
+    pub laser_frames: bool,
 }
 
 impl LineConfig {
@@ -193,6 +198,7 @@ impl LineConfig {
             supports_g53: false,
             reports_state: false,
             halt_needs_power_cycle: false,
+            laser_frames: true,
         }
     }
 
@@ -258,6 +264,9 @@ pub struct LineMachine {
     /// Set when a job or frame has been handed to the worker and the snapshot does not show it
     /// yet, so a second start is refused at once.
     starting: Arc<AtomicBool>,
+    /// What `G92` has added to the machine position of a controller that reports one position
+    /// only (see [`Worker::note_origin_shift`]). Zero on all others.
+    origin_shift: Arc<Mutex<[f64; 3]>>,
     cfg: LineConfig,
     worker: Option<JoinHandle<()>>,
 }
@@ -280,9 +289,10 @@ impl LineMachine {
         };
         let shared = Arc::new(Mutex::new(snap.clone()));
         let starting = Arc::new(AtomicBool::new(false));
-        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), starting.clone(), cfg.clone(), snap);
+        let origin_shift = Arc::new(Mutex::new([0.0; 3]));
+        let worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), starting.clone(), origin_shift.clone(), cfg.clone(), snap);
         let handle = std::thread::Builder::new().name("darkburn-gcode".into()).spawn(move || worker.run()).expect("spawn G-code worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, starting, cfg, worker: Some(handle) }
+        Self { cmds: cmd_tx, events: ev_rx, shared, starting, origin_shift, cfg, worker: Some(handle) }
     }
 
     pub fn config(&self) -> &LineConfig {
@@ -343,6 +353,15 @@ impl LineMachine {
             let e = 1e-6;
             p.x >= t.xy.x0 - e && p.x <= t.xy.x1 + e && p.y >= t.xy.y0 - e && p.y <= t.xy.y1 + e
         })
+    }
+
+    /// Travel check of a point worked out from the reported position. A controller that reports
+    /// one position reports the work position once `G92` has been used (as the emulator does;
+    /// what a given real board does is a hardware check). The point must then lie on the machine
+    /// both as reported and with the `G92` shift added, so the check holds either way.
+    fn on_machine(&self, p: Point) -> bool {
+        let shift = *self.origin_shift.lock().unwrap_or_else(|p| p.into_inner());
+        self.in_travel(p) && ((shift[0] == 0.0 && shift[1] == 0.0) || self.in_travel(Point::new(p.x + shift[0], p.y + shift[1])))
     }
 
     fn lines_of(&self, template: &str, vars: &[(&str, String)]) -> Vec<String> {
@@ -421,21 +440,29 @@ impl GcodeMachine for LineMachine {
     }
 
     fn frame_outline(&self, points: &[Point], opts: FrameOptions) -> Result<(), MachineError> {
-        self.motion_ok()?;
+        let s = self.motion_ok()?;
         if points.is_empty() {
             return Err(MachineError::InvalidArgument("Nothing to frame.".into()));
         }
-        if opts.feed <= 0.0 {
+        if !positive(opts.feed) {
             return Err(MachineError::InvalidArgument("Framing speed must be above 0.".into()));
         }
-        for p in points {
-            if !self.in_travel(*p) {
+        if points.iter().chain(&opts.return_to).any(|p| !p.x.is_finite() || !p.y.is_finite()) {
+            return Err(MachineError::InvalidArgument("The frame has a position that is not a number.".into()));
+        }
+        // The frame is in work coordinates: on the machine it lies shifted by the work offset.
+        let (ox, oy) = (s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
+        for p in points.iter().chain(&opts.return_to) {
+            if !self.on_machine(Point::new(p.x + ox, p.y + oy)) {
                 return Err(MachineError::OutOfBounds(format!("the frame reaches X {:.1}, Y {:.1}, outside the machine", p.x, p.y)));
             }
         }
         let mut src = vec!["G21 G90".to_owned()];
         src.push(format!("G0 X{} Y{}", num(points[0].x), num(points[0].y)));
         if let Some(pct) = opts.laser_percent {
+            if !self.cfg.laser_frames {
+                return Err(MachineError::Unsupported("framing with the laser on (switched off in the device settings)"));
+            }
             self.s_value(pct)?;
             let s = pct * 10.0;
             src.push(format!("M3 S{}", num(s.round())));
@@ -450,6 +477,10 @@ impl GcodeMachine for LineMachine {
                 src.push(format!("G1 X{} Y{} F{f}", num(p.x), num(p.y)));
             }
         }
+        if let Some(p) = opts.return_to {
+            // Laser off (M5 above, or never on): back to where the head was.
+            src.push(format!("G0 X{} Y{}", num(p.x), num(p.y)));
+        }
         let lines = translate(src.iter().map(String::as_str), &self.cfg.power);
         let n = lines.len();
         let job = Job::from_lines(lines).with_total(n);
@@ -458,8 +489,11 @@ impl GcodeMachine for LineMachine {
 
     fn jog(&self, step: JogStep) -> Result<(), MachineError> {
         let s = self.motion_ok()?;
-        if step.feed <= 0.0 {
+        if !positive(step.feed) {
             return Err(MachineError::InvalidArgument("Jog speed must be above 0.".into()));
+        }
+        if !(step.dx.is_finite() && step.dy.is_finite() && step.dz.is_finite()) {
+            return Err(MachineError::InvalidArgument("The jog distance is not a number.".into()));
         }
         if step.dx == 0.0 && step.dy == 0.0 && step.dz == 0.0 {
             return Ok(());
@@ -469,7 +503,7 @@ impl GcodeMachine for LineMachine {
         }
         if self.cfg.travel.is_some() {
             let target = Point::new(s.mpos[0] + step.dx, s.mpos[1] + step.dy);
-            if !self.in_travel(target) {
+            if !self.on_machine(target) {
                 return Err(MachineError::OutOfBounds("the jog goes past the machine's travel".into()));
             }
         }
@@ -485,16 +519,28 @@ impl GcodeMachine for LineMachine {
         if t.x.is_none() && t.y.is_none() && t.z.is_none() {
             return Ok(());
         }
-        if t.feed <= 0.0 {
+        if !positive(t.feed) {
             return Err(MachineError::InvalidArgument("Move speed must be above 0.".into()));
+        }
+        if [t.x, t.y, t.z].into_iter().flatten().any(|v| !v.is_finite()) {
+            return Err(MachineError::InvalidArgument("The position is not a number.".into()));
         }
         if t.coords == darkburn_grbl::Coords::Machine && !self.cfg.supports_g53 {
             return Err(MachineError::Unsupported("moves in machine coordinates"));
         }
         let cur = s.wpos;
         let probe = Point::new(t.x.unwrap_or(cur[0]), t.y.unwrap_or(cur[1]));
-        if t.coords == darkburn_grbl::Coords::Work && !self.in_travel(probe) && self.cfg.travel.is_some() && s.mpos == s.wpos {
-            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", probe.x, probe.y)));
+        // Where the work position lands on the machine: the offset is what the two reported
+        // positions differ by.
+        let probe = Point::new(probe.x + s.mpos[0] - s.wpos[0], probe.y + s.mpos[1] - s.wpos[1]);
+        if t.coords == darkburn_grbl::Coords::Work && !self.on_machine(probe) && self.cfg.travel.is_some() {
+            return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} (machine) is outside the machine", probe.x, probe.y)));
+        }
+        if t.coords == darkburn_grbl::Coords::Machine && self.cfg.travel.is_some() {
+            let m = Point::new(t.x.unwrap_or(s.mpos[0]), t.y.unwrap_or(s.mpos[1]));
+            if !self.in_travel(m) {
+                return Err(MachineError::OutOfBounds(format!("X {:.1}, Y {:.1} is outside the machine", m.x, m.y)));
+            }
         }
         let mut axes = String::new();
         for (l, v) in [('X', t.x), ('Y', t.y), ('Z', t.z)] {
@@ -510,7 +556,15 @@ impl GcodeMachine for LineMachine {
     }
 
     fn go_to_origin(&self) -> Result<(), MachineError> {
-        self.motion_ok()?;
+        let s = self.motion_ok()?;
+        // Work X0 Y0 on the machine: the work offset is what the two reported positions differ by.
+        let origin = Point::new(s.mpos[0] - s.wpos[0], s.mpos[1] - s.wpos[1]);
+        if !self.on_machine(origin) {
+            return Err(MachineError::OutOfBounds(format!("the origin is at X {:.1}, Y {:.1} (machine), outside the machine", origin.x, origin.y)));
+        }
+        if s.fire_on {
+            self.send(Cmd::FireOff)?;
+        }
         self.send(Cmd::Lines { lines: vec!["G90".into(), "G0 X0 Y0".into()], tag: Tag::Plain })
     }
 
@@ -543,6 +597,10 @@ impl GcodeMachine for LineMachine {
         let lines = render_lines(&self.cfg.commands.set_origin, &[]);
         if lines.is_empty() {
             return Err(MachineError::Unsupported("setting the origin"));
+        }
+        if self.cfg.poll == PollMode::M114 {
+            // The shift is worked out from the last reported position: ask for a fresh one.
+            self.send(Cmd::Line { text: "M114".into(), tag: Tag::Poll })?;
         }
         self.send(Cmd::Lines { lines, tag: Tag::Plain })
     }
@@ -724,6 +782,11 @@ struct ActiveJob {
     errors: usize,
     stop_on_error: bool,
     sync_acked: bool,
+    /// The power command the controller is holding (a job line set it, none switched it off).
+    power_on: Option<String>,
+    /// The `M3`/`M4` word and the `S` value of the job so far, for a controller that holds the
+    /// laser at the last `S` ([`TranslateOptions::travel_s0`]).
+    held: (Option<u32>, String),
 }
 
 impl ActiveJob {
@@ -790,8 +853,12 @@ struct Worker {
     t: Box<dyn darkburn_grbl::Transport>,
     cmds: Receiver<Cmd>,
     events: Sender<MachineEvent>,
+    /// Events raised since the last [`Worker::publish`]. They go out together with the
+    /// snapshot, so whoever receives an event finds the state it reports in the snapshot.
+    outbox: RefCell<Vec<MachineEvent>>,
     shared: Arc<Mutex<MachineSnapshot>>,
     starting: Arc<AtomicBool>,
+    origin_shift: Arc<Mutex<[f64; 3]>>,
     start_seen: bool,
     cfg: LineConfig,
     snap: MachineSnapshot,
@@ -824,6 +891,7 @@ impl Worker {
         events: Sender<MachineEvent>,
         shared: Arc<Mutex<MachineSnapshot>>,
         starting: Arc<AtomicBool>,
+        origin_shift: Arc<Mutex<[f64; 3]>>,
         cfg: LineConfig,
         snap: MachineSnapshot,
     ) -> Self {
@@ -832,8 +900,10 @@ impl Worker {
             t,
             cmds,
             events,
+            outbox: RefCell::new(Vec::new()),
             shared,
             starting,
+            origin_shift,
             start_seen: false,
             phase: Phase::WaitBanner { deadline: now + cfg.banner_wait },
             cfg,
@@ -855,17 +925,27 @@ impl Worker {
         }
     }
 
+    /// Queues an event. It is delivered by the next [`Worker::publish`].
     fn emit(&self, e: MachineEvent) {
-        let _ = self.events.send(e);
+        self.outbox.borrow_mut().push(e);
     }
 
     fn note(&self, text: impl Into<String>) {
         self.emit(MachineEvent::Console(ConsoleLine { kind: ConsoleKind::Note, text: text.into() }));
     }
 
+    /// Stores the snapshot and delivers the queued events as one step: the events are sent
+    /// while the snapshot lock is held, so a reader never sees an event before the state it
+    /// reports, nor the new state before its events are waiting.
     fn publish(&mut self) {
         self.snap.updated = Some(Instant::now());
-        *self.shared.lock().unwrap_or_else(|p| p.into_inner()) = self.snap.clone();
+        {
+            let mut shared = self.shared.lock().unwrap_or_else(|p| p.into_inner());
+            *shared = self.snap.clone();
+            for e in self.outbox.get_mut().drain(..) {
+                let _ = self.events.send(e);
+            }
+        }
         if self.start_seen {
             self.start_seen = false;
             self.starting.store(false, Ordering::SeqCst);
@@ -873,6 +953,12 @@ impl Worker {
     }
 
     fn run(mut self) {
+        self.run_loop();
+        // Whatever ended the loop, the last state and its events go out.
+        self.publish();
+    }
+
+    fn run_loop(&mut self) {
         let mut buf = [0u8; 512];
         loop {
             loop {
@@ -910,13 +996,32 @@ impl Worker {
         self.abort_job(&format!("The connection was lost: {reason}"));
         self.snap.connection = ConnectionState::Failed(reason.to_owned());
         self.snap.activity = Activity::Idle;
-        self.publish();
         self.emit(MachineEvent::Disconnected(Some(reason.to_owned())));
+        self.publish();
     }
 
     fn shutdown(&mut self, _why: Option<&str>) {
+        // Motion the controller has buffered would go on, laser and all, after the link is
+        // closed: a `laser off` line only runs when the moves ahead of it are done.
+        let moving = self.job.is_some() || self.stop.is_some() || self.inflight.iter().any(|s| !matches!(s.tag, Tag::Poll | Tag::Ident));
         self.abort_job("Disconnected");
         if self.snap.connection == ConnectionState::Connected {
+            if moving {
+                match self.cfg.quick_stop.clone() {
+                    QuickStop::None => {}
+                    QuickStop::Realtime(b) => {
+                        let _ = self.t.write_all(&[b]);
+                        // Give the reset a moment, as Stop does, then clear the halt it leaves.
+                        std::thread::sleep(Duration::from_millis(30));
+                        for l in render_lines(&self.cfg.commands.after_stop, &[]) {
+                            let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                        }
+                    }
+                    QuickStop::Line(l) => {
+                        let _ = self.t.write_all(format!("{l}\n").as_bytes());
+                    }
+                }
+            }
             // Make sure the laser is off before letting go.
             for l in render_lines(&self.cfg.commands.laser_off, &[]) {
                 let _ = self.t.write_all(format!("{l}\n").as_bytes());
@@ -929,8 +1034,8 @@ impl Worker {
         }
         self.snap.connection = ConnectionState::Disconnected;
         self.snap.activity = Activity::Idle;
-        self.publish();
         self.emit(MachineEvent::Disconnected(None));
+        self.publish();
     }
 
     // ----- commands -----
@@ -946,8 +1051,12 @@ impl Worker {
                     return Flow::Quit;
                 }
             }
-            Cmd::Line { text, tag } => self.enqueue(text, tag),
+            Cmd::Line { text, tag } => {
+                self.fire_off_before(&tag);
+                self.enqueue(text, tag);
+            }
             Cmd::Lines { lines, tag } => {
+                self.fire_off_before(&tag);
                 for l in lines {
                     self.enqueue(l, tag.clone());
                 }
@@ -993,6 +1102,10 @@ impl Worker {
             self.emit(MachineEvent::Rejected("A job is already running.".into()));
             return;
         }
+        if self.fire_until.is_some() {
+            // Off now, ahead of the job's first line, not from the timer in the middle of it.
+            self.fire_off();
+        }
         let Job { lines, total_lines, finish, stop_on_error, .. } = job;
         self.job = Some(ActiveJob {
             kind,
@@ -1010,6 +1123,8 @@ impl Worker {
             errors: 0,
             stop_on_error,
             sync_acked: false,
+            power_on: None,
+            held: (None, String::new()),
         });
         self.snap.activity = if kind == JobKind::Frame { Activity::Framing } else { Activity::Job };
         self.snap.paused = false;
@@ -1018,13 +1133,24 @@ impl Worker {
     }
 
     fn pause(&mut self) {
-        if self.job.is_none() || self.snap.paused {
+        // Not during a stop: the job object is still there until the stop ends, but there is
+        // nothing left to pause, and the pause command would reach the controller after it.
+        if self.job.is_none() || self.snap.paused || self.stop.is_some() {
             return;
         }
         self.snap.paused = true;
-        for l in render_lines(&self.cfg.commands.pause, &[]) {
-            self.enqueue_front(l);
+        let mut lines = Vec::new();
+        // A controller that keeps the laser at the last power command (Marlin outside inline
+        // mode, a fan output) would burn one spot while the head stands still: off first.
+        if self.job.as_ref().is_some_and(|j| j.power_on.is_some()) {
+            match &self.cfg.power.style {
+                PowerStyle::Command { off, .. } => lines.push(off.clone()),
+                // A controller that holds the last `S` of its `M3`/`M4` (see `pump_send`).
+                _ => lines.push("M5".to_owned()),
+            }
         }
+        lines.extend(render_lines(&self.cfg.commands.pause, &[]));
+        self.enqueue_urgent(lines, Tag::Plain);
     }
 
     fn resume(&mut self) {
@@ -1032,23 +1158,43 @@ impl Worker {
             return;
         }
         self.snap.paused = false;
-        for l in render_lines(&self.cfg.commands.resume, &[]) {
-            self.enqueue_front(l);
+        let mut lines = render_lines(&self.cfg.commands.resume, &[]);
+        // The power the pause switched off, back on before the job's next line.
+        lines.extend(self.job.as_ref().and_then(|j| j.power_on.clone()));
+        self.enqueue_urgent(lines, Tag::Plain);
+    }
+
+    /// Queues lines that go out ahead of everything else, window or not, in the order given
+    /// and behind urgent lines that already wait. A pause and a resume that arrive together
+    /// must not change places: the laser would be switched on and then off for the rest of
+    /// the job.
+    fn enqueue_urgent(&mut self, lines: Vec<String>, tag: Tag) {
+        let at = self.queue.iter().take_while(|o| o.urgent).count();
+        for (i, text) in lines.into_iter().enumerate() {
+            self.queue.insert(at + i, Out { text, tag: tag.clone(), urgent: true });
         }
     }
 
-    fn enqueue_front(&mut self, text: String) {
-        self.queue.push_front(Out { text, tag: Tag::Plain, urgent: true });
+    /// The fire button never stays on while another command runs: homing and long moves
+    /// would hold back the timed switch-off until they are done.
+    fn fire_off_before(&mut self, tag: &Tag) {
+        if self.fire_until.is_some() && *tag != Tag::Poll {
+            self.fire_off();
+        }
     }
 
     fn fire_off(&mut self) {
         self.fire_until = None;
+        if self.job.is_some() {
+            // A job controls the laser itself; a switch-off between its lines would leave
+            // the rest of it unburned.
+            self.snap.fire_on = false;
+            return;
+        }
         if self.snap.fire_on || self.stop.is_none() {
             // Drop queued fire-on lines first so they cannot switch the laser on afterwards.
             self.queue.retain(|o| o.tag != Tag::Fire);
-            for l in render_lines(&self.cfg.commands.fire_off, &[]) {
-                self.queue.push_front(Out { text: l, tag: Tag::StopStep, urgent: true });
-            }
+            self.enqueue_urgent(render_lines(&self.cfg.commands.fire_off, &[]), Tag::StopStep);
         }
         self.snap.fire_on = false;
         self.emit(MachineEvent::FireOff);
@@ -1176,6 +1322,38 @@ impl Worker {
         self.snap.wpos = pos;
     }
 
+    /// Follows `G92` on a controller that reports one position: from the `G92` on that is the
+    /// work position, and the travel checks need to know by how much the machine position
+    /// differs. Called when the line is acknowledged. `G92.1` ends the shift; homing does not
+    /// (whether a given firmware drops the shift on homing is not known here, and keeping it
+    /// only makes the checks stricter).
+    fn note_origin_shift(&mut self, text: &str) {
+        let Some(words) = parse_words(&strip_comment_simple(text)) else { return };
+        let g = |want: f64| words.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - want).abs() < 1e-9));
+        let mut shift = self.origin_shift.lock().unwrap_or_else(|p| p.into_inner());
+        if g(92.1) {
+            *shift = [0.0; 3];
+            return;
+        }
+        if !g(92.0) {
+            return;
+        }
+        let named = words.iter().any(|(l, _)| matches!(l, 'X' | 'Y' | 'Z'));
+        for (i, axis) in ['X', 'Y', 'Z'].iter().enumerate() {
+            let value = match words.iter().find(|(l, _)| l == axis) {
+                Some((_, v)) => v.parse::<f64>().ok(),
+                None if named => None,
+                None => Some(0.0),
+            };
+            if let Some(v) = value {
+                shift[i] += self.snap.wpos[i] - v;
+                // What the controller reports from here on, until its next report says so itself.
+                self.snap.mpos[i] = v;
+                self.snap.wpos[i] = v;
+            }
+        }
+    }
+
     fn ingest(&mut self, data: &[u8]) {
         for &b in data {
             if b == b'\n' || b == b'\r' {
@@ -1226,6 +1404,8 @@ impl Worker {
         if low == "start" && self.phase == Phase::Ready {
             self.console_in(line);
             self.note("The controller restarted.");
+            // A restarted controller has forgotten its `G92`.
+            *self.origin_shift.lock().unwrap_or_else(|p| p.into_inner()) = [0.0; 3];
             self.inflight.clear();
             self.inflight_bytes = 0;
             self.abort_job("The controller restarted");
@@ -1264,6 +1444,12 @@ impl Worker {
 
     fn on_halt(&mut self, line: &str) {
         self.console_in(line);
+        self.halted(line);
+    }
+
+    /// The controller has halted: nothing of what ran or waited may go on once the halt is
+    /// cleared.
+    fn halted(&mut self, line: &str) {
         let first = self.snap.alarm.is_none();
         self.snap.alarm = Some(line.to_owned());
         self.snap.state = MachineState::Alarm(None);
@@ -1332,8 +1518,10 @@ impl Worker {
         }
         if state.is_alarm() {
             if self.snap.alarm.is_none() {
-                self.snap.alarm = Some("Alarm".to_owned());
-                self.emit(MachineEvent::Alarm("Alarm".to_owned()));
+                // The halt line itself can be lost or never sent. A controller that reports
+                // the alarm state has dropped its planner all the same, so the job, the pause
+                // and the fire button end here as they do on the line.
+                self.halted("Alarm");
             }
         } else if self.snap.alarm.is_some() && self.phase == Phase::Ready {
             // The controller says it is no longer in alarm.
@@ -1347,6 +1535,9 @@ impl Worker {
             return;
         };
         self.inflight_bytes = self.inflight_bytes.saturating_sub(sent.len);
+        if error.is_none() && self.cfg.poll == PollMode::M114 {
+            self.note_origin_shift(&sent.text);
+        }
         let err_text = error.clone();
         match sent.tag {
             Tag::Ident => self.finish_identify(),
@@ -1392,7 +1583,9 @@ impl Worker {
             Tag::Home => {
                 if let Some(msg) = err_text {
                     self.emit(MachineEvent::Error { message: msg, line: sent.text });
-                } else if self.inflight.iter().all(|s| s.tag != Tag::Home) && !self.queue.iter().any(|o| o.tag == Tag::Home) {
+                } else if self.stop.is_none() && self.inflight.iter().all(|s| s.tag != Tag::Home) && !self.queue.iter().any(|o| o.tag == Tag::Home) {
+                    // Not during a stop: the answer may be the stop's own, with the homing
+                    // cut off.
                     self.emit(MachineEvent::Homed);
                 }
             }
@@ -1471,8 +1664,8 @@ impl Worker {
     fn fail(&mut self, msg: String) {
         self.snap.connection = ConnectionState::Failed(msg.clone());
         self.phase = Phase::Ready;
-        self.publish();
         self.emit(MachineEvent::ConnectFailed(msg));
+        self.publish();
     }
 
     // ----- the loop body -----
@@ -1529,7 +1722,12 @@ impl Worker {
                 self.write(&b)?;
             }
             PollMode::M114 => {
-                let busy = self.inflight.iter().any(|s| s.tag == Tag::Poll) || self.queue.iter().any(|o| o.tag == Tag::Poll);
+                // Not while the answer to a line that waits for the motion is owed (the `M400`
+                // at the end of a job, homing): behind it the request could not be answered
+                // before the motion ends anyway, and from a controller that answers out of
+                // turn its `ok` would be taken for that line's.
+                let busy = self.inflight.iter().any(|s| matches!(s.tag, Tag::Poll | Tag::JobSync | Tag::Home))
+                    || self.queue.iter().any(|o| o.tag == Tag::Poll);
                 if !busy && self.stop.is_none() && !(self.snap.alarm.is_some() && self.cfg.halt_needs_power_cycle) {
                     self.last_poll = now;
                     self.queue.push_back(Out { text: "M114".into(), tag: Tag::Poll, urgent: false });
@@ -1581,6 +1779,11 @@ impl Worker {
                 job.tail_built = true;
                 let mut tail = VecDeque::new();
                 let fin = job.finish;
+                // Laser off before the move to the finish position: a controller that holds
+                // the last power would burn a line all the way there.
+                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
+                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
+                }
                 match fin {
                     FinishPosition::Stay => {}
                     FinishPosition::Origin => {
@@ -1591,9 +1794,6 @@ impl Worker {
                         tail.push_back(Out { text: "G90".into(), tag: Tag::JobTail, urgent: false });
                         tail.push_back(Out { text: format!("G0 X{} Y{}", num(p.x), num(p.y)), tag: Tag::JobTail, urgent: false });
                     }
-                }
-                for l in render_lines(&self.cfg.commands.laser_off, &[]) {
-                    tail.push_back(Out { text: l, tag: Tag::JobTail, urgent: false });
                 }
                 let sync = self.cfg.finish_sync.trim();
                 if !sync.is_empty() {
@@ -1612,6 +1812,33 @@ impl Worker {
             let Some(o) = job.staged.take() else { return Ok(()) };
             if matches!(o.tag, Tag::Job(_)) {
                 job.lines_sent += 1;
+            }
+            if let PowerStyle::Command { set, off } = &self.cfg.power.style {
+                // The power is its own command here and stays until the next one: remember it
+                // for a pause.
+                let head = set.split("{value}").next().unwrap_or_default();
+                if o.text == *off {
+                    job.power_on = None;
+                } else if !head.is_empty() && o.text.starts_with(head) {
+                    job.power_on = Some(o.text.clone());
+                }
+            } else if self.cfg.power.travel_s0
+                && self.cfg.power.style == PowerStyle::Passthrough
+                && let Some(words) = parse_words(&o.text)
+            {
+                // A controller that is not known to switch the laser off when the head stands
+                // still (a custom device) holds the last `S` of its `M3`/`M4`: remember both
+                // for a pause.
+                for (l, v) in &words {
+                    match (l, v.parse::<f64>().ok()) {
+                        ('M', Some(m)) if m == 3.0 || m == 4.0 => job.held.0 = Some(m as u32),
+                        ('M', Some(5.0)) => job.held = (None, String::new()),
+                        ('S', Some(_)) => job.held.1 = v.clone(),
+                        _ => {}
+                    }
+                }
+                let burning = job.held.1.parse::<f64>().is_ok_and(|s| s > 0.0);
+                job.power_on = job.held.0.filter(|_| burning).map(|m| format!("M{m} S{}", job.held.1));
             }
             self.write_line(&o.text, o.tag)?;
         }
@@ -1637,6 +1864,10 @@ impl Worker {
             let p = j.progress();
             self.snap.job = Some(p.clone());
             self.snap.activity = Activity::Idle;
+            // A pause that came when the controller already had every line held nothing
+            // back. It ends with the job: the controller takes its pause command when the
+            // motion is done, and the resume command behind it leaves it ready for the next.
+            self.resume();
             self.emit(MachineEvent::JobFinished(p));
         }
     }
@@ -1713,6 +1944,12 @@ impl Worker {
             self.emit(MachineEvent::StateChanged(new));
         }
     }
+}
+
+/// A usable speed: a real number above 0 (`NaN <= 0.0` is false, so a plain comparison lets
+/// NaN through).
+fn positive(v: f64) -> bool {
+    v.is_finite() && v > 0.0
 }
 
 fn strip_comment_simple(t: &str) -> String {

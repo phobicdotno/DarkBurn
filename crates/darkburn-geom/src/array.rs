@@ -4,6 +4,11 @@
 use crate::path::{DEFAULT_ACCURACY, contours, nearest_on_contour, seg_tangent};
 use kurbo::{Affine, BezPath, ParamCurve, ParamCurveArclen, Point, Rect, Vec2};
 
+/// The most copies an array is meant to have. Every array function stops one copy past this,
+/// so a caller can tell that the limit was passed while a mistyped count or spacing cannot
+/// fill the memory.
+pub const MAX_COPIES: usize = 100_000;
+
 /// Distance between neighbouring grid items.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Spacing {
@@ -67,16 +72,20 @@ impl Default for GridOptions {
     }
 }
 
-/// Grid array transforms in row-major order (row 0 first). Item 0 is the identity.
+/// Grid array transforms in row-major order (row 0 first). Item 0 is the identity. At most
+/// [`MAX_COPIES`]` + 1` transforms are returned.
 pub fn grid_array(item_bbox: Rect, o: &GridOptions) -> Vec<Affine> {
     let step = o.spacing.step(item_bbox);
     let row_step = if o.shift == Shift::HexRows { step.y * 3f64.sqrt() / 2.0 } else { step.y };
     let sx = if o.reverse_x { -1.0 } else { 1.0 };
     let sy = if o.reverse_y { -1.0 } else { 1.0 };
     let c = item_bbox.center().to_vec2();
-    let mut out = Vec::with_capacity(o.rows * o.cols);
-    for r in 0..o.rows {
+    let mut out = Vec::with_capacity(o.rows.saturating_mul(o.cols).min(MAX_COPIES + 1));
+    'rows: for r in 0..o.rows {
         for col in 0..o.cols {
+            if out.len() > MAX_COPIES {
+                break 'rows;
+            }
             let mut d = Vec2::new(sx * step.x * col as f64, sy * row_step * r as f64);
             match o.shift {
                 Shift::AltRows(dx) if r % 2 == 1 => d.x += dx,
@@ -125,7 +134,8 @@ pub struct CircularOptions {
 }
 
 /// Circular (radial) array of an item whose centre is `item_center`. Copy `i` sits at
-/// `start + i * step` around `center`; with a start angle of 0 copy 0 is the identity.
+/// `start + i * step` around `center`; with a start angle of 0 copy 0 is the identity. At most
+/// [`MAX_COPIES`]` + 1` transforms are returned.
 pub fn circular_array(item_center: Point, o: &CircularOptions) -> Vec<Affine> {
     if o.count == 0 {
         return Vec::new();
@@ -139,7 +149,7 @@ pub fn circular_array(item_center: Point, o: &CircularOptions) -> Vec<Affine> {
         0.0
     };
     let sign = if o.clockwise { -1.0 } else { 1.0 };
-    (0..o.count)
+    (0..o.count.min(MAX_COPIES + 1))
         .map(|i| {
             let a = sign * (o.start_angle_deg + step * i as f64).to_radians();
             let rot = Affine::rotate_about(a, o.center);
@@ -190,7 +200,7 @@ impl Walker {
 
 /// Copies an item along the first subpath of `path`. `anchor` is the item point placed on
 /// the path (usually its bounding-box centre). On closed paths there is no copy on top of
-/// the first one at the end.
+/// the first one at the end. At most [`MAX_COPIES`]` + 1` transforms are returned.
 pub fn copy_along_path(anchor: Point, path: &BezPath, o: &AlongOptions) -> Vec<Affine> {
     let Some(c) = contours(path).into_iter().next() else { return Vec::new() };
     let mut cum = vec![0.0];
@@ -199,6 +209,10 @@ pub fn copy_along_path(anchor: Point, path: &BezPath, o: &AlongOptions) -> Vec<A
         cum.push(l);
     }
     let total = cum[cum.len() - 1];
+    // A path so large that its length is not a number has no places along it.
+    if !total.is_finite() {
+        return Vec::new();
+    }
     let closed = c.is_closed_within(1e-9);
     let mut s0 = 0.0;
     if o.start_at_nearest
@@ -220,12 +234,12 @@ pub fn copy_along_path(anchor: Point, path: &BezPath, o: &AlongOptions) -> Vec<A
             } else {
                 0.0
             };
-            (0..n).map(|i| step * i as f64).collect()
+            (0..n.min(MAX_COPIES + 1)).map(|i| step * i as f64).collect()
         }
         AlongMode::Spacing(d) if d > eps => {
             let mut v = Vec::new();
             let mut k = 0.0;
-            while k <= avail + eps && !(w.closed && k > avail - eps && !v.is_empty()) {
+            while k <= avail + eps && !(w.closed && k > avail - eps && !v.is_empty()) && v.len() <= MAX_COPIES {
                 v.push(k);
                 k += d;
             }
@@ -253,6 +267,28 @@ mod tests {
 
     fn close(a: Point, b: Point) -> bool {
         a.distance(b) < 1e-6
+    }
+
+    #[test]
+    fn a_mistyped_count_or_spacing_cannot_fill_the_memory() {
+        let item = Rect::new(0.0, 0.0, 10.0, 5.0);
+        let huge = GridOptions { rows: usize::MAX, cols: usize::MAX, ..Default::default() };
+        assert_eq!(grid_array(item, &huge).len(), MAX_COPIES + 1);
+        let wide = GridOptions { rows: 2, cols: 100_000_000_000, ..Default::default() };
+        assert_eq!(grid_array(item, &wide).len(), MAX_COPIES + 1);
+        let c =
+            CircularOptions { center: Point::ZERO, count: usize::MAX, start_angle_deg: 0.0, sweep_deg: 360.0, rotate_items: true, clockwise: false };
+        assert_eq!(circular_array(Point::new(10.0, 0.0), &c).len(), MAX_COPIES + 1);
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((1000.0, 0.0));
+        let close = AlongOptions { mode: AlongMode::Spacing(1e-6), rotate_items: false, start_at_nearest: false };
+        assert_eq!(copy_along_path(Point::ZERO, &line, &close).len(), MAX_COPIES + 1);
+        let many = AlongOptions { mode: AlongMode::Count(usize::MAX), rotate_items: false, start_at_nearest: false };
+        assert_eq!(copy_along_path(Point::ZERO, &line, &many).len(), MAX_COPIES + 1);
+        // Arrays within the limit are whole.
+        let ok = GridOptions { rows: 100, cols: 1000, ..Default::default() };
+        assert_eq!(grid_array(item, &ok).len(), MAX_COPIES);
     }
 
     #[test]

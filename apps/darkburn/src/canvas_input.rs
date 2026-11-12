@@ -508,7 +508,7 @@ fn shape_tool(ui: &Ui, app: &mut DarkBurn, st: &mut State, response: &Response, 
 fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Option<&'static str>) {
     let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_key(m, k));
     // A dialog or window is open: Escape is its (it closes the dialog), not the canvas's.
-    let window_open = ctx.memory(|m| m.areas().visible_layer_ids().iter().any(|l| matches!(l.order, egui::Order::Middle | egui::Order::Foreground)));
+    let window_open = crate::escape::window_open(ctx);
     if !window_open && pressed(Modifiers::NONE, Key::Escape) {
         if !matches!(st.gesture, Gesture::None) {
             cancel(app, st);
@@ -520,6 +520,11 @@ fn keys(ctx: &egui::Context, app: &mut DarkBurn, st: &mut State, run: &mut Optio
             app.set_tool(Tool::Select);
             st.tool = Tool::Select;
         }
+        return;
+    }
+    // So are the other keys: an arrow, Tab or a letter pressed over a dialog must not move, pick
+    // or flip the shapes behind it.
+    if window_open {
         return;
     }
     if !st.pen.is_empty() && pressed(Modifiers::NONE, Key::Enter) {
@@ -610,7 +615,6 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
     let enabled: Vec<bool> = items
         .iter()
         .map(|(id, _, _)| match *id {
-            "window.preview" => false,
             "canvas.properties" => true,
             "edit.paste_at_cursor" => app.context_point.is_some(),
             id => app.can_run(id),
@@ -623,10 +627,12 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
             if matches!(i, 3 | 5 | 8) {
                 Menu::separator(ui);
             }
-            let icon = crate::commands::find(id).map(|c| c.icon).unwrap_or("");
-            let shortcut = crate::commands::find(id).map(|c| c.key).filter(|k| !k.is_empty()).unwrap_or(*key);
+            let cmd = crate::commands::find(id);
+            let icon = cmd.map(|c| c.icon).unwrap_or("");
+            // The key the command has now (the user may have changed or removed it).
+            let shortcut = cmd.map_or_else(|| key.to_string(), |c| crate::keymap::key_in(&app.prefs.hotkeys, c.id, crate::keymap::default_key(c)));
             let mut item = MenuItem::new(id, label, icon);
-            item.shortcut = shortcut;
+            item.shortcut = &shortcut;
             item.enabled = enabled[i];
             if item.show(ui).clicked() && item.enabled {
                 picked = Some(id);

@@ -222,6 +222,26 @@ impl JobMap {
         path
     }
 
+    /// Map one design point (a tab or a forced start point) the way [`apply`](Self::apply)
+    /// maps the outline it sits on. A point that cannot be mapped stays where it is.
+    pub fn apply_point(&self, p: Point) -> Point {
+        let mut p = p;
+        if let Some(c) = &self.cylinder
+            && let Ok(q) = c.map_point(p)
+        {
+            p = q;
+        }
+        if let Some(r) = &self.rotary
+            && let Ok(a) = r.axis_affine()
+        {
+            p = a * p;
+        }
+        if let Some(f) = &self.fit {
+            p = f.apply_point(p);
+        }
+        p
+    }
+
     fn warn(&self, w: String) {
         let mut v = self.warnings.borrow_mut();
         if !v.contains(&w) {

@@ -1,5 +1,8 @@
 # darkburn-ruida: attribution
 
+> The root [`ATTRIBUTION.md`](../../ATTRIBUTION.md) is newer than this file. It lists where the two
+> differ, and where they differ the root file holds.
+
 This crate is written for DarkBurn and licensed MIT OR Apache-2.0. The Ruida protocol is not
 publicly documented by its maker; the facts used here (ports, swizzle maths, checksum, number
 encodings, opcodes and memory addresses) come from the public sources below. Byte values and
@@ -10,6 +13,8 @@ algorithms are facts; the Rust code is new.
 | Source | Licence | Used for |
 |---|---|---|
 | MeerK40t, `meerk40t/ruida/` (`rdjob.py`, `emulator.py`, `ruidasession.py`, README), https://github.com/meerk40t/meerk40t, Copyright (c) 2021 meerk40t | MIT | Opcode constants and their parameter layouts; the split-at-byte->=0x80 command parser; swizzle with arbitrary magic; magic detection by byte histogram and by card-ID probe; the `.rd` header/layer/trailer layout and the `E5 05` file sum (+0xD7); relative-vs-absolute move choice; the controller memory-address table and the emulator's answers (machine status 21/22/23, positions at 0x221/0x231/0x241/0x251, card ID 0x2FE, firmware string 0x2FF, file count 0x205, file times at 0x390+n); file-system commands `E8 00..04`; jog-port key codes. |
+| ruida-pa, Ruida Protocol Analyzer, `ruida_pa/protocols/ruida/ruida_protocol.py` and `ruida_pa/rpalib/ruida_transcoder.py`, https://github.com/StevenIsaacs/ruida-pa, Copyright (c) 2025 Steve Isaacs | MIT | The power scale (14 bits, 0x4000 = 100 %, so percent = raw / 163.84); the names of the hardware overscan modes `CA 01 00..05`; the card ID of the RDC8445S (0x90109010); the machine status bits (bit 0 job running, bit 1 paused, bit 24 moving); the reference point bytes `D8 10` machine zero, `D8 11` origin, `D8 12` current position; time values in microseconds. Its "verified" marks are its author's statements, not ours. |
+| MeerK40t, `meerk40t/ruida/rdjob.py` (same project and licence as above) | MIT | The file header starts with `D8 10` (absolute position) before `E6 01` and `F0`; `CA 01 01..05` as work modes of a raster. |
 | `ruida` crate by lyonlabs (crates.io, v0.1.1) | MIT | Listed as an allowed reference; no code was copied from it. |
 
 MeerK40t's MIT licence text:
@@ -38,12 +43,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+ruida-pa's MIT licence text is the same as above with the line `Copyright (c) 2025 Steve Isaacs`.
+
 ## Documentation consulted (facts only, no text or code copied)
 
 - EduTechWiki "Ruida" (CC BY-NC-SA): ports, checksum, magic table, command list, address map.
 - Stefan Schuermans, "Reverse Engineering of RDLxxx and RDCAM": scrambling, message table, USB FT245R.
 - Fablab Nürnberg wiki, "Diskussion:Nova 35" (CC BY-NC-SA): UDP framing and ACK bytes.
 - kkaempf/ruida docs: USB serial notes (FTDI 0403:6001, DTR/RTS).
+- `docs/research/other-controllers.md` in this repository: the summary of the above for the status
+  word, power and time units, overscan modes and board IDs.
 - jnweiger/ruida-laser (GPL-2.0) and LibLaserCut (LGPL-3.0): **documentation only**. No code from
   these projects was read for porting or copied.
 

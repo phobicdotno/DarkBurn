@@ -34,6 +34,9 @@ pub enum Then {
     New,
     /// Open a project: the given file, or one picked in a dialog.
     Open(Option<PathBuf>),
+    /// Put in place the file that was read in the background (kept by `file_io`): the project
+    /// was changed while it was being read.
+    OpenRead,
     Exit,
 }
 
@@ -101,9 +104,11 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
                 let path = PathBuf::from(path);
                 if path.exists() {
                     guard(app, ctx, Then::Open(Some(path)));
-                } else {
+                } else if drive_is_there(&path) {
                     app.prefs.recent.retain(|p| Path::new(p) != path);
                     app.files.message = Some(("Project not found".into(), format!("{} is no longer there.", path.display())));
+                } else {
+                    app.files.message = Some(("Project not found".into(), format!("{} is on a drive that is not connected now.", path.display())));
                 }
             }
         }
@@ -120,9 +125,20 @@ fn guard(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
     }
 }
 
+/// Ask "Save changes?" before the file that `file_io` has read takes the project's place.
+pub fn ask_before_read_file(app: &mut DarkBurn) {
+    app.files.ask_save = Some(Then::OpenRead);
+}
+
+/// What the "Save changes?" window is waiting to do, if it is open.
+pub fn asking(app: &DarkBurn) -> Option<&Then> {
+    app.files.ask_save.as_ref()
+}
+
 fn proceed(app: &mut DarkBurn, ctx: &egui::Context, then: Then) {
     match then {
         Then::New => new_project(app),
+        Then::OpenRead => crate::file_io::open_held(app),
         Then::Open(path) => {
             let path = path.or_else(|| {
                 let mut all: Vec<&str> = vec![project::EXTENSION];
@@ -244,12 +260,40 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 }
 
 /// Write through a temporary file so a failed write never leaves half a project.
+///
+/// The temporary file is a new one beside `path` with a short name of its own: never a file
+/// that is already there (a `plan.dbrn.tmp` belongs to the person), and never a longer name
+/// than the one asked for (which may be as long as the file system allows). It is removed again
+/// when the write or the rename fails.
+/// `path` with the file ending `ext`: kept as it is when it ends in it already (in any case),
+/// otherwise the ending is put after the whole name. A dot in the name is part of the name
+/// ("Birch 3.5" becomes "Birch 3.5.dbclb", not "Birch 3.dbclb").
+pub(crate) fn with_ending(path: &Path, ext: &str) -> PathBuf {
+    if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
+        return path.to_path_buf();
+    }
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".");
+    name.push(ext);
+    PathBuf::from(name)
+}
+
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
+    use std::io::Write as _;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let (tmp, mut file) = loop {
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = dir.join(format!(".darkburn-{}-{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp) {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 10_000 => {}
+            Err(e) => return Err(e),
+        }
+    };
+    let written = file.write_all(bytes).and_then(|()| file.flush());
+    drop(file);
+    written.and_then(|()| std::fs::rename(&tmp, path)).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
 }
@@ -262,9 +306,15 @@ pub fn remember_recent(prefs: &mut Prefs, path: &Path) {
     prefs.recent.truncate(RECENT_MAX);
 }
 
-/// Drop recent projects whose files are gone.
+/// Whether the drive (or share) `path` is on can be reached. A memory stick that is not plugged
+/// in or a network drive that is not connected says nothing about the files on it.
+fn drive_is_there(path: &Path) -> bool {
+    path.ancestors().last().is_none_or(|root| root.as_os_str().is_empty() || root.exists())
+}
+
+/// Drop recent projects whose files are gone. One on a drive that is not there now is kept.
 pub fn prune_recent(prefs: &mut Prefs) {
-    prefs.recent.retain(|p| Path::new(p).is_file());
+    prefs.recent.retain(|p| Path::new(p).is_file() || !drive_is_there(Path::new(p)));
     prefs.recent.truncate(RECENT_MAX);
 }
 
@@ -365,11 +415,15 @@ pub fn write_autosave(dir: &Path, doc: &darkburn_core::Document, project: Option
     Ok(())
 }
 
-/// The auto-save is now unneeded (saved, or the project let go).
+/// The auto-save is now unneeded (saved, or the project let go). An extra window has none: the
+/// files belong to the first window. While a crashed session's copy is still being offered the
+/// files are that copy, and they stay until the question is answered.
 fn discard_autosave(app: &mut DarkBurn) {
     wait_for_autosave(app);
     if let Some(dir) = &app.settings_dir
         && !app.safe_mode
+        && !app.fio.secondary
+        && app.files.restore.is_none()
     {
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_FILE));
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_PATH_FILE));
@@ -423,6 +477,8 @@ fn autosave_tick(app: &mut DarkBurn, now: Instant) -> Option<Duration> {
                 app.files.autosave.failed = r.is_err();
                 if let Err(e) = r {
                     log::warn!("auto-save failed: {e}");
+                    // Nothing was kept: this state is still to be saved, at the next interval.
+                    app.files.autosave.revision = None;
                 }
                 app.files.autosave.at = Some(now);
                 app.files.autosave.writing = None;
@@ -431,7 +487,8 @@ fn autosave_tick(app: &mut DarkBurn, now: Instant) -> Option<Duration> {
             Err(mpsc::TryRecvError::Disconnected) => app.files.autosave.writing = None,
         }
     }
-    if !autosave_enabled(app) {
+    if !autosave_enabled(app) || app.files.restore.is_some() {
+        // Off, or the file still holds a crashed session's copy that is being offered.
         app.files.autosave.due = None;
         return None;
     }
@@ -531,6 +588,8 @@ pub fn push_to(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
     let text = app.editor.clipboard.to_text();
     sys.set_text(text.clone());
     app.files.last_clip_text = Some(text);
+    // Our text took the place of any bitmap there: the same bitmap copied again later is new.
+    app.files.last_clip_image = None;
 }
 
 /// Take newer contents from the system clipboard: shapes from another DarkBurn, SVG text or a
@@ -545,6 +604,7 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
                 app.editor.clipboard = Clipboard { cut_settings: app.editor.clipboard.cut_settings.take(), ..clip };
             }
             app.files.last_clip_text = Some(text);
+            app.files.last_clip_image = None;
             return;
         }
         if import::is_svg_text(&text) {
@@ -557,6 +617,7 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
                 Err(e) => log::info!("clipboard SVG not read: {e}"),
             }
             app.files.last_clip_text = Some(text);
+            app.files.last_clip_image = None;
             return;
         }
         // Plain text: text shapes come later.
@@ -568,6 +629,8 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
         return;
     }
     app.files.last_clip_image = Some(key);
+    // The bitmap took the place of the text there: the same text copied again later is new.
+    app.files.last_clip_text = None;
     let Some(png) = import::rgba_to_png(w, h, rgba) else { return };
     let opts = import_options(app);
     if let Ok(mut imp) = import::bitmap(&png, &opts, None) {
@@ -578,7 +641,15 @@ pub fn pull_from(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
 
 /// Before a paste: take shapes from the system clipboard when it holds something newer.
 pub fn pull_system_clipboard(app: &mut DarkBurn, _ctx: &egui::Context) {
-    pull_from(app, &mut Arboard::open());
+    pull_if_used(app, &mut Arboard::open());
+}
+
+/// [`pull_from`], unless the system clipboard is turned off in the settings: then Paste gives
+/// what was copied in this window, whatever other programs have copied since.
+pub fn pull_if_used(app: &mut DarkBurn, sys: &mut dyn SystemClipboard) {
+    if app.prefs.opts.system_clipboard {
+        pull_from(app, sys);
+    }
 }
 
 // ----- Each frame -----
@@ -628,6 +699,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
             app.files.ask_save = Some(Then::Exit);
         } else {
             wait_for_autosave(app);
+            crate::art_library::closing(app);
             if let Some(dir) = &app.settings_dir
                 && !app.safe_mode
                 && !app.fio.secondary
@@ -660,8 +732,8 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
             }
             ui_kit::Action::Apply => {
                 app.files.ask_save = None;
-                // Let the project go without saving it.
-                app.editor.mark_saved();
+                // Let the project go without saving it. It stays marked as changed until
+                // something takes its place: the open may still be cancelled or fail.
                 proceed(app, ctx, then);
             }
             ui_kit::Action::Cancel => app.files.ask_save = None,
@@ -693,11 +765,8 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
     if app.notes_open {
         let doc = &mut app.editor.doc;
         let (mut notes, mut show) = (doc.notes.clone(), doc.show_notes_on_load);
-        let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes")
-            .fields()
-            .keep_open_on_escape()
-            .actions("", "Close", None)
-            .show(ctx, true, |ui| {
+        let (closed, action) =
+            ui_kit::Window::new(egui::Id::unique("db_notes"), "db_app", "Project notes").fields().actions("", "Close", None).show(ctx, true, |ui| {
                 ui_kit::text_area(ui, "Notes", egui::Id::unique("db_notes_text"), &mut notes, 12, 100_000);
                 ui_kit::checkbox(ui, "Show the notes when the project opens", &mut show);
             });
@@ -843,6 +912,30 @@ mod tests {
         assert!(!run(&mut a, &ctx, "edit.copy"));
     }
 
+    /// A drive letter with nothing behind it (a memory stick or network drive that is not there).
+    #[cfg(windows)]
+    fn absent_drive() -> Option<String> {
+        ('D'..='Z').rev().map(|c| format!("{c}:\\")).find(|d| !Path::new(d).exists())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recent_projects_on_a_drive_that_is_not_there_are_kept() {
+        let Some(drive) = absent_drive() else { return };
+        let dir = TempDir::new("recent-drive");
+        let mut a = app(&dir);
+        let away = format!("{drive}jobs\\sign.dbrn");
+        let gone = dir.0.join("gone.dbrn").to_string_lossy().into_owned();
+        a.prefs.recent = vec![away.clone(), gone];
+        let ctx = egui::Context::default();
+        frame(&ctx, &mut a);
+        assert_eq!(a.prefs.recent, vec![away.clone()], "the deleted file goes, the one on the absent drive stays");
+        // Picking it says why it cannot be opened, and keeps it for when the drive is back.
+        assert!(run(&mut a, &ctx, "file.recent.0"));
+        assert!(a.files.message.is_some());
+        assert_eq!(a.prefs.recent, vec![away]);
+    }
+
     #[test]
     fn new_and_open_ask_first_when_modified() {
         let dir = TempDir::new("guard");
@@ -980,6 +1073,96 @@ mod tests {
         assert!(a.project_path.is_none());
     }
 
+    /// What a crashed session leaves in the settings folder: the marker and an auto-save of a
+    /// project with one rectangle that was being edited as `mine.dbrn`.
+    fn leave_a_crashed_session(settings: &Path, project: &Path) {
+        let mut doc = darkburn_core::Document::new();
+        doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
+        assert_eq!(begin_session(settings), None);
+        write_autosave(settings, &doc, Some(project)).unwrap();
+    }
+
+    // PLAT-06: the next start finds the crash restore file and offers it.
+    #[test]
+    fn a_start_after_a_crash_offers_the_restore_file_and_a_clean_exit_does_not() {
+        let dir = TempDir::new("crash-start");
+        let settings = dir.0.join("settings");
+        leave_a_crashed_session(&settings, &dir.0.join("mine.dbrn"));
+        let ctx = egui::Context::default();
+        let mut a = app(&dir);
+        frame(&ctx, &mut a);
+        assert_eq!(a.files.restore.as_deref(), Some(settings.join(AUTOSAVE_FILE).as_path()));
+        assert!(a.files.open_dialogs().contains(&"restore_autosave"));
+        // Safe mode and a second window of the same copy never offer it (and leave the files).
+        for (safe, secondary) in [(true, false), (false, true)] {
+            let mut b = app(&dir);
+            b.safe_mode = safe;
+            b.fio.secondary = secondary;
+            frame(&ctx, &mut b);
+            assert!(b.files.restore.is_none());
+            assert!(settings.join(AUTOSAVE_FILE).is_file());
+        }
+        // After a clean exit there is nothing to offer.
+        end_session(&settings);
+        let mut c = app(&dir);
+        frame(&ctx, &mut c);
+        assert!(c.files.restore.is_none());
+        assert!(settings.join(SESSION_MARKER).is_file(), "this session is marked as running");
+        end_session(&settings);
+    }
+
+    #[test]
+    fn the_restore_dialog_brings_the_project_back_or_throws_the_copy_away() {
+        use crate::ui_harness::Gui;
+        for restore in [true, false] {
+            let mut g = Gui::standard();
+            let settings = g.temp("crashed");
+            let project = g.temp("mine.dbrn");
+            leave_a_crashed_session(&settings, &project);
+            {
+                let mut a = g.app();
+                a.settings_dir = Some(settings.clone());
+                a.safe_mode = false;
+                a.files.started = false; // as at a start
+            }
+            g.frames(2);
+            assert!(g.window_titles().contains(&"Restore auto-saved project?".to_string()), "{:?}", g.window_titles());
+            assert!(g.visible_texts().join(" ").contains("did not close properly"));
+            g.screenshot("crash-restore");
+            assert!(g.layout_problems().is_empty(), "{:?}", g.layout_problems());
+            assert_eq!(g.app().editor.doc.len(), 0, "nothing is opened before the answer");
+            g.click_label(if restore { "Restore" } else { "Discard" });
+            g.frames(2);
+            assert!(!g.window_titles().contains(&"Restore auto-saved project?".to_string()));
+            let mut a = g.app();
+            if restore {
+                assert_eq!(a.editor.doc.len(), 1, "the rectangle is back");
+                assert!(a.editor.is_modified(), "it still needs saving");
+                assert_eq!(a.project_path.as_deref(), Some(project.as_path()), "under the name it had");
+                assert!(!project.exists(), "the user's own file is not written by a restore");
+            } else {
+                assert_eq!(a.editor.doc.len(), 0);
+                assert!(a.project_path.is_none());
+                assert!(!settings.join(AUTOSAVE_FILE).exists(), "the copy is gone");
+                assert!(!settings.join(AUTOSAVE_PATH_FILE).exists());
+            }
+            // Leave nothing for the harness's own checks to trip over.
+            a.safe_mode = true;
+        }
+    }
+
+    #[test]
+    fn a_damaged_restore_file_is_reported_and_the_open_project_is_kept() {
+        let dir = TempDir::new("crash-bad");
+        let settings = dir.0.join("settings");
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join(AUTOSAVE_FILE), b"not a project").unwrap();
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        assert!(restore_autosave(&mut a, &settings.join(AUTOSAVE_FILE)).is_err());
+        assert_eq!(a.editor.doc.len(), 1, "what was open is untouched");
+    }
+
     #[test]
     fn autosave_writes_after_the_interval_and_restores_after_a_crash() {
         let dir = TempDir::new("autosave");
@@ -1068,6 +1251,49 @@ mod tests {
         assert!(b.editor.clipboard.shapes.is_empty());
     }
 
+    /// A bitmap pasted once, then shapes copied here, then the same bitmap copied again in the
+    /// other program: Paste gives the bitmap (the newest copy), not the shapes. And the other way
+    /// round for shapes from a second DarkBurn copied again after a bitmap.
+    #[test]
+    fn the_same_thing_copied_again_elsewhere_after_something_else_is_pasted() {
+        let dir = TempDir::new("clip-again");
+        let mut a = app(&dir);
+        let mut sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        pull_from(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image());
+        add_rect(&mut a);
+        let ids = a.editor.doc.iter().map(|s| s.id).collect::<Vec<_>>();
+        a.editor.clipboard.copy(&a.editor.doc, &ids);
+        push_to(&mut a, &mut sys);
+        assert!(sys.image.is_none(), "our text replaced the bitmap");
+        let ours = sys.text.clone();
+        // The other program copies its bitmap again.
+        sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        pull_from(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image(), "the bitmap is the newest copy");
+        // And our own shapes text again (as a second DarkBurn would put it there).
+        sys = FakeClip { text: ours, image: None };
+        pull_from(&mut a, &mut sys);
+        assert!(!a.editor.clipboard.shapes[0].is_image(), "the shapes are the newest copy");
+    }
+
+    /// With "Use the system clipboard" off, Paste does not take what another program copied.
+    #[test]
+    fn paste_leaves_the_system_clipboard_alone_when_it_is_turned_off() {
+        let dir = TempDir::new("clip-off");
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        let ids = a.editor.doc.iter().map(|s| s.id).collect::<Vec<_>>();
+        a.editor.clipboard.copy(&a.editor.doc, &ids);
+        let mut sys = FakeClip { text: None, image: Some((3, 2, vec![255; 24])) };
+        a.prefs.opts.system_clipboard = false;
+        pull_if_used(&mut a, &mut sys);
+        assert!(!a.editor.clipboard.shapes[0].is_image(), "the copied rectangle stays");
+        a.prefs.opts.system_clipboard = true;
+        pull_if_used(&mut a, &mut sys);
+        assert!(a.editor.clipboard.shapes[0].is_image());
+    }
+
     #[test]
     fn notes_edits_mark_the_project_modified_via_touch() {
         let dir = TempDir::new("notes");
@@ -1075,5 +1301,118 @@ mod tests {
         let ctx = egui::Context::default();
         run(&mut a, &ctx, "file.notes");
         assert!(a.notes_open);
+    }
+
+    /// "Don't save" lets the project go only when something takes its place: when the file to
+    /// open turns out to be unreadable the project is still open and still unsaved.
+    #[test]
+    fn dont_save_keeps_the_project_unsaved_when_the_open_fails() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        let junk = g.temp("junk.dbrn");
+        std::fs::write(&junk, b"not a project").unwrap();
+        {
+            let mut a = g.app();
+            add_rect(&mut a);
+            assert!(a.editor.is_modified());
+            a.files.ask_save = Some(Then::Open(Some(junk.clone())));
+        }
+        g.frames(2);
+        g.click_label("Don't save");
+        g.frames(2);
+        let a = g.app();
+        assert!(a.files.message.as_ref().is_some_and(|(t, _)| t == "Could not open"), "{:?}", a.files.message);
+        assert_eq!(a.editor.doc.len(), 1, "the project is still open");
+        assert!(a.editor.is_modified(), "and it still has unsaved changes, so closing asks again");
+        assert_eq!(title(&a), "Untitled* - DarkBurn");
+    }
+
+    /// An extra window keeps no auto-save of its own, so nothing it does may remove the first
+    /// window's copy.
+    #[test]
+    fn an_extra_window_leaves_the_first_windows_autosave_alone() {
+        let dir = TempDir::new("secondary");
+        let settings = dir.0.join("settings");
+        let mut doc = darkburn_core::Document::new();
+        doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
+        write_autosave(&settings, &doc, Some(&dir.0.join("mine.dbrn"))).unwrap();
+        let mut second = app(&dir);
+        second.fio.secondary = true;
+        add_rect(&mut second);
+        new_project(&mut second);
+        add_rect(&mut second);
+        save_to(&mut second, &dir.0.join("other.dbrn")).unwrap();
+        open_path(&mut second, &dir.0.join("other.dbrn")).unwrap();
+        assert!(settings.join(AUTOSAVE_FILE).is_file(), "the first window's auto-save is still there");
+        assert!(settings.join(AUTOSAVE_PATH_FILE).is_file());
+    }
+
+    /// DarkBurn is started again after a crash by opening another project (a double click on a
+    /// file): the crashed session's copy must still be there when the restore question is answered.
+    #[test]
+    fn opening_a_file_at_the_start_after_a_crash_keeps_the_copy_to_restore() {
+        let dir = TempDir::new("crash-arg");
+        let settings = dir.0.join("settings");
+        let mine = dir.0.join("mine.dbrn");
+        leave_a_crashed_session(&settings, &mine);
+        let other = dir.0.join("other.dbrn");
+        let mut writer = DarkBurn::new(Prefs::default());
+        add_rect(&mut writer);
+        add_rect(&mut writer);
+        save_to(&mut writer, &other).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut a = app(&dir);
+        a.fio.pending_open = vec![other.clone()];
+        frame(&ctx, &mut a);
+        crate::file_io::frame(&ctx, &mut a);
+        assert_eq!(a.project_path.as_deref(), Some(other.as_path()), "the file from the command line is open");
+        assert_eq!(a.editor.doc.len(), 2);
+        let offered = a.files.restore.clone().expect("the restore question is still asked");
+        assert!(offered.is_file(), "and the copy it is about still exists");
+        restore_autosave(&mut a, &offered).unwrap();
+        assert_eq!(a.editor.doc.len(), 1, "the crashed session's project is back");
+        assert_eq!(a.project_path.as_deref(), Some(mine.as_path()));
+        // Answered: from now on a save removes the copy as usual.
+        a.files.restore = None;
+        save_to(&mut a, &mine).unwrap();
+        assert!(!settings.join(AUTOSAVE_FILE).exists());
+        end_session(&settings);
+    }
+
+    /// Bug hunt 5: an auto-save that could not be written is tried again at the next interval,
+    /// without waiting for another edit.
+    #[test]
+    fn a_failed_autosave_is_tried_again() {
+        let dir = TempDir::new("autosave-retry");
+        let settings = dir.0.join("settings");
+        let mut a = app(&dir);
+        a.prefs.autosave_minutes = 1.0;
+        add_rect(&mut a);
+        // Something sits where the auto-save goes: the write fails.
+        let blocker = settings.join(AUTOSAVE_FILE);
+        std::fs::create_dir_all(&blocker).unwrap();
+        std::fs::write(blocker.join("in the way"), b"x").unwrap();
+        let t0 = Instant::now();
+        let settle = |a: &mut DarkBurn, at: Instant| {
+            for _ in 0..500 {
+                autosave_tick(a, at);
+                if a.files.autosave.writing.is_none() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        autosave_tick(&mut a, t0);
+        settle(&mut a, t0 + Duration::from_secs(61));
+        assert!(a.files.autosave.failed, "the write failed");
+        assert_eq!(autosave_status(&a, t0 + Duration::from_secs(62)), "Auto-save failed");
+        // The way is clear again: the next rounds write the same, still unsaved, project.
+        std::fs::remove_dir_all(&blocker).unwrap();
+        for round in 2..5 {
+            settle(&mut a, t0 + Duration::from_secs(61 * round));
+        }
+        assert!(blocker.is_file(), "the auto-save was written once it could be");
+        assert!(!a.files.autosave.failed);
     }
 }

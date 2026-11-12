@@ -67,11 +67,16 @@ pub struct Shape {
     /// Power scale in percent applied to this shape's layer power.
     pub power_scale: f64,
     /// Manually placed tabs (the cut skips them), as points on the outline in local coordinates.
+    /// Each belongs to the sub-path nearest to it. A shape with manual tabs gets no automatic ones.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tabs: Vec<[f64; 2]>,
-    /// Forced start point of the cut, a point near the outline in local coordinates.
+    /// Forced start point of the cut, a point near the outline in local coordinates. The closed
+    /// sub-path nearest to it starts cutting at its point nearest to it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_point: Option<[f64; 2]>,
+    /// Forced start points of further sub-paths of a compound shape (same rule as `start_point`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extra_start_points: Vec<[f64; 2]>,
     /// Forced cut direction.
     #[serde(skip_serializing_if = "is_auto_direction")]
     pub direction: CutDirection,
@@ -93,6 +98,7 @@ impl Default for Shape {
             power_scale: 100.0,
             tabs: Vec::new(),
             start_point: None,
+            extra_start_points: Vec::new(),
             direction: CutDirection::Auto,
             array: None,
         }
@@ -362,7 +368,13 @@ impl Shape {
         match &self.kind {
             ShapeKind::Path { path } => path.clone(),
             ShapeKind::Rect { width, height, radius } => rounded_rect(*width, *height, *radius),
-            ShapeKind::Ellipse { rx, ry } => kurbo::Ellipse::new(Point::ZERO, Vec2::new(*rx, *ry), 0.0).path_elements(OUTLINE_TOLERANCE).collect(),
+            ShapeKind::Ellipse { rx, ry } => {
+                let r = rx.abs().max(ry.abs());
+                if !curve_fits(r) {
+                    return Rect::new(-rx.abs(), -ry.abs(), rx.abs(), ry.abs()).to_path(0.1);
+                }
+                kurbo::Ellipse::new(Point::ZERO, Vec2::new(*rx, *ry), 0.0).path_elements(outline_tolerance(r)).collect()
+            }
             ShapeKind::Polygon { sides, radius } => polygon(*sides, *radius),
             ShapeKind::Text(t) => t.backup.clone().unwrap_or_else(|| Rect::from_origin_size(Point::ZERO, t.placeholder_size()).to_path(0.1)),
             ShapeKind::Code(c) => c.cache.clone().unwrap_or_else(|| Rect::from_center_size(Point::ZERO, (10.0, 10.0)).to_path(0.1)),
@@ -438,6 +450,17 @@ impl Shape {
                 .collect(),
             _ => vec![self.clone()],
         }
+    }
+
+    /// Every forced start point of this shape, in local coordinates.
+    pub fn start_points(&self) -> impl Iterator<Item = [f64; 2]> + '_ {
+        self.start_point.iter().chain(&self.extra_start_points).copied()
+    }
+
+    /// Replace every forced start point (the first one becomes `start_point`).
+    pub fn set_start_points(&mut self, points: &[[f64; 2]]) {
+        self.start_point = points.first().copied();
+        self.extra_start_points = points.iter().skip(1).copied().collect();
     }
 
     /// Set the layer of this shape and every child.
@@ -534,13 +557,29 @@ pub fn path_distance(path: &BezPath, p: Point) -> f64 {
     path.segments().map(|s| s.nearest(p, 1e-3).distance_sq).fold(f64::INFINITY, f64::min).sqrt()
 }
 
+/// The tolerance for the curves of an outline with radius `r`: [`OUTLINE_TOLERANCE`] for
+/// anything that fits a workshop, and never finer than a billionth of the radius, so that a
+/// shape with an absurd size (a typing slip, a script) still has a short outline instead of one
+/// that takes all the memory there is.
+/// Whether a curve of radius `r` can be worked out at all: past this the arithmetic of the
+/// curve overflows (the square of the radius is no longer a number), and the outline is the
+/// box around the shape instead.
+fn curve_fits(r: f64) -> bool {
+    r.is_finite() && r.abs() <= 1e100
+}
+
+fn outline_tolerance(r: f64) -> f64 {
+    let scaled = r.abs() * 1e-9;
+    if scaled.is_finite() { OUTLINE_TOLERANCE.max(scaled) } else { OUTLINE_TOLERANCE }
+}
+
 /// A rectangle `w` by `h` centred on the origin, corners rounded by `radius` (negative rounds
 /// them inwards), traced counter-clockwise from the bottom edge.
 pub fn rounded_rect(w: f64, h: f64, radius: f64) -> BezPath {
     let (w, h) = (w.abs(), h.abs());
     let (x0, y0, x1, y1) = (-w / 2.0, -h / 2.0, w / 2.0, h / 2.0);
     let r = radius.abs().min(w / 2.0).min(h / 2.0);
-    if r < 1e-9 {
+    if r < 1e-9 || !curve_fits(r) {
         return Rect::new(x0, y0, x1, y1).to_path(0.1);
     }
     use std::f64::consts::FRAC_PI_2 as Q;
@@ -561,7 +600,7 @@ pub fn rounded_rect(w: f64, h: f64, radius: f64) -> BezPath {
     for (centre, start, sweep) in corners {
         let arc = kurbo::Arc::new(centre, (r, r), start, sweep, 0.0);
         p.line_to(centre + Vec2::from_angle(start) * r);
-        p.extend(arc.append_iter(OUTLINE_TOLERANCE));
+        p.extend(arc.append_iter(outline_tolerance(r)));
     }
     p.close_path();
     p
@@ -601,6 +640,31 @@ mod tests {
         assert!(s.contains(Point::new(30.0, 30.0)));
         assert!(!s.contains(Point::new(5.0, 30.0)));
         assert_eq!(s.layer, 3);
+    }
+
+    #[test]
+    fn a_huge_ellipse_or_rounded_rectangle_has_a_short_outline() {
+        // Found by the monkey (seed 1000, step 48): an ellipse 1e150 mm wide asked for 120 GB.
+        let e = Shape::new(ShapeKind::Ellipse { rx: 5e149, ry: 3.9 }, Affine::IDENTITY, 0);
+        assert!(e.local_outline().elements().len() < 200, "{} elements", e.local_outline().elements().len());
+        let r = rounded_rect(1e150, 1e150, 4e149);
+        assert!(r.elements().len() < 200, "{} elements", r.elements().len());
+        // Shapes of a sensible size keep the outline they had.
+        let e = Shape::new(ShapeKind::Ellipse { rx: 500.0, ry: 300.0 }, Affine::IDENTITY, 0);
+        let exact: BezPath = kurbo::Ellipse::new(Point::ZERO, Vec2::new(500.0, 300.0), 0.0).path_elements(OUTLINE_TOLERANCE).collect();
+        assert_eq!(e.local_outline(), exact);
+    }
+
+    #[test]
+    fn an_ellipse_near_the_largest_number_there_is_still_has_an_outline() {
+        // Found by the monkey (seed 3026, step 26): an ellipse 1.7e308 mm high asked for 120 GB,
+        // because the arithmetic of the curve overflows at that size.
+        let e = Shape::new(ShapeKind::Ellipse { rx: 99.8, ry: 8.5e307 }, Affine::IDENTITY, 0);
+        assert!(e.local_outline().elements().len() < 200, "{} elements", e.local_outline().elements().len());
+        let e = Shape::new(ShapeKind::Ellipse { rx: f64::INFINITY, ry: f64::NAN }, Affine::IDENTITY, 0);
+        assert!(e.local_outline().elements().len() < 200);
+        let r = rounded_rect(1.7e308, 1.7e308, 8e307);
+        assert!(r.elements().len() < 200, "{} elements", r.elements().len());
     }
 
     #[test]

@@ -71,6 +71,13 @@ impl Selection {
         self.ids.last().copied()
     }
 
+    /// Drop shapes that can no longer be clicked: locked, or with every layer hidden. Without
+    /// this a shape on a layer that was just hidden stays selected, unseen, and the next Delete
+    /// or arrow key acts on it.
+    pub fn retain_selectable(&mut self, doc: &Document) {
+        self.ids.retain(|id| doc.get(*id).is_some_and(|s| doc.is_selectable(s)));
+    }
+
     /// Drop ids that are no longer in `doc`.
     pub fn retain_existing(&mut self, doc: &Document) {
         self.ids.retain(|id| doc.get(*id).is_some());
@@ -83,6 +90,8 @@ struct Snapshot {
     doc: Document,
     selection: Selection,
     label: String,
+    /// The editor's revision when this state was current.
+    revision: u64,
 }
 
 /// Unlimited undo and redo.
@@ -178,17 +187,27 @@ impl Editor {
 
     /// Record the state before a change called `label`. Call it, then change `doc`.
     pub fn checkpoint(&mut self, label: &str) {
-        self.history.undo.push(Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string() });
+        self.history.undo.push(Snapshot {
+            doc: self.doc.clone(),
+            selection: self.selection.clone(),
+            label: label.to_string(),
+            revision: self.revision,
+        });
         self.history.redo.clear();
         self.revision += 1;
     }
 
-    /// Make an undoable change: `f` changes the document and selection; nothing is recorded
-    /// when it returns false.
+    /// Make an undoable change: `f` changes the document and selection. A change that leaves a
+    /// shape further out than [`MAX_COORD`], or with a position or size that is not a number,
+    /// is not made at all (false comes back, as if `f` had declined). Nothing is recorded
+    /// when it returns false, nor when it says it changed something and the document is the one
+    /// it was (the selection `f` made is kept then, and what could be redone still can).
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
-        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string() };
-        let changed = f(&mut self.doc, &mut self.selection);
-        if changed {
+        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision };
+        let changed = f(&mut self.doc, &mut self.selection) && within_reach(&self.doc, &before.doc);
+        if changed && self.doc == before.doc {
+            // Nothing to undo: no step, and the document is no more "changed" than it was.
+        } else if changed {
             self.history.undo.push(before);
             self.history.redo.clear();
             self.revision += 1;
@@ -203,27 +222,64 @@ impl Editor {
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
     pub fn drop_checkpoint(&mut self) {
         if let Some(s) = self.history.undo.pop() {
-            self.doc = s.doc;
+            // Back at the state of the checkpoint: still saved if it was saved then.
+            let was_saved = self.is_saved_state(&s);
+            self.restore_doc(s.doc);
             self.selection = s.selection;
-            self.revision += 1;
+            self.step_to(was_saved);
         }
+    }
+
+    /// Whether `s` holds the document as it was last saved or opened. The notes are not part of
+    /// an undo step, so they must still be the ones that were saved.
+    fn is_saved_state(&self, s: &Snapshot) -> bool {
+        s.revision == self.saved_revision && s.doc.notes == self.doc.notes && s.doc.show_notes_on_load == self.doc.show_notes_on_load
+    }
+
+    /// Move the revision on after a step through the history; `saved` says the document is now
+    /// the one that was saved.
+    fn step_to(&mut self, saved: bool) {
+        self.revision += 1;
+        if saved {
+            self.saved_revision = self.revision;
+        }
+    }
+
+    /// Put the document of an undo step back. The notes are typed outside the undo history (they
+    /// are not undo steps), so the ones in the open document stay.
+    fn restore_doc(&mut self, mut doc: Document) -> Document {
+        doc.notes = std::mem::take(&mut self.doc.notes);
+        doc.show_notes_on_load = self.doc.show_notes_on_load;
+        let mut old = std::mem::replace(&mut self.doc, doc);
+        old.notes = self.doc.notes.clone();
+        old
     }
 
     pub fn undo(&mut self) -> bool {
         let Some(s) = self.history.undo.pop() else { return false };
-        let now =
-            Snapshot { doc: std::mem::replace(&mut self.doc, s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let saved = self.is_saved_state(&s);
+        let now = Snapshot {
+            doc: self.restore_doc(s.doc),
+            selection: std::mem::replace(&mut self.selection, s.selection),
+            label: s.label,
+            revision: self.revision,
+        };
         self.history.redo.push(now);
-        self.revision += 1;
+        self.step_to(saved);
         true
     }
 
     pub fn redo(&mut self) -> bool {
         let Some(s) = self.history.redo.pop() else { return false };
-        let now =
-            Snapshot { doc: std::mem::replace(&mut self.doc, s.doc), selection: std::mem::replace(&mut self.selection, s.selection), label: s.label };
+        let saved = self.is_saved_state(&s);
+        let now = Snapshot {
+            doc: self.restore_doc(s.doc),
+            selection: std::mem::replace(&mut self.selection, s.selection),
+            label: s.label,
+            revision: self.revision,
+        };
         self.history.undo.push(now);
-        self.revision += 1;
+        self.step_to(saved);
         true
     }
 
@@ -231,6 +287,24 @@ impl Editor {
     pub fn selected(&self) -> Vec<ShapeId> {
         self.selection.ids().iter().copied().filter(|id| self.doc.get(*id).is_some()).collect()
     }
+}
+
+/// The furthest from the origin a shape may reach, mm: a thousand kilometres, far beyond any
+/// machine and well inside the range where the arithmetic still holds. A typing slip or a
+/// script asking for 1e300 is refused instead of putting "infinity" into the job.
+pub const MAX_COORD: f64 = 1e9;
+
+/// Whether every shape that `doc` has and `before` had not (new or changed) lies within
+/// [`MAX_COORD`]. Shapes that were already there are left alone, so a document that came in
+/// with something far out can still be worked on.
+fn within_reach(doc: &Document, before: &Document) -> bool {
+    doc.shapes.iter().enumerate().all(|(i, s)| {
+        if before.shapes.get(i).is_some_and(|b| std::sync::Arc::ptr_eq(b, s)) {
+            return true;
+        }
+        let b = s.bbox();
+        s.transform.as_coeffs().iter().chain(&[b.x0, b.y0, b.x1, b.y1]).all(|c| c.is_finite() && c.abs() <= MAX_COORD)
+    })
 }
 
 #[cfg(test)]
@@ -241,6 +315,67 @@ mod tests {
 
     fn square(x: f64) -> Shape {
         Shape::rect(Rect::new(x, 0.0, x + 10.0, 10.0), 0.0, 0)
+    }
+
+    #[test]
+    fn a_change_that_changes_nothing_is_not_an_undo_step() {
+        // Found by the monkey: commands that report success without changing anything (a 1 x 1
+        // grid array, "move to the lower left" when already there) each left an undo step that
+        // did nothing and marked the document as changed.
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.edit("Move", |d, _| {
+            d.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0)) * d.get(id).unwrap().transform;
+            true
+        });
+        e.undo();
+        e.mark_saved();
+        let steps = e.history.len();
+        let ok = e.edit("Nothing", |_, sel| {
+            sel.set([id]);
+            true
+        });
+        assert!(ok, "the caller still hears that its change went through");
+        assert_eq!(e.history.len(), steps, "no undo step");
+        assert!(!e.is_modified(), "the document is as it was saved");
+        assert_eq!(e.selection.ids(), &[id], "the selection the change made is kept");
+        assert!(e.redo(), "and what could be redone still can");
+    }
+
+    #[test]
+    fn a_change_that_puts_a_shape_out_of_this_world_is_refused() {
+        // Found by the monkey (seeds 3004, 3007, 3010): a shape placed at -1.7e308 mm had a
+        // bounding box reaching to infinity, and the job got "G0 X-inf".
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        let before = e.doc.clone();
+        for far in [1.7e308, -1e300, 1e13, f64::NAN, f64::INFINITY] {
+            let ok = e.edit("Move", |d, _| {
+                d.get_mut(id).unwrap().transform = kurbo::Affine::translate((far, 0.0));
+                true
+            });
+            assert!(!ok, "{far} was let through");
+            assert_eq!(e.doc, before);
+            assert_eq!(e.history.len(), 0);
+        }
+        let ok = e.edit("Size", |d, _| {
+            d.get_mut(id).unwrap().kind = crate::shape::ShapeKind::Rect { width: 1e300, height: 5.0, radius: 0.0 };
+            true
+        });
+        assert!(!ok, "a size of 1e300 was let through");
+        assert_eq!(e.doc, before);
+        // Anything a machine could ever reach is fine, and so is a shape that was already far
+        // out when the document was opened: other changes still go through.
+        assert!(e.edit("Move", |d, _| {
+            d.get_mut(id).unwrap().transform = kurbo::Affine::translate((5e6, -5e6));
+            true
+        }));
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((1e300, 0.0));
+        let other = e.doc.add(square(20.0));
+        assert!(e.edit("Move", |d, _| {
+            d.get_mut(other).unwrap().transform = kurbo::Affine::translate((1.0, 0.0));
+            true
+        }));
     }
 
     #[test]
@@ -321,5 +456,119 @@ mod tests {
         assert_eq!(e.history.len(), 2000);
         while e.undo() {}
         assert!(e.doc.is_empty());
+    }
+
+    /// Notes are typed outside the undo history, so stepping through it must not touch them.
+    #[test]
+    fn undo_and_redo_leave_the_project_notes_alone() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.doc.notes = "3 mm birch, two passes".into();
+        e.doc.show_notes_on_load = true;
+        e.touch();
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        assert!(e.undo() && e.undo());
+        assert!(e.doc.is_empty());
+        assert_eq!(e.doc.notes, "3 mm birch, two passes", "undoing shapes does not wipe the notes");
+        assert!(e.doc.show_notes_on_load);
+        e.doc.notes.push_str(" (checked)");
+        e.touch();
+        assert!(e.redo() && e.redo());
+        assert_eq!(e.doc.len(), 2);
+        assert_eq!(e.doc.notes, "3 mm birch, two passes (checked)", "redo does not bring old notes back");
+        // A dropped checkpoint (a click that moved nothing) does not either.
+        e.checkpoint("Drag");
+        e.doc.notes = "new".into();
+        e.drop_checkpoint();
+        assert_eq!(e.doc.notes, "new");
+    }
+
+    /// A drag that is cancelled or ends where it began changes nothing: a saved project stays saved.
+    #[test]
+    fn a_dropped_checkpoint_does_not_mark_a_saved_project_as_changed() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        let id = e.doc.iter().next().unwrap().id;
+        let before = e.revision();
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0));
+        e.touch();
+        e.drop_checkpoint();
+        assert!(!e.is_modified(), "nothing changed since the save");
+        assert!(e.revision() > before, "but the canvas is told to draw again");
+        // With unsaved changes before the drag it stays changed.
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        e.checkpoint("Move");
+        e.drop_checkpoint();
+        assert!(e.is_modified());
+    }
+
+    /// Undo back to what was saved (and redo forward to it) is the saved project again.
+    #[test]
+    fn undo_and_redo_back_to_the_saved_state_are_not_unsaved_changes() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        e.edit("Add", |d, _| {
+            d.add(square(20.0));
+            true
+        });
+        e.edit("Add", |d, _| {
+            d.add(square(40.0));
+            true
+        });
+        assert!(e.undo());
+        assert!(e.is_modified(), "one step short of the saved state");
+        assert!(e.undo());
+        assert!(!e.is_modified(), "undo back to the saved state");
+        assert!(e.undo());
+        assert!(e.is_modified(), "undo past the saved state");
+        assert!(e.redo());
+        assert!(!e.is_modified(), "redo forward to the saved state");
+        assert!(e.redo() && e.redo());
+        assert!(e.is_modified());
+        assert!(e.undo() && e.undo());
+        assert!(!e.is_modified(), "and back again");
+        // Notes are not undo steps: with other notes than the saved ones it is not the saved project.
+        e.edit("Add", |d, _| {
+            d.add(square(60.0));
+            true
+        });
+        e.doc.notes = "changed".into();
+        e.touch();
+        assert!(e.undo());
+        assert!(e.is_modified(), "the notes differ from the saved ones");
+        // A new change after an undo past the save can never be undone into the saved state.
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.mark_saved();
+        assert!(e.undo());
+        e.edit("Add", |d, _| {
+            d.add(square(5.0));
+            true
+        });
+        assert!(e.undo());
+        assert!(e.is_modified(), "the empty document was never saved");
+        assert!(e.redo());
+        assert!(e.is_modified());
     }
 }

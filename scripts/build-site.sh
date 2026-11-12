@@ -187,7 +187,11 @@ Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
 Header set Cache-Control "no-cache"
 Header set Strict-Transport-Security "max-age=31536000"
 </FilesMatch>
+<FilesMatch "\.(png|ico)$">
+Header set Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+</FilesMatch>
 </IfModule>
+FileETag None
 AddDefaultCharset utf-8
 ErrorDocument 404 /404.html
 <IfModule mod_rewrite.c>

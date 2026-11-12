@@ -24,7 +24,17 @@
     # For this name only: nothing is said about the names beside it.
     Header set Strict-Transport-Security "max-age=31536000"
   </FilesMatch>
+  # A picture that is opened by itself is shown by the browser on a page of its own making,
+  # which carries style of its own. The policy above would refuse that style, and the picture
+  # would sit in a corner. A picture runs nothing, so its policy allows that much.
+  <FilesMatch "\.(png|ico)$">
+    Header set Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+  </FilesMatch>
 </IfModule>
+
+# A browser asks again by the date of a file alone. With the host's second mark for a file
+# (ETag), a host that compresses what it sends would send the whole file each time.
+FileETag None
 
 # The licence text of the fonts holds a copyright sign.
 AddDefaultCharset utf-8

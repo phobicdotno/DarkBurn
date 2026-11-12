@@ -155,15 +155,16 @@ jobs:
               differ="$differ$f "
             fi
           done < <(cd target/site && find . -type f ! -name .made-by-build-site ! -name .htaccess | sed 's|^\./||' | LC_ALL=C sort)
-          # The rules are not handed out, but what they do shows: the headers they set, and
-          # the "not found" page. Rules that were changed or taken away on the host show here.
+          # The rules are not handed out, but what they do shows: the headers they set for
+          # every file (the first block of .htaccess), and the "not found" page. Rules that
+          # were changed or taken away on the host show here.
           heads=$(ask -o /dev/null -D - "$url/" | tr -d '\r') || heads=''
           while IFS= read -r want; do
             if ! printf '%s\n' "$heads" | grep -qixF -- "$want"; then
               echo "the header is not sent: $want"
               differ="$differ.htaccess "
             fi
-          done < <(sed -n 's/^ *Header set \([A-Za-z-]*\) "\(.*\)"$/\1: \2/p' target/site/.htaccess)
+          done < <(sed -n '/<FilesMatch "\.">/,/<\/FilesMatch>/s/^ *Header set \([A-Za-z-]*\) "\(.*\)"$/\1: \2/p' target/site/.htaccess)
           code=$(ask -o live.tmp -w '%{http_code}' "$url/no-such-page") || code=none
           if [ "$code" != 404 ] || ! cmp -s live.tmp target/site/404.html; then
             echo "no-such-page: the host answers $code, or not with 404.html"

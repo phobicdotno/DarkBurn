@@ -373,3 +373,21 @@ fn every_window_that_stays_open_docks() {
     g.close_dialogs();
     assert!(out.is_empty(), "windows that stay open but are not dockable kit windows: {out:#?}");
 }
+
+#[test]
+fn zz_debug_escape_after_cancel() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    g.run_command("tools.offset");
+    g.frames(2);
+    g.click_label("Cancel");
+    g.run_command("tools.offset");
+    g.frames(2);
+    let ctx = g.ctx();
+    let layers = ctx.memory(|m| m.areas().visible_layer_ids());
+    let id = egui::Id::unique(("shape_dialog", OFFSET));
+    eprintln!("window {id:?} layers {layers:?} popup {} focus {:?}", egui::Popup::is_any_open(&ctx), ctx.memory(|m| m.focused()));
+    g.escape();
+    eprintln!("open after Esc: {:?}", g.app().shape_ui.open);
+    panic!("debug");
+}

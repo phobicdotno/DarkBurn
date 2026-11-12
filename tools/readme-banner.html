@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The picture at the top of the README</title>
+<!--
+  docs/readme-banner.png is a picture of this page: the top of the web page (site/), drawn with
+  the page's own style sheet, fonts and icon. To draw it again, from the repository's folder:
+
+    sh scripts/build-site.sh
+    chromium --headless --screenshot=docs/readme-banner.png --window-size=760,364 \
+      --force-device-scale-factor=2 --default-background-color=00000000 tools/readme-banner.html
+
+  The words here are the words of site/index.html and of the alt text in README.md: change all
+  three together. If the picture gets taller or shorter, change 364 above and the height in
+  README.md (half the picture's height in pixels).
+-->
+<link rel="stylesheet" href="../target/site/style.css">
+<style>
+  html, body { background: transparent; }
+  body { margin: 0; }
+  .banner {
+    position: relative; overflow: hidden; isolation: isolate;
+    width: 760px; height: 364px; padding: 34px 44px 0;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 18px;
+  }
+  .banner::before {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    background-image: linear-gradient(var(--grid1) 1px, transparent 1px), linear-gradient(90deg, var(--grid1) 1px, transparent 1px);
+    background-size: 3rem 3rem; background-position: center top;
+    -webkit-mask-image: radial-gradient(ellipse 85% 90% at 40% 0%, #000 0%, transparent 85%);
+    mask-image: radial-gradient(ellipse 85% 90% at 40% 0%, #000 0%, transparent 85%);
+  }
+  .banner::after {
+    content: ""; position: absolute; z-index: -1; right: -90px; bottom: -150px; width: 520px; height: 330px;
+    background: radial-gradient(45% 55% at 38% 50%, rgba(255, 204, 0, .34), transparent 72%), radial-gradient(45% 55% at 70% 46%, rgba(255, 159, 26, .30), transparent 72%);
+    filter: blur(52px);
+  }
+  .banner__top { display: flex; align-items: center; justify-content: space-between; height: 44px; margin-bottom: 30px; }
+  .banner .brand { order: 0; font-size: 1.5rem; gap: .75rem; }
+  .banner .brand img { width: 2.5rem; height: 2.5rem; }
+  .banner .pill { font-size: 1.25rem; padding: .34rem 1rem .34rem .85rem; margin-bottom: 0; }
+  .banner .pill__dot { width: .5625rem; height: .5625rem; }
+  .banner h1 { font-size: 4.5rem; }
+  .banner .hero__lead { font-size: 1.5rem; margin-top: 1.375rem; color: var(--soft); }
+  /* The line under "burn." is drawn in, not animated: the picture is taken at once. */
+  .banner .burn::after { animation: none; }
+</style>
+</head>
+<body>
+<div class="banner">
+  <div class="banner__top">
+    <span class="brand"><img src="../target/site/icon.svg" width="40" height="40" alt=""><span>DarkBurn</span></span>
+    <p class="pill"><span class="pill__dot" aria-hidden="true"></span>Status: pre-release</p>
+  </div>
+  <h1><span>Design, arrange,</span> <span>preview and <span class="burn">burn.</span></span></h1>
+  <p class="hero__lead"><span>One program for laser cutters and engravers.</span> <span>Written in Rust.</span></p>
+</div>
+</body>
+</html>

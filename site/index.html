@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<title>DarkBurn: design, arrange, preview and burn</title>
+<meta name="description" content="DarkBurn is a desktop program for laser cutters and engravers, written in Rust. Pre-release: it has not yet burned a job on a real machine.">
+<link rel="canonical" href="https://darkburn.phobic.no/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="DarkBurn">
+<meta property="og:url" content="https://darkburn.phobic.no/">
+<meta property="og:title" content="DarkBurn: design, arrange, preview and burn">
+<meta property="og:description" content="One program for laser cutters and engravers. Written in Rust. Pre-release: DarkBurn has not yet burned a job on a real machine.">
+<meta property="og:image" content="https://darkburn.phobic.no/img/hero.png">
+<meta property="og:image:width" content="2880">
+<meta property="og:image:height" content="1920">
+<meta property="og:image:alt" content="DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#121315">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-256.png">
+<link rel="preload" href="fonts/IBMPlexSans-Variable.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script src="site.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="top" id="top">
+  <div class="wrap top__in">
+    <a class="brand" href="#top" aria-label="DarkBurn, top of the page">
+      <img src="icon.svg" width="30" height="30" alt="" decoding="async">
+      <span>DarkBurn</span>
+    </a>
+    <button class="navbtn" type="button" aria-expanded="false" aria-controls="nav">
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 6h14M3 10h14M3 14h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span>Menu</span>
+    </button>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <ul>
+        <li><a href="#look">A look around</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#machines">Machines</a></li>
+        <li><a href="#files">Files</a></li>
+        <li><a href="#agents">AI agents</a></li>
+        <li><a href="#install">Install</a></li>
+        <li><a href="#not-yet">Not there yet</a></li>
+      </ul>
+    </nav>
+    <a class="gh" href="https://github.com/phobicdotno/DarkBurn">GitHub<svg class="ext" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3.5 2.5h6v6M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+  </div>
+</header>
+
+<main id="main" tabindex="-1">
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap hero__top">
+    <div class="hero__copy">
+      <p class="pill"><span class="pill__dot" aria-hidden="true"></span>Status: pre-release</p>
+      <h1 id="hero-title"><span>Design, arrange,</span> <span>preview and <span class="burn">burn.</span></span></h1>
+      <p class="hero__lead"><span>One program for laser cutters and engravers.</span> <span>Written in Rust.</span></p>
+      <p class="hero__cta">
+        <a class="btn btn--primary" href="#install">Install</a>
+        <a class="btn" href="https://github.com/phobicdotno/DarkBurn">GitHub<svg class="ext" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M3.5 2.5h6v6M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      </p>
+    </div>
+    <aside class="notice status" id="status" aria-labelledby="status-title">
+      <p class="notice__tag">Status</p>
+      <p class="notice__lead" id="status-title">Pre-release. DarkBurn has not yet burned a job on a real machine.</p>
+      <p>The machine drivers have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under <a href="#not-yet">What is not there yet</a>.</p>
+    </aside>
+  </div>
+  <figure class="hero__shot">
+    <a class="shot shot--l" href="img/hero.png" aria-label="The main window: open the picture larger" aria-describedby="pic-hero">
+      <img id="pic-hero" src="img/hero.png" width="2880" height="1920" fetchpriority="high" alt="DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.">
+    </a>
+    <figcaption>A workshop sign, four key tags, a gear and a QR code on five layers: one scores, two engrave, two cut. <span class="swipe">Swipe a picture sideways to see the rest of the window.</span></figcaption>
+  </figure>
+</section>
+
+<section class="section" id="about" aria-labelledby="about-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="about-title">What it is</h2>
+      <p class="lead">DarkBurn is a desktop program for laser cutters and engravers. You draw or import a design, give each layer a mode, a speed and a power, watch the preview, and send the job to the machine.</p>
+    </div>
+    <div class="facts">
+      <article class="card fact fact--list">
+        <div class="fact__head">
+          <h3><span class="fact__num">802</span> items on the parity checklist</h3>
+        </div>
+        <div class="fact__meter">
+          <div class="meter" role="img" aria-label="Of 802 items, 728 are done, 48 are partly done and 26 are open.">
+            <span class="meter__done"></span><span class="meter__part"></span><span class="meter__open"></span>
+          </div>
+          <ul class="legend">
+            <li><span class="key key--done" aria-hidden="true"></span><b>728</b> done</li>
+            <li><span class="key key--part" aria-hidden="true"></span><b>48</b> partly done</li>
+            <li><span class="key key--open" aria-hidden="true"></span><b>26</b> open</li>
+          </ul>
+        </div>
+        <div class="fact__body">
+          <p>Most of them are what LightBurn 1.4.04 does; the rest are DarkBurn's own, such as the Gweike M3 Ultra and AI agents. It opens and saves LightBurn projects. DarkBurn is not affiliated with LightBurn Software.</p>
+          <p><a class="more" href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/PARITY-CHECKLIST.md">The parity checklist</a></p>
+        </div>
+      </article>
+      <article class="card fact fact--tests">
+        <h3><span class="fact__pre">More than</span> <span class="fact__num">2200</span> automated tests</h3>
+      </article>
+      <article class="card fact fact--half">
+        <h3 class="fact__title">Built-in machine simulators</h3>
+        <p>A whole job can be run with no laser attached.</p>
+        <p><a class="more" href="#machines">Machines</a></p>
+      </article>
+      <article class="card fact fact--half">
+        <h3 class="fact__title">An MCP server</h3>
+        <p>An AI agent can work the program behind switches that only you can change.</p>
+        <p><a class="more" href="#agents">AI agents</a></p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="look" aria-labelledby="look-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="look-title">A look around</h2>
+      <p class="lead">Every screenshot on this page is DarkBurn drawing itself in its headless test harness, with the built-in GRBL simulator as the machine.</p>
+      <p class="swipe">Swipe a picture sideways to see the rest of the window.</p>
+    </div>
+
+    <figure class="tour">
+      <a class="shot shot--l" href="img/geometry.png" aria-label="Shape tools: open the picture larger" aria-describedby="pic-geometry">
+        <img id="pic-geometry" src="img/geometry.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Modify tab with Offset, Weld, Boolean, Array and Round Corners buttons. On the canvas: a rosette of twelve petals inside a double ring, a bottle-opener outline with two holes, a honeycomb of hexagons, and a curve with one node selected and its two handles showing. The layer list names four layers.">
+      </a>
+      <figcaption>
+        <p class="tour__n" aria-hidden="true">01</p>
+        <h3>Shape tools</h3>
+        <p>A circular array with an offset rim, a part made with boolean union and difference, a grid array, and a curve in the node editor.</p>
+      </figcaption>
+    </figure>
+
+    <figure class="tour tour--flip">
+      <a class="shot shot--r" href="img/image-engraving.png" aria-label="Photo engraving: open the picture larger" aria-describedby="pic-image-engraving">
+        <img id="pic-image-engraving" src="img/image-engraving.png" width="2880" height="1920" loading="lazy" decoding="async" alt="A grey landscape picture on the canvas drawn as black and white dither dots, with the Adjust Image window beside it: brightness, contrast, gamma, enhance, image mode Jarvis, DPI, two presets, and a before and after preview with the original above the dots.">
+      </a>
+      <figcaption>
+        <p class="tour__n" aria-hidden="true">02</p>
+        <h3>Photo engraving</h3>
+        <p>A picture dithered for the laser (the landscape is computed, not a photograph). Adjust Image shows the original above the dots that will burn.</p>
+      </figcaption>
+    </figure>
+
+    <figure class="tour">
+      <a class="shot shot--l" href="img/preview.png" aria-label="The Preview: open the picture larger" aria-describedby="pic-preview">
+        <img id="pic-preview" src="img/preview.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Preview window over the main window: the job drawn on a white bed, part of it already traced, the travel moves shown, and an estimated time.">
+      </a>
+      <figcaption>
+        <p class="tour__n" aria-hidden="true">03</p>
+        <h3>The Preview</h3>
+        <p>The Preview plays the job before anything burns and gives the time.</p>
+      </figcaption>
+    </figure>
+
+    <figure class="tour tour--flip">
+      <a class="shot shot--r" href="img/machines.png" aria-label="Running a job: open the picture larger" aria-describedby="pic-machines">
+        <img id="pic-machines" src="img/machines.png" width="2880" height="1920" loading="lazy" decoding="async" alt="DarkBurn connected to the GRBL simulator while a job with a coaster and a bottle opener runs. The Move panel on the left shows jog arrows and the head position, the Console on the right lists G-code lines as they are sent, and the Laser panel shows Busy, a progress bar about a third full, and elapsed and remaining time.">
+      </a>
+      <figcaption>
+        <p class="tour__n" aria-hidden="true">04</p>
+        <h3>Running a job</h3>
+        <p>A job on the built-in GRBL simulator: the console lists what is sent, the Move panel shows where the head is, and the Laser panel shows the progress.</p>
+      </figcaption>
+    </figure>
+
+    <h3 class="subhead">More pictures</h3>
+    <div class="more-shots">
+      <figure class="mini">
+        <a class="shot" href="img/variable-text.png" aria-label="Text and codes: open the picture larger" aria-describedby="pic-variable-text">
+          <img id="pic-variable-text" src="img/variable-text.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Text tab and the Variable Text panel. The canvas shows an asset plate that reads WORKSHOP ASSET, Tag no. 0042, a date and the engraving speed and power, with a Code 128 barcode, a Data Matrix and a QR code.">
+        </a>
+        <figcaption>
+          <h4>Text and codes</h4>
+          <p>Serial numbers, dates and cut settings in text, with a barcode, a Data Matrix and a QR code that follow the serial number.</p>
+        </figcaption>
+      </figure>
+      <figure class="mini">
+        <a class="shot" href="img/cut-settings.png" aria-label="Cut settings and the material test: open the picture larger" aria-describedby="pic-cut-settings">
+          <img id="pic-cut-settings" src="img/cut-settings.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Cut Settings Editor beside a material test grid of twenty squares, one for each layer, five speeds by four powers. The editor lists one layer for every square and shows the settings of layer 07: mode Fill, speed 300 mm/s, max power 20 %, min power 10 %, passes, interval, lines per inch and scan angle.">
+        </a>
+        <figcaption>
+          <h4>Cut settings and the material test</h4>
+          <p>A material test puts every speed and power on a layer of its own. Double-click a layer to set its mode, speed, power, passes and fill.</p>
+        </figcaption>
+      </figure>
+      <figure class="mini">
+        <a class="shot" href="img/light.png" aria-label="Light theme: open the picture larger" aria-describedby="pic-light">
+          <img id="pic-light" src="img/light.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The DarkBurn main window in the light theme, with the same workshop sign, key tags, gear and QR code on a white canvas.">
+        </a>
+        <figcaption>
+          <h4>Light theme</h4>
+          <p>The project from the top of the page in the light theme.</p>
+        </figcaption>
+      </figure>
+    </div>
+    <p class="fine"><code><span class="nw">cargo test</span> <span class="nw">-p darkburn</span> <span class="nw">readme_shots</span> <span class="nw">--</span> <span class="nw">--ignored</span> <span class="nw">--test-threads=1</span></code> makes them again.</p>
+  </div>
+</section>
+
+<section class="section section--band" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="features-title">Features</h2>
+      <p class="lead">Everything in the README's feature lists is ticked as done on the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/PARITY-CHECKLIST.md">parity checklist</a>. What is partly done or missing is under <a href="#not-yet">What is not there yet</a>.</p>
+    </div>
+    <ul class="grid">
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">01</p>
+        <h3>Design and drawing</h3>
+        <p>Lines, curves, rectangles, ellipses and polygons on a canvas with rulers, a grid and snapping, placed by hand or by numbers.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">02</p>
+        <h3>Editing and arranging</h3>
+        <p>Node editing, boolean and offset tools, arrays, clean-up, align and distribute.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">03</p>
+        <h3>Text, barcodes and variable text</h3>
+        <p>Text with system and single-line fonts, text on a path, QR codes, barcodes, and text that changes from job to job.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">04</p>
+        <h3>Images and engraving</h3>
+        <p>Bring in pictures, adjust them, pick a dither mode and engrave, or trace them into cut lines.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">05</p>
+        <h3>Layers and cut settings</h3>
+        <p>What each layer does to the material: its mode, its speed and power, and everything under them.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">06</p>
+        <h3>Preview and planning</h3>
+        <p>See the job before it runs, with a time estimate, and decide the cut order and where the job lands.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">07</p>
+        <h3>Running a job</h3>
+        <p>Connect, frame, start, pause and stop, jog the head and talk to the controller.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">08</p>
+        <h3>Camera, rotary and print and cut</h3>
+        <p>The wizards and settings are done. The live camera parts are not (see <a href="#not-yet">What is not there yet</a>).</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">09</p>
+        <h3>Libraries</h3>
+        <p>A material library for cut settings and an art library for artwork you use again.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">10</p>
+        <h3>Interface, themes and languages</h3>
+        <p>One window with an app bar, a ribbon, tabbed panels and a status bar, with themes, remappable shortcuts and two languages.</p>
+      </li>
+      <li class="card feat">
+        <p class="feat__n" aria-hidden="true">11</p>
+        <h3>Safety guards</h3>
+        <p>Warnings, checks and switches between you and an accidental start.</p>
+        <p class="feat__limit">None of these has been tried on a real machine. Most of them are checklist items.</p>
+      </li>
+      <li class="card feat feat--link">
+        <h3>The long lists</h3>
+        <p>Every group, bullet by bullet, is in the README.</p>
+        <p><a class="more" href="https://github.com/phobicdotno/DarkBurn/blob/main/README.md#features">Features in the README</a></p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" id="machines" aria-labelledby="machines-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="machines-title">Machines</h2>
+      <div class="notice">
+        <p class="notice__lead">Everything in this list ran on DarkBurn's own simulators or on loopback links. Nothing in it has run on a real machine.</p>
+      </div>
+    </div>
+    <ul class="machines">
+      <li class="machine machine--wide">
+        <h3>GRBL family</h3>
+        <p>GRBL 1.1, older M3-only GRBL, GRBL-LPC, grblHAL and FluidNC, with auto-detect of xTool, Ortur, Atomstack and Sculpfun lasers.</p>
+      </li>
+      <li class="machine">
+        <h3>Other <span class="nw">G-code</span></h3>
+        <p>Smoothieware, Marlin and a custom <span class="nw">G-code</span> device.</p>
+        <p class="limit"><span class="limit__tag">Limit</span> LinuxCNC as file output only. Snapmaker is partly done.</p>
+      </li>
+      <li class="machine">
+        <h3>Ruida</h3>
+        <p>Over Ethernet.</p>
+        <p class="limit"><span class="limit__tag">Limit</span> USB is partly done.</p>
+      </li>
+      <li class="machine">
+        <h3>Galvo <span class="machine__sub">(EZCad2-style boards)</span></h3>
+        <p>Fibre, MOPA, UV and CO2 sources.</p>
+        <p class="limit"><span class="limit__tag">Limit</span> This build refuses a real galvo USB link.</p>
+      </li>
+      <li class="machine">
+        <h3>Gweike M3 Ultra <span class="machine__sub">(fibre plus CO2 flatbed)</span></h3>
+        <p>Files for the vendor's own software.</p>
+        <p class="limit"><span class="limit__tag">Limit</span> DarkBurn does not connect to this machine.</p>
+      </li>
+      <li class="machine machine--no">
+        <h3>Trocen / AWC, TopWisdom</h3>
+        <p class="limit"><span class="limit__tag limit__tag--no">Not supported</span> The protocols and file formats are not public.</p>
+      </li>
+      <li class="machine machine--wide">
+        <h3>Simulators</h3>
+        <p>A fresh install starts on the GRBL simulator. You can also add simulators for Ruida, Smoothieware, Marlin, Snapmaker, a custom <span class="nw">G-code</span> machine, a galvo board and the Gweike controller card, or a design-only device with no laser.</p>
+      </li>
+    </ul>
+    <details class="fold">
+      <summary>What each one can do, its limits, and connections</summary>
+      <ul>
+        <li><b>GRBL family.</b> Streaming with buffer tracking, jogging, feed and power overrides while a job runs, a settings editor with backup, alarm and error codes in plain words, and a fire button.</li>
+        <li><b>Other <span class="nw">G-code</span>.</b> LinuxCNC has no live link. <b>Limits:</b> Snapmaker is partly done. Snapmaker over the network, Emblaser 2 over Wi-Fi and Cubiio are listed in the wizard but wait for a capture from real hardware.</li>
+        <li><b>Ruida.</b> Over Ethernet: start, pause, stop, frame, home, jog, send a file, the file list on the controller, machine settings with backup, controller info, dual tube, U axis and rotary. RD files are saved and imported. <b>Limits:</b> USB is partly done, and Fire needs Ethernet. Two boards (RDC6442S, RDC8445S) are recognised by card ID. Job start and end delays are missing.</li>
+        <li><b>Galvo.</b> Lens correction, field calibration, frequency and Q-pulse, timing, wobble, red-light framing, repeat marking, drill mode and EZCad config import. <b>Limits:</b> door and foot switch inputs, the done-marking output, the rotary runner and 3D sliced images are partly done.</li>
+        <li><b>Gweike M3 Ultra.</b> A DXF with one layer per material and the craft file (<code>.chf</code>), with fibre cut settings for assist gas, pierce stages and follower height. A simulator of the controller card plans a job and gives a time. <b>Limits:</b> nobody has yet checked that the exported files open in the vendor's software. The <code>.nc</code> export is partly done. The direct Ethernet link waits for a read-only capture on the real controller card. The safety item (the machine's height follower, piercing and gas logic stay in charge) stays partly done until there is a link to check it on.</li>
+        <li><b>Connections:</b> USB serial with a baud choice, TCP/IP, UDP, Bluetooth serial, and a UDP automation socket for start and status. Raw USB, FTDI packet USB, HTTP and the TCP relay through a network bridge are partly done. "Find my laser" lists serial ports and USB devices but does not search the network.</li>
+        <li><b>Devices:</b> a device list with import and export of profiles, a new device wizard, per-device work area, origin corner, start and end scripts and air assist commands, and a Machine Settings dialog with backup files.</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<section class="section" id="files" aria-labelledby="files-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="files-title">Files</h2>
+      <p class="lead">LightBurn <code>.lbrn2</code> and older <code>.lbrn</code> projects open, and <code>.lbrn2</code> can be saved back.</p>
+    </div>
+    <dl class="files">
+      <div>
+        <dt>Projects</dt>
+        <dd>DarkBurn <code>.dbrn</code> projects hold embedded images, cut settings, planner settings, notes and a thumbnail.</dd>
+      </div>
+      <div>
+        <dt>Import</dt>
+        <dd>SVG, Adobe Illustrator, PDF with a page choice, DXF, PLT / HPGL, Ruida RD, and PNG, JPG, BMP, GIF, TIFF and WebP pictures. Several files at once, or by drag and drop.</dd>
+      </div>
+      <div>
+        <dt>Export</dt>
+        <dd>SVG, Adobe Illustrator and DXF, for the selection or for everything. PNG, JPG or BMP when the selection is a bitmap.</dd>
+      </div>
+      <div>
+        <dt>Machine files</dt>
+        <dd><span class="nw">G-code</span> (<code>.gc</code>, <code>.gcode</code>, <code>.nc</code>, <code>.txt</code>) and Ruida RD. For the Gweike software: a DXF with one layer per material, and the craft file (<code>.chf</code>).</dd>
+      </div>
+      <div>
+        <dt>Beside the design</dt>
+        <dd>SHX single-line fonts, CSV and text files for variable text, and DarkBurn's own files for material and art libraries, device profiles, preferences, hotkeys, machine settings backups and camera calibration. Galvo lens correction files and EZCad configs are read.</dd>
+      </div>
+      <div>
+        <dt>Print</dt>
+        <dd>In black only or with colours, through a PDF handed to the system.</dd>
+      </div>
+      <div class="files__no">
+        <dt><span class="limit__tag limit__tag--no">Not read or written</span></dt>
+        <dd>SignCut files, LightBurn library, art, device and hotkey files, Trocen UD5 and TopWisdom OUT files.</dd>
+      </div>
+    </dl>
+  </div>
+</section>
+
+<section class="section section--band" id="agents" aria-labelledby="agents-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="agents-title">AI agents</h2>
+      <p class="lead"><code>darkburn-mcp</code> ships next to the app. It is an MCP server that connects a client such as Claude Code or Claude Desktop to the running window, where every menu item, button and setting is also a command.</p>
+    </div>
+    <ul class="switches">
+      <li class="card switch">
+        <p class="switch__state"><span class="sw" aria-hidden="true"></span>Off by default</p>
+        <h3>Off until you turn it on</h3>
+        <p>Nothing listens until you switch on "MCP control" in Settings &gt; AI agents (MCP). The channel is on this computer only, with a new token for every session.</p>
+      </li>
+      <li class="card switch">
+        <p class="switch__state"><span class="sw" aria-hidden="true"></span>Off by default</p>
+        <h3>Machines are a separate switch</h3>
+        <p>The Gweike has one more switch of its own. Stop and pause are always allowed.</p>
+      </li>
+      <li class="card switch">
+        <p class="switch__state"><span class="sw sw--on" aria-hidden="true"></span>On by default</p>
+        <h3>Starting a job or firing asks you first</h3>
+        <p>A dialog with Confirm and Cancel and no keyboard default. This is the default, and you can switch it off.</p>
+      </li>
+      <li class="card switch">
+        <p class="switch__state"><svg class="lock" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 10.5V7.75a3.5 3.5 0 0 1 7 0v2.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Only you can change</p>
+        <h3>Agents cannot change these switches</h3>
+        <p>Every call goes into an audit log shown on the same settings page. A chip in the status bar shows connected agents and changes colour while machine control is allowed.</p>
+      </li>
+    </ul>
+    <div class="agents__more">
+      <div class="agents__text">
+        <p><strong>What an agent can do out of the box:</strong> draw and edit, set up layers, inspect the design and every cut setting, measure, take screenshots, and preview a job, <span class="nw">G-code</span> text included. A preview never sends anything.</p>
+        <p><strong>Without a window:</strong> <code>darkburn --mcp-headless</code> serves the same tools on simulators only.</p>
+        <p><code>darkburn-mcp --print-config</code> prints the lines that register it with Claude Code and Claude Desktop. On Windows the install folder is not on your PATH, so type the full path there: see <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/INSTALL.md#first-start">first start</a>.</p>
+        <p>The tools and the safety model are in <a href="https://github.com/phobicdotno/DarkBurn/blob/main/crates/darkburn-mcp/README.md">crates/darkburn-mcp/README.md</a>; the agent guide is <a href="https://github.com/phobicdotno/DarkBurn/blob/main/crates/darkburn-mcp/skill/darkburn-agent-guide.md">darkburn-agent-guide.md</a>.</p>
+      </div>
+      <aside class="notice" aria-labelledby="agents-warn">
+        <p class="notice__lead" id="agents-warn">Two things to know before you let an agent in.</p>
+        <p>File writes are allowed by default, and with them an agent can save or export to any path and overwrite what is there.</p>
+        <p>And the confirmation dialog and the window screenshot have not yet been checked by hand in the running app.</p>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="install" aria-labelledby="install-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="install-title">Install</h2>
+      <p class="lead">No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source.</p>
+    </div>
+    <div class="install">
+      <div class="install__cmds">
+        <div class="cmd">
+          <div class="cmd__head"><h3 id="cmd-unix">Linux and macOS</h3></div>
+          <pre tabindex="0" role="group" aria-labelledby="cmd-unix"><code>curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh</code></pre>
+          <p class="cmd__note">On macOS DarkBurn builds and its tests pass on a build server, but nobody has used it on a Mac yet.</p>
+        </div>
+        <div class="cmd">
+          <div class="cmd__head"><h3 id="cmd-win">Windows, in PowerShell</h3></div>
+          <pre tabindex="0" role="group" aria-labelledby="cmd-win"><code>irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex</code></pre>
+          <p class="cmd__note">The Windows script has not been run on Windows yet; PowerShell 7.7 on Linux has run it against stand-ins for the Windows parts.</p>
+        </div>
+      </div>
+      <div class="install__needs">
+        <h3>Building from source needs</h3>
+        <ul class="needs">
+          <li><b>Rust 1.95</b> or newer</li>
+          <li><b>A C toolchain</b></li>
+          <li><b>About 3.5 GB</b> of disk</li>
+        </ul>
+        <p>The first build took 13 minutes on a four-core computer.</p>
+        <p>Everything else (options, uninstall, what gets installed, building by hand): <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+        <p><a href="https://github.com/phobicdotno/DarkBurn/releases">Releases</a>: no package has been published.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="not-yet" aria-labelledby="not-yet-title">
+  <div class="wrap">
+    <div class="shead">
+      <h2 id="not-yet-title">What is not there yet</h2>
+      <p class="lead">No job has been burned on a real machine, and the camera, rotary and print and cut parts have not met a real camera, a real rotary or a printed sheet.</p>
+    </div>
+    <div class="notyet">
+      <ul class="tally">
+        <li><b>0 <span>of 151</span></b> boxes ticked in the hardware check files</li>
+        <li><b>48</b> checklist items partly done</li>
+        <li><b>26</b> checklist items open</li>
+      </ul>
+      <div class="notyet__text">
+        <p>The end-to-end runs on the three target machines (an Atomstack on GRBL, a Ruida laser and the Gweike M3 Ultra) are open, and none of the 151 boxes in the hardware check files is ticked. The checks are done by hand: if you connect a real laser, you are doing one of them.</p>
+        <ul class="links">
+          <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/PARITY-CHECKLIST.md">The parity checklist</a><span>The full list, item by item.</span></li>
+          <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/HARDWARE-CHECKS.md">The hardware checks</a><span>And the sister files for <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-gcodebots.md"><span class="nw">G-code</span> machines</a>, <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-galvo.md">galvo boards</a> and the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-mcc.md">Gweike controller card</a>.</span></li>
+          <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/BUGHUNT-NOTES.md">docs/BUGHUNT-NOTES.md</a><span>Known open problems.</span></li>
+        </ul>
+      </div>
+    </div>
+    <details class="fold">
+      <summary>Partly done in the program</summary>
+      <ul>
+        <li>Camera: the camera picker with exposure and brightness, the live viewfinder, the capture settings, head-mounted camera stitching and trace from a camera capture.</li>
+        <li>Rotary: test rotation and the rotary jog arrows. Print and cut: setting the two targets.</li>
+        <li>Move panel: Focus Z and Set finish position.</li>
+        <li>Images: fast skip of blank areas in <span class="nw">G-code</span>, and the scanning offset table.</li>
+        <li>Cut settings: air assist with the DSP modes, and PPI mode.</li>
+        <li>Start here: a job can run from a point on <span class="nw">G-code</span> and DSP machines, but not on a galvo, and an RD file cannot be saved from a point.</li>
+        <li>Printing has no printer choice or page setup, and 1:1 scale depends on the PDF viewer.</li>
+        <li>Check for Updates works against a test server. The real request to the release feed has not been verified.</li>
+        <li>Toolbars can be shown, hidden and reordered, but the ribbon cannot split off, dock or float.</li>
+        <li>Shortcuts: F2 as a second Start key, the Z and diagonal jog keys, and Y and N in message boxes are missing. Jogging uses Ctrl+Alt+arrows instead of the numpad.</li>
+        <li>File dialogs are the system's own. "Ignore Start when the monitor is off" is stored but does nothing yet.</li>
+        <li>LightBurn projects: variable text state and virtual arrays are not carried over, and the bug hunt notes still ask for a check of bitmap and Y-axis orientation against a real file.</li>
+        <li>AI agents: imports and traces still run inside the call instead of reporting progress.</li>
+        <li>Nodes and devices: there is no separate node highlight tool, and the material library follows a device by its name while job origin and start-from stay with the project.</li>
+      </ul>
+    </details>
+    <details class="fold">
+      <summary>Open on the checklist</summary>
+      <ul>
+        <li>Languages other than English and Norwegian (22 are on the checklist), and translated machine error messages.</li>
+        <li>The Linux and macOS builds. Both build from source and the test suite passes on both on a build server. On macOS nobody has used the program yet.</li>
+        <li>Explorer thumbnails for project files and recent files in the Windows jump list.</li>
+        <li>SignCut import, and import of LightBurn library, art, device and hotkey files.</li>
+        <li>Newer features marked "later" on the checklist: tangent circle generator, true nest and quick nest, the Pages window, multi-file trace, 3D model to depth map, taper warp, continuous framing and a REST API.</li>
+      </ul>
+    </details>
+    <p class="fine">What changed, version by version, is in <a href="https://github.com/phobicdotno/DarkBurn/blob/main/CHANGELOG.md">CHANGELOG.md</a>.</p>
+  </div>
+</section>
+
+<section class="section section--band section--last" id="scratch" aria-labelledby="scratch-title">
+  <div class="wrap closing">
+    <div>
+      <h2 id="scratch-title">Written from scratch</h2>
+      <ul class="plain">
+        <li>No LightBurn code, icons, artwork, images or help text is in DarkBurn.</li>
+        <li>The people and agents who write DarkBurn's code work from the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/PARITY-CHECKLIST.md">parity checklist</a>, a written list of what the program should do, and the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/BUILD-RULES.md">build rules</a> forbid opening LightBurn.</li>
+        <li>No GPL, LGPL or AGPL code is copied. Code ported from MIT and Apache projects is credited in <a href="https://github.com/phobicdotno/DarkBurn/blob/main/ATTRIBUTION.md">ATTRIBUTION.md</a>.</li>
+        <li>DarkBurn is not affiliated with LightBurn Software. The product names on this page are trademarks of their owners.</li>
+      </ul>
+    </div>
+    <div>
+      <h2 id="licence-title">Licence</h2>
+      <p class="licence">MIT or Apache-2.0, at your option.</p>
+      <p><a class="more" href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-MIT">LICENSE-MIT</a><br><a class="more" href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-APACHE">LICENSE-APACHE</a></p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot__in">
+    <div class="foot__brand">
+      <a class="brand" href="#top" aria-label="DarkBurn, top of the page">
+        <img src="icon.svg" width="30" height="30" alt="" loading="lazy" decoding="async">
+        <span>DarkBurn</span>
+      </a>
+      <p>Design, arrange, preview and burn.</p>
+    </div>
+    <nav aria-label="Project links">
+      <ul class="foot__links">
+        <li><a href="https://github.com/phobicdotno/DarkBurn">GitHub</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/releases">Releases</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/CHANGELOG.md">CHANGELOG.md</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/ATTRIBUTION.md">ATTRIBUTION.md</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/INSTALL.md">docs/INSTALL.md</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/SECURITY.md">SECURITY.md</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-MIT">LICENSE-MIT</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-APACHE">LICENSE-APACHE</a></li>
+      </ul>
+    </nav>
+    <p class="foot__legal">DarkBurn is not affiliated with LightBurn Software. The product names on this page are trademarks of their owners. Licence: MIT or Apache-2.0, at your option.</p>
+  </div>
+</footer>
+</body>
+</html>

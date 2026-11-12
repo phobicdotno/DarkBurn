@@ -1,22 +1,6 @@
 <p align="center">
-  <img src="assets/icons/app/darkburn-256.png" width="76" height="76" alt="DarkBurn icon: a laser head over a plate with a burned line">
+  <img src="docs/readme-banner.png" width="760" height="364" alt="DarkBurn. Status: pre-release. Design, arrange, preview and burn. One program for laser cutters and engravers. Written in Rust.">
 </p>
-
-<h1 align="center">DarkBurn</h1>
-
-<p align="center">
-  <b>Design, arrange, preview and burn.</b><br>
-  One program for laser cutters and engravers. Written in Rust.
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/status-pre--release-d9a400" alt="Status: pre-release">
-  <img src="https://img.shields.io/badge/licence-MIT%20or%20Apache--2.0-4c6a92" alt="Licence: MIT or Apache-2.0">
-</p>
-
-![DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.](docs/img/hero.png)
-
-<p align="center"><i>A workshop sign, four key tags, a gear and a QR code on five layers: one scores, two engrave, two cut.</i></p>
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -29,16 +13,20 @@
   <a href="#building-from-source">Building</a>
 </p>
 
+> [!WARNING]
+> **Status: pre-release. DarkBurn has not yet burned a job on a real machine.**
+>
+> The machine drivers have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under [What is not there yet](#what-is-not-there-yet).
+
+![DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.](docs/img/hero.png)
+
+<p align="center"><i>A workshop sign, four key tags, a gear and a QR code on five layers: one scores, two engrave, two cut.</i></p>
+
 DarkBurn is a desktop program for laser cutters and engravers. You draw or import a design, give each layer a mode, a speed and a power, watch the preview, and send the job to the machine.
 
 It is built to a [parity checklist](docs/PARITY-CHECKLIST.md) of 802 items: 728 are done, 48 are partly done and 26 are open. Most of them are what LightBurn 1.4.04 does; the rest are DarkBurn's own, such as the Gweike M3 Ultra and AI agents. It opens and saves LightBurn projects. DarkBurn is not affiliated with LightBurn Software.
 
 It has built-in machine simulators, so a whole job can be run with no laser attached, and an MCP server, so an AI agent can work the program behind switches that only you can change. There are more than 2200 automated tests.
-
-> [!WARNING]
-> **Status: pre-release. DarkBurn has not yet burned a job on a real machine.**
->
-> The machine drivers have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under [What is not there yet](#what-is-not-there-yet).
 
 ## Install
 

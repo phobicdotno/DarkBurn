@@ -23,9 +23,10 @@ on:
     # A version: v0.0.24, or v0.0.24-rc1. The first job stops a tag that is not the
     # workspace version.
     tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
-    # For pushes to main, as in ci.yml: not when only the front page or the documents changed.
-    # GitHub does not look at paths for a tag, so a tag always runs.
-    paths: ["**", "!README.md", "!docs/**", "docs/PARITY-CHECKLIST.md"]
+    # For pushes to main, as in ci.yml: not when only the front page, the documents, the web
+    # page or what builds and publishes the web page (scripts/build-site.sh, pages.yml) changed:
+    # no package holds them. GitHub does not look at paths for a tag, so a tag always runs.
+    paths: ["**", "!README.md", "!docs/**", "!site/**", "!scripts/build-site.sh", "!.github/workflows/pages.yml", "docs/PARITY-CHECKLIST.md"]
   workflow_dispatch:
     inputs:
       only:

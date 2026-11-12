@@ -10,7 +10,7 @@
 #
 # Then it checks the result: every file the page points to is there, nothing on the page is
 # fetched from another host, every page carries its Content-Security-Policy line, and the
-# rules for the host (.htaccess) hold nothing but what this script knows.
+# rules for the host (.htaccess) are line for line the ones this script knows.
 #
 # To look at the page:
 #   sh scripts/build-site.sh && python3 -m http.server -d target/site
@@ -156,9 +156,11 @@ rm -f "$out/.head"
 # apart.
 #
 # The file can do far more than that. The host runs PHP, and one line in .htaccess can make it
-# run a picture as a program, send every visitor elsewhere or ask for a password. So each line
-# is one of the few kinds below, and anything else is refused. A new kind of line is named
-# here first.
+# run a picture as a program, send every visitor elsewhere, take the headers away or ask for a
+# password. A line that looks harmless can too: a header that is set for no file at all, a
+# rule that catches every address. So the lines of the file, without its comments, are
+# compared one by one with the lines below, in this order. To change a rule, change it here
+# first.
 rules=$out/.htaccess
 [ -f "$rules" ] || die "site/.htaccess is not there."
 if [ "$(LC_ALL=C tr -d ' -~\n' <"$rules" | wc -c | tr -d ' ')" -ne 0 ]; then
@@ -169,22 +171,42 @@ fi
 if grep -n '\\$' "$rules"; then
     die ".htaccess has a line that ends with a backslash (see the lines above)."
 fi
-header="Header set Content-Security-Policy \"$front; frame-ancestors 'none'\""
-[ "$(grep -c 'Content-Security-Policy' "$rules")" -eq 1 ] ||
-    die ".htaccess names Content-Security-Policy more than once, or not at all. A comment counts too. It is set in one line: $header"
-grep -qFx -- "  $header" "$rules" ||
-    die ".htaccess does not set the policy as this script knows it. To change the policy, change it in this script first. The line must be this, with two spaces in front of it: $header"
-kinds='</?IfModule( mod_(headers|rewrite)\.c)?>
-</?FilesMatch( "[^"]*")?>
-Header set (X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|Cache-Control) "[^"]*"
-ErrorDocument 404 /404\.html
+{
+    printf '<IfModule mod_headers.c>\n'
+    printf 'Header set Content-Security-Policy "%s; frame-ancestors %s"\n' "$front" "'none'"
+    cat <<'EOF'
+Header set X-Frame-Options "DENY"
+Header set X-Content-Type-Options "nosniff"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+<FilesMatch "\.(html|js|css)$">
+Header set Cache-Control "no-cache"
+</FilesMatch>
+<FilesMatch "\.ttf$">
+Header set Cache-Control "public, max-age=31536000"
+</FilesMatch>
+</IfModule>
+ErrorDocument 404 /404.html
+<IfModule mod_rewrite.c>
 RewriteEngine On
 RewriteBase /
-RewriteCond [^ ]+ [^ ]+( \[NC\])?
-RewriteRule [^ ]+ (-|https://%\{HTTP_HOST\}(/|%\{REQUEST_URI\})) \[R=(301|404),L\]'
-odd=$(sed 's/^ *//' "$rules" | grep -v '^#' | grep -v '^$' | grep -vFx -- "$header" |
-    grep -Evx -e "$(printf '%s' "$kinds" | tr '\n' '|')" | head -n 3 || true)
-[ -z "$odd" ] || die ".htaccess holds a line this script does not know (a new kind of line is named in this script first, in the list \"kinds\"): $odd"
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+RewriteRule ^(img|fonts)/?$ - [R=404,L]
+RewriteCond %{THE_REQUEST} \s/+index(\.html)?[\s?#] [NC]
+RewriteRule ^ https://%{HTTP_HOST}/ [R=301,L]
+</IfModule>
+EOF
+} >"$out/.rules"
+# The file as the host reads it: without the spaces in front of a line, the comments and the
+# empty lines.
+sed 's/^ *//' "$rules" | grep -v '^#' | grep -v '^$' >"$out/.rules-found" || true
+if ! cmp -s "$out/.rules" "$out/.rules-found"; then
+    diff "$out/.rules" "$out/.rules-found" >&2 || true
+    die ".htaccess does not hold the rules this script knows (see the lines above: \"<\" is a line the script knows, \">\" a line the file holds). To change a rule, change it in this script first."
+fi
+rm -f "$out/.rules" "$out/.rules-found"
 
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.

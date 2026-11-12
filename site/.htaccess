@@ -1,11 +1,13 @@
 # The rules of the web page for the host that serves it (Apache). The page is hosted the way
 # the other pages on phobic.no are: the folder that scripts/build-site.sh makes is uploaded as
 # it is, this file with it. scripts/deploy-site.sh does both.
+#
+# scripts/build-site.sh holds every rule of this file and refuses the file when a line differs
+# (comments are free). To change a rule, change it there first.
 
 <IfModule mod_headers.c>
   # The same policy as the line in index.html, and one thing a line in a page cannot say: no
-  # other site may show the page in a frame. scripts/build-site.sh checks this line. To change
-  # the policy, change it there first.
+  # other site may show the page in a frame.
   Header set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'"
   Header set X-Frame-Options "DENY"
   Header set X-Content-Type-Options "nosniff"

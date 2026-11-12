@@ -1,0 +1,21 @@
+[package]
+name = "darkburn-pendant"
+description = "The XHC wireless handheld pendant (Mlaser PHB02, USB 10ce:eba0): key and LED reports, a poll thread, and an in-memory emulator for DarkBurn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# The real USB receiver through hidapi. Off by default and never opened in tests (hardware safety
+# rule). `hidapi` is MIT and builds without system libraries on Linux (hidraw found through the
+# pure-Rust `basic-udev`) and on Windows (the native backend); macOS uses its own IOKit.
+hid = ["dep:hidapi"]
+
+[dependencies]
+log = { workspace = true }
+hidapi = { version = "2.6.7", optional = true, default-features = false, features = ["linux-native-basic-udev", "windows-native"] }

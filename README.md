@@ -56,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/i
 irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
 ```
 
-No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source. That needs Rust 1.95 or newer, a C toolchain and about 3.5 GB of disk, and the first build took 13 minutes on a four-core computer. macOS is untested. The Windows script has not been run on Windows yet; PowerShell 7.7 on Linux has run it against stand-ins for the Windows parts.
+No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source. That needs Rust 1.95 or newer, a C toolchain and about 3.5 GB of disk, and the first build took 13 minutes on a four-core computer. On macOS DarkBurn builds and its tests pass on a build server, but nobody has used it on a Mac yet. The Windows script has not been run on Windows yet; PowerShell 7.7 on Linux has run it against stand-ins for the Windows parts.
 
 Everything else (options, uninstall, what gets installed, building by hand): [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -339,7 +339,7 @@ The full list, item by item, is the [parity checklist](docs/PARITY-CHECKLIST.md)
 - No job has been burned on a real machine, and the camera, rotary and print and cut parts have not met a real camera, a real rotary or a printed sheet. The end-to-end runs on the three target machines (an Atomstack on GRBL, a Ruida laser and the Gweike M3 Ultra) are open, and none of the 151 boxes in the hardware check files is ticked. Those files are [docs/HARDWARE-CHECKS.md](docs/HARDWARE-CHECKS.md) and its sister files for [G-code machines](docs/hardware-checks-gcodebots.md), [galvo boards](docs/hardware-checks-galvo.md) and the [Gweike controller card](docs/hardware-checks-mcc.md). The checks are done by hand: if you connect a real laser, you are doing one of them.
 - What each kind of machine cannot do yet is in the folded list under [Machines](#machines).
 
-**Packages.** The CI workflow runs the lints and tests on Windows, Linux and macOS; the release workflow builds an MSI and a portable zip for Windows and a tar.gz for Linux and macOS; neither has had a green run yet and no package has been published.
+**Packages.** The CI workflow runs the lints and tests on Windows, Linux and macOS, and has passed on all three for the same code. The release workflow builds an MSI and a portable zip for Windows and a tar.gz for Linux and macOS. It has built every package once, each system in a run of its own; it has not yet run for a version tag, and no package has been published.
 
 <details>
 <summary><b>Partly done in the program</b></summary>
@@ -365,7 +365,7 @@ The full list, item by item, is the [parity checklist](docs/PARITY-CHECKLIST.md)
 <summary><b>Open on the checklist</b></summary>
 
 - Languages other than English and Norwegian (22 are on the checklist), and translated machine error messages.
-- The Linux and macOS builds. Linux builds from source and its test suite runs there; macOS is untested.
+- The Linux and macOS builds. Both build from source and the test suite passes on both on a build server. On macOS nobody has used the program yet.
 - Explorer thumbnails for project files and recent files in the Windows jump list.
 - SignCut import, and import of LightBurn library, art, device and hotkey files.
 - Newer features marked "later" on the checklist: tangent circle generator, true nest and quick nest, the Pages window, multi-file trace, 3D model to depth map, taper warp, continuous framing and a REST API.

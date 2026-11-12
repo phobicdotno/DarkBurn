@@ -333,8 +333,7 @@ jobs:
           - arch: x86_64
             target: x86_64-apple-darwin
     # Both are built on an Apple silicon runner. The Intel build is cross-compiled there, and
-    # Rosetta starts it for the check. This job is new: macOS has never been built before and
-    # this job has not been seen green yet.
+    # Rosetta starts it for the check. This job is new and has passed once.
     runs-on: macos-26
     timeout-minutes: 90
     permissions:

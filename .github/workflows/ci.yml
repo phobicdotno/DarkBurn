@@ -99,9 +99,8 @@ jobs:
         # The one system a run by hand asks for, else all three. While the repository is
         # private, a push or a pull request leaves macOS out (see the top of this file).
         system: ${{ fromJSON((inputs.only || 'all') != 'all' && format('["{0}"]', inputs.only) || (github.event.repository.private && github.event_name != 'workflow_dispatch' && github.ref_type != 'tag') && '["windows", "linux"]' || '["windows", "linux", "macos"]') }}
-    # macOS is an Apple silicon runner: its GPU (Metal) draws the UI tests. This job is new.
-    # macOS has never been built or tested before and this job has not been seen green yet,
-    # so expect to fix things after its first runs. It is not allowed to fail quietly.
+    # macOS is an Apple silicon runner: its GPU (Metal) draws the UI tests. The macOS job is new
+    # and has passed once. It is not allowed to fail quietly.
     runs-on: ${{ matrix.system == 'windows' && 'windows-2025' || matrix.system == 'linux' && 'ubuntu-24.04' || 'macos-26' }}
     timeout-minutes: 90
     steps:

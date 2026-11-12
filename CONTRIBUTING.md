@@ -31,7 +31,7 @@ cargo test --workspace --locked
 
 The UI tests draw the real app offscreen and need a graphics adapter. A software Vulkan driver such as lavapipe will do.
 
-The workspace builds and the tests run on Linux. macOS is untested, and the CI workflow has not had a green run yet.
+The workspace builds and the tests pass on Windows, Linux and macOS, on GitHub's build servers. Nobody has used the program on a Mac yet.
 
 ## Rules for every contribution
 

@@ -77,8 +77,8 @@ commit for the Windows installer, and a job stops when the two differ.
 - The Linux packages are built inside Ubuntu 22.04, so they start on systems with glibc 2.35 or newer.
   Both macOS packages are built on an Apple silicon runner; the Intel one is cross-compiled and started
   with Rosetta. A package whose programs could not be started on the runner is not kept.
-- The macOS jobs are new. Until they have been seen green, expect to fix things after their first runs.
-  Prove a system by hand before the first tag, the tests first and then the packages:
+- The macOS jobs are new and each has passed once. Prove a system by hand before the first tag, the tests
+  first and then the packages:
   `gh workflow run ci.yml --ref <branch> -f only=macos`, then `gh workflow run release.yml --ref <branch> -f only=macos`.
 - GitHub's own actions are used by major version (`actions/checkout@v7`). The one action from elsewhere, the
   build cache, is pinned to a commit.

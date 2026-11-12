@@ -3,7 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh
 #
-# Status: pre-release. On Linux DarkBurn builds from source and its tests run. macOS is untested.
+# Status: pre-release. On Linux DarkBurn builds from source and its tests run. On macOS it has
+# been built and tested on a build server only: nobody has used it on a Mac yet.
 #
 # What it does
 #   1. Looks in the latest GitHub release for a ready-made build for this computer
@@ -105,7 +106,8 @@ What it does
 
 Status
   Pre-release. DarkBurn has not yet run a job on a real machine.
-  On Linux it builds from source and its tests run. macOS is untested.
+  On Linux it builds from source and its tests run. On macOS it has been built
+  and tested on a build server only: nobody has used it on a Mac yet.
 EOF
 }
 
@@ -1004,7 +1006,7 @@ finish() {
     say ""
     if [ "$OS" = macos ]; then
         say "Start it from ~/Applications (Finder or Spotlight), or run: darkburn"
-        say "macOS is untested: neither DarkBurn nor this installer has been tried on a Mac yet."
+        say "On macOS DarkBurn has been built and tested on a build server only: nobody has used it, or this installer, on a Mac yet."
         say "Please report what happens: https://github.com/$GITHUB_REPO/issues"
     else
         say "Start it from the applications menu, or run: darkburn"
@@ -1142,7 +1144,7 @@ main() {
 
     say "DarkBurn installer (pre-release) for $OS $MACHINE"
     if [ "$OS" = macos ]; then
-        say "macOS is untested: neither DarkBurn nor this installer has been tried on a Mac yet."
+        say "On macOS DarkBurn has been built and tested on a build server only: nobody has used it, or this installer, on a Mac yet."
     fi
     if [ -n "${SUDO_USER:-}" ] && [ "$(id -u 2>/dev/null || true)" = 0 ]; then
         warn "this is running under sudo, so DarkBurn is installed for root only ($HOME). It needs no sudo."

@@ -473,7 +473,7 @@ else
   one. For a copy that did, run this in the folder: xattr -dr com.apple.quarantine ."
     install_text='  It makes DarkBurn.app in ~/Applications, with links to both programs in ~/.local/bin.'
     status_extra='
-macOS is untested: DarkBurn has not been tried on a Mac yet.'
+On macOS DarkBurn has been built and tested on a build server only: nobody has used it on a Mac yet.'
 fi
 
 cat >"$STAGE/README.txt" <<EOF

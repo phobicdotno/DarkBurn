@@ -84,7 +84,7 @@ If a line trips, please [say what happened](https://github.com/phobicdotno/DarkB
 curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh
 ```
 
-**macOS is untested.** Neither DarkBurn nor this installer has been tried on a Mac yet, and the script says so when it starts.
+**macOS has only been tried on a build server.** DarkBurn builds there, its tests pass and both programs start. Nobody has used it on a Mac yet, and this installer has not been run on one. The script says so when it starts.
 
 Once a release is out, the script downloads the archive for your computer, one of these four, and installs from it:
 
@@ -93,7 +93,7 @@ Once a release is out, the script downloads the archive for your computer, one o
 - `darkburn-<version>-macos-arm64.tar.gz`
 - `darkburn-<version>-macos-x86_64.tar.gz`
 
-Before it installs from an archive, the script starts both programs once. When that fails, or the release has no archive for your computer, it builds from source. The Linux archives are to be built on Ubuntu 22.04, so they need glibc 2.35 or newer.
+Before it installs from an archive, the script starts both programs once. When that fails, or the release has no archive for your computer, it builds from source. The Linux archives are built on Ubuntu 22.04, so they need glibc 2.35 or newer.
 
 ### Windows
 
@@ -220,7 +220,7 @@ A release is to have a `.sha256` file beside each download. When it has one, the
 - **PATH:** when `~/.local/bin` is not on your PATH, the script says so and prints the line to add.
 - **Other folders:** when `XDG_DATA_HOME` or `XDG_CACHE_HOME` is set, the script uses it in place of `~/.local/share` or `~/.cache`.
 
-### macOS (untested)
+### macOS (not yet used on a Mac)
 
 - **Installs** `DarkBurn.app` into `~/Applications`, with links to `darkburn` and `darkburn-mcp` in `~/.local/bin`. No `sudo`.
 - **Building needs** the Xcode command line tools (`xcode-select --install`) and Rust 1.95 or newer.
@@ -247,11 +247,11 @@ The MSI and the portable zip are described under [Windows: the MSI](#windows-the
 
 | Platform | Today |
 |---|---|
-| **Windows** | Developed on Windows first. Its test run on a Windows build server has not passed yet. |
-| **Linux** | Builds from source, and the test suite runs there. |
-| **macOS** | Untested: never built, never run. |
+| **Windows** | The lints and tests pass on a Windows build server. The MSI and the portable zip were built there once, and both programs started. Nobody has opened that MSI by hand yet. |
+| **Linux** | Builds from source, and the lints and tests pass on a Linux build server. The x86_64 and arm64 archives were built there once, and both programs started. |
+| **macOS** | Builds, and the lints and tests pass on an Apple silicon build server. The Apple silicon and Intel archives were built there once, and both programs started, the Intel ones under Rosetta. Nobody has used DarkBurn on a Mac yet. |
 
-The CI workflow runs the lints and tests on Windows, Linux and macOS; the release workflow builds an MSI and a portable zip for Windows and a tar.gz for Linux and macOS; neither has had a green run yet and no package has been published.
+The CI workflow runs the lints and tests on Windows, Linux and macOS, and has passed on all three for the same code. The release workflow builds an MSI and a portable zip for Windows and a tar.gz for Linux and macOS. It has built every package once, each system in a run of its own; it has not yet run for a version tag, and no package has been published.
 
 Both install scripts are new.
 

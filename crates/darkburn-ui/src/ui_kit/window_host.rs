@@ -511,7 +511,7 @@ fn apply_pick(ctx: &Context, key: &str, pick: Option<Placement>) {
 /// A window with a title bar of its own is being dragged (`response` is its move response):
 /// over a panel area, show that it will dock there; dropped there, it becomes a tab.
 pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
-    if !(response.dragged() || response.drag_stopped()) {
+    if !(response.dragged() || response.drag_stopped()) || !moved_since_press(ctx) {
         return;
     }
     let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| target_at(ctx, p)) else { return };
@@ -522,6 +522,15 @@ pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
     if let Some(rect) = target_rect(ctx, &area) {
         paint_drop_hint(ctx, rect);
     }
+}
+
+/// The pointer was moved since its button went down, beyond a click's wobble: a press and
+/// release on a button in a window (its Cancel, say) is not a drop, even held long.
+fn moved_since_press(ctx: &Context) -> bool {
+    ctx.input(|i| {
+        i.pointer.is_decidedly_dragging()
+            && i.pointer.press_origin().zip(i.pointer.latest_pos()).is_some_and(|(from, to)| from.distance(to) > i.options.max_click_dist)
+    })
 }
 
 #[cfg(test)]

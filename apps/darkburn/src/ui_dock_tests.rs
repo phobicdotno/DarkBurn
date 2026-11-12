@@ -375,30 +375,22 @@ fn every_window_that_stays_open_docks() {
 }
 
 #[test]
-fn zz_debug_escape_after_cancel() {
+fn a_click_in_a_floating_window_over_a_panel_does_not_dock_it() {
+    // The shape dialog opens at the right, over the panel area it can dock in: its buttons are
+    // pressed there without moving it.
     let mut g = Gui::standard();
     g.sample_design();
+    let key = crate::shape_ui::dock_key(OFFSET);
+    for _ in 0..2 {
+        g.run_command("tools.offset");
+        g.frames(2);
+        let card = g.rect_of("dialog:window").expect("the dialog is open");
+        assert!(window_host::target_at(&g.ctx(), card.center()).is_some(), "the dialog is over a dock area: {card:?}");
+        g.click_label("Cancel");
+        assert!(g.app().shape_ui.open.is_none(), "Cancel closed it");
+        assert_eq!(window_host::place(&g.ctx(), &key).placement, Placement::Floating, "a click is not a drop");
+    }
     g.run_command("tools.offset");
     g.frames(2);
-    let dump = |g: &Gui, at: &str| {
-        let ctx = g.ctx();
-        let layers = ctx.memory(|m| m.areas().visible_layer_ids());
-        let id = egui::Id::unique(("shape_dialog", OFFSET));
-        let area = egui::AreaState::load(&ctx, id).map(|a| a.rect());
-        eprintln!("DBG {at}: place {:?} open {:?}", window_host::place(&ctx, &crate::shape_ui::dock_key(OFFSET)), window_host::open_windows(&ctx));
-        eprintln!(
-            "DBG {at}: window {id:?} area {area:?} layers {layers:?} titles {:?} popup {} only {}",
-            g.window_titles(),
-            egui::Popup::is_any_open(&ctx),
-            crate::escape::only_window(&ctx, id)
-        );
-    };
-    dump(&g, "first");
-    g.click_label("Cancel");
-    g.run_command("tools.offset");
-    g.frames(2);
-    dump(&g, "again");
-    g.escape();
-    eprintln!("DBG open after Esc: {:?}", g.app().shape_ui.open);
-    panic!("debug");
+    assert_eq!(g.window_titles(), [OFFSET], "it opens floating again");
 }

@@ -738,7 +738,7 @@ mod tests {
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), time: Some(t), events, ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
             dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(800.0, 0.0), Pos2::new(1200.0, 800.0)));
-            let shown = egui::Area::new(Id::new("card")).default_pos(Pos2::new(850.0, 100.0)).show(ui.ctx(), |ui| {
+            let shown = egui::Area::new(Id::unique("card")).default_pos(Pos2::new(850.0, 100.0)).show(ui.ctx(), |ui| {
                 ui.add_sized([200.0, 100.0], egui::Button::new("Cancel"));
             });
             dock_on_drop(ui.ctx(), "a", &shown.response);

@@ -37,6 +37,7 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 - [ ] Homing: `G28 X Y` (the default; Z is never homed) leaves the laser safe, and `G28` without axes is not used.
 - [ ] `G92.1` clears the work offset (used by "clear origin"); some builds lack it.
 - [ ] `M400` at the end of a job returns only after the last move.
+- [ ] Answers come in the order of the lines: a line sent while `M400`, a dwell or homing is under way (the position request `M114`, say) is answered after it. The driver counts on this to tell which line an `ok` belongs to.
 - [ ] Unknown commands print `echo:Unknown command` and still send `ok` (reported as a job line warning, job continues).
 - [ ] `M220 S<percent>` feed override.
 - [ ] `start` printed after a board reset is detected and aborts the job.
@@ -60,6 +61,7 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 - [ ] A real controller that answers `ok` per line streams correctly at window 1 and 4.
 - [ ] The `status` template: that the reply is a `<State,MPos:x,y,z>` report and is not followed by `ok`.
 - [ ] `M400` at the end of a job is understood; clear `finish_sync` where it is not.
+- [ ] Answers come in the order of the lines, also for a line sent while `M400` waits for the motion to end.
 
 ### Common
 - [ ] Dead-reckoned position (commanded, not measured) on devices without status polling is shown as such in the UI.

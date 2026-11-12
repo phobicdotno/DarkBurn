@@ -473,6 +473,41 @@ fn marlin_pause_in_a_cut_switches_the_laser_off_and_resume_puts_it_back() {
     }
 }
 
+/// A controller answers its lines in the order they came in. A position request sent while the
+/// last moves of a job still run is answered when they are done, behind the `M400` that ends
+/// the job. Its answer is never taken for the `M400`'s: the job is not finished before the
+/// motion is.
+#[test]
+fn a_position_request_behind_the_last_moves_does_not_end_the_job_early() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+    let mut p = marlin_profile();
+    p.gcode.marlin_power = MarlinPowerMode::M3;
+    p.gcode.air_assist.on.clear();
+    p.gcode.air_assist.off.clear();
+    let (m, mut log) = connect(&p, &emu);
+    // Eight pieces of 5 mm at 50 mm/s: 0.8 s of motion, all of it in the planner at once.
+    let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M4 S0".to_owned(), "G0 X10 Y10".to_owned()];
+    for i in 1..=8 {
+        src.push(format!("G1 X{} Y10 S500 F3000", 10 + 5 * i));
+    }
+    src.push("M5".to_owned());
+    let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(&p));
+    let n = out.len();
+    m.start_job(Job::from_lines(out).with_total(n)).unwrap();
+    // The controller has every line and the `M400`; the moves have only begun.
+    let arrived = |text: &str| emu.with(|e| e.stats().arrived.iter().filter(|l| *l == text).count());
+    assert!(m.as_ref().wait_until(T, |_| arrived("M400") == 1), "the job never came to its end");
+    let polls = arrived("M114");
+    m.request_status().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| arrived("M114") > polls), "the position request was not sent");
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    emu.with(|e| {
+        assert_eq!(e.planner_len(), 0, "the job was reported finished with moves still to run");
+        assert!((e.stats().burned_mm - 40.0).abs() < 1e-6, "the whole cut burns, {} mm", e.stats().burned_mm);
+    });
+    m.disconnect();
+}
+
 /// A custom G-code controller is not known to switch the laser off by itself when the head
 /// stands still: it holds the last `S` of an `M3`/`M4`. A pause in the middle of a cut must
 /// switch it off, and the rest of the cut must burn after the resume.

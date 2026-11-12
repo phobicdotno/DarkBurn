@@ -4,8 +4,12 @@
 //! `docs/hardware-checks-gcodebots.md`.
 //!
 //! Model: lines go into a planner of limited size. `ok` is sent when a line has been accepted
-//! into the planner, so a full planner holds the `ok` back (that is the flow control). Motion
-//! runs on a simulated clock that advances while the driver reads.
+//! into the planner, so a full planner holds the `ok` back (that is the flow control). `M400`,
+//! a dwell and homing are answered when they are done, and the lines behind them wait until
+//! then: answers always come in the order of the lines. The exceptions are a quick stop or a
+//! kill (`M410`, `M112`), which ends such a command instead of waiting for it, and `resume`
+//! while suspended, without which the command would never end. Motion runs on a simulated
+//! clock that advances while the driver reads.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -207,6 +211,16 @@ fn words(line: &str) -> Vec<(char, f64, bool)> {
         }
     }
     out
+}
+
+/// `M410` (quick stop) and `M112` (kill): the two lines that end a command that is waiting.
+fn is_stop_line(line: &str) -> bool {
+    words(&strip(line)).iter().any(|(l, v, _)| *l == 'M' && (*v == 410.0 || *v == 112.0))
+}
+
+/// Smoothieware's `resume` console command.
+fn is_resume_line(line: &str) -> bool {
+    strip(line).split_whitespace().next().is_some_and(|w| w.eq_ignore_ascii_case("resume"))
 }
 
 impl LineEmulator {
@@ -437,8 +451,27 @@ impl LineEmulator {
         self.say(&text);
     }
 
+    /// True while a command that ends when it is done (`M400`, a dwell, homing) waits in the
+    /// planner or runs. A controller is busy with one command at a time, so what came in behind
+    /// it waits, and every answer goes out in the order the lines came in.
+    fn busy_with_a_command(&self) -> bool {
+        self.exec.as_ref().is_some_and(|e| e.ack) || self.planner.iter().any(|q| q.ack)
+    }
+
     fn process_inbox(&mut self) {
-        while let Some(line) = self.inbox.front().cloned() {
+        loop {
+            if self.busy_with_a_command() {
+                // A quick stop or a kill does not wait for the command to end: it ends it.
+                // What had come in before it and still waits has its turn afterwards. While
+                // suspended nothing runs, so `resume` is the other line that cannot wait.
+                let paused = self.paused;
+                let Some(i) = self.inbox.iter().position(|l| is_stop_line(l) || (paused && is_resume_line(l))) else { break };
+                if let Some(line) = self.inbox.remove(i) {
+                    self.try_line(&line);
+                }
+                continue;
+            }
+            let Some(line) = self.inbox.front().cloned() else { break };
             if self.try_line(&line) {
                 self.inbox.pop_front();
             } else {
@@ -1072,6 +1105,71 @@ mod tests {
         e.advance(Duration::from_secs(60));
         let n2 = drain(&mut e).matches("ok").count();
         assert_eq!(n + n2, 5);
+    }
+
+    /// `M400`, a dwell and homing end when they are done, and a controller is busy with one
+    /// command at a time: what comes in behind them is answered after them, in order.
+    #[test]
+    fn lines_behind_a_command_that_waits_are_answered_after_it() {
+        let mut e = LineEmulator::new(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+        // One second of motion, then the wait for it, then a position request and a laser-off.
+        e.receive(b"M3 S255\nG1 X10 F600\nM400\nM114\nM5\n");
+        assert_eq!(drain(&mut e), "ok\nok\n", "only M3 and the move are answered so far");
+        assert!(e.laser_armed(), "M5 has not had its turn yet");
+        e.advance(Duration::from_millis(500));
+        assert_eq!(drain(&mut e), "", "half way: M400 still waits and so does what is behind it");
+        e.advance(Duration::from_secs(2));
+        let r = drain(&mut e);
+        assert!(r.starts_with("ok\nX:10.00 Y:0.00 "), "M400 first, then the position at the end of the move: {r}");
+        assert_eq!(r.matches("ok").count(), 3, "{r}");
+        assert!(!e.laser_armed());
+        assert!((e.stats().burned_mm - 10.0).abs() < 1e-9);
+
+        // A dwell and homing hold back what is behind them in the same way.
+        e.receive(b"G4 P400\nM114\n");
+        e.advance(Duration::from_millis(200));
+        assert_eq!(drain(&mut e), "");
+        e.advance(Duration::from_millis(300));
+        assert!(drain(&mut e).starts_with("ok\nX:10.00 "));
+        e.receive(b"G28\nM114\n");
+        e.advance(Duration::from_millis(200));
+        assert_eq!(drain(&mut e), "");
+        e.advance(Duration::from_millis(300));
+        assert!(drain(&mut e).starts_with("ok\nX:0.00 Y:0.00 "));
+    }
+
+    #[test]
+    fn a_quick_stop_does_not_wait_behind_an_m400() {
+        let mut e = LineEmulator::new(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+        e.receive(b"M3 S255\nG1 X100 F600\nM400\nM114\n");
+        e.advance(Duration::from_millis(500));
+        drain(&mut e);
+        e.receive(b"M410\nM5\n");
+        // The move is gone at once. The lines that waited have their turn now, in order.
+        assert_eq!(e.planner_len(), 0);
+        let r = drain(&mut e);
+        assert!(r.starts_with("ok\nX:5.00 Y:0.00 "), "the stop is answered, then the position request: {r}");
+        assert!(!e.laser_armed(), "{r}");
+        e.advance(Duration::from_secs(20));
+        assert!((e.stats().burned_mm - 5.0).abs() < 1e-9, "{} mm", e.stats().burned_mm);
+    }
+
+    /// Suspended, nothing runs. A command that waits for the motion to end, sent then, must
+    /// not keep `resume` waiting behind it for ever.
+    #[test]
+    fn resume_is_not_held_behind_a_command_that_cannot_end_while_suspended() {
+        let mut e = LineEmulator::new(EmuConfig::new(EmuFlavor::Smoothie).with_time_scale(1.0));
+        e.receive(b"G1 X10 F600\nsuspend\nM400\nM114\n");
+        e.advance(Duration::from_secs(5));
+        assert!(e.is_paused());
+        assert_eq!(e.planner_len(), 2, "the move and the M400 stand still");
+        drain(&mut e);
+        e.receive(b"resume\n");
+        assert!(!e.is_paused());
+        assert!(drain(&mut e).starts_with("Resuming"), "resume is answered, M114 still waits");
+        e.advance(Duration::from_secs(5));
+        let r = drain(&mut e);
+        assert!(r.starts_with("ok\r\nok C: X:10.0000 "), "M400, then the position at the end: {r:?}");
     }
 
     #[test]

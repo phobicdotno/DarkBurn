@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.521 (build 6)
+## v0.0.522 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -105,6 +105,7 @@
 - Fix: Text in an SVG file no longer disappears on a computer without Arial
 - New: install with one line: a curl line on Linux and macOS, a PowerShell line on Windows
 - New: ready-made packages for Linux (x86_64 and arm64) and macOS (Apple silicon and Intel), next to the Windows installer and the portable zip
+- Fix: A simulated G-code machine could say a job was finished a moment before its last moves had run
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

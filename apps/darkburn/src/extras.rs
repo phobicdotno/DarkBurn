@@ -64,6 +64,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     options::publish(&app.prefs.opts);
     keymap::publish(&app.prefs.hotkeys);
     i18n::set_language(&app.prefs.language);
+    crate::language_fonts::frame(ctx, &i18n::language());
     let o = &app.prefs.opts;
     let zoom = o.ui_scale / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 1e-3 {

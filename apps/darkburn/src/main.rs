@@ -70,6 +70,8 @@ mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
+mod language_fonts;
+mod languages;
 mod laser_panel;
 mod laser_position;
 mod layer_defaults;

@@ -14,6 +14,14 @@ pub struct FaceData {
     pub index: u32,
 }
 
+/// The bytes of the face, so a face can be handed on without copying them (the interface
+/// fonts take shared bytes).
+impl AsRef<[u8]> for FaceData {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
 /// A face picked for a family + bold/italic request.
 #[derive(Debug, Clone)]
 pub struct ResolvedFace {
@@ -197,6 +205,15 @@ impl FontLibrary {
         let r = best.map(|b| b.1);
         self.fallback_cache.lock().unwrap().insert(ch, r);
         r
+    }
+
+    /// How many of `chars` face `id` has a glyph for (0 for an unknown or unreadable face).
+    pub fn glyph_count(&self, id: ID, chars: &[char]) -> usize {
+        self.db
+            .with_face_data(id, |d, i| {
+                ttf_parser::Face::parse(d, i).map(|f| chars.iter().filter(|c| f.glyph_index(**c).is_some()).count()).unwrap_or(0)
+            })
+            .unwrap_or(0)
     }
 
     /// Family name of a face id.

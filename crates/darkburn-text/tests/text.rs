@@ -262,3 +262,17 @@ fn spec_round_trips_through_serde() {
     let d: TextSpec = serde_json::from_str("{\"text\":\"x\"}").unwrap();
     assert_eq!(d.size, 10.0);
 }
+
+#[test]
+fn glyph_count_counts_the_characters_a_face_can_draw() {
+    let l = lib();
+    let id = l.resolve(SANS, false, false).unwrap().id;
+    assert_eq!(l.glyph_count(id, &['A', 'z', '\u{e5}']), 3);
+    // Cyrillic and Greek are in Plex Sans; CJK and Arabic are not.
+    assert_eq!(l.glyph_count(id, &['\u{0416}', '\u{03A9}', '\u{65E5}', '\u{0633}']), 2);
+    assert_eq!(l.glyph_count(id, &[]), 0);
+    // The bytes of a face can be shared as they are.
+    let data = l.face_data(id).unwrap();
+    let bytes: &[u8] = (*data).as_ref();
+    assert_eq!(bytes.len(), data.data.len());
+}

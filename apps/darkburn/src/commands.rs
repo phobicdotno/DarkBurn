@@ -844,8 +844,8 @@ pub fn registry() -> &'static [Cmd] {
         for (id, label) in crate::prefs::TOOLBARS.iter().copied().chain([("status", "Status Bar")]) {
             v.push(c(leak(format!("toolbar.{id}")), leak(format!("Show or Hide {label}")), "", ""));
         }
-        for (code, name) in LANGUAGES {
-            v.push(c(leak(format!("lang.{code}")), name, "", ""));
+        for l in crate::languages::offered() {
+            v.push(c(leak(format!("lang.{}", l.code)), l.name, "", ""));
         }
         for i in 0..24 {
             v.push(c(leak(format!("file.recent.{i}")), leak(format!("Open Recent Project {}", i + 1)), "", ""));
@@ -937,7 +937,7 @@ pub fn ui_action_ids() -> Vec<String> {
     out.extend(crate::panels::PANELS.iter().map(|p| format!("panel.{}", p.id)));
     out.extend(crate::prefs::TOOLBARS.iter().map(|(id, _)| format!("toolbar.{id}")));
     out.push("toolbar.status".into());
-    out.extend(LANGUAGES.iter().map(|(code, _)| format!("lang.{code}")));
+    out.extend(crate::languages::offered().map(|l| format!("lang.{}", l.code)));
     out.extend((0..24).map(|i| format!("file.recent.{i}")));
     out.sort();
     out.dedup();
@@ -1254,34 +1254,6 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("help.debug_log"),
         ],
     ),
-];
-
-/// Interface languages, each named in its own language. Only English has text so far.
-pub const LANGUAGES: &[(&str, &str)] = &[
-    ("en", "English"),
-    ("de", "Deutsch"),
-    ("es", "Español"),
-    ("fr", "Français"),
-    ("it", "Italiano"),
-    ("nl", "Nederlands"),
-    ("nb", "Norsk bokmål"),
-    ("pl", "Polski"),
-    ("pt", "Português"),
-    ("sv", "Svenska"),
-    ("da", "Dansk"),
-    ("fi", "Suomi"),
-    ("cs", "Čeština"),
-    ("hu", "Magyar"),
-    ("tr", "Türkçe"),
-    ("el", "Ελληνικά"),
-    ("ru", "Русский"),
-    ("uk", "Українська"),
-    ("ja", "日本語"),
-    ("zh", "简体中文"),
-    ("zh-TW", "繁體中文"),
-    ("ko", "한국어"),
-    ("he", "עברית"),
-    ("ar", "العربية"),
 ];
 
 #[cfg(test)]

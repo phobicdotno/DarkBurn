@@ -1,7 +1,8 @@
 //! The translation layer. Every piece of interface text goes through [`tr`]: a stable key and
 //! the English text. The English text is the fallback, so a missing translation never shows a
 //! key. Translations live in `assets/locales/<code>.json` (flat key to text objects), embedded in
-//! the program. `en.json` is generated from the code by a test and kept in step by it.
+//! the program. `en.json` is generated from the code by a test and kept in step by it. The
+//! languages and their files are listed in `languages.rs`.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -9,9 +10,6 @@ use std::sync::OnceLock;
 use std::sync::RwLock;
 
 use crate::commands::Cmd;
-
-/// The languages that have a translation file, by code.
-const FILES: &[(&str, &str)] = &[("en", include_str!("../../../assets/locales/en.json")), ("nb", include_str!("../../../assets/locales/nb.json"))];
 
 /// The active language code (empty: English). The program has one interface, so one value.
 #[cfg(not(test))]
@@ -52,7 +50,7 @@ fn set_active(code: &str) {
 fn tables() -> &'static HashMap<&'static str, HashMap<String, String>> {
     static TABLES: OnceLock<HashMap<&'static str, HashMap<String, String>>> = OnceLock::new();
     TABLES.get_or_init(|| {
-        FILES
+        crate::languages::files()
             .iter()
             .map(|(code, text)| {
                 let table: HashMap<String, String> = serde_json::from_str(text).unwrap_or_else(|e| {
@@ -65,9 +63,9 @@ fn tables() -> &'static HashMap<&'static str, HashMap<String, String>> {
     })
 }
 
-/// Whether language `code` has translated text.
+/// Whether language `code` can be chosen: it is in the Language menu.
 pub fn available(code: &str) -> bool {
-    tables().contains_key(code)
+    crate::languages::is_offered(code)
 }
 
 /// Switch the interface language. An unknown code leaves English.
@@ -85,12 +83,18 @@ pub fn language() -> String {
 /// The text for `key` in the active language; `english` when there is none.
 pub fn tr(key: &str, english: &str) -> String {
     let lang = language();
-    if lang != "en"
-        && let Some(text) = tables().get(lang.as_str()).and_then(|t| t.get(key))
-    {
-        return text.clone();
+    if lang == "en" {
+        return english.to_string();
     }
-    english.to_string()
+    lookup(tables().get(lang.as_str()), key, english)
+}
+
+/// The text for `key` in `table`; `english` when the table, the key or the text is missing.
+fn lookup(table: Option<&HashMap<String, String>>, key: &str, english: &str) -> String {
+    match table.and_then(|t| t.get(key)) {
+        Some(text) if !text.trim().is_empty() => text.clone(),
+        _ => english.to_string(),
+    }
 }
 
 /// A command's label in the active language.
@@ -206,6 +210,10 @@ mod tests {
         }
     }
 
+    fn english_file() -> &'static str {
+        crate::languages::file("en").expect("assets/locales/en.json")
+    }
+
     fn locale_path(code: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/locales").join(format!("{code}.json"))
     }
@@ -216,7 +224,7 @@ mod tests {
         if std::env::var_os("DARKBURN_WRITE_LOCALES").is_some() {
             std::fs::write(locale_path("en"), serde_json::to_string_pretty(&want).unwrap() + "\n").unwrap();
         }
-        let have: BTreeMap<String, String> = serde_json::from_str(FILES[0].1).unwrap();
+        let have: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
         // Commands other builders added since are fine; every other key must match exactly.
         let strip = |m: &BTreeMap<String, String>| -> BTreeMap<String, String> {
             m.iter().filter(|(k, _)| !k.starts_with("cmd.")).map(|(k, v)| (k.clone(), v.clone())).collect()
@@ -231,8 +239,8 @@ mod tests {
 
     #[test]
     fn norwegian_covers_the_english_keys() {
-        let en: BTreeMap<String, String> = serde_json::from_str(FILES[0].1).unwrap();
-        let nb: BTreeMap<String, String> = serde_json::from_str(FILES[1].1).unwrap();
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        let nb: BTreeMap<String, String> = serde_json::from_str(crate::languages::file("nb").unwrap()).unwrap();
         let missing: Vec<_> = en.keys().filter(|k| !k.starts_with("cmd.") && !nb.contains_key(*k)).collect();
         assert!(missing.is_empty(), "nb.json lacks: {missing:?}");
         let cmds = en.keys().filter(|k| k.starts_with("cmd.")).count();
@@ -271,8 +279,216 @@ mod tests {
     }
 
     #[test]
+    fn a_key_the_file_lacks_or_leaves_empty_shows_the_english_text() {
+        // A language whose file has only a few keys yet, as a new one starts out.
+        let partial: HashMap<String, String> = [("menu.File", "Datei"), ("menu.Edit", " ")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+        assert_eq!(lookup(Some(&partial), "menu.File", "File"), "Datei");
+        assert_eq!(lookup(Some(&partial), "menu.Tools", "Tools"), "Tools");
+        assert_eq!(lookup(Some(&partial), "menu.Edit", "Edit"), "Edit");
+        assert_eq!(lookup(None, "menu.File", "File"), "File");
+    }
+
+    #[test]
     fn every_language_in_the_menu_is_named_in_itself() {
-        assert!(crate::commands::LANGUAGES.iter().any(|(c, n)| *c == "nb" && *n == "Norsk bokm\u{e5}l"));
+        assert_eq!(crate::languages::find("nb").map(|l| l.name), Some("Norsk bokm\u{e5}l"));
         assert!(available("nb") && available("en"));
+        assert!(!available("xx"));
+        // A language in the table without its file cannot be chosen; it falls back to English.
+        if let Some(l) = crate::languages::LANGUAGES.iter().find(|l| crate::languages::file(l.code).is_none()) {
+            assert!(!available(l.code));
+            set_language(l.code);
+            assert_eq!(language(), "en");
+        }
+    }
+
+    // ---- The rules every translation file keeps [I18N-04] ----
+
+    /// The `{name}` placeholders of `text` (`{}` included), sorted. The program fills them in, so
+    /// a translation has the same ones, in any order.
+    fn placeholders(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(i) = rest.find('{') {
+            rest = &rest[i + 1..];
+            if let Some(end) = rest.find('}') {
+                let name = &rest[..end];
+                if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    out.push(format!("{{{name}}}"));
+                    rest = &rest[end + 1..];
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// How many shortcut marks `text` has: `&` right before a letter (an accelerator; `&&` and
+    /// `& ` are a plain ampersand).
+    fn accelerators(text: &str) -> usize {
+        let chars: Vec<char> = text.chars().collect();
+        let mut n = 0;
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '&' {
+                match chars.get(i + 1) {
+                    Some('&') => i += 1,
+                    Some(c) if !c.is_whitespace() => n += 1,
+                    _ => {}
+                }
+            }
+            i += 1;
+        }
+        n
+    }
+
+    /// The key names in `text` (Ctrl, Shift, Alt, Cmd, Esc, F1 to F24), sorted. They name keys on
+    /// the keyboard, so they stay as they are.
+    fn key_names(text: &str) -> Vec<String> {
+        let mut out: Vec<String> = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| {
+                matches!(*w, "Ctrl" | "Shift" | "Alt" | "Cmd" | "Esc")
+                    || w.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=24).contains(&n) && !w.starts_with("F0"))
+            })
+            .map(str::to_string)
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn ends_with_colon(text: &str) -> bool {
+        let t = text.trim_end();
+        t.ends_with(':') || t.ends_with('\u{ff1a}')
+    }
+
+    fn ends_with_ellipsis(text: &str) -> bool {
+        let t = text.trim_end().trim_end_matches([':', '\u{ff1a}']);
+        t.ends_with("...") || t.ends_with('\u{2026}')
+    }
+
+    fn leading_space(text: &str) -> &str {
+        &text[..text.len() - text.trim_start().len()]
+    }
+
+    fn trailing_space(text: &str) -> &str {
+        &text[text.trim_end().len()..]
+    }
+
+    /// What is wrong with `text` as the translation of `english`.
+    fn check_text(english: &str, text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if text.trim().is_empty() {
+            out.push("is empty (leave the key out to show English)".to_string());
+            return out;
+        }
+        if placeholders(text) != placeholders(english) {
+            out.push(format!("has the placeholders {:?}, English has {:?}", placeholders(text), placeholders(english)));
+        }
+        if leading_space(text) != leading_space(english) || trailing_space(text) != trailing_space(english) {
+            out.push("does not start and end with the same spaces as English".to_string());
+        }
+        if ends_with_colon(text) != ends_with_colon(english) {
+            out.push(format!("must {}end with a colon, as English", if ends_with_colon(english) { "" } else { "not " }));
+        }
+        if ends_with_ellipsis(text) != ends_with_ellipsis(english) {
+            out.push(format!("must {}end with \"...\", as English", if ends_with_ellipsis(english) { "" } else { "not " }));
+        }
+        if accelerators(text) != accelerators(english) {
+            out.push(format!("has {} shortcut marks (&), English has {}", accelerators(text), accelerators(english)));
+        }
+        if key_names(text) != key_names(english) {
+            out.push(format!("names the keys {:?}, English names {:?}", key_names(text), key_names(english)));
+        }
+        out
+    }
+
+    /// What is wrong with the locale file `text`, checked against the English table.
+    fn check_file(english: &BTreeMap<String, String>, text: &str) -> Vec<String> {
+        let value: serde_json::Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(e) => return vec![format!("is not valid JSON: {e}")],
+        };
+        let Some(object) = value.as_object() else {
+            return vec!["is not one object of key to text".to_string()];
+        };
+        let mut out = Vec::new();
+        for (key, v) in object {
+            let Some(v) = v.as_str() else {
+                out.push(format!("{key}: is not a text"));
+                continue;
+            };
+            let Some(en) = english.get(key) else {
+                out.push(format!("{key}: English has no such key"));
+                continue;
+            };
+            out.extend(check_text(en, v).into_iter().map(|p| format!("{key}: {p}")));
+        }
+        out
+    }
+
+    #[test]
+    fn every_locale_file_keeps_the_rules_of_the_english_text() {
+        let english: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        let dir = locale_path("en").parent().unwrap().to_path_buf();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let problems = check_file(&english, &text);
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            assert!(problems.is_empty(), "{name}:\n  {}", problems.join("\n  "));
+            checked += 1;
+        }
+        assert!(checked >= 2, "en.json and nb.json at least");
+    }
+
+    #[test]
+    fn the_locale_checker_finds_each_kind_of_mistake() {
+        let english: BTreeMap<String, String> =
+            [("a", "Export..."), ("b", "Speed:"), ("c", "Saved {count} files"), ("d", "&Open"), ("e", "Press F1 or Ctrl+H"), ("f", " mm")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+        let one = |key: &str, text: &str| check_file(&english, &serde_json::json!({ key: text }).to_string());
+        // Each rule kept: no problem.
+        for (k, v) in [
+            ("a", "Exportieren..."),
+            ("a", "\u{30a8}\u{30af}\u{30b9}\u{30dd}\u{30fc}\u{30c8}\u{2026}"),
+            ("b", "Hastighet:"),
+            ("b", "\u{901f}\u{5ea6}\u{ff1a}"),
+        ] {
+            assert!(one(k, v).is_empty(), "{k} {v}: {:?}", one(k, v));
+        }
+        for (k, v) in [("c", "{count} Dateien gespeichert"), ("d", "\u{00c5}&pne"), ("e", "Trykk F1 eller Ctrl+H"), ("f", " mm")] {
+            assert!(one(k, v).is_empty(), "{k} {v}: {:?}", one(k, v));
+        }
+        // Each rule broken: a problem that says which.
+        let broken = [
+            ("a", "Exportieren", "\"...\""),
+            ("a", "Exportieren...:", "colon"),
+            ("b", "Hastighet", "colon"),
+            ("c", "{anzahl} Dateien gespeichert", "placeholders"),
+            ("c", "Dateien gespeichert", "placeholders"),
+            ("d", "Open", "shortcut marks"),
+            ("e", "Trykk F2 eller Ctrl+H", "keys"),
+            ("e", "Trykk F1 eller Strg+H", "keys"),
+            ("f", "mm", "spaces"),
+            ("f", " mm ", "spaces"),
+            ("b", "   ", "empty"),
+            ("zz", "Hei", "no such key"),
+        ];
+        for (k, v, why) in broken {
+            let p = one(k, v);
+            assert!(p.iter().any(|p| p.contains(why)), "{k} {v:?}: expected a problem about {why}, got {p:?}");
+        }
+        assert!(check_file(&english, "{\"a\": \"Export...\",}")[0].contains("not valid JSON"));
+        assert!(check_file(&english, "[\"Export...\"]")[0].contains("one object"));
+        assert!(check_file(&english, "{\"a\": 3}")[0].contains("not a text"));
+        // The English file passes its own rules.
+        let all = serde_json::to_string(&english).unwrap();
+        assert!(check_file(&english, &all).is_empty());
     }
 }

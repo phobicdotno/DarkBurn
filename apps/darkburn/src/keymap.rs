@@ -66,6 +66,7 @@ pub fn key_for(c: &Cmd) -> String {
 }
 
 /// The key slot `id` has now (empty for none), as the key handler sees it.
+#[cfg(test)]
 pub fn key_of(o: &Overrides, id: &str) -> String {
     effective(o).get(id).cloned().unwrap_or_default()
 }

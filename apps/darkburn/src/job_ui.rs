@@ -158,6 +158,14 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
         }
     }
     let mut command: Option<(&'static str, serde_json::Value)> = None;
+    // Moved to a tab, a window of its own or back to floating, the picture has another size:
+    // the job is fitted to it again, as it was where it came from.
+    let placement = ui_kit::window_host::place(ctx, PREVIEW_KEY).placement;
+    let placed_id = Id::unique("db_preview_placement");
+    if ctx.data(|d| d.get_temp::<ui_kit::window_host::Placement>(placed_id)).is_some_and(|was| was != placement) {
+        app.job.preview.fitted = false;
+    }
+    ctx.data_mut(|d| d.insert_temp(placed_id, placement));
     // Docked as a tab or in a window of its own, the Preview fills what it is given (Maximise
     // has nothing to do there); floating, it is its own window, sized and maximised as before.
     let hosted_id = Id::unique("db_preview_window_hosted");

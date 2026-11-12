@@ -280,6 +280,17 @@ fn the_preview_keeps_playing_docked_and_in_a_window_of_its_own() {
         });
         g.frames(3);
         assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), place);
+        // The job is fitted to the picture it has there, not to the floating window's.
+        {
+            let app = g.app();
+            let p = &app.job.preview;
+            let bed = egui::vec2(app.prefs.page_width, app.prefs.page_height) * p.zoom;
+            assert!(p.pan.x >= 0.0 && p.pan.y >= 0.0, "{what}: the job is fitted again: pan {:?}", p.pan);
+            if let Placement::Docked(area) = &place {
+                let area = g.rect_of(&format!("panel:area:{area}")).expect("the panel area");
+                assert!(p.pan.x + bed.x <= area.width(), "{what}: the bed {bed:?} at {:?} is wider than the tab {area:?}", p.pan);
+            }
+        }
         // It plays on while it is there.
         {
             let mut app = g.app();

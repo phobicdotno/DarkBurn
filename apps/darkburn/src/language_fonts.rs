@@ -159,16 +159,17 @@ fn wanted(code: &str, names: bool) -> Vec<Face> {
 }
 
 /// The interface font definitions for `code`: the bundled ones with the system faces it needs.
-pub fn definitions_for(code: &str) -> FontDefinitions {
+#[cfg(test)]
+fn definitions_for(code: &str) -> FontDefinitions {
     darkburn_ui::fonts::with_fallbacks(darkburn_ui::fonts::base_font_definitions(), wanted(code, false))
 }
 
 fn names_id() -> egui::Id {
-    egui::Id::new("darkburn_language_names_wanted")
+    egui::Id::unique("darkburn_language_names_wanted")
 }
 
 fn installed_id() -> egui::Id {
-    egui::Id::new("darkburn_language_fonts_installed")
+    egui::Id::unique("darkburn_language_fonts_installed")
 }
 
 /// The Language menu is open: its names need their fonts from the next frame on.

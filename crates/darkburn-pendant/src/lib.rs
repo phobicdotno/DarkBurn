@@ -18,7 +18,7 @@ pub mod poll;
 pub mod protocol;
 pub mod transport;
 
-pub use events::{KeyTracker, PendantEvent};
+pub use events::{KeyTracker, PendantEvent, never_chords};
 #[cfg(feature = "hid")]
 pub use hid::{HidConnector, HidTransport};
 pub use poll::{Pendant, PollOptions};

@@ -13,12 +13,20 @@ pub enum PendantEvent {
     /// The receiver could not be opened. Sent once per new reason while the pendant is on and
     /// no receiver is open, so the app can show it (for example the Linux permission message).
     Unavailable(crate::PendantError),
-    /// A key went down on its own (Fn not held). Fn itself also arrives as a `KeyDown`.
+    /// A key went down on its own (Fn not held). Fn itself also arrives as a `KeyDown`, and so
+    /// do Stop and Pause whatever else is held: see [`never_chords`].
     KeyDown(Key),
     /// A key went down while Fn was held: Fn+key. Comes instead of `KeyDown` for that key.
+    /// Never for Stop or Pause.
     Chord(Key),
     /// A key came up (after a `KeyDown` or a `Chord`).
     KeyUp(Key),
+}
+
+/// Stop and Pause are a press on their own even while Fn is held: a thumb resting on Fn must
+/// never turn Stop into a chord that does nothing.
+pub fn never_chords(key: Key) -> bool {
+    matches!(key, Key::Stop | Key::Pause)
 }
 
 /// Remembers which keys are held and turns each new report into events.
@@ -26,7 +34,7 @@ pub enum PendantEvent {
 /// A report is the full set of keys held now, so a press is a key that is in the new set and not
 /// in the last one, and a release the other way round. Each press gives exactly one action
 /// event: [`PendantEvent::Chord`] when Fn is held (or goes down in the same report),
-/// [`PendantEvent::KeyDown`] otherwise.
+/// [`PendantEvent::KeyDown`] otherwise. Stop and Pause always give a `KeyDown`.
 #[derive(Clone, Debug, Default)]
 pub struct KeyTracker {
     held: KeySet,
@@ -52,7 +60,13 @@ impl KeyTracker {
             out.push(PendantEvent::KeyDown(Key::Fn));
         }
         let fn_held = now.contains(Key::Fn);
-        out.extend(pressed.iter().filter(|k| *k != Key::Fn).map(|k| if fn_held { PendantEvent::Chord(k) } else { PendantEvent::KeyDown(k) }));
+        out.extend(
+            pressed.iter().filter(|k| *k != Key::Fn).map(
+                |k| {
+                    if fn_held && !never_chords(k) { PendantEvent::Chord(k) } else { PendantEvent::KeyDown(k) }
+                },
+            ),
+        );
         self.held = now;
         out
     }
@@ -106,6 +120,22 @@ mod tests {
             t.update([Key::Fn].into_iter().collect());
             assert_eq!(t.update([Key::Fn, k].into_iter().collect()), vec![Chord(k)]);
         }
+    }
+
+    /// Fn held (or going down in the same report) must not swallow Stop or Pause.
+    #[test]
+    fn stop_and_pause_are_plain_presses_with_fn_held() {
+        for k in [Key::Stop, Key::Pause] {
+            let mut t = KeyTracker::new();
+            t.update([Key::Fn].into_iter().collect());
+            assert_eq!(t.update([Key::Fn, k].into_iter().collect()), vec![KeyDown(k)], "Fn held, then {k:?}");
+            let mut t = KeyTracker::new();
+            assert_eq!(t.update([Key::Fn, k].into_iter().collect()), vec![KeyDown(Key::Fn), KeyDown(k)], "Fn and {k:?} in one report");
+        }
+        // The report of the finding: 04 10 0b 0a 00 chk, Fn already held.
+        let mut t = KeyTracker::new();
+        feed(&mut t, [0x04, 0x10, 0x0b, 0x00, 0x00, 0x05]);
+        assert_eq!(feed(&mut t, [0x04, 0x10, 0x0b, 0x0a, 0x00, 0x00]), vec![KeyDown(Key::Stop)]);
     }
 
     #[test]

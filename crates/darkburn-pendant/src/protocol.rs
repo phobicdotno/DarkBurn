@@ -91,7 +91,8 @@ impl Key {
     }
 
     /// The keys with a second function printed for Fn: Fn+GoToOrigin, Fn+ZCalibrate,
-    /// Fn+ZMinusW and Fn+ZPlusW. Fn with any other key is still reported as a chord.
+    /// Fn+ZMinusW and Fn+ZPlusW. Fn with any other key is still reported as a chord, except
+    /// Stop and Pause, which are always plain presses.
     pub fn has_printed_fn(self) -> bool {
         matches!(self, Key::GoToOrigin | Key::ZCalibrate | Key::ZMinusW | Key::ZPlusW)
     }

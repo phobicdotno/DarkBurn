@@ -77,6 +77,20 @@ fn connect_sim(ctx: &egui::Context, app: &mut DarkBurn) {
     pump(ctx, app, "the simulator ready", |a| state(a) == LaserState::Ready);
 }
 
+/// A G-code job that runs for a good minute on the simulator, started as the window starts one.
+fn start_slow_job(ctx: &egui::Context, a: &mut DarkBurn) {
+    let mut j = crate::machine_api::JobRequest::gcode(
+        ["G21 G90".to_owned(), "M4 S100".to_owned()].into_iter().chain((0..60).map(|i| format!("G1 X{} Y10 F300", 10 + (i % 2) * 30))).collect(),
+    );
+    j.name = "slow".into();
+    a.machine.begin_start(j).unwrap();
+    pump(ctx, a, "the slow job running", |a| state(a) == LaserState::Busy);
+}
+
+fn stopped(a: &DarkBurn) -> bool {
+    matches!(state(a), LaserState::Ready | LaserState::Alarm)
+}
+
 fn pos(a: &DarkBurn) -> (f64, f64) {
     let p = a.machine.handle.snapshot().machine_pos;
     (p[0], p[1])
@@ -229,6 +243,25 @@ fn start_and_stop_run_the_job_like_the_buttons() {
     });
     tap(&emu, Key::Stop);
     pump(&ctx, &mut a, "the job stopped", |a| !a.machine.handle.snapshot().state.is_working());
+}
+
+/// A thumb resting on Fn must not take Stop or Pause away.
+#[test]
+fn stop_and_pause_work_with_fn_held() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    emu.hold(&[Key::Fn]);
+    emu.hold(&[Key::Fn, Key::Pause]);
+    pump(&ctx, &mut a, "the job paused with Fn held", |a| state(a) == LaserState::Paused);
+    emu.hold(&[Key::Fn]);
+    emu.hold(&[Key::Fn, Key::Stop]);
+    pump(&ctx, &mut a, "the job stopped with Fn held", stopped);
+    emu.release();
 }
 
 #[test]

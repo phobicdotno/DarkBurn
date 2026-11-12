@@ -1,1 +1,1 @@
-ci all  one whole run on the three systems
+ci macos  the same code as the run on Windows and Linux before it

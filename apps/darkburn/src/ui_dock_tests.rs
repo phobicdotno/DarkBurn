@@ -493,6 +493,8 @@ fn every_kit_window_in_the_code_docks_or_is_a_listed_one_shot() {
         }
         let text = std::fs::read_to_string(&path).expect("read the source");
         // The program's code, not its unit tests.
+        // Checked out with either line ending.
+        let text = text.replace("\r\n", "\n");
         let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or_default();
         for (at, _) in code.match_indices("Window::new(") {
             let line = code[..at].lines().count();
@@ -583,6 +585,11 @@ fn the_floating_preview_docks_when_its_title_bar_is_dragged_onto_a_panel() {
     open_preview(&mut g);
     assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Floating);
     let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    eprintln!("DBG win={:?} title={:?} area={:?} screen={:?}", window(&g, "Preview"), preview_title(&g), area, g.screen());
+    for n in g.a11y().iter().filter(|n| n.rect.contains(preview_title(&g))) {
+        eprintln!("DBG node {} {:?} {:?}", n.role, n.label, n.rect);
+    }
+    eprintln!("DBG windows {:?}", g.find_a11y(Some("Window"), "Preview").iter().map(|n| n.rect).collect::<Vec<_>>());
     g.drag(preview_title(&g), area.center());
     g.frames(3);
     assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Docked("RightTop".into()));

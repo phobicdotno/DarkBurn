@@ -1,0 +1,4 @@
+# The web page and the script that builds it are read byte for byte (by sh, and by the script's
+# own checks), so they keep Unix line ends in every checkout, also on Windows.
+/site/** text eol=lf
+/scripts/build-site.sh text eol=lf

@@ -42,6 +42,12 @@ for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
 done
 odd=$(find "$root/site" ! -type f ! -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds something that is not a plain file: $odd"
+# No folder on the way to these files is a link either.
+real=$(CDPATH='' cd -- "$root" && pwd -P)
+for d in site docs/img assets/fonts/ibm-plex-sans assets/fonts/ibm-plex-mono \
+    assets/icons/ui/design/svg/model assets/icons/app; do
+    [ "$(CDPATH='' cd -- "$root/$d" && pwd -P)" = "$real/$d" ] || die "$d is reached through a link."
+done
 
 # The folder is made new each time. Only a folder this script made is ever removed.
 mark=.made-by-build-site
@@ -65,47 +71,85 @@ cp "$icons/ui/design/svg/model/db_app.svg" "$out/icon.svg"
 cp "$icons/app/darkburn-256.png" "$out/icon-256.png"
 cp "$icons/app/darkburn.ico" "$out/favicon.ico"
 
+# Only these files are published. A page or a drawing anywhere else (a sub-folder of site/,
+# a .htm or .xhtml file) would be served without any of the checks below.
+odd=$(cd "$out" && find . -type f ! -name "$mark" |
+    grep -Evx '\./(index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9._-]+\.png|fonts/[A-Za-z0-9._-]+\.(ttf|txt))' |
+    head -n 3 | tr '\n' ' ')
+[ -z "$odd" ] || die "not on the list of files this script publishes: $odd"
+
 # A drawing opened by its own address is a page of its own, and the policy line of index.html
-# does not reach it. So no drawing may carry script.
-for svg in "$out"/*.svg "$out"/img/*.svg; do
+# does not reach it. So a drawing holds plain shapes and nothing else: ASCII text, tags from a
+# short list, no attribute that starts with "on", no link, no style. A search for "<script"
+# alone is not enough: a browser also runs <s:script>, a tag built from an entity, an
+# attribute at the start of a line and a file in UTF-16.
+for svg in "$out"/*.svg; do
     [ -f "$svg" ] || continue
-    if grep -Ein "<script|<foreignObject|<iframe|<embed|<object|javascript:|[[:space:]]on[a-z]+[[:space:]]*=" "$svg"; then
-        die "${svg##*/} carries script or another document (see the lines above)."
+    name=${svg##*/}
+    # What is left when printable ASCII and line ends are taken out: UTF-16, tabs, hidden characters.
+    [ "$(LC_ALL=C tr -d ' -~\n' <"$svg" | wc -c)" -eq 0 ] ||
+        die "$name holds something that is not plain ASCII text."
+    flat=$(tr '\n' ' ' <"$svg")
+    case $flat in
+        *'<!'* | *'<?'* | *'&'*) die "$name holds a DOCTYPE, a comment, a processing instruction or an entity." ;;
+    esac
+    odd=$(printf '%s\n' "$flat" | grep -Eo '<[^/ >][^ />]*' | sort -u |
+        grep -Evx '<(svg|title|desc|g|defs|path|circle|ellipse|rect|line|polyline|polygon|linearGradient|radialGradient|stop|clipPath)' |
+        tr '\n' ' ')
+    [ -z "$odd" ] || die "$name holds tags a plain drawing does not need: $odd"
+    if printf '%s\n' "$flat" | grep -Eio "([[:space:]\"']on[a-z]+|href|style)[[:space:]]*=|javascript:|url\\([[:space:]]*[^#[:space:]]"; then
+        die "$name holds a handler, a link, a style or an address (see the lines above)."
     fi
 done
 
 # Each page carries a Content-Security-Policy line that allows the page's own files and nothing
-# else, and the line stands before anything the page loads. A browser holds the page to it:
-# nothing is fetched from another host and no script or style inside the HTML runs, however it
-# is written. The searches further down say the same early and by line; they do not read
-# site.js, and the policy line is what counts.
+# else. A browser holds the page to it: nothing is fetched from another host and no script or
+# style inside the HTML runs, however it is written. The searches further down say the same
+# early and by line; they do not read site.js, and the policy line is what counts.
+#
+# So each page begins with the same six lines, and they are compared byte for byte. A browser
+# drops a policy line that does not stand in the <head>, and little is needed for that: a
+# letter or a tag before it, a missing quote in the line above, a character nobody sees. A
+# policy that only looks strict (a host name without https://, a nonce, a hash) is refused the
+# same way. To change the policy, change it here first. 404.html runs no script.
+start='<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">'
+own="style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'"
 for page in "$out"/*.html; do
     name=${page##*/}
-    policy=$(sed -n 's/.*<meta http-equiv="Content-Security-Policy" content="\([^"]*\)">.*/\1/p' "$page")
-    case $policy in
-        "default-src 'none';"*) ;;
-        *) die "$name has no Content-Security-Policy line that begins with default-src 'none'." ;;
+    case $name in
+        index.html) policy="default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'" ;;
+        *) policy="default-src 'none'; $own" ;;
     esac
-    case $policy in
-        *unsafe* | *'*'* | *http* | *data:* | *blob:* | *filesystem:*)
-            die "$name: its Content-Security-Policy line allows more than the page's own files."
-            ;;
-    esac
-    at=$(grep -n 'http-equiv="Content-Security-Policy"' "$page" | head -n 1 | cut -d: -f1)
-    first=$(grep -Ein '<(link|script|style|img|base|body)[[:space:]>]' "$page" | head -n 1 | cut -d: -f1)
-    [ "$at" -lt "${first:-0}" ] ||
-        die "$name: the Content-Security-Policy line must stand before the first <link>, <script> or picture."
+    printf '%s\n<meta http-equiv="Content-Security-Policy" content="%s">\n' "$start" "$policy" >"$out/.head"
+    head -n 6 "$page" | cmp -s - "$out/.head" ||
+        die "$name does not begin with the six lines this script knows: doctype, <html>, <head>, charset, viewport and the Content-Security-Policy line, which must be: $policy"
+    # One line on one line: an attribute or a tag may be written over several.
+    flat=$(tr '\n\r\t' '   ' <"$page")
+    # The policy line is the only http-equiv: a "refresh" would send the visitor elsewhere, and
+    # no policy decides where a page goes next.
+    [ "$(printf '%s\n' "$flat" | grep -Eio 'http-equiv|<base[[:space:]>/]' | wc -l)" -eq 1 ] ||
+        die "$name has an http-equiv besides the policy line, or a <base>. Neither belongs on the page."
+    # The policy allows every file of the page's own host as script. The page has one.
+    if printf '%s\n' "$flat" | grep -Eio '<script[^>]*>?' | grep -vx '<script src="site.js">'; then
+        die "$name has a <script> that is not exactly <script src=\"site.js\"> (see the lines above)."
+    fi
 done
+rm -f "$out/.head"
 
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.
-if grep -Ein "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?//|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?//" "$out"/*.html; then
+if grep -Ein "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\]|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\]" "$out"/*.html; then
     die "the page fetches something from another host (see the lines above)."
 fi
 for page in "$out"/*.html; do
     # On one line first: a <link> may be written over several.
-    if tr '\n' ' ' <"$page" | grep -Eio '<link[^>]*>' | grep -vi 'rel="canonical"' |
-        grep -Ei "href[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?//"; then
+    if tr '\n' ' ' <"$page" | grep -Eio '<link[^>]*>' |
+        grep -vFx '<link rel="canonical" href="https://darkburn.phobic.no/">' |
+        grep -Ei "href[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\]"; then
         die "${page##*/} loads a file from another host with <link> (see the lines above)."
     fi
 done
@@ -118,9 +162,15 @@ done
 
 # No script or style inside the HTML: the policy line allows only files, so a browser would
 # refuse them.
-if grep -Ein "<script[[:space:]]*>|<script[[:space:]][^>]*>[^<]|<style|[[:space:]]style[[:space:]]*=|[[:space:]]on[a-z]+[[:space:]]*=[[:space:]]*[\"']|javascript:" "$out"/*.html; then
+if grep -Ein "<script[[:space:]]*>|<script[[:space:]][^>]*>[^<]|<style|[[:space:]]style[[:space:]]*=|javascript:" "$out"/*.html; then
     die "script or style inside the HTML (see the lines above). Put it in site.js or style.css."
 fi
+for page in "$out"/*.html; do
+    # On one line first: an attribute may stand on a line of its own.
+    if tr '\n' ' ' <"$page" | grep -Eio "<[a-z][^>]*[[:space:]\"'/]on[a-z]+[[:space:]]*=[^>]{0,40}"; then
+        die "${page##*/}: a handler inside a tag (see the lines above). Put it in site.js."
+    fi
+done
 
 # Every file the page points to is there.
 refs=$out/.refs

@@ -9,26 +9,57 @@
 #   A pull request that changes the same files, or a run by hand on another branch:
 #     the page is built and checked. Nothing is published. This file publishes main only.
 #
-# Four things are set once, by hand, in this order. A workflow cannot set them:
+# Five things are set once, by hand, in this order. A workflow cannot set them:
+#   0. Verify phobic.no for the account, before anything else: the account's own Settings >
+#      Pages > Add a domain. GitHub shows a TXT record named
+#      _github-pages-challenge-phobicdotno.phobic.no. Add it to the DNS of phobic.no, press
+#      Verify, and leave the record there for good: without it the verification lapses.
+#      From then on only repositories of this account can publish a GitHub Pages site at
+#      phobic.no or at a name directly under it, and a claim that somebody else's page has
+#      made on such a name is dropped. (It also takes such a name away from a site of your
+#      own that is published from another account or an organisation.) This comes first
+#      because this file is public: without it anybody can put darkburn.phobic.no on a page
+#      of their own before you do, and GitHub would then serve that page at the name.
 #   1. Settings > Pages > Build and deployment > Source: GitHub Actions.
 #      Then Actions > pages > Run workflow, on main. The page is now at
 #      https://phobicdotno.github.io/DarkBurn/
-#   2. Settings > Pages > Custom domain: darkburn.phobic.no. GitHub checks the DNS at once and
-#      says the check failed: the record is not there yet. Until step 3 has taken effect, the
-#      address of step 1 forwards to a name that does not answer.
+#   2. In the same sitting: Settings > Pages > Custom domain: darkburn.phobic.no, Save. The
+#      field must keep the name. A message that the DNS check failed is expected: the record
+#      is not there yet. A message that the domain is already taken is not: stop, and do not
+#      go on to step 3 until step 0 is done and the name saves. Until step 3 has taken
+#      effect, the address of step 1 forwards to a name that does not answer.
 #   3. In the DNS of phobic.no:  darkburn  CNAME  phobicdotno.github.io.
+#      and no other record for darkburn. phobic.no should have no wildcard record.
 #   4. Back under Settings > Pages: "Enforce HTTPS", once it is offered (GitHub says up to 24
-#      hours). If the DNS check still shows as failed when the record answers, or the box stays
-#      greyed out: press Remove beside the custom domain, type it again and Save. That starts
-#      the check and the request for the certificate again.
-# The domain is named here before the DNS record exists, and the record is removed again if
-# Pages is ever switched off: a record that points at GitHub while no page claims the name can
-# be claimed by somebody else's page. Verifying phobic.no for the account (the account's own
-# Settings > Pages > Add a domain) closes that door for phobic.no and every name directly
-# under it.
-# After the first publication, look once at Settings > Environments > github-pages >
-# Deployment branches and tags: it should list main and nothing else. That rule, not this file,
-# is what stops a changed copy of this workflow on another branch from publishing.
+#      hours). Until this box is ticked the page is also served without encryption, and the
+#      address of step 1 forwards there: somebody on a visitor's network can then change the
+#      install commands the page shows. Do not link or announce the address before. If the
+#      DNS check still shows as failed when the record answers, or the box stays greyed out:
+#      press Remove beside the custom domain, type it again and Save. That starts the check
+#      and the request for the certificate again. Afterwards
+#        curl -sI http://darkburn.phobic.no/ | sed -n '1p;/^[Ll]ocation:/p'
+#      must show 301 and Location: https://darkburn.phobic.no/
+# A run of this workflow that publishes says so in a warning while the custom domain is not
+# set or HTTPS is not enforced.
+#
+# The DNS record goes first and Pages second whenever the page is to go away or to move:
+# before Pages is switched off or the site unpublished, before the custom domain is removed
+# and left out, and before the repository is made private (on a free account GitHub then takes
+# the page down by itself), deleted or given to another account. A record that points at
+# GitHub while no page claims the name can be claimed by somebody else's page. Step 0 closes
+# that door on GitHub Pages for phobic.no and every name directly under it, for as long as
+# its TXT record stays. It does not cover a name further down (x.darkburn.phobic.no), which a
+# wildcard record would leave open, and it does not cover records that point at other hosts.
+#
+# Right after step 1, look at Settings > Environments > github-pages > Deployment branches and
+# tags. It must say "Selected branches and tags" and list main and nothing else. If it says
+# "No restriction", set it yourself: GitHub does not always set it. The rule stops a changed
+# copy of this workflow on another branch of this repository from publishing through
+# github-pages. It does not stop everybody who may push a branch here: a changed copy can name
+# another environment, and an environment that a workflow run makes has no rules. So write
+# access to this repository goes only to people who may publish the page. A pull request from
+# a fork cannot publish: its token can only read.
+#
 # Until Pages is switched on with that source, a run builds and checks the page, says in a
 # notice that nothing was published, and passes.
 name: pages
@@ -96,8 +127,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if answer=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>&1); then
-            kind=$answer
+          kind='' cname='' https='' verified=''
+          if answer=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '[.build_type // "none", .cname // "none", (.https_enforced // false | tostring), .protected_domain_state // "unknown"] | join(" ")' 2>&1); then
+            read -r kind cname https verified <<<"$answer" || true
           else
             case $answer in
               *"HTTP 404"*) kind=off ;;
@@ -106,6 +138,16 @@ jobs:
           fi
           if [ "$kind" = workflow ]; then
             echo "publish=true" >>"$GITHUB_OUTPUT"
+            # Things set by hand (see the top of this file), looked at on every publication.
+            if [ "$cname" != darkburn.phobic.no ]; then
+              echo "::warning title=Custom domain::GitHub Pages does not have the custom domain darkburn.phobic.no (step 2 at the top of pages.yml). If the DNS record for darkburn exists, no page holds the name."
+            fi
+            if [ "$https" != true ]; then
+              echo "::warning title=HTTPS is not enforced::The page is also served without encryption (step 4 at the top of pages.yml)."
+            fi
+            case $verified in
+              unverified | pending) echo "::warning title=phobic.no is not verified::See step 0 at the top of pages.yml." ;;
+            esac
           else
             echo "publish=false" >>"$GITHUB_OUTPUT"
             echo "::notice title=Built, not published::GitHub Pages is not set to publish from GitHub Actions (found: $kind). Set it under Settings, Pages, Source, then run this workflow again."

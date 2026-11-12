@@ -288,7 +288,8 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     let snap = app.machine.handle.snapshot().clone();
     let family = machine_ui::family_of(&app.machine);
     let dev = app.machine.active().clone();
-    let free = snap.connected() && snap.state == LaserState::Ready;
+    // The jog keys are refused exactly when these buttons are disabled (key_cmds).
+    let free = crate::key_cmds::jog_free(&snap);
     if !snap.connected() {
         ui.label(RichText::new("Connect a laser to jog it. The simulator needs no hardware.").size(t.font_small).color(t.text_dim));
     }
@@ -340,7 +341,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
 
     // Z and rotary [MOVE-02, MOVE-03]
-    if dev.settings.z_enabled || family == Family::Ruida {
+    if crate::key_cmds::has_z(&app.machine) {
         ui.horizontal(|ui| {
             ui.label("Z");
             let rev = if dev.settings.z_reverse { -1.0 } else { 1.0 };

@@ -1,9 +1,21 @@
 //! Keyboard shortcuts: the defaults come from the command table, the user's changes are kept in
-//! the preferences as overrides (command id to key text, empty for "no key"). Conflicts are
+//! the preferences as overrides (key slot to key text, empty for "no key"). Every command has two
+//! slots: its first key (slot id = command id, the one menus and tooltips show) and a second key
+//! (slot id = command id + [`SECOND`]), so F2 starts a job as well as Alt+S. Conflicts are
 //! detected when a key is assigned. A keymap travels as a `.dbhk` file.
+//!
+//! Number pad [KEY-03]: egui 0.37.0 (egui-winit 0.37.0 on winit 0.30.13) gives a key press the
+//! logical key and the physical key, and maps both `KeyCode::DigitN` and `KeyCode::NumpadN` to
+//! `Key::NumN`; winit's `KeyEvent::location` (which says "numpad") is dropped by egui-winit.
+//! With NumLock on, numpad 8 and the 8 above the letters therefore arrive as the same event and
+//! cannot be told apart (eframe 0.37 has no hook before that conversion except a raw Windows
+//! message hook, which needs unsafe code). With NumLock off the number pad sends arrows, Home,
+//! PgUp, End and PgDn as the logical key and still `NumN` as the physical key, which no other key
+//! does: those presses are what a `Numpad8` binding matches.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use egui::{Key, KeyboardShortcut, Modifiers};
 use serde::{Deserialize, Serialize};
@@ -16,6 +28,10 @@ pub type Overrides = BTreeMap<String, String>;
 
 pub const FILE_FORMAT: &str = "darkburn-hotkeys";
 pub const FILE_EXTENSION: &str = "dbhk";
+/// Added to a command id for its second key.
+pub const SECOND: &str = "#2";
+/// Key text of a number pad key pressed with NumLock off ("Numpad8").
+pub const NUMPAD: &str = "Numpad";
 
 thread_local! {
     // One snapshot per thread that draws an app (see `options::get`).
@@ -32,14 +48,16 @@ pub fn publish(o: &Overrides) {
     });
 }
 
-/// The key text now bound to command `c` (its default unless changed).
+/// The key text now bound to command `c` (its default unless changed). Menus and tooltips show
+/// the first key only.
 pub fn key_for(c: &Cmd) -> String {
     CURRENT.with(|o| key_in(&o.borrow(), c.id, default_key(c)))
 }
 
 /// Keys of commands whose registry entry (in another module) has none: the laser keys that
-/// LightBurn has (Pause, Ctrl+Break) and the jog keys. egui cannot tell the numpad from the
-/// digit row, so the jog keys are Ctrl+Alt+arrows.
+/// LightBurn has (Pause, Ctrl+Break) and the jog keys. The arrow keys with Ctrl+Alt jog X and Y,
+/// Ctrl+Alt with the keys of the number pad's corners (Home, PgUp, End, PgDn) jog diagonally, and
+/// Ctrl+Alt+] and Ctrl+Alt+[ jog Z.
 const EXTRA_DEFAULTS: &[(&str, &str)] = &[
     ("job.pause", "Pause"),
     ("job.stop", "Ctrl+Pause"),
@@ -47,6 +65,26 @@ const EXTRA_DEFAULTS: &[(&str, &str)] = &[
     ("laser.jog_right", "Ctrl+Alt+Right"),
     ("laser.jog_up", "Ctrl+Alt+Up"),
     ("laser.jog_down", "Ctrl+Alt+Down"),
+    ("laser.jog_up_left", "Ctrl+Alt+Home"),
+    ("laser.jog_up_right", "Ctrl+Alt+PgUp"),
+    ("laser.jog_down_left", "Ctrl+Alt+End"),
+    ("laser.jog_down_right", "Ctrl+Alt+PgDn"),
+    ("laser.jog_z_up", "Ctrl+Alt+]"),
+    ("laser.jog_z_down", "Ctrl+Alt+["),
+];
+
+/// Default second keys: F2 starts the job [KEY-01], and the number pad (NumLock off) jogs the
+/// way its keys point [KEY-03]. 5 has nothing; + and - are zoom.
+const SECOND_DEFAULTS: &[(&str, &str)] = &[
+    ("job.start", "F2"),
+    ("laser.jog_up", "Numpad8"),
+    ("laser.jog_down", "Numpad2"),
+    ("laser.jog_left", "Numpad4"),
+    ("laser.jog_right", "Numpad6"),
+    ("laser.jog_up_left", "Numpad7"),
+    ("laser.jog_up_right", "Numpad9"),
+    ("laser.jog_down_left", "Numpad1"),
+    ("laser.jog_down_right", "Numpad3"),
 ];
 
 /// The default key of a command.
@@ -55,6 +93,11 @@ pub fn default_key(c: &Cmd) -> &'static str {
         return c.key;
     }
     EXTRA_DEFAULTS.iter().find(|(id, _)| *id == c.id).map_or("", |(_, k)| k)
+}
+
+/// The default second key of command `id`.
+pub fn second_default(id: &str) -> &'static str {
+    SECOND_DEFAULTS.iter().find(|(i, _)| *i == id).map_or("", |(_, k)| k)
 }
 
 /// The key text for `id` given overrides and the default.
@@ -67,29 +110,124 @@ pub fn bindable() -> Vec<(&'static str, &'static str, &'static str)> {
     commands::registry().iter().filter(|c| c.args.is_empty()).map(|c| (c.id, c.label, default_key(c))).collect()
 }
 
-/// The effective key of each bindable command (empty when it has none).
+/// A place for one key of a command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    /// The command id for the first key, the command id + [`SECOND`] for the second.
+    pub id: &'static str,
+    pub cmd: &'static str,
+    pub default: &'static str,
+}
+
+/// Both slots of every bindable command, first then second.
+pub fn slots() -> &'static [Slot] {
+    static ALL: OnceLock<Vec<Slot>> = OnceLock::new();
+    ALL.get_or_init(|| {
+        let mut v = Vec::new();
+        for (id, _, default) in bindable() {
+            v.push(Slot { id, cmd: id, default });
+            // Made once per command for the life of the program.
+            let second: &'static str = Box::leak(format!("{id}{SECOND}").into_boxed_str());
+            v.push(Slot { id: second, cmd: id, default: second_default(id) });
+        }
+        v
+    })
+}
+
+/// The slot with id `id`.
+pub fn slot(id: &str) -> Option<Slot> {
+    slots().iter().find(|s| s.id == id).copied()
+}
+
+/// The slot id of command `cmd`'s second key.
+pub fn second_of(cmd: &str) -> String {
+    format!("{cmd}{SECOND}")
+}
+
+/// The command a slot id belongs to.
+pub fn command_of(id: &str) -> &str {
+    id.strip_suffix(SECOND).unwrap_or(id)
+}
+
+/// What a key text means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binding {
+    /// A key with its modifiers, matched on the logical key.
+    Keys(KeyboardShortcut),
+    /// A number pad digit pressed with NumLock off (the physical key; see the module notes).
+    Numpad(Key),
+}
+
+/// Parse a key text: what the command table writes, or `Numpad0` to `Numpad9`.
+pub fn parse_binding(text: &str) -> Option<Binding> {
+    if let Some(digit) = text.strip_prefix(NUMPAD) {
+        return Some(digit).filter(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit()).and_then(Key::from_name).map(Binding::Numpad);
+    }
+    commands::parse_key(text).map(Binding::Keys)
+}
+
+/// The physical number pad key of a key event, when the logical key shows NumLock is off (it
+/// is then an arrow, Home, PgUp, End or PgDn, not the digit).
+pub fn numpad_key(key: Key, physical: Option<Key>) -> Option<Key> {
+    const DIGITS: [Key; 10] = [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9];
+    physical.filter(|p| DIGITS.contains(p) && !DIGITS.contains(&key))
+}
+
+/// The key text of a number pad key ([`numpad_key`]).
+pub fn numpad_text(key: Key) -> String {
+    format!("{NUMPAD}{}", key.name())
+}
+
+/// The effective key of each slot: every first key (empty when it has none) and the second keys
+/// that are set or were changed.
 pub fn effective(o: &Overrides) -> BTreeMap<&'static str, String> {
-    bindable().into_iter().map(|(id, _, default)| (id, key_in(o, id, default))).collect()
+    slots()
+        .iter()
+        .filter_map(|s| {
+            let key = key_in(o, s.id, s.default);
+            (s.id == s.cmd || !key.is_empty() || o.contains_key(s.id)).then_some((s.id, key))
+        })
+        .collect()
 }
 
 /// Shortcut table for the key handler: commands with a key, those with more modifiers first so
-/// Ctrl+Shift+Z is not taken for Ctrl+Z.
+/// Ctrl+Shift+Z is not taken for Ctrl+Z. Number pad keys are in [`numpad_table`].
 pub fn table(o: &Overrides) -> Vec<(KeyboardShortcut, &'static str)> {
-    let mut v: Vec<_> = effective(o).into_iter().filter_map(|(id, key)| commands::parse_key(&key).map(|k| (k, id))).collect();
+    let mut v: Vec<_> = effective(o)
+        .into_iter()
+        .filter_map(|(id, key)| match parse_binding(&key) {
+            Some(Binding::Keys(k)) => slot(id).map(|s| (k, s.cmd)),
+            _ => None,
+        })
+        .collect();
     let weight = |k: &KeyboardShortcut| k.modifiers.command as u8 + k.modifiers.shift as u8 + k.modifiers.alt as u8;
     v.sort_by_key(|(k, id)| (std::cmp::Reverse(weight(k)), *id));
     v
 }
 
-/// Keys bound to more than one command: (key text, the commands).
+/// The number pad keys (NumLock off) and their commands.
+pub fn numpad_table(o: &Overrides) -> Vec<(Key, &'static str)> {
+    effective(o)
+        .into_iter()
+        .filter_map(|(id, key)| match parse_binding(&key) {
+            Some(Binding::Numpad(k)) => slot(id).map(|s| (k, s.cmd)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Keys bound to more than one slot: (key text, the slot ids).
 pub fn conflicts(o: &Overrides) -> Vec<(String, Vec<&'static str>)> {
+    let eff = effective(o);
     let mut by_key: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
-    for (id, key) in effective(o) {
-        if let Some(k) = commands::parse_key(&key) {
-            by_key.entry(format!("{:?}", (k.modifiers, k.logical_key))).or_default().push(id);
+    for (id, key) in &eff {
+        match parse_binding(key) {
+            Some(Binding::Keys(k)) => by_key.entry(format!("{:?}", (k.modifiers, k.logical_key))).or_default().push(id),
+            Some(Binding::Numpad(k)) => by_key.entry(format!("numpad {k:?}")).or_default().push(id),
+            None => {}
         }
     }
-    by_key.into_values().filter(|ids| ids.len() > 1).map(|ids| (effective(o)[ids[0]].clone(), ids)).collect()
+    by_key.into_values().filter(|ids| ids.len() > 1).map(|ids| (eff[ids[0]].clone(), ids)).collect()
 }
 
 /// Why an assignment was refused.
@@ -97,23 +235,23 @@ pub fn conflicts(o: &Overrides) -> Vec<(String, Vec<&'static str>)> {
 pub enum Refused {
     UnknownCommand,
     BadKey,
-    /// Another command (id) already has this key.
+    /// Another slot (id) already has this key.
     Taken(&'static str),
 }
 
-/// The command that already uses `key`, ignoring `except`.
+/// The slot that already uses `key`, ignoring `except`.
 pub fn owner_of(o: &Overrides, key: &str, except: &str) -> Option<&'static str> {
-    let want = commands::parse_key(key)?;
-    effective(o).into_iter().find(|(id, k)| *id != except && commands::parse_key(k) == Some(want)).map(|(id, _)| id)
+    let want = parse_binding(key)?;
+    effective(o).into_iter().find(|(id, k)| *id != except && parse_binding(k) == Some(want)).map(|(id, _)| id)
 }
 
-/// Give command `id` the key `key` ("" clears it). Without `take`, a key another command uses is
-/// refused; with it, the other command loses the key.
+/// Give slot `id` (a command id, or a command id + [`SECOND`]) the key `key` ("" clears it).
+/// Without `take`, a key another slot uses is refused; with it, the other slot loses the key.
 pub fn assign(o: &mut Overrides, id: &str, key: &str, take: bool) -> Result<(), Refused> {
-    let Some((_, _, default)) = bindable().into_iter().find(|(i, _, _)| *i == id) else {
+    let Some(s) = slot(id) else {
         return Err(Refused::UnknownCommand);
     };
-    if !key.is_empty() && commands::parse_key(key).is_none() {
+    if !key.is_empty() && parse_binding(key).is_none() {
         return Err(Refused::BadKey);
     }
     if !key.is_empty()
@@ -124,7 +262,7 @@ pub fn assign(o: &mut Overrides, id: &str, key: &str, take: bool) -> Result<(), 
         }
         o.insert(other.to_string(), String::new());
     }
-    if key == default {
+    if key == s.default {
         o.remove(id);
     } else {
         o.insert(id.to_string(), key.to_string());
@@ -132,9 +270,12 @@ pub fn assign(o: &mut Overrides, id: &str, key: &str, take: bool) -> Result<(), 
     Ok(())
 }
 
-/// Back to the default key of `id`.
+/// Back to the default key: a command id resets both its keys, a second-key id only that one.
 pub fn reset(o: &mut Overrides, id: &str) {
     o.remove(id);
+    if !id.ends_with(SECOND) {
+        o.remove(&second_of(id));
+    }
 }
 
 /// The text of a key press, as the command table writes it (`Ctrl+Shift+Z`, `Del`, `PgUp`).
@@ -159,6 +300,8 @@ pub fn key_text(m: Modifiers, key: Key) -> String {
         Key::Minus => "-",
         Key::Plus => "+",
         Key::Backtick => "`",
+        Key::OpenBracket => "[",
+        Key::CloseBracket => "]",
         other => other.name(),
     };
     s
@@ -171,7 +314,7 @@ struct File {
     keys: BTreeMap<String, String>,
 }
 
-/// A `.dbhk` file holding the effective key of every command.
+/// A `.dbhk` file holding the effective key of every command (and the second keys in use).
 pub fn to_file(o: &Overrides) -> String {
     let keys = effective(o).into_iter().map(|(id, k)| (id.to_string(), k)).collect();
     serde_json::to_string_pretty(&File { format: FILE_FORMAT.into(), version: 1, keys }).unwrap_or_default()
@@ -186,12 +329,11 @@ pub fn from_file(text: &str) -> Result<Overrides, String> {
     let mut o = Overrides::new();
     for (id, key) in f.keys {
         // Commands this version does not know are skipped, so files travel between versions.
-        if bindable().iter().any(|(i, _, _)| *i == id) {
-            if !key.is_empty() && commands::parse_key(&key).is_none() {
+        if let Some(s) = slot(&id) {
+            if !key.is_empty() && parse_binding(&key).is_none() {
                 return Err(format!("{}: {key}", tr("hotkeys.bad_key", "Not a key")));
             }
-            let default = bindable().into_iter().find(|(i, _, _)| *i == id).map(|(_, _, d)| d).unwrap_or("");
-            if key != default {
+            if key != s.default {
                 o.insert(id, key);
             }
         }
@@ -263,9 +405,99 @@ mod tests {
     }
 
     #[test]
+    fn f2_is_a_second_start_key_and_menus_keep_the_first() {
+        let o = Overrides::new();
+        let start = commands::lookup("job.start").unwrap();
+        assert_eq!(effective(&o)["job.start#2"], "F2");
+        let f2 = commands::parse_key("F2").unwrap();
+        let alt_s = commands::parse_key("Alt+S").unwrap();
+        let t = table(&o);
+        assert!(t.contains(&(f2, "job.start")), "F2 runs the command itself, not a slot");
+        assert!(t.contains(&(alt_s, "job.start")));
+        publish(&o);
+        assert_eq!(key_for(start), "Alt+S", "menus and tooltips show the first key");
+    }
+
+    #[test]
+    fn second_keys_are_set_cleared_and_reset_on_their_own() {
+        let mut o = Overrides::new();
+        assign(&mut o, "edit.undo#2", "Ctrl+Alt+Z", false).unwrap();
+        assert!(table(&o).contains(&(commands::parse_key("Ctrl+Alt+Z").unwrap(), "edit.undo")));
+        assert!(table(&o).contains(&(commands::parse_key("Ctrl+Z").unwrap(), "edit.undo")), "the first key still works");
+        // A second key can clash with a first key and take it over.
+        assert_eq!(assign(&mut o, "edit.redo#2", "Ctrl+Z", false), Err(Refused::Taken("edit.undo")));
+        assert_eq!(assign(&mut o, "job.frame#2", "F2", false), Err(Refused::Taken("job.start#2")));
+        assign(&mut o, "job.start#2", "", false).unwrap();
+        assert!(!table(&o).iter().any(|(k, _)| commands::parse_key("F2") == Some(*k)), "a cleared second key does nothing");
+        // A cleared default second key survives a file.
+        assert_eq!(from_file(&to_file(&o)).unwrap(), o);
+        reset(&mut o, "job.start#2");
+        assert_eq!(effective(&o)["job.start#2"], "F2");
+        assign(&mut o, "edit.undo", "Ctrl+U", false).unwrap();
+        reset(&mut o, "edit.undo");
+        assert!(o.is_empty(), "resetting a command resets both its keys: {o:?}");
+        assert_eq!(assign(&mut o, "edit.undo#3", "F7", false), Err(Refused::UnknownCommand));
+    }
+
+    #[test]
+    fn number_pad_keys_are_bindings_of_their_own() {
+        assert_eq!(parse_binding("Numpad8"), Some(Binding::Numpad(Key::Num8)));
+        assert_eq!(parse_binding("8"), Some(Binding::Keys(KeyboardShortcut::new(Modifiers::NONE, Key::Num8))));
+        assert_eq!(parse_binding("Numpad"), None);
+        assert_eq!(parse_binding("Numpad12"), None);
+        assert_eq!(parse_binding("NumpadA"), None);
+        // NumLock off: an arrow with the physical key of a pad digit. NumLock on, or the digit
+        // row: the digit itself, which is not a number pad key.
+        assert_eq!(numpad_key(Key::ArrowUp, Some(Key::Num8)), Some(Key::Num8));
+        assert_eq!(numpad_key(Key::Home, Some(Key::Num7)), Some(Key::Num7));
+        assert_eq!(numpad_key(Key::Num8, Some(Key::Num8)), None);
+        assert_eq!(numpad_key(Key::ArrowUp, Some(Key::ArrowUp)), None);
+        assert_eq!(numpad_key(Key::ArrowUp, None), None);
+        assert_eq!(numpad_text(Key::Num8), "Numpad8");
+        let pad = numpad_table(&Overrides::new());
+        for (key, id) in [
+            (Key::Num8, "laser.jog_up"),
+            (Key::Num2, "laser.jog_down"),
+            (Key::Num4, "laser.jog_left"),
+            (Key::Num6, "laser.jog_right"),
+            (Key::Num7, "laser.jog_up_left"),
+            (Key::Num9, "laser.jog_up_right"),
+            (Key::Num1, "laser.jog_down_left"),
+            (Key::Num3, "laser.jog_down_right"),
+        ] {
+            assert!(pad.contains(&(key, id)), "{key:?} {id}");
+        }
+        assert_eq!(pad.len(), 8);
+        assert!(!table(&Overrides::new()).iter().any(|(k, _)| k.logical_key == Key::Num8 && !k.modifiers.any()), "a pad key is not the digit 8");
+        // A number pad key can be moved like any other.
+        let mut o = Overrides::new();
+        assert_eq!(assign(&mut o, "laser.jog_up", "Numpad8", false), Err(Refused::Taken("laser.jog_up#2")));
+        assign(&mut o, "laser.jog_up#2", "Numpad5", false).unwrap();
+        assert!(numpad_table(&o).contains(&(Key::Num5, "laser.jog_up")));
+        assert_eq!(from_file(&to_file(&o)).unwrap(), o);
+    }
+
+    #[test]
+    fn z_and_diagonal_jog_keys_have_defaults() {
+        let o = Overrides::new();
+        let e = effective(&o);
+        for (id, key) in [
+            ("laser.jog_up_left", "Ctrl+Alt+Home"),
+            ("laser.jog_up_right", "Ctrl+Alt+PgUp"),
+            ("laser.jog_down_left", "Ctrl+Alt+End"),
+            ("laser.jog_down_right", "Ctrl+Alt+PgDn"),
+            ("laser.jog_z_up", "Ctrl+Alt+]"),
+            ("laser.jog_z_down", "Ctrl+Alt+["),
+        ] {
+            assert_eq!(e[id], key, "{id}");
+            assert!(table(&o).contains(&(commands::parse_key(key).unwrap(), id)), "{id}");
+        }
+    }
+
+    #[test]
     fn hotkey_files_round_trip() {
         let mut o = Overrides::new();
-        assign(&mut o, "file.save", "F2", false).unwrap();
+        assign(&mut o, "file.save", "F8", false).unwrap();
         assign(&mut o, "edit.select_all", "", false).unwrap();
         let text = to_file(&o);
         assert!(text.contains(FILE_FORMAT));

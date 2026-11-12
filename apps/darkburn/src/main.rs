@@ -132,6 +132,8 @@ mod shape_ops;
 mod shape_props;
 mod shape_ui;
 mod shell;
+#[cfg(test)]
+mod shortcut_keys_tests;
 mod sounds;
 mod startup;
 #[cfg(test)]

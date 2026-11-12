@@ -272,6 +272,9 @@ impl DarkBurn {
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return None;
         }
+        if let Some(id) = crate::key_cmds::numpad_command(self, ctx) {
+            return Some(id);
+        }
         let over_window = crate::escape::window_open(ctx);
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
             // A plain key pressed over a dialog or a menu is the dialog's: Delete or a letter must

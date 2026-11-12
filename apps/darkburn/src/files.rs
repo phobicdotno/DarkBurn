@@ -744,6 +744,7 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
     if let Some(path) = app.files.restore.clone() {
         let (_, action) = ui_kit::Window::new(egui::Id::unique("db_restore"), "open", "Restore auto-saved project?")
             .actions("Restore", "Discard", None)
+            .answer_keys(ui_kit::AnswerKeys::YesNo)
             .required()
             .show(ctx, true, |ui| {
                 ui.label("DarkBurn did not close properly last time. An auto-saved copy of the project you were working on was found.");

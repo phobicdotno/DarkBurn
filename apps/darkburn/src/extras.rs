@@ -337,6 +337,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if app.extras.hotkeys.open {
         capture_key(ctx, app);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_hotkeys"), "settings", &tr("hotkeys.title", "Edit Hotkeys"))
+            .cards(2.7)
             .fields()
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {
@@ -358,7 +359,7 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
     let Some(cmd) = app.extras.hotkeys.capturing.clone() else { return };
     let pressed = ctx.input_mut(|i| {
         let found = i.events.iter().find_map(|e| match e {
-            egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } => Some((*key, *modifiers)),
+            egui::Event::Key { key, physical_key, pressed: true, modifiers, repeat: false } => Some((*key, *physical_key, *modifiers)),
             _ => None,
         });
         if found.is_some() {
@@ -366,13 +367,17 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
         }
         found
     });
-    let Some((key, mods)) = pressed else { return };
+    let Some((key, physical, mods)) = pressed else { return };
     let hk = &mut app.extras.hotkeys;
     if key == egui::Key::Escape && !mods.any() {
         hk.capturing = None;
         return;
     }
-    let text = keymap::key_text(mods, key);
+    // A number pad key (NumLock off) is kept as that key, so it does not take the arrow's place.
+    let text = match keymap::numpad_key(key, physical) {
+        Some(pad) if !mods.command && !mods.alt => keymap::numpad_text(pad),
+        _ => keymap::key_text(mods, key),
+    };
     match keymap::assign(&mut app.prefs.hotkeys, &cmd, &text, false) {
         Ok(()) => {
             hk.status = text;
@@ -387,9 +392,38 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
     }
 }
 
+/// Width of a key column in the hotkey editor.
+const KEY_CELL: f32 = 120.0;
+
+/// One key of a command in the hotkey editor: click it, then press the key; right-click removes
+/// just this key.
+fn key_cell(ui: &mut Ui, app: &mut DarkBurn, slot: &str, default: &str) {
+    let key = keymap::key_in(&app.prefs.hotkeys, slot, default);
+    let waiting = app.extras.hotkeys.capturing.as_deref() == Some(slot);
+    let text = if waiting {
+        tr("hotkeys.press", "Press a key...")
+    } else if key.is_empty() {
+        tr("hotkeys.none", "none")
+    } else {
+        key
+    };
+    ui.allocate_ui_with_layout(egui::vec2(KEY_CELL, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(KEY_CELL);
+        let r = ui_kit::button(ui, text, ui_kit::Button::Small)
+            .backing_on_hover_text(tr("hotkeys.key_tip", "Click, then press the new key. Esc cancels. Right-click removes the key."));
+        if r.clicked() {
+            app.extras.hotkeys.capturing = Some(slot.to_string());
+            app.extras.hotkeys.conflict = None;
+        }
+        if r.secondary_clicked() {
+            let _ = keymap::assign(&mut app.prefs.hotkeys, slot, "", false);
+        }
+    });
+}
+
 fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
-    ui.set_min_width(560.0);
+    ui.set_min_width(660.0);
     let search = tr("hotkeys.search", "Search commands");
     ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &search));
     ui.add_space(t.space_6);
@@ -398,7 +432,10 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
         ui_kit::status_line(ui, &format!("{key}: {} ({})", tr("hotkeys.clash", "used by several commands"), ids.join(", ")), ui_kit::StatusTone::Dim);
     }
     if let Some((cmd, key, other)) = app.extras.hotkeys.conflict.clone() {
-        let name = |id: &str| keymap::bindable().into_iter().find(|(i, _, _)| *i == id).map(|(_, l, _)| l.to_string()).unwrap_or_default();
+        let name = |id: &str| {
+            let cmd = keymap::command_of(id);
+            crate::commands::find(cmd).map(i18n::cmd_label).unwrap_or_else(|| cmd.to_string())
+        };
         ui_kit::status_line(ui, &format!("{key} {} \"{}\".", tr("hotkeys.taken_by", "is already used by"), name(other)), ui_kit::StatusTone::Dim);
         ui.horizontal(|ui| {
             if ui_kit::button(ui, tr("hotkeys.take", "Take the key"), ui_kit::Button::Small).clicked() {
@@ -411,6 +448,14 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
         });
     }
     let filter = app.extras.hotkeys.filter.to_lowercase();
+    ui.horizontal(|ui| {
+        let head = |ui: &mut Ui, w: f32, text: String| {
+            ui.add_sized([w, 18.0], egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).truncate());
+        };
+        head(ui, 250.0, tr("hotkeys.command", "Command"));
+        head(ui, KEY_CELL, tr("hotkeys.key", "Key"));
+        head(ui, KEY_CELL, tr("hotkeys.second", "Second key"));
+    });
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
         for (id, label, default) in keymap::bindable() {
             let cmd = crate::commands::find(id);
@@ -418,31 +463,19 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             if !filter.is_empty() && !shown.to_lowercase().contains(&filter) && !id.contains(&filter) {
                 continue;
             }
-            let key = keymap::key_in(&app.prefs.hotkeys, id, default);
-            let waiting = app.extras.hotkeys.capturing.as_deref() == Some(id);
+            let second = keymap::second_of(id);
             ui.horizontal(|ui| {
                 ui.add_sized([250.0, 22.0], egui::Label::new(shown).truncate());
-                let text = if waiting {
-                    tr("hotkeys.press", "Press a key...")
-                } else if key.is_empty() {
-                    tr("hotkeys.none", "none")
-                } else {
-                    key.clone()
-                };
-                if ui_kit::button(ui, text, ui_kit::Button::Small)
-                    .backing_on_hover_text(tr("hotkeys.set_tip", "Click, then press the new key. Esc cancels."))
-                    .clicked()
-                {
-                    app.extras.hotkeys.capturing = Some(id.to_string());
-                    app.extras.hotkeys.conflict = None;
-                }
+                key_cell(ui, app, id, default);
+                key_cell(ui, app, &second, keymap::second_default(id));
                 if ui_kit::button(ui, tr("hotkeys.clear", "Clear"), ui_kit::Button::Small).clicked() {
                     let _ = keymap::assign(&mut app.prefs.hotkeys, id, "", false);
+                    let _ = keymap::assign(&mut app.prefs.hotkeys, &second, "", false);
                 }
-                let changed = app.prefs.hotkeys.contains_key(id);
+                let changed = app.prefs.hotkeys.contains_key(id) || app.prefs.hotkeys.contains_key(&second);
+                let defaults = [default, keymap::second_default(id)].into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(", ");
                 ui.add_enabled_ui(changed, |ui| {
-                    if ui_kit::button(ui, tr("hotkeys.reset", "Default"), ui_kit::Button::Small).backing_on_hover_text(default.to_string()).clicked()
-                    {
+                    if ui_kit::button(ui, tr("hotkeys.reset", "Default"), ui_kit::Button::Small).backing_on_hover_text(defaults).clicked() {
                         keymap::reset(&mut app.prefs.hotkeys, id);
                     }
                 });

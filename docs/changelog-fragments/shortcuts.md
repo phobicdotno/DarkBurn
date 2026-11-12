@@ -1,0 +1,5 @@
+- New: F2 starts the job too
+- New: every command can have a second key in the hotkey editor
+- New: keys to jog Z and diagonally
+- New: number pad jogs the laser (with NumLock off)
+- New: Y and N answer yes/no questions

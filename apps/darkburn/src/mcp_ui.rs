@@ -219,8 +219,10 @@ impl Host {
                     }
                 });
             });
-        // Escape refuses, like Cancel. Nothing on the keyboard confirms.
-        if answer.is_none() && crate::escape::closes(ctx, window) {
+        // Escape and N refuse, like Cancel. Nothing on the keyboard confirms.
+        if answer.is_none()
+            && (crate::escape::closes(ctx, window) || ui_kit::answer_key(ctx, ui_kit::AnswerKeys::NoOnly, false) == ui_kit::Action::Cancel)
+        {
             answer = Some(false);
         }
         if let Some(yes) = answer {

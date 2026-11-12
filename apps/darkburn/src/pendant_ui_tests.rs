@@ -212,7 +212,21 @@ fn start_and_stop_run_the_job_like_the_buttons() {
     a.prefs.opts.pendant = true;
     pump(&ctx, &mut a, "the receiver", connected);
     tap(&emu, Key::Start);
-    pump(&ctx, &mut a, "the job running", |a| a.machine.handle.snapshot().state.is_working());
+    // Start takes the button's path: the job is planned off the UI thread first.
+    pump(&ctx, &mut a, "the job being planned", |a| a.job.pending.is_some());
+    let result = loop {
+        if let Some((task, _)) = a.job.pending.as_mut()
+            && let Some(r) = task.poll()
+        {
+            break r.clone();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let (_, then) = a.job.pending.take().unwrap();
+    crate::job_cmds::finish(&mut a, result.unwrap(), then);
+    pump(&ctx, &mut a, "the job running", |a| {
+        a.machine.handle.snapshot().state.is_working() || a.machine.job_log.iter().any(|l| l.starts_with("Job"))
+    });
     tap(&emu, Key::Stop);
     pump(&ctx, &mut a, "the job stopped", |a| !a.machine.handle.snapshot().state.is_working());
 }

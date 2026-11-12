@@ -122,6 +122,21 @@ for f in "$out"/*.html "$out"/*.css "$out"/*.js; do
     fi
 done
 
+# The two commands a visitor copies and runs, as the page holds them. They are compared with
+# the lines here letter for letter, and the page has no other <pre>. To change a command,
+# change it here first, and in README.md.
+cat >"$out/.cmds" <<'EOF'
+<pre tabindex="0" role="group" aria-labelledby="cmd-unix"><code>curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh</code></pre>
+<pre tabindex="0" role="group" aria-labelledby="cmd-win"><code>irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex</code></pre>
+EOF
+tr '\n\r\t' '   ' <"$out/index.html" | grep -Eio '<pre[^>]*>([^<]|<[^/]|</[^p])*</pre>|<pre[^>]*>' |
+    grep -Ei '</pre>$|^<pre[^>]*>$' >"$out/.cmds-found" || true
+if ! cmp -s "$out/.cmds" "$out/.cmds-found"; then
+    diff "$out/.cmds" "$out/.cmds-found" >&2 || true
+    die "index.html does not show the two install commands this script knows, or has another <pre> (see the lines above: \"<\" is a line the script knows, \">\" a line the page holds)."
+fi
+rm -f "$out/.cmds" "$out/.cmds-found"
+
 # What this script does not judge: what style.css and site.js do. Both are the page's own
 # files, the policy allows them, and both can change what a visitor reads, the install
 # commands too (a style sheet can hide a line and show another). A change to either is read
@@ -201,7 +216,7 @@ Header set X-Content-Type-Options "nosniff"
 Header set Referrer-Policy "strict-origin-when-cross-origin"
 Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
 Header set Cache-Control "no-cache"
-Header set Strict-Transport-Security "max-age=31536000"
+Header set Strict-Transport-Security "max-age=31536000" "expr=%{HTTP_HOST} =~ /^darkburn\.phobic\.no(:[0-9]+)?$/"
 </FilesMatch>
 <FilesMatch "\.(png|ico)$">
 Header set Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'"
@@ -213,7 +228,9 @@ ErrorDocument 404 /404.html
 <IfModule mod_rewrite.c>
 RewriteEngine On
 RewriteBase /
-RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no(:[0-9]+)?$ [NC]
+RewriteCond %{HTTP:Service-Worker} .
+RewriteRule ^ - [F]
+RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no\.?(:[0-9]+)?$ [NC]
 RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
 RewriteCond %{HTTPS} !=on
 RewriteCond %{HTTP:X-Forwarded-Proto} !=https

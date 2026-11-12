@@ -30,13 +30,19 @@
 #      http, its "not found" page and the folder's address under the main name, and says
 #      what it found.
 #
-# Set once, by hand, at the host: the name darkburn.phobic.no for the folder
-# httpd.www/darkburn, the way the other names under phobic.no are set up there. Until then
-# step 4 says that the page does not answer, and the upload is still fine.
+# Set once, by hand, at the host, before the first upload: the name darkburn.phobic.no for
+# the folder httpd.www/darkburn, the way the other names under phobic.no are set up there.
+# Wait until https://darkburn.phobic.no/ opens without a warning about its certificate (an
+# empty or "forbidden" page is fine), then upload.
+#
+# Only this script uploads. site/ is not the folder that goes up, and a program that leaves
+# out files whose names start with a dot would leave out .htaccess, and with it https and
+# every header.
 #
 # Nothing is removed on the host but the script's own x.new files. A file the page no longer
 # uses stays there, and a page that stays there is still shown at its address, until somebody
-# deletes it by hand. Step 3 names such files.
+# deletes it by hand. Step 3 names such files. A folder .well-known is the host's own (it
+# renews the certificate through it) and is left alone.
 #
 # For a trial on another host or in another folder:
 #   DARKBURN_SITE_HOST   the host
@@ -134,6 +140,8 @@ list=$root/target/site-upload.txt
 files=$root/target/site-files.txt
 log=$root/target/site-log.txt
 seen=$root/target/site-seen.txt
+# Not written through a link that somebody left in their place.
+rm -f "$list" "$files" "$log" "$log.there" "$seen" "$seen.page" "$seen.err"
 # The lists and what the host answered are removed however the script ends.
 trap 'rm -f "$list" "$files" "$log" "$log.there" "$seen" "$seen.page" "$seen.err"' EXIT
 trap 'exit 130' INT
@@ -206,12 +214,18 @@ if [ "$st" -ne 0 ]; then
 fi
 printf 'Uploaded %s files.\n' "$count"
 
+# What the host says (a file name, the address it forwards to) is printed as plain letters
+# only: other bytes can change what a terminal shows.
 note() {
-    printf 'Look at this: %s\n' "$1"
+    printf 'Look at this: %s\n' "$(printf '%s' "$1" | LC_ALL=C tr -c ' -~' '?')"
 }
 
 # What the folder on the host holds that is not part of the page. sftp writes the names with
-# or without the folder in front, depending on its version; both are read.
+# or without the folder in front, depending on its version; both are read. One line of the
+# file for each command sent: more, and a name in the folder holds a line break.
+if [ "$(grep -c '^sftp> ' "$log")" -ne "$(grep -c '' "$list")" ]; then
+    note "a file name in the folder on the host holds a line break, so the list below cannot be trusted. Look at the folder yourself: somebody may want a file not to be seen."
+fi
 awk -v dir="$dir" '
     /^sftp> ls -1a / { cur = substr($0, 14); next }
     /^sftp> / { cur = ""; next }
@@ -225,7 +239,7 @@ awk -v dir="$dir" '
 if [ "$(LC_ALL=C sort "$files" | LC_ALL=C comm -23 - "$log.there" | grep -c '')" -ne 0 ]; then
     printf 'The list of the folder on the host could not be read, so look there yourself for files that are not part of the page.\n'
 else
-    extra=$(LC_ALL=C sort "$files" | LC_ALL=C comm -13 - "$log.there" | grep -vx -e img -e fonts | tr '\n' ' ') || true
+    extra=$(LC_ALL=C sort "$files" | LC_ALL=C comm -13 - "$log.there" | grep -vx -e img -e fonts -e .well-known | tr '\n' ' ') || true
     [ -z "$extra" ] ||
         note "the folder on the host also holds: ${extra% }. That is not part of the page. Delete it there by hand unless it is meant to be there: a page that is left is still shown at its address."
 fi
@@ -274,7 +288,8 @@ case $got in
         done
         case $url in
             https://*)
-                printf '%s\n' "$heads" | grep -qi '^strict-transport-security:' ||
+                # The rules send it under the page's own name only.
+                [ "$url" != "$real_url" ] || printf '%s\n' "$heads" | grep -qi '^strict-transport-security:' ||
                     note "the host does not send Strict-Transport-Security."
                 plain=http://${url#https://}/
                 got=$(ask "$plain")

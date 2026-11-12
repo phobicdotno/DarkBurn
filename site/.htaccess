@@ -21,8 +21,9 @@
     # and the fonts too. A file that has not changed is not sent again.
     Header set Cache-Control "no-cache"
     # A browser that has been here over https never asks over plain http again, for a year.
-    # For this name only: nothing is said about the names beside it.
-    Header set Strict-Transport-Security "max-age=31536000"
+    # Said under the page's own name only: under any other name that shows this folder the
+    # line would bind that name, and the page cannot take that back.
+    Header set Strict-Transport-Security "max-age=31536000" "expr=%{HTTP_HOST} =~ /^darkburn\.phobic\.no(:[0-9]+)?$/"
   </FilesMatch>
   # A picture that is opened by itself is shown by the browser on a page of its own making,
   # which carries style of its own. The policy above would refuse that style, and the picture
@@ -47,10 +48,15 @@ ErrorDocument 404 /404.html
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+  # A browser marks the request for a script that is to stay behind in it and answer for the
+  # page from then on (a service worker). The page has none, and none is handed out: such a
+  # script would go on answering for the page after a bad site.js was put right.
+  RewriteCond %{HTTP:Service-Worker} .
+  RewriteRule ^ - [F]
   # The host also serves this folder under the main name, as phobic.no/darkburn/. There the
   # page would share everything a browser keeps apart by name with all else on phobic.no. So
   # that address is sent on to the page's own name. Any other name (a trial) is left alone.
-  RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no(:[0-9]+)?$ [NC]
+  RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no\.?(:[0-9]+)?$ [NC]
   RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
   # Plain http is sent to https first, so the page and the install commands it shows always
   # arrive encrypted.

@@ -310,6 +310,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if app.extras.help_open {
         let topic = help::topic(&app.extras.help_topic);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_help"), "help", &tr("help.title", "Help"))
+            .dockable("db_help")
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {
                 let t = Tokens::get();

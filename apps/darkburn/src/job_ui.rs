@@ -758,6 +758,7 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     let names: Vec<String> = app.job.presets.iter().map(|q| q.name.clone()).collect();
     let mut name = app.job.preset_name.clone();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_material"), "db_material_test", "Material Test")
+        .dockable("db_material_test")
         .fields()
         .cards(3.4)
         .actions("Generate", "Close", None)

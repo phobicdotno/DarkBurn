@@ -1294,8 +1294,7 @@ impl<'a> Window<'a> {
                         .auto_shrink([false, false])
                         .show(ui, body);
                 } else if self.body_padding {
-                    let height =
-                        (dimension(ui.ctx().content_rect().height()) - t.form_header_height - t.form_footer_height - t.space_24 * 2.0).max(0.0);
+                    let height = (dimension(room_height(ui.ctx())) - t.form_header_height - t.form_footer_height - t.space_24 * 2.0).max(0.0);
                     // Offer the body all the room the screen leaves, not just the height the card
                     // had last frame: a card first laid out on a tiny page (a browser canvas not
                     // sized yet) would otherwise keep a body of no height, its buttons hidden (#9472).
@@ -1617,6 +1616,12 @@ impl Window<'_> {
     }
 }
 
+/// The height a card in the main window can have: the screen's, less the main window's resize
+/// border at the top and the bottom, which a floating card keeps clear of.
+fn room_height(ctx: &egui::Context) -> f32 {
+    ctx.content_rect().height() - 2.0 * crate::titlebar::keep_clear_of_border(ctx)
+}
+
 /// The floating card's right edge, bottom edge and corner: dragging one gives the card a size of
 /// its own, remembered under `key`.
 fn resize_grips(ui: &mut Ui, id: egui::Id, key: &str, margin: egui::Vec2) {
@@ -1717,7 +1722,7 @@ fn page_list_sized<S>(
     // The search strip, the gap under it, and the following item spacing sit above the page.
     // They must not eat the rows the page already had, or the graphics checkboxes fall out of view.
     let header_band = if header.is_some() { t.control_height + t.form_gap_y + t.space_8 } else { 0.0 };
-    let height = (dimension(ui.ctx().content_rect().height()) - t.form_header_height - t.form_footer_height - t.space_24 * 3.0)
+    let height = (dimension(room_height(ui.ctx())) - t.form_header_height - t.form_footer_height - t.space_24 * 3.0)
         .clamp(0.0, t.control_height * rows + header_band);
     let (body, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), height), egui::Sense::hover());
     let width = if body.width() + 2.0 * super::NAV_BORDER < WINDOW_PAGES_NARROW_AT {

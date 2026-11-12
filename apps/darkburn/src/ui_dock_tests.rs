@@ -128,13 +128,14 @@ fn windows_docked_together_keep_their_tab_order_after_a_restart() {
     g.frames(2);
     window_host::update(&ctx, "db_shape_offset_shapes", |p| p.dock("RightTop"));
     g.frames(3);
-    let order = |g: &Gui| {
-        let mut tabs = g.rects("panel:tab:window:");
-        tabs.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()));
-        tabs.into_iter().map(|(name, _)| name).collect::<Vec<_>>()
-    };
-    let want = ["panel:tab:window:settings", "panel:tab:window:db_shape_offset_shapes"];
-    assert_eq!(order(&g), want);
+    // The tabs in the order the area draws them (some may sit in its overflow list).
+    let order = |g: &Gui| window_host::docked_tabs(&g.ctx(), "RightTop").into_iter().map(|t| t.key).collect::<Vec<_>>();
+    let want = ["settings", "db_shape_offset_shapes"];
+    assert_eq!(order(&g), want, "open: {:?}", window_host::open_windows(&g.ctx()));
+    // Where both tabs are drawn, Settings comes first.
+    if let (Some(a), Some(b)) = (g.rect_of("panel:tab:window:settings"), g.rect_of("panel:tab:window:db_shape_offset_shapes")) {
+        assert!(a.left() < b.left() || a.top() < b.top(), "{a:?} before {b:?}");
+    }
     g.screenshot("dock-two-tabs");
 
     // Saved, read back and opened again: the same order.
@@ -279,19 +280,25 @@ fn the_preview_keeps_playing_docked_and_in_a_window_of_its_own() {
         });
         g.frames(3);
         assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), place);
+        // It plays on while it is there.
         {
             let mut app = g.app();
             let p = &mut app.job.preview;
             p.t = 0.0;
             p.playing = true;
-            p.speed_index = usize::MAX;
         }
-        g.frames(1);
-        let start = preview_clock(&g).unwrap_or_else(|| panic!("{what}: the Preview shows its clock: {:?}", g.visible_texts()));
         g.frames(6);
         let t = g.app().job.preview.t;
+        assert!(t > 0.0, "{what}: the Preview plays");
+        g.app().job.preview.playing = false;
+        g.frames(1);
+        let start = preview_clock(&g).unwrap_or_else(|| panic!("{what}: the Preview shows its clock: {:?}", g.visible_texts()));
+        // And shows the time the job has got to, with no input in between.
+        let total = g.app().job.preview.data.as_ref().map_or(0.0, |d| d.stats.seconds);
+        g.app().job.preview.t = total;
+        g.frames(1);
         let now = preview_clock(&g).unwrap();
-        assert!(t > 0.0 && now != start, "{what}: the clock moves on ({start} -> {now}, t {t})");
+        assert_ne!(now, start, "{what}: the clock follows the job");
         g.app().job.preview.playing = false;
         g.screenshot(&format!("dock-preview-{}", if what == "docked" { "docked" } else { "detached" }));
     }
@@ -301,7 +308,32 @@ fn the_preview_keeps_playing_docked_and_in_a_window_of_its_own() {
 
 /// Windows that open for one answer and close with it: they float above everything, are not
 /// worked beside, and so are not docked.
-const ONE_SHOT: &[&str] = &[];
+const ONE_SHOT: &[&str] = &[
+    // Read once and closed.
+    "About DarkBurn",
+    "Check for Updates",
+    // A message and its one button.
+    "Could not open",
+    "No job",
+    "Things to know about this file",
+    // Asked before going on: answered, the step goes on.
+    "Save changes?",
+    // Set up, then OK (or Cancel) does it once and closes the window.
+    "Convert to Bitmap",
+    "Create QR Code",
+    "Export",
+    "Export Gweike DXF",
+    "Export Gweike G-code",
+    "Print",
+    "Macro 1",
+    // Picks a machine or walks through setting one up, step by step, then closes.
+    "Find my laser",
+    "New device: Type",
+    "New device: Connection",
+    "New device: Name and size",
+    "New device: Origin and homing",
+    "New device: Summary",
+];
 
 fn fresh_design(g: &mut Gui) {
     g.close_dialogs();

@@ -291,6 +291,7 @@ fn the_preview_keeps_playing_docked_and_in_a_window_of_its_own() {
         let t = g.app().job.preview.t;
         assert!(t > 0.0, "{what}: the Preview plays");
         g.app().job.preview.playing = false;
+        g.app().job.preview.t = 0.0;
         g.frames(1);
         let start = preview_clock(&g).unwrap_or_else(|| panic!("{what}: the Preview shows its clock: {:?}", g.visible_texts()));
         // And shows the time the job has got to, with no input in between.

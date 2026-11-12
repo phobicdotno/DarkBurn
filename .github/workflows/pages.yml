@@ -3,16 +3,32 @@
 # The page is site/. scripts/build-site.sh puts it together with the pictures, the fonts and the
 # icon it shows, and checks it. This workflow hands that folder to GitHub Pages.
 #
-#   A push to main that changes the page or what it shows, or a run by hand
+#   A push to main that changes the page or what it shows, or a run by hand on main
 #   (Actions > pages > Run workflow):
 #     the page is built and published.
-#   A pull request that changes the same files:
-#     the page is built and checked. Nothing is published.
+#   A pull request that changes the same files, or a run by hand on another branch:
+#     the page is built and checked. Nothing is published. This file publishes main only.
 #
-# Three things are set once, by hand. A workflow cannot set them:
-#   Settings > Pages > Build and deployment > Source: GitHub Actions
-#   Settings > Pages > Custom domain: darkburn.phobic.no, then "Enforce HTTPS" once it is offered
-#   In the DNS of phobic.no:  darkburn  CNAME  phobicdotno.github.io.
+# Four things are set once, by hand, in this order. A workflow cannot set them:
+#   1. Settings > Pages > Build and deployment > Source: GitHub Actions.
+#      Then Actions > pages > Run workflow, on main. The page is now at
+#      https://phobicdotno.github.io/DarkBurn/
+#   2. Settings > Pages > Custom domain: darkburn.phobic.no. GitHub checks the DNS at once and
+#      says the check failed: the record is not there yet. Until step 3 has taken effect, the
+#      address of step 1 forwards to a name that does not answer.
+#   3. In the DNS of phobic.no:  darkburn  CNAME  phobicdotno.github.io.
+#   4. Back under Settings > Pages: "Enforce HTTPS", once it is offered (GitHub says up to 24
+#      hours). If the DNS check still shows as failed when the record answers, or the box stays
+#      greyed out: press Remove beside the custom domain, type it again and Save. That starts
+#      the check and the request for the certificate again.
+# The domain is named here before the DNS record exists, and the record is removed again if
+# Pages is ever switched off: a record that points at GitHub while no page claims the name can
+# be claimed by somebody else's page. Verifying phobic.no for the account (the account's own
+# Settings > Pages > Add a domain) closes that door for phobic.no and every name directly
+# under it.
+# After the first publication, look once at Settings > Environments > github-pages >
+# Deployment branches and tags: it should list main and nothing else. That rule, not this file,
+# is what stops a changed copy of this workflow on another branch from publishing.
 # Until Pages is switched on with that source, a run builds and checks the page, says in a
 # notice that nothing was published, and passes.
 name: pages
@@ -43,10 +59,12 @@ on:
 # Nothing by default. Each job asks for what it needs.
 permissions: {}
 
-# One publication at a time, and one that has started is left to finish.
+# One publication at a time, and one that has started is left to finish. A run that does not
+# publish (a pull request, a run by hand on another branch) is in a group of its own, so it
+# never takes the place of a publication that waits.
 concurrency:
-  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: pages-${{ github.ref == 'refs/heads/main' && 'publish' || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 defaults:
   run:
@@ -74,7 +92,7 @@ jobs:
       # source, or with Pages off, publishing would fail, so the run says so and stops here.
       - name: Is GitHub Pages set to publish from workflows
         id: pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -101,7 +119,7 @@ jobs:
   publish:
     name: Publish
     needs: build
-    if: needs.build.outputs.publish == 'true'
+    if: needs.build.outputs.publish == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

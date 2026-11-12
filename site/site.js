@@ -2,6 +2,9 @@
 (function () {
   'use strict';
   var doc = document;
+  /* This file is loaded in the head, so the class is there before anything is drawn.
+     The style sheet folds the section links into a menu only when it is. */
+  doc.documentElement.classList.add('js');
 
   function ready(fn) {
     if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', fn);
@@ -13,7 +16,7 @@
     var btn = doc.querySelector('.navbtn');
     var nav = doc.getElementById('nav');
     if (!btn || !nav) return;
-    btn.hidden = false;
+    var bar = btn.closest('.top');
 
     function set(open) {
       nav.classList.toggle('is-open', open);
@@ -27,12 +30,17 @@
     });
     doc.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && btn.getAttribute('aria-expanded') === 'true') {
+        var inside = bar.contains(doc.activeElement);
         set(false);
-        btn.focus();
+        if (inside) btn.focus();
       }
     });
     doc.addEventListener('click', function (e) {
       if (!e.target.closest('.top')) set(false);
+    });
+    /* The menu closes when the keyboard focus moves on, out of the bar. */
+    bar.addEventListener('focusout', function (e) {
+      if (e.relatedTarget && !bar.contains(e.relatedTarget)) set(false);
     });
   }
 
@@ -69,21 +77,28 @@
       var btn = doc.createElement('button');
       btn.type = 'button';
       btn.className = 'copy';
-      btn.textContent = 'Copy';
-      if (title) btn.setAttribute('aria-label', 'Copy the command for ' + title.textContent);
+      var word = doc.createElement('span');
+      word.textContent = 'Copy';
+      btn.appendChild(word);
+      if (title) {
+        var rest = doc.createElement('span');
+        rest.className = 'vh';
+        rest.textContent = ' the command for ' + title.textContent;
+        btn.appendChild(rest);
+      }
 
       var said = doc.createElement('span');
       said.setAttribute('role', 'status');
-      said.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
+      said.className = 'vh';
 
       var timer;
       function show(label, done) {
-        btn.textContent = label;
+        word.textContent = label;
         btn.classList.toggle('is-done', done);
-        said.textContent = done ? 'Copied' : '';
+        said.textContent = done ? 'Copied' : 'Not copied. The command is selected.';
         clearTimeout(timer);
         timer = setTimeout(function () {
-          btn.textContent = 'Copy';
+          word.textContent = 'Copy';
           btn.classList.remove('is-done');
           said.textContent = '';
         }, 2000);
@@ -135,8 +150,8 @@
     var shots = Array.prototype.slice.call(doc.querySelectorAll('a.shot'));
     var probe = doc.createElement('dialog');
     if (!shots.length || typeof probe.showModal !== 'function' || !window.matchMedia) return;
-    var wide = window.matchMedia('(min-width: 900px)');
-    var box, img, cap, count, at = 0;
+    var wide = window.matchMedia('(min-width: 900px) and (min-height: 600px)');
+    var box, img, cap, count, file, at = 0;
 
     function el(tag, cls, text) {
       var e = doc.createElement(tag);
@@ -157,7 +172,13 @@
       if (!fc) return '';
       var head = fc.querySelector('h3, h4');
       var text = fc.querySelector('p:last-child');
-      if (!head) return fc.textContent.trim();
+      if (!head) {
+        /* The first picture: its caption is plain text, followed by a hint that is for phones only. */
+        var copy = fc.cloneNode(true);
+        var hint = copy.querySelector('.swipe');
+        if (hint) copy.removeChild(hint);
+        return copy.textContent.trim();
+      }
       var name = head.textContent.trim();
       var words = text ? text.textContent.trim() : '';
       return words.indexOf(name) === 0 ? words : name + '. ' + words;
@@ -166,14 +187,18 @@
       at = (i + shots.length) % shots.length;
       var a = shots[at];
       var small = a.querySelector('img');
+      /* The old picture goes before the new one is asked for, so that a slow line never shows
+         one picture over the words of another. */
+      img.removeAttribute('src');
       img.src = a.getAttribute('href');
       img.alt = small ? small.alt : '';
+      file.href = a.getAttribute('href');
       cap.textContent = captionOf(a);
       count.textContent = (at + 1) + ' / ' + shots.length;
     }
     function build() {
       box = el('dialog', 'zoom');
-      box.setAttribute('aria-label', 'Picture at full size');
+      box.setAttribute('aria-label', 'Picture, larger');
       var bar = el('div', 'zoom__bar');
       count = el('p', 'zoom__count');
       count.setAttribute('aria-live', 'polite');
@@ -181,7 +206,9 @@
       img.width = 2880;
       img.height = 1920;
       cap = el('p', 'zoom__cap');
+      file = el('a', 'zoom__btn', 'Open the file');
       bar.appendChild(count);
+      bar.appendChild(file);
       bar.appendChild(button('\u2190', 'Previous picture', function () { show(at - 1); }));
       bar.appendChild(button('\u2192', 'Next picture', function () { show(at + 1); }));
       var close = button('Close', 'Close the picture', function () { box.close(); });
@@ -205,6 +232,9 @@
     shots.forEach(function (a, i) {
       a.addEventListener('click', function (e) {
         if (!wide.matches || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        /* A picture that is already about as large on the page as it would be here opens as the file. */
+        var room = Math.min(window.innerWidth - 32, (window.innerHeight - 150) * 1.5);
+        if (room < a.getBoundingClientRect().width * 1.15) return;
         e.preventDefault();
         if (!box) build();
         show(i);

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
 <title>DarkBurn: design, arrange, preview and burn</title>
 <meta name="description" content="DarkBurn is a desktop program for laser cutters and engravers, written in Rust. Pre-release: it has not yet burned a job on a real machine.">
 <link rel="canonical" href="https://darkburn.phobic.no/">
@@ -23,8 +24,7 @@
 <link rel="apple-touch-icon" href="icon-256.png">
 <link rel="preload" href="fonts/IBMPlexSans-Variable.ttf" as="font" type="font/ttf" crossorigin>
 <link rel="stylesheet" href="style.css">
-<script>document.documentElement.className = 'js';</script>
-<script src="site.js" defer></script>
+<script src="site.js"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to the content</a>
@@ -35,7 +35,7 @@
       <img src="icon.svg" width="30" height="30" alt="" decoding="async">
       <span>DarkBurn</span>
     </a>
-    <button class="navbtn" type="button" aria-expanded="false" aria-controls="nav" hidden>
+    <button class="navbtn" type="button" aria-expanded="false" aria-controls="nav">
       <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 6h14M3 10h14M3 14h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       <span>Menu</span>
     </button>
@@ -74,7 +74,7 @@
     </aside>
   </div>
   <figure class="hero__shot">
-    <a class="shot shot--l" href="img/hero.png" aria-label="The main window: open the full-size picture" aria-describedby="pic-hero">
+    <a class="shot shot--l" href="img/hero.png" aria-label="The main window: open the picture larger" aria-describedby="pic-hero">
       <img id="pic-hero" src="img/hero.png" width="2880" height="1920" fetchpriority="high" alt="DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.">
     </a>
     <figcaption>A workshop sign, four key tags, a gear and a QR code on five layers: one scores, two engrave, two cut. <span class="swipe">Swipe a picture sideways to see the rest of the window.</span></figcaption>
@@ -129,10 +129,11 @@
     <div class="shead">
       <h2 id="look-title">A look around</h2>
       <p class="lead">Every screenshot on this page is DarkBurn drawing itself in its headless test harness, with the built-in GRBL simulator as the machine.</p>
+      <p class="swipe">Swipe a picture sideways to see the rest of the window.</p>
     </div>
 
     <figure class="tour">
-      <a class="shot shot--l" href="img/geometry.png" aria-label="Shape tools: open the full-size picture" aria-describedby="pic-geometry">
+      <a class="shot shot--l" href="img/geometry.png" aria-label="Shape tools: open the picture larger" aria-describedby="pic-geometry">
         <img id="pic-geometry" src="img/geometry.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Modify tab with Offset, Weld, Boolean, Array and Round Corners buttons. On the canvas: a rosette of twelve petals inside a double ring, a bottle-opener outline with two holes, a honeycomb of hexagons, and a curve with one node selected and its two handles showing. The layer list names four layers.">
       </a>
       <figcaption>
@@ -143,7 +144,7 @@
     </figure>
 
     <figure class="tour tour--flip">
-      <a class="shot shot--r" href="img/image-engraving.png" aria-label="Photo engraving: open the full-size picture" aria-describedby="pic-image-engraving">
+      <a class="shot shot--r" href="img/image-engraving.png" aria-label="Photo engraving: open the picture larger" aria-describedby="pic-image-engraving">
         <img id="pic-image-engraving" src="img/image-engraving.png" width="2880" height="1920" loading="lazy" decoding="async" alt="A grey landscape picture on the canvas drawn as black and white dither dots, with the Adjust Image window beside it: brightness, contrast, gamma, enhance, image mode Jarvis, DPI, two presets, and a before and after preview with the original above the dots.">
       </a>
       <figcaption>
@@ -154,7 +155,7 @@
     </figure>
 
     <figure class="tour">
-      <a class="shot shot--l" href="img/preview.png" aria-label="The Preview: open the full-size picture" aria-describedby="pic-preview">
+      <a class="shot shot--l" href="img/preview.png" aria-label="The Preview: open the picture larger" aria-describedby="pic-preview">
         <img id="pic-preview" src="img/preview.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Preview window over the main window: the job drawn on a white bed, part of it already traced, the travel moves shown, and an estimated time.">
       </a>
       <figcaption>
@@ -165,7 +166,7 @@
     </figure>
 
     <figure class="tour tour--flip">
-      <a class="shot shot--r" href="img/machines.png" aria-label="Running a job: open the full-size picture" aria-describedby="pic-machines">
+      <a class="shot shot--r" href="img/machines.png" aria-label="Running a job: open the picture larger" aria-describedby="pic-machines">
         <img id="pic-machines" src="img/machines.png" width="2880" height="1920" loading="lazy" decoding="async" alt="DarkBurn connected to the GRBL simulator while a job with a coaster and a bottle opener runs. The Move panel on the left shows jog arrows and the head position, the Console on the right lists G-code lines as they are sent, and the Laser panel shows Busy, a progress bar about a third full, and elapsed and remaining time.">
       </a>
       <figcaption>
@@ -178,7 +179,7 @@
     <h3 class="subhead">More pictures</h3>
     <div class="more-shots">
       <figure class="mini">
-        <a class="shot" href="img/variable-text.png" aria-label="Text and codes: open the full-size picture" aria-describedby="pic-variable-text">
+        <a class="shot" href="img/variable-text.png" aria-label="Text and codes: open the picture larger" aria-describedby="pic-variable-text">
           <img id="pic-variable-text" src="img/variable-text.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Text tab and the Variable Text panel. The canvas shows an asset plate that reads WORKSHOP ASSET, Tag no. 0042, a date and the engraving speed and power, with a Code 128 barcode, a Data Matrix and a QR code.">
         </a>
         <figcaption>
@@ -187,7 +188,7 @@
         </figcaption>
       </figure>
       <figure class="mini">
-        <a class="shot" href="img/cut-settings.png" aria-label="Cut settings and the material test: open the full-size picture" aria-describedby="pic-cut-settings">
+        <a class="shot" href="img/cut-settings.png" aria-label="Cut settings and the material test: open the picture larger" aria-describedby="pic-cut-settings">
           <img id="pic-cut-settings" src="img/cut-settings.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The Cut Settings Editor beside a material test grid of twenty squares, one for each layer, five speeds by four powers. The editor lists one layer for every square and shows the settings of layer 07: mode Fill, speed 300 mm/s, max power 20 %, min power 10 %, passes, interval, lines per inch and scan angle.">
         </a>
         <figcaption>
@@ -196,7 +197,7 @@
         </figcaption>
       </figure>
       <figure class="mini">
-        <a class="shot" href="img/light.png" aria-label="Light theme: open the full-size picture" aria-describedby="pic-light">
+        <a class="shot" href="img/light.png" aria-label="Light theme: open the picture larger" aria-describedby="pic-light">
           <img id="pic-light" src="img/light.png" width="2880" height="1920" loading="lazy" decoding="async" alt="The DarkBurn main window in the light theme, with the same workshop sign, key tags, gear and QR code on a white canvas.">
         </a>
         <figcaption>
@@ -205,7 +206,7 @@
         </figcaption>
       </figure>
     </div>
-    <p class="fine"><code>cargo test -p darkburn readme_shots -- --ignored --test-threads=1</code> makes them again.</p>
+    <p class="fine"><code><span class="nw">cargo test</span> <span class="nw">-p darkburn</span> <span class="nw">readme_shots</span> <span class="nw">--</span> <span class="nw">--ignored</span> <span class="nw">--test-threads=1</span></code> makes them again.</p>
   </div>
 </section>
 
@@ -295,8 +296,8 @@
         <p>GRBL 1.1, older M3-only GRBL, GRBL-LPC, grblHAL and FluidNC, with auto-detect of xTool, Ortur, Atomstack and Sculpfun lasers.</p>
       </li>
       <li class="machine">
-        <h3>Other G-code</h3>
-        <p>Smoothieware, Marlin and a custom G-code device.</p>
+        <h3>Other <span class="nw">G-code</span></h3>
+        <p>Smoothieware, Marlin and a custom <span class="nw">G-code</span> device.</p>
         <p class="limit"><span class="limit__tag">Limit</span> LinuxCNC as file output only. Snapmaker is partly done.</p>
       </li>
       <li class="machine">
@@ -320,14 +321,14 @@
       </li>
       <li class="machine machine--wide">
         <h3>Simulators</h3>
-        <p>A fresh install starts on the GRBL simulator. You can also add simulators for Ruida, Smoothieware, Marlin, Snapmaker, a custom G-code machine, a galvo board and the Gweike controller card, or a design-only device with no laser.</p>
+        <p>A fresh install starts on the GRBL simulator. You can also add simulators for Ruida, Smoothieware, Marlin, Snapmaker, a custom <span class="nw">G-code</span> machine, a galvo board and the Gweike controller card, or a design-only device with no laser.</p>
       </li>
     </ul>
     <details class="fold">
       <summary>What each one can do, its limits, and connections</summary>
       <ul>
         <li><b>GRBL family.</b> Streaming with buffer tracking, jogging, feed and power overrides while a job runs, a settings editor with backup, alarm and error codes in plain words, and a fire button.</li>
-        <li><b>Other G-code.</b> LinuxCNC has no live link. <b>Limits:</b> Snapmaker is partly done. Snapmaker over the network, Emblaser 2 over Wi-Fi and Cubiio are listed in the wizard but wait for a capture from real hardware.</li>
+        <li><b>Other <span class="nw">G-code</span>.</b> LinuxCNC has no live link. <b>Limits:</b> Snapmaker is partly done. Snapmaker over the network, Emblaser 2 over Wi-Fi and Cubiio are listed in the wizard but wait for a capture from real hardware.</li>
         <li><b>Ruida.</b> Over Ethernet: start, pause, stop, frame, home, jog, send a file, the file list on the controller, machine settings with backup, controller info, dual tube, U axis and rotary. RD files are saved and imported. <b>Limits:</b> USB is partly done, and Fire needs Ethernet. Two boards (RDC6442S, RDC8445S) are recognised by card ID. Job start and end delays are missing.</li>
         <li><b>Galvo.</b> Lens correction, field calibration, frequency and Q-pulse, timing, wobble, red-light framing, repeat marking, drill mode and EZCad config import. <b>Limits:</b> door and foot switch inputs, the done-marking output, the rotary runner and 3D sliced images are partly done.</li>
         <li><b>Gweike M3 Ultra.</b> A DXF with one layer per material and the craft file (<code>.chf</code>), with fibre cut settings for assist gas, pierce stages and follower height. A simulator of the controller card plans a job and gives a time. <b>Limits:</b> nobody has yet checked that the exported files open in the vendor's software. The <code>.nc</code> export is partly done. The direct Ethernet link waits for a read-only capture on the real controller card. The safety item (the machine's height follower, piercing and gas logic stay in charge) stays partly done until there is a link to check it on.</li>
@@ -359,7 +360,7 @@
       </div>
       <div>
         <dt>Machine files</dt>
-        <dd>G-code (<code>.gc</code>, <code>.gcode</code>, <code>.nc</code>, <code>.txt</code>) and Ruida RD. For the Gweike software: a DXF with one layer per material, and the craft file (<code>.chf</code>).</dd>
+        <dd><span class="nw">G-code</span> (<code>.gc</code>, <code>.gcode</code>, <code>.nc</code>, <code>.txt</code>) and Ruida RD. For the Gweike software: a DXF with one layer per material, and the craft file (<code>.chf</code>).</dd>
       </div>
       <div>
         <dt>Beside the design</dt>
@@ -392,7 +393,7 @@
       <li class="card switch">
         <p class="switch__state"><span class="sw" aria-hidden="true"></span>Off by default</p>
         <h3>Machines are a separate switch</h3>
-        <p>Off by default. The Gweike has one more switch of its own. Stop and pause are always allowed.</p>
+        <p>The Gweike has one more switch of its own. Stop and pause are always allowed.</p>
       </li>
       <li class="card switch">
         <p class="switch__state"><span class="sw sw--on" aria-hidden="true"></span>On by default</p>
@@ -407,7 +408,7 @@
     </ul>
     <div class="agents__more">
       <div class="agents__text">
-        <p><strong>What an agent can do out of the box:</strong> draw and edit, set up layers, inspect the design and every cut setting, measure, take screenshots, and preview a job, G-code text included. A preview never sends anything.</p>
+        <p><strong>What an agent can do out of the box:</strong> draw and edit, set up layers, inspect the design and every cut setting, measure, take screenshots, and preview a job, <span class="nw">G-code</span> text included. A preview never sends anything.</p>
         <p><strong>Without a window:</strong> <code>darkburn --mcp-headless</code> serves the same tools on simulators only.</p>
         <p><code>darkburn-mcp --print-config</code> prints the lines that register it with Claude Code and Claude Desktop. On Windows the install folder is not on your PATH, so type the full path there: see <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/INSTALL.md#first-start">first start</a>.</p>
         <p>The tools and the safety model are in <a href="https://github.com/phobicdotno/DarkBurn/blob/main/crates/darkburn-mcp/README.md">crates/darkburn-mcp/README.md</a>; the agent guide is <a href="https://github.com/phobicdotno/DarkBurn/blob/main/crates/darkburn-mcp/skill/darkburn-agent-guide.md">darkburn-agent-guide.md</a>.</p>
@@ -471,7 +472,7 @@
         <p>The end-to-end runs on the three target machines (an Atomstack on GRBL, a Ruida laser and the Gweike M3 Ultra) are open, and none of the 151 boxes in the hardware check files is ticked. The checks are done by hand: if you connect a real laser, you are doing one of them.</p>
         <ul class="links">
           <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/PARITY-CHECKLIST.md">The parity checklist</a><span>The full list, item by item.</span></li>
-          <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/HARDWARE-CHECKS.md">The hardware checks</a><span>And the sister files for <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-gcodebots.md">G-code machines</a>, <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-galvo.md">galvo boards</a> and the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-mcc.md">Gweike controller card</a>.</span></li>
+          <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/HARDWARE-CHECKS.md">The hardware checks</a><span>And the sister files for <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-gcodebots.md"><span class="nw">G-code</span> machines</a>, <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-galvo.md">galvo boards</a> and the <a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/hardware-checks-mcc.md">Gweike controller card</a>.</span></li>
           <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/BUGHUNT-NOTES.md">docs/BUGHUNT-NOTES.md</a><span>Known open problems.</span></li>
         </ul>
       </div>
@@ -482,9 +483,9 @@
         <li>Camera: the camera picker with exposure and brightness, the live viewfinder, the capture settings, head-mounted camera stitching and trace from a camera capture.</li>
         <li>Rotary: test rotation and the rotary jog arrows. Print and cut: setting the two targets.</li>
         <li>Move panel: Focus Z and Set finish position.</li>
-        <li>Images: fast skip of blank areas in G-code, and the scanning offset table.</li>
+        <li>Images: fast skip of blank areas in <span class="nw">G-code</span>, and the scanning offset table.</li>
         <li>Cut settings: air assist with the DSP modes, and PPI mode.</li>
-        <li>Start here: a job can run from a point on G-code and DSP machines, but not on a galvo, and an RD file cannot be saved from a point.</li>
+        <li>Start here: a job can run from a point on <span class="nw">G-code</span> and DSP machines, but not on a galvo, and an RD file cannot be saved from a point.</li>
         <li>Printing has no printer choice or page setup, and 1:1 scale depends on the PDF viewer.</li>
         <li>Check for Updates works against a test server. The real request to the release feed has not been verified.</li>
         <li>Toolbars can be shown, hidden and reordered, but the ribbon cannot split off, dock or float.</li>
@@ -546,6 +547,7 @@
         <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/CHANGELOG.md">CHANGELOG.md</a></li>
         <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/ATTRIBUTION.md">ATTRIBUTION.md</a></li>
         <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/docs/INSTALL.md">docs/INSTALL.md</a></li>
+        <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/SECURITY.md">SECURITY.md</a></li>
         <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-MIT">LICENSE-MIT</a></li>
         <li><a href="https://github.com/phobicdotno/DarkBurn/blob/main/LICENSE-APACHE">LICENSE-APACHE</a></li>
       </ul>

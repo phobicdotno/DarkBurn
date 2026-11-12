@@ -42,6 +42,8 @@ for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
 done
 odd=$(find "$root/site" ! -type f ! -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds something that is not a plain file: $odd"
+odd=$(find "$root/site" ! -path "$root/site" -type d | head -n 3)
+[ -z "$odd" ] || die "site/ holds a folder: $odd"
 # No folder on the way to these files is a link either.
 real=$(CDPATH='' cd -- "$root" && pwd -P)
 for d in site docs/img assets/fonts/ibm-plex-sans assets/fonts/ibm-plex-mono \
@@ -70,11 +72,14 @@ cp "$fonts/ibm-plex-sans/OFL.txt" "$out/fonts/OFL.txt"
 cp "$icons/ui/design/svg/model/db_app.svg" "$out/icon.svg"
 cp "$icons/app/darkburn-256.png" "$out/icon-256.png"
 cp "$icons/app/darkburn.ico" "$out/favicon.ico"
+for p in "$out"/img/*.png; do
+    [ "$(head -c 8 "$p" | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ] || die "img/${p##*/} is not a PNG picture."
+done
 
 # Only these files are published. A page or a drawing anywhere else (a sub-folder of site/,
 # a .htm or .xhtml file) would be served without any of the checks below.
 odd=$(cd "$out" && find . -type f ! -name "$mark" |
-    grep -Evx '\./(index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9._-]+\.png|fonts/[A-Za-z0-9._-]+\.(ttf|txt))' |
+    grep -Evx '\./(index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9_-]+\.png|fonts/(IBMPlexSans-Variable\.ttf|IBMPlexMono-Regular\.ttf|OFL\.txt))' |
     head -n 3 | tr '\n' ' ')
 [ -z "$odd" ] || die "not on the list of files this script publishes: $odd"
 
@@ -87,7 +92,7 @@ for svg in "$out"/*.svg; do
     [ -f "$svg" ] || continue
     name=${svg##*/}
     # What is left when printable ASCII and line ends are taken out: UTF-16, tabs, hidden characters.
-    [ "$(LC_ALL=C tr -d ' -~\n' <"$svg" | wc -c)" -eq 0 ] ||
+    [ "$(LC_ALL=C tr -d ' -~\n' <"$svg" | wc -c | tr -d ' ')" -eq 0 ] ||
         die "$name holds something that is not plain ASCII text."
     flat=$(tr '\n' ' ' <"$svg")
     case $flat in
@@ -131,7 +136,7 @@ for page in "$out"/*.html; do
     flat=$(tr '\n\r\t' '   ' <"$page")
     # The policy line is the only http-equiv: a "refresh" would send the visitor elsewhere, and
     # no policy decides where a page goes next.
-    [ "$(printf '%s\n' "$flat" | grep -Eio 'http-equiv|<base[[:space:]>/]' | wc -l)" -eq 1 ] ||
+    [ "$(printf '%s\n' "$flat" | grep -Eio 'http-equiv|<base[[:space:]>/]' | wc -l | tr -d ' ')" -eq 1 ] ||
         die "$name has an http-equiv besides the policy line, or a <base>. Neither belongs on the page."
     # The policy allows every file of the page's own host as script. The page has one.
     if printf '%s\n' "$flat" | grep -Eio '<script[^>]*>?' | grep -vx '<script src="site.js">'; then

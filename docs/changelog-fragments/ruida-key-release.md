@@ -1,1 +1,0 @@
-- Fix: Ruida over Ethernet: a late answer from the controller could hide a lost key release and leave the Pulse key or a jog key held down; a release is now sent again until its own answer is in

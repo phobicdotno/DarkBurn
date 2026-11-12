@@ -1,1 +1,1 @@
-release macos  first macOS packaging run: Apple silicon and Intel
+ci macos  first test run on macOS (Apple silicon)

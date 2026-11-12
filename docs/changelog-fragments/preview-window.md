@@ -1,7 +1,0 @@
-- Fix: the Preview window keeps its size instead of growing as wide as the whole app
-- Fix: Shade by power, Show travel moves and Invert in the Preview can be seen and clicked, and a narrow Preview puts its boxes and buttons on more rows
-- Fix: the Preview follows the pointer when you resize it by a corner or an edge, and no longer gets a little shorter every time you take hold of it
-- Fix: Restore in the Preview puts the window back where it was, at the size it had
-- Fix: the Preview and the Cut Settings Editor no longer open on top of the menus at the top of the app, also in a small window, and a maximised Preview leaves the menus free
-- Fix: the hint under the layer list in the Cut Settings Editor is no longer cut off
-- Fix: the Cut Settings Editor shows its settings all the way down to the bottom of the window, and is no longer as tall as the whole app with its lower part empty

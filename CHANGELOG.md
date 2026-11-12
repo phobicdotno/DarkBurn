@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.509 (build 6)
+## v0.0.521 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -93,6 +93,18 @@
 - Fix: Opening the door on a GRBL laser ends the Fire button, so closing the door and pressing Resume no longer lights the laser again
 - Fix: A GRBL job or frame that the door has stopped, and a paused frame, now show Resume instead of Pause
 - Fix: A Smoothieware or custom machine that halts in the middle of a job no longer goes on with the job after Unlock
+- Fix: the Preview window keeps its size instead of growing as wide as the whole app
+- Fix: Shade by power, Show travel moves and Invert in the Preview can be seen and clicked, and a narrow Preview puts its boxes and buttons on more rows
+- Fix: the Preview follows the pointer when you resize it by a corner or an edge, and no longer gets a little shorter every time you take hold of it
+- Fix: Restore in the Preview puts the window back where it was, at the size it had
+- Fix: the Preview and the Cut Settings Editor no longer open on top of the menus at the top of the app, also in a small window, and a maximised Preview leaves the menus free
+- Fix: the hint under the layer list in the Cut Settings Editor is no longer cut off
+- Fix: the Cut Settings Editor shows its settings all the way down to the bottom of the window, and is no longer as tall as the whole app with its lower part empty
+- Fix: Adjust Image and Trace Image are as tall as what is in them, no longer as tall as the whole app, and stay clear of the menus at the top
+- Fix: Ruida over Ethernet: a late answer from the controller could hide a lost key release and leave the Pulse key or a jog key held down; a release is now sent again until its own answer is in
+- Fix: Text in an SVG file no longer disappears on a computer without Arial
+- New: install with one line: a curl line on Linux and macOS, a PowerShell line on Windows
+- New: ready-made packages for Linux (x86_64 and arm64) and macOS (Apple silicon and Intel), next to the Windows installer and the portable zip
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

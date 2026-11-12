@@ -743,6 +743,18 @@ mod tests {
                 ui.allocate_space(vec2(200.0, 100.0));
             });
             dock_on_drop(ui.ctx(), "a", &shown.response);
+            let r = &shown.response;
+            eprintln!(
+                "DBG t={t} rect={:?} dragged={} started={} stopped={} origin={:?} latest={:?} place={:?} presses={:?}",
+                r.rect,
+                r.dragged(),
+                r.drag_started(),
+                r.drag_stopped(),
+                ui.ctx().input(|i| i.pointer.press_origin()),
+                ui.ctx().input(|i| i.pointer.latest_pos()),
+                place(ui.ctx(), "a").placement,
+                with(ui.ctx(), |s| s.presses.clone())
+            );
         });
         out.textures_delta.clear();
     }

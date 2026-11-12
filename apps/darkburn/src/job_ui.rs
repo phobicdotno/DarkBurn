@@ -225,13 +225,19 @@ fn floating_preview(ctx: &egui::Context, app: &mut DarkBurn, command: &mut Optio
     let shown = window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, command));
     if let Some(shown) = &shown {
         // From its title bar it can be docked as a tab (dragged onto a panel area, or from the
-        // title bar's menu) or put in a window of its own.
-        ui_kit::window_host::dock_on_drop(ctx, PREVIEW_KEY, &shown.response);
+        // title bar's menu) or put in a window of its own. egui moves the window by its title bar
+        // only: the window's own response is dragged from its body too, where the window stays
+        // put, so the drop follows the title bar's drag.
+        if let Some(title_drag) = ctx.read_response(id.with("__title_click")) {
+            ui_kit::window_host::dock_on_drop(ctx, PREVIEW_KEY, &title_drag);
+        }
         // The title bar less its close button, which keeps its click; not a stop for the Tab key.
         let r = shown.response.rect;
         let height = ctx.global_style().spacing.interact_size.y + 8.0;
         let title = Rect::from_min_size(r.min, vec2((r.width() - 2.0 * height).max(0.0), height));
-        let ui = egui::Ui::new(ctx.clone(), id.with("title_menu"), egui::UiBuilder::new().layer_id(shown.response.layer_id).max_rect(title));
+        // The Ui has an id of its own: egui keeps a Ui's id for the room it took up (none here),
+        // which under the same id as the title bar's took the title bar's room away.
+        let ui = egui::Ui::new(ctx.clone(), id.with("title_bar"), egui::UiBuilder::new().layer_id(shown.response.layer_id).max_rect(title));
         ui.interact(title, id.with("title_menu"), Sense::CLICK).context_menu(|ui| ui_kit::window_host::place_menu(ui, PREVIEW_KEY));
     }
     // Escape closes the Preview, unless a dialog on top of it wants the key.

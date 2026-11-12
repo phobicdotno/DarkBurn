@@ -173,3 +173,85 @@ position), Arrange, Modify (changing shapes), Text, Modes.
 - **Toolbar**, **Ribbon**: the rows of command buttons; the ribbon has tabs.
 - **Hotkey**: a keyboard shortcut for a command.
 - **Preferences** / **Settings**: the program's options (Settings), saved per user.
+
+## German (de)
+
+Formal "Sie" in help texts; commands as infinitives ("Formen versetzen"). Key names stay as in
+English: Ctrl, Shift, Esc (not Strg, Umschalt). Panel labels that are not translated yet are
+quoted „like this“.
+
+- Job: Auftrag. Cut (laser): Schnitt, schneiden. Cut (clipboard): Ausschneiden.
+- Layer: Ebene; sub-layer: Unterebene. Line / Fill / Image: Linie / Füllen / Bild. Engrave: gravieren.
+- Power: Leistung. Speed: Geschwindigkeit. Pass: Durchgang. Interval: Intervall. Kerf: Schnittbreite.
+- Overscan: Überlauf. Air assist: Luftunterstützung. Frame: Rahmen fahren / Umriss abfahren.
+- Jog: verfahren. Home: Referenzfahrt. Origin: Nullpunkt. Start point: Startpunkt.
+- Cut direction: Schnittrichtung. Tab: Haltesteg. Focus test: Fokustest. Material test: Materialtest.
+- Cut library / Material library: Schnittbibliothek / Materialbibliothek. Rotary: Drehachse.
+- Camera: Kamera. Print and cut: Drucken und Schneiden. Device / Machine: Gerät / Maschine.
+- Console: Konsole. Preview: Vorschau. Nudge: Pfeiltasten-Schritt.
+- Shape / Object: Form / Objekt. Path: Pfad. Node: Knoten. Weld: verschmelzen.
+- Boolean union / difference / intersection: Boolesche Vereinigung / Differenz / Schnittmenge.
+- Offset: Versatz (command: Formen versetzen). Trace: nachzeichnen. Bitmap: Bitmap.
+- Group / Ungroup: Gruppieren / Gruppierung aufheben. Array: Reihe (Rechteckreihe, Kreisreihe).
+- Align / Distribute / Dock: Ausrichten / Verteilen / Andocken. Flip / Mirror: spiegeln.
+- Snap: einrasten. Grid: Gitter. Lock: sperren. Crop: zuschneiden. Mask: Maske.
+- Variable text: Variabler Text. Selection: Auswahl. Page: Seite. Canvas: Zeichenfläche.
+- Bed: Arbeitstisch. Work area: Arbeitsbereich. Panel: Bedienfeld. Toolbar: Werkzeugleiste.
+- Ribbon: Menüband (tab Home: Start). Hotkeys: Tastenkürzel. Settings: Einstellungen.
+- Theme: Design. Art library: Grafikbibliothek. Move (panel): Bewegen. Cut shapes: Formen zerschneiden.
+- Cut table columns: Ebene, Modus, V/Leist, Aus, Anz, Luft.
+
+## French (fr)
+
+"Vous" in help texts; commands as infinitives ("Décaler les formes"). A normal space before
+: ; ? and ! (the checker counts the colon at the end). Key names stay as in English: Ctrl, Shift,
+Esc. Panel labels that are not translated yet are quoted « like this ».
+
+- Job: tâche. Cut (laser): découpe, découper. Cut (clipboard): Couper.
+- Layer: calque; sub-layer: sous-calque. Line / Fill / Image: Ligne / Remplissage / Image. Engrave: graver.
+- Power: puissance. Speed: vitesse. Pass: passe. Interval: intervalle. Kerf: largeur de coupe.
+- Overscan: surcourse. Air assist: assistance d'air. Frame: cadrer.
+- Jog: déplacer. Home: prise d'origine. Origin: origine. Start point: point de départ.
+- Cut direction: sens de découpe. Tab: attache. Focus test: Test de focale. Material test: Test de matériau.
+- Cut library / Material library: Bibliothèque de découpe / de matériaux. Rotary: rotatif.
+- Camera: caméra. Print and cut: Imprimer et découper. Device / Machine: appareil / machine.
+- Console: console. Preview: Aperçu. Nudge: pas des flèches.
+- Shape / Object: forme / objet. Path: tracé. Node: nœud. Weld: souder.
+- Boolean union / difference / intersection: Union / Différence / Intersection booléenne.
+- Offset: décalage (command: Décaler les formes). Trace: vectoriser. Bitmap: bitmap.
+- Group / Ungroup: Grouper / Dissocier. Array: réseau (rectangulaire, circulaire, virtuel).
+- Align / Distribute / Dock: Aligner / Répartir / Accoler. Flip: retourner. Mirror: symétrie.
+- Snap: aimanter, aimantation. Grid: grille. Lock: verrouiller. Crop: rogner. Mask: masque.
+- Variable text: Texte variable. Selection: sélection. Page: page. Canvas: zone de dessin.
+- Bed: plateau. Work area: zone de travail. Panel: panneau. Toolbar: barre d'outils.
+- Ribbon: ruban (tab Home: Accueil). Hotkeys: raccourcis. Settings and preferences: Paramètres.
+- Theme: thème. Art library: Bibliothèque graphique. Move (panel): Déplacement.
+- Cut shapes: Diviser les formes. Feeder: chargeur. Camera control: Contrôle caméra.
+- Cut table columns: Calque, Mode, Vit/Puis, Sor, Vis, Air.
+
+## Italian (it)
+
+Informal imperative in commands and help texts ("Salva", "Fai clic"). Key names stay as in
+English: Ctrl, Shift, Esc. Panel labels that are not translated yet are quoted «like this».
+
+- Job: lavoro. Cut (laser): taglio, tagliare. Cut (clipboard): Taglia.
+- Layer: livello; sub-layer: sottolivello. Line / Fill / Image: Linea / Riempimento / Immagine. Engrave: incidere.
+- Power: potenza. Speed: velocità. Pass: passata. Interval: intervallo. Kerf: larghezza di taglio.
+- Overscan: oltrecorsa. Air assist: assistenza aria. Frame: contorno, percorrere il contorno.
+- Jog: spostamento manuale. Home: azzeramento. Origin: origine. Start point: punto di partenza.
+- Cut direction: direzione di taglio. Tab: ponticello. Focus test: Test di messa a fuoco.
+- Material test: Test materiale. Cut library / Material library: Libreria di taglio / materiali.
+- Rotary: rotativo. Camera: telecamera. Print and cut: Stampa e taglia.
+- Device / Machine: dispositivo / macchina. Console: Console. Preview: Anteprima. Nudge: passo delle frecce.
+- Shape / Object: forma / oggetto. Path: tracciato. Node: nodo. Weld: saldare.
+- Boolean union / difference / intersection: Unione / Differenza / Intersezione booleana.
+- Offset: Offset. Trace: vettorizzare. Dither: retinatura. Bitmap: bitmap.
+- Group / Ungroup: Raggruppa / Separa. Array: serie (a griglia, circolare, virtuale).
+- Align / Distribute / Dock: Allinea / Distribuisci / Accosta. Flip: capovolgi. Mirror: specchia.
+- Snap: aggancio, aggancia. Grid: griglia. Lock: blocca. Crop: ritaglia. Mask: maschera.
+- Variable text: Testo variabile. Selection: selezione. Page: pagina. Canvas: area di disegno.
+- Bed: piano di lavoro. Work area: area di lavoro. Panel: pannello. Toolbar: barra degli strumenti.
+- Ribbon: barra multifunzione (tab Home: Home). Hotkeys: scorciatoie. Settings: Impostazioni.
+- Theme: tema. Art library: Libreria grafica. Move (panel): Sposta. Cut shapes: Dividi forme.
+- Feeder: caricatore. Camera control: Controllo telecamera.
+- Cut table columns: Livello, Modalità, Vel/Pot, Usc, Vis, Aria.

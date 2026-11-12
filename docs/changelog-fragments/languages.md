@@ -1,3 +1,4 @@
 - New: the Language menu is ready for 22 more languages and shows each one as soon as its translation is there; a text not yet translated shows in English
 - New: Japanese, Korean and Chinese will be drawn with the fonts already on your computer
 - Fix: the Language menu no longer lists languages that cannot be picked yet
+- New: German, French and Italian (machine-translated; corrections are welcome)

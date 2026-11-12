@@ -252,6 +252,22 @@ mod tests {
         }
     }
 
+    /// German, French and Italian translate every English text, and the Language menu offers
+    /// them [I18N-04].
+    #[test]
+    fn german_french_and_italian_cover_every_english_key() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("de", "Datei"), ("fr", "Fichier"), ("it", "File")] {
+            let t: BTreeMap<String, String> = serde_json::from_str(crate::languages::file(code).unwrap()).unwrap();
+            let missing: Vec<_> = en.keys().filter(|k| !t.contains_key(*k)).collect();
+            assert!(missing.is_empty(), "{code}.json lacks: {missing:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
     #[test]
     fn translated_text_is_used_and_english_is_the_fallback() {
         // The language is global; this test is the only one that changes it.

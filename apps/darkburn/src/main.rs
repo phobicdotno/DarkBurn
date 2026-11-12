@@ -157,6 +157,8 @@ mod ui_hunt3_tests;
 #[cfg(test)]
 mod ui_hunt_tests;
 #[cfg(test)]
+mod ui_language_tests;
+#[cfg(test)]
 mod ui_smoke_tests;
 mod updates;
 mod view;

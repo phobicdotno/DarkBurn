@@ -16,13 +16,16 @@ same as `LICENSE-APACHE`. The file names inside the notice (`ATTRIBUTION.md`,
 
 The copied source and artwork were taken from SolidCraft 0.40.0-rc.3, commit
 `be6e439550d0a7232061557e9d34faf522b18beb`. The crates used by path are built from the next
-commit, `ae7da14907e00a11ed04656385cc0c2db386dc55` (the same version), which `scripts/install.sh`
-pins (`SOLIDCRAFT_PIN`). Both commits are in the fork, on branch `params-resize`. They follow
-upstream commit `419bbcda0`. The pinned commit is also the head of pull request #13422 in the
-upstream repository, where the change was merged as commit `ca171fe9`. The second commit changes
-one copied file, `crates/ui-egui/src/ui_kit/panel.rs`; DarkBurn's copy has the form of the first.
-The sources of the files copied later (`crates/darkburn-mcp/src/server.rs`, the Windows
-packaging) are the same at both commits.
+commit, `ae7da14907e00a11ed04656385cc0c2db386dc55` (the same version). Two files pin it and must
+name the same commit: `scripts/install.sh` (`SOLIDCRAFT_PIN`) and `scripts/install.ps1`
+(`$SolidCraftPin`). The installers, when they build from source, and the workflows
+(`.github/actions/prepare/action.yml`) fetch that commit from the fork. Both commits are in the
+fork, on branch `params-resize`. They follow upstream commit `419bbcda0`. The pinned commit is
+also the head of pull request #13422 in the upstream repository, where the change was merged as
+commit `ca171fe9`. The second commit changes one copied file,
+`crates/ui-egui/src/ui_kit/panel.rs`; DarkBurn's copy has the form of the first. The sources of
+the files copied later (`crates/darkburn-mcp/src/server.rs`, the Windows packaging) are the same
+at both commits.
 
 DarkBurn contains no LightBurn code, icons, artwork, pictures, fonts or sample files.
 
@@ -63,7 +66,8 @@ source file of `solidcraft-mcp-server` (see Copied source).
 | `apps/darkburn/build.rs` | `apps/solidcraft/build.rs` | DarkBurn's icon and names; the version resource text is written inline |
 | `apps/darkburn/src/shell.rs`: the function `app_bar` | `crates/ui-egui/src/toolbar.rs`: the function `app_bar` | Adapted. DarkBurn's mark, name, menus and commands; the order of the steps and the sizes of the bar's parts are SolidCraft's. The rest of the file is DarkBurn's own |
 | `apps/darkburn/src/ribbon.rs`: the constants `TAB_ROW_HEIGHT`, `GROUP_HEIGHT`, `RIBBON_HEIGHT`, `BUTTON_HEIGHT`, `BUTTON_MIN_WIDTH`, `BUTTON_MAX_WIDTH` and `BUTTON_GAP` | `crates/ui-egui/src/toolbar.rs` (the same names) | Values unchanged. The rest of the file is DarkBurn's own |
-| `apps/darkburn/src/updates.rs`: the HTTPS client set-up in the function `check`. `apps/darkburn/Cargo.toml`: the `ureq` and `rustls` lines | `apps/solidcraft/src/main.rs`: the functions `http_call` and `agent_http`. `apps/solidcraft/Cargo.toml`: the same two lines | DarkBurn's user agent and time limits; redirects are followed one at a time and each address is checked. The rest of `updates.rs` is DarkBurn's own |
+| `apps/darkburn/src/updates.rs`: the HTTPS client set-up in the function `check`, and the methods `State::start` and `State::poll`. `apps/darkburn/Cargo.toml`: the `ureq` and `rustls` lines | `apps/solidcraft/src/main.rs`: the functions `http_call` and `agent_http`. `crates/ui-egui/src/update.rs`: the functions `start` and `poll`. `apps/solidcraft/Cargo.toml`: the same two lines | DarkBurn's user agent and time limits; redirects are followed one at a time and each address is checked. `start` and `poll` are adapted: the check runs on a thread with SolidCraft's name for it (`update-check`), and a thread that stops gives SolidCraft's message; what they keep and show is DarkBurn's. The names `parse_version`, `is_newer` and `RELEASES_PAGE` are SolidCraft's too; DarkBurn compares three numbers and does not use the `semver` crate. The rest of `updates.rs` is DarkBurn's own |
+| `Cargo.toml`: the sections `[workspace.lints.rust]`, `[workspace.lints.clippy]`, `[profile.dev]`, `[profile.dev.package."*"]` and `[profile.release]`. `rustfmt.toml`, the whole file. `apps/darkburn/Cargo.toml`: the two `[lints]` sections with the comment above them, and the lines `raw-window-handle`, `windows-sys` and `embed-resource` | `Cargo.toml`, `rustfmt.toml` and `apps/solidcraft/Cargo.toml`: the same sections and lines | Values unchanged. SolidCraft's comments and its `ci` and `mutants` profiles are left out; the comment above `[lints]` names only the one file DarkBurn has; `windows-sys` has only the five features that `native_frame.rs` needs |
 | `crates/darkburn-mcp/src/server.rs` | `crates/mcp-server/src/server.rs` (JSON-RPC framing and MCP lifecycle from CADCraft, see below) | `Tools::read_resource` returns a `Resource` with its own MIME type and text; `check_arguments` comes from the crate |
 
 Followed, not copied. These parts are DarkBurn's own code:
@@ -79,13 +83,23 @@ Followed, not copied. These parts are DarkBurn's own code:
 | DarkBurn file | SolidCraft source | Changes |
 |---|---|---|
 | `packaging/windows/darkburn.wxs` | `assets/platforms/windows/solidcraft.wxs` | Install for one user or for all users, with the `WixUI_Advanced` wizard; DarkBurn's file types; a desktop shortcut; the settings folder is removed on request. Most of the file is DarkBurn's own |
-| `scripts/package-common.ps1`, `scripts/build-installer.ps1` | `packaging/windows/package.ps1` | Split into shared steps and an installer script; two programs; the licence list is written by `cargo about`; x64 only |
+| `scripts/package-common.ps1`, `scripts/build-installer.ps1`, `scripts/build-portable.ps1` | `packaging/windows/package.ps1` | Split into shared steps, an installer script and a portable zip script; two programs; the licence list is written by `cargo about`; x64 only. In `build-portable.ps1` the folder and zip names and the steps around them are SolidCraft's. Added by DarkBurn: the `licenses` folder and the check that the `.wxs` names each file of it, the text of the wizard's licence page (`New-LicenceRtf`), the `.sha256` files, the `portable.txt` marker, and a zip written entry by entry |
 
 Both SolidCraft files say in their own header that they are adapted from PhotoCraft's packaging,
 under Apache-2.0. SolidCraft's `ATTRIBUTION.md` records the same for
 `assets/platforms/windows/solidcraft.wxs` and for its `packaging/` folder, and its `NOTICE` for
 `packaging/`. The licence is Apache-2.0, not MIT OR Apache-2.0. The parts DarkBurn took from the
 two files keep that licence. The Apache-2.0 text is `LICENSE-APACHE`.
+
+The installer is built with the WiX Toolset 5.0.2 and its extensions `WixToolset.UI.wixext` and
+`WixToolset.Util.wixext` (https://github.com/wixtoolset/wix, Copyright (c) .NET Foundation and
+contributors, Microsoft Reciprocal License, MS-RL). WiX is not kept in this repository: the
+release workflow installs it and `scripts/build-installer.ps1` runs it. The setup wizard is
+WiX's dialog set `WixUI_Advanced`: its pages, their wording and their pictures are WiX's own and
+are built into the MSI. `packaging/windows/darkburn.wxs` gives the wizard only the text of its
+licence page, the default folders and the line on its last page, and uses nothing of the Util
+extension. The portable zip and the Linux and macOS archives hold nothing of WiX. `licenses/`
+has no copy of the MS-RL text.
 
 ### Credits SolidCraft passes on
 
@@ -104,6 +118,9 @@ passes the credit on.
 
 The Rust code is new. Constants, tables, names and the order of steps come from the sources. The
 MeerK40t and ruida-pa commits that were read were not recorded.
+`docs/research/other-controllers.md`, dated 8 November 2026, records the two repositories as it
+found them: MeerK40t's `main` last pushed on 25 September 2026 (latest release 0.9.8100, of
+15 August 2025), and ruida-pa last pushed on 31 October 2026.
 
 - **MeerK40t**, https://github.com/meerk40t/meerk40t, Copyright (c) 2021 meerk40t, MIT
   (`licenses/MeerK40t-LICENSE-MIT`).
@@ -117,10 +134,10 @@ MeerK40t and ruida-pa commits that were read were not recorded.
 | DarkBurn files | Source | What was taken | Changes |
 |---|---|---|---|
 | `crates/darkburn-ruida/src/{command,encoding,swizzle,rd,settings,emulator,machine,packet,transport}.rs` | MeerK40t `meerk40t/ruida/` (`rdjob.py`, `emulator.py`, `ruidasession.py`, `README.md`). The research notes also name `controller.py`, `udp_transport.py`, `usb_transport.py`, `serial_connection.py`, `loader.py` and `device.py` of that folder as read | Opcode constants and their parameter layouts; the rule that a byte of 0x80 or more starts a command; swizzle with any magic value; magic detection by byte histogram and by card-ID probe; the `.rd` header, layer and trailer layout and the file sum; the choice between relative and absolute moves; the controller memory address table; the emulator's answers; file commands `E8 00` to `E8 04`; jog key codes | Written again in Rust |
-| `crates/darkburn-ruida/src/command.rs` (`OverscanMode`, reference point bytes), `encoding.rs` (power scale), `settings.rs` (`KNOWN_BOARDS`, `StatusWord`) | ruida-pa `ruida_pa/protocols/ruida/ruida_protocol.py`, `ruida_pa/rpalib/ruida_transcoder.py` | The 14-bit power scale (0x4000 is 100 %); the names of the overscan modes `CA 01 00` to `CA 01 05`; the card ID of the RDC8445S; status bits 0, 1 and 24; the reference point bytes `D8 10`, `D8 11`, `D8 12`; times in microseconds | Constants and names only |
+| `crates/darkburn-ruida/src/command.rs` (`OverscanMode`, reference point bytes), `encoding.rs` (power scale), `settings.rs` (`KNOWN_BOARDS`, `StatusWord`) | ruida-pa `ruida_pa/protocols/ruida/ruida_protocol.py`, `ruida_pa/rpalib/ruida_transcoder.py`. The research notes also name its changelog, `docs/api/RdDriver-interface.md` and an older design document as read | The 14-bit power scale (0x4000 is 100 %); the names of the overscan modes `CA 01 00` to `CA 01 05`; the card ID of the RDC8445S; status bits 0, 1 and 24; the reference point bytes `D8 10`, `D8 11`, `D8 12`; times in microseconds; the firmware name `RDLC-V8.01.70`, which the notes quote from the changelog as a real controller's answer and which a test in `apps/darkburn/src/ruida_tests.rs` uses | Constants and names only |
 | `crates/darkburn-galvo/src/{codec,cor,settings,machine,transport,emulator}.rs` | MeerK40t `meerk40t/balormk/` (`controller.py`, `usb_connection.py`, `mock_connection.py`, `device.py`) | Opcode numbers and names; the 12-byte command and the 3072-byte list packet; status bits; the USB IDs 0x9588:0x9899 and the endpoints; the bring-up order and default words; the power and frequency formulas; delay encoding; port bits; the job sequence; the two `.cor` layouts and the lens table upload | Written again in Rust. MeerK40t's `balormk/README.md` says its driver began as a plugin for Balor by Bryce Schroeder and still uses many of the original names. See the note on Balor under this table |
 | `crates/darkburn-import/src/lbrn.rs` | MeerK40t `meerk40t/extra/lbrn.py` | How `VertList` and `PrimList` are split into tokens; the `LineClosed` and empty `PrimList` forms; XForm composition; polygon vertex placement; bitmap placement | Written again in Rust. MeerK40t's file only reads; the `.lbrn2` writer is DarkBurn's own. The element names, attribute names and cut setting fields that the reader and the writer use come from `docs/research/laser-protocols-and-devices.md`, part 2e; its sources are in the next table |
-| `crates/darkburn-mcc/src/{frame,crc,registers,command,fifo,gate,sim,chf,craft,planner}.rs` | phobicMlaserLinux: `docs/analysis/`, `src/nexcut/mcc/`, `src/nexcut/io/chf.py`, `src/nexcut/model/` | Frame layout, CRC and byte orders; register blocks, status and alarm bits; command vectors; the FIFO item grammar; the safety gate; the card simulator; the `.chf` grammar, reader and writer; the craft parameter model; a few message frames recorded in the control program's log files, used as test vectors in `frame.rs`, `crc.rs` and `command.rs` | Ported from Python to Rust. `apps/darkburn/src/{gweike_workflow,gweike_ui}.rs` show and write the craft parameters through this crate |
+| `crates/darkburn-mcc/src/{frame,crc,registers,command,fifo,gate,sim,chf,craft,planner}.rs` | phobicMlaserLinux: `docs/analysis/`, `src/nexcut/mcc/`, `src/nexcut/io/chf.py`, `src/nexcut/model/` | Frame layout, CRC and byte orders; register blocks, status and alarm bits; command vectors; the FIFO item grammar; the safety gate; the card simulator; the `.chf` grammar, reader and writer; the craft parameter model; a few message frames recorded in the control program's log files, used as test vectors in `frame.rs`, `crc.rs` and `command.rs`; the values and sizes of two sample `.chf` files shipped with the control program (`File/Temp/tempGraph.chf`, 500 bytes, and `Work1/3.chf`, 718 bytes): two tests in `chf.rs` build these files again and compare them with text kept in the test module (`CIRCLE_V5`, `STADIUM_V4`); the settings of the owner's machine, which `command.rs` says are from the program's parameter files `BkManuPara.xml` and `BkHardPara.xml`, used as default values in `command.rs` and `planner.rs` and as limits in `craft.rs` | Ported from Python to Rust. `apps/darkburn/src/{gweike_workflow,gweike_ui}.rs` show and write the craft parameters through this crate |
 
 Balor (https://gitlab.com/bryce15/balor) is the project MeerK40t's galvo driver began from. Its
 `LICENSE` file is the text of the GNU GPL, version 3; its GitLab page lists the Server Side
@@ -148,6 +165,13 @@ This file is the newer one. Where they differ, this file holds. The known differ
 - `crates/darkburn-vision/ATTRIBUTION.md` says the camera library `nokhwa` is used only with a
   feature that is off by default. `apps/darkburn/Cargo.toml` turns that feature on (`live-camera`),
   so `nokhwa` is built into `darkburn`. See "Built on".
+- `crates/darkburn-grbl/ATTRIBUTION.md` says the serial port library `serialport` is off by
+  default, and does not name `nusb`. `apps/darkburn/Cargo.toml` turns both features on (`serial`,
+  `rawusb`), so both libraries are built into `darkburn`. See "Built on".
+- `crates/darkburn-mcc/ATTRIBUTION.md` says `encoding_rs`, with its BSD-3-Clause tables, comes in
+  only with the feature `cp936`, which is off by default. That feature is off in `darkburn`, but
+  `dxf` and `lopdf` (used by `crates/darkburn-import`) need `encoding_rs` themselves, so it is
+  built into `darkburn`. See "Fonts and data inside the libraries".
 - `crates/darkburn-{import,ruida,text}/ATTRIBUTION.md` each have a sentence about LightBurn or
   about commercial laser software that is wider than the sentence at the top of this file.
 
@@ -163,9 +187,10 @@ reference, and the row says all that the repository records about its use.
 
 | Source | Licence | Facts used | Where |
 |---|---|---|---|
-| GRBL v1.1 (https://github.com/gnea/grbl), grblHAL (https://github.com/grblHAL/core) and FluidNC (https://github.com/bdring/FluidNC): their wikis. The research notes also list `grbl/settings.h`, `doc/script/stream.py`, grblHAL `errors.c` and `alarms.c`, and FluidNC `Report.cpp` as sources | GNU GPL, version 3 or later | Real-time command bytes; the `ok` and `error:N` replies; the status report grammar; `$` commands; setting, error and alarm numbers and what they mean; jogging and laser mode rules; start-up banners. Eleven setting labels are GRBL's own short names (for example `Step pulse time`, `Junction deviation`). The emulator in `crates/darkburn-grbl/src/emulator.rs` prints GRBL's start-up banner, its help line and its `[MSG:...]` lines as the firmware prints them | `crates/darkburn-grbl`, `crates/darkburn-job` |
+| GRBL v1.1 (https://github.com/gnea/grbl), grblHAL (https://github.com/grblHAL/core) and FluidNC (https://github.com/bdring/FluidNC): their wikis. The research notes also list `grbl/settings.h`, `doc/script/stream.py`, grblHAL `errors.c` and `alarms.c`, and FluidNC `Report.cpp` as sources. `crates/darkburn-grbl/src/emulator.rs` names one more: the README of grbl-LPC (https://github.com/gnea/grbl-LPC), the firmware behind the device type "GRBL-LPC (Smoothieboard)". The driver and the emulator also know GRBL 0.9; the repository names no document for it | GNU GPL, version 3 or later. grbl-LPC: GNU GPL, version 3, as its README says | Real-time command bytes; the `ok` and `error:N` replies; the status report grammar; `$` commands; setting, error and alarm numbers and what they mean; jogging and laser mode rules; start-up banners. GRBL 0.9's older forms: the status report with commas, errors and alarms as text, and `$$` lines that end in a comment. What grbl-LPC's settings `$33` to `$36` are (PWM frequency, PWM off value, PWM minimum and maximum); the emulator lists them for that firmware. Eleven setting labels are GRBL's own short names (for example `Step pulse time`, `Junction deviation`). The emulator in `crates/darkburn-grbl/src/emulator.rs` prints GRBL's start-up banner, its help line and its `[MSG:...]` lines as the firmware prints them. As GRBL 0.9 it prints that firmware's alarm lines (`ALARM: Hard/soft limit`, `ALARM: Abort during cycle`, `ALARM: Homing fail`) and a version line in its form (`[0.9j.20160303:]`) | `crates/darkburn-grbl`, `crates/darkburn-job` |
 | Smoothieware, Marlin and LinuxCNC documentation | The firmware is under the GNU GPL: version 3 (Smoothieware, Marlin), version 2 (LinuxCNC) | Command names, reply shapes and which commands exist. The emulator in `crates/darkburn-gcodebots/src/emu.rs` prints Smoothieware and Marlin reply lines as the firmware prints them, among them the halt and kill lines, the `version` reply, the `fire` reply and the firmware and settings reports | `crates/darkburn-gcodebots`, `crates/darkburn-job` |
-| Snapmaker public wiki and forum posts. `docs/research/other-controllers.md` also names Snapmaker's G-code reference (https://snapmaker.github.io/Documentation/gcode/) | None stated for the documents. Snapmaker Luban is under the GNU AGPL, version 3 | The fields of the laser file header | `crates/darkburn-gcodebots/src/snapmaker.rs` |
+| Snapmaker public wiki and forum posts. `docs/research/other-controllers.md` also names Snapmaker's G-code reference (https://snapmaker.github.io/Documentation/gcode/) and Snapmaker's SACP documents (https://github.com/Snapmaker/Snapmaker-SACP/tree/main/docs) | None stated for the documents. Snapmaker Luban is under the GNU AGPL, version 3 | The fields of the laser file header. From the G-code reference: laser power written as `M3 P<percent>`, which the Snapmaker emulator accepts. From the SACP documents: that a Snapmaker 2.0 takes plain G-code over USB serial and uses HTTP over the network | `crates/darkburn-gcodebots/src/snapmaker.rs`, `crates/darkburn-gcodebots/src/emu.rs`, `apps/darkburn/src/devices.rs` |
+| The web interface of FluidNC and of ESP3D (https://github.com/luc-github/ESP3D), as `apps/darkburn/src/connections.rs` names them | FluidNC: as in the first row. ESP3D: GNU GPL, version 3 | The form of the HTTP request that carries a G-code line: a `GET` to the path `/command?plain=`, followed by the text. Not confirmed against a real board (`docs/HARDWARE-CHECKS.md`) | `apps/darkburn/src/connections.rs` (`HttpTransport`, and the default request path of a device) |
 | Console output that owners of Ortur, xTool, Atomstack and Sculpfun machines have posted in public (forum threads and vendor help pages) | None stated | The tags and greetings by which a machine is recognised | `crates/darkburn-grbl/src/detect.rs` |
 | Vendor pages, owner notes and forum threads on Emblaser, Cubiio, Trocen and TopWisdom machines, named in `docs/research/other-controllers.md` | None stated | Which firmware family the Emblaser machines speak; that the others have no public description of their protocol | `apps/darkburn/src/devices.rs` |
 | EduTechWiki "Ruida" (https://edutechwiki.unige.ch/en/Ruida) | CC BY-NC-SA (version not recorded) | Ports, checksum, magic values, command list, address map | `crates/darkburn-ruida` |
@@ -173,21 +198,24 @@ reference, and the row says all that the repository records about its use.
 | Fablab Nürnberg wiki, "Diskussion:Nova 35" | CC BY-NC-SA 3.0 | UDP framing and ACK bytes | `crates/darkburn-ruida` |
 | kkaempf/ruida documentation (https://github.com/kkaempf/ruida) | Ruby licence | USB serial notes | `crates/darkburn-ruida` |
 | jnweiger/ruida-laser (https://github.com/jnweiger/ruida-laser); LibLaserCut `drivers/Ruida.java` (https://github.com/t-oster/LibLaserCut) | GNU GPL, version 2; GNU LGPL, version 3 | Listed in the research notes as read-only references for the Ruida protocol (`src/ruida.py` and `doc/protocol.md`; `Ruida.java`) | `crates/darkburn-ruida` |
+| A public description of a network bridge (TCP relay) for Ruida controllers. `apps/darkburn/src/connections.rs` says the framing comes from "one public description of such a bridge" and does not name it. No other file in the repository names it | Not recorded | The framing of a relayed packet: the byte 0x4C, the length of the packet in two bytes, high byte first, then the UDP packet with its checksum. The bridge's TCP port, 5005, is in the same code and has no source named either. Neither is confirmed against a real bridge (`docs/HARDWARE-CHECKS.md`) | `apps/darkburn/src/connections.rs` (`BRIDGE_PORT`, `BRIDGE_MARK`, `bridge_frame`, `BridgeTransport`) |
 | lbrn2-to-svg (https://github.com/jlucaso1/lbrn2-to-svg), Copyright (c) 2025 João Lucas de Oliveira Lopes | MIT | A cross-check of shape placement and group transforms | `crates/darkburn-import/src/lbrn.rs` |
 | lbrnts (https://github.com/tscircuit/lbrnts), Copyright (c) 2025 tscircuit Inc. | MIT | Listed in the research notes as a typed model of the LightBurn project format, with the full list of cut setting fields | `crates/darkburn-import/src/lbrn.rs` |
 | Boxes.py, its lbrn2 exporter (https://github.com/florianfesti/boxes) | GNU GPL, version 3 or later | Listed in the research notes as a read-only reference for the writer. `crates/darkburn-import/ATTRIBUTION.md` records that it was not used | `crates/darkburn-import/src/lbrn.rs` |
 | Three LightBurn forum threads on the project file format, named in the research notes | Forum posts; no licence recorded | That the files are plain XML, and how format version 0 (`.lbrn`) and version 1 (`.lbrn2`) differ | `crates/darkburn-import/src/lbrn.rs` |
+| LightBurn 1.4.04, the installed program, and LightBurn's online documentation (docs.lightburnsoftware.com) | Proprietary program. No licence recorded for the documentation | Which features, windows, menus, settings, device types and connection types the program has, and what they are called. `docs/research/lightburn-feature-inventory.md` lists what it was written from: the program's change log, read in full; text strings from the program file and from its debug file; the program file's import tables and resources; the file list of the install folder; the running program (a picture of its main window, the tree of its controls, pictures of its menus); and pages of the documentation. The note quotes symbol names and names of user-interface objects of the program as evidence that a feature exists. No file of the program is in this repository | `docs/research/lightburn-feature-inventory.md`, and `docs/PARITY-CHECKLIST.md`, which is made from it and which DarkBurn is built to. `crates/darkburn-vision/ATTRIBUTION.md` names both as its reference for what its tools do |
 | The control program Gweike ships with the M3 Ultra (Mlaser, a rebrand of Au3tech NexCut) | Proprietary | Which file types the program opens. The research notes record a static inspection of the program's package: file names, text strings, import tables, configuration and log files. No file of the program is in this repository | `crates/darkburn-import/src/gweike.rs`. `apps/darkburn/src/{gweike_workflow,gweike_ui}.rs` point to `docs/research/mlaser-rea-findings.md` for what is still open |
 | Au3tech MCC100-X1 user manual | Vendor document | Listed in the research notes for wiring, network set-up and parameter pages | `crates/darkburn-mcc` |
 | OpenLaser (https://github.com/nkapron/OpenLaser) | GNU GPL, version 3 | Listed in the research notes as a read-only reference for the MCC100 card. `crates/darkburn-mcc/ATTRIBUTION.md` records that no GPL code was used | `crates/darkburn-mcc` |
 | fiber_laser (https://github.com/rahilm/fiber_laser), Copyright (c) 2026 the mlaser contributors | MIT | Listed in the research notes as a rebuild of Mlaser | `crates/darkburn-mcc` |
+| Vendor, reseller, review and forum pages on the Gweike M3 Ultra and on Au3tech's MCC100 card, listed under "Sources" in part 2a of `docs/research/laser-protocols-and-devices.md` | None stated | What the machine is (a fibre and CO2 flatbed), which controller card it has, and that its control program, Mlaser, is Au3tech's NexCut under Gweike's name | `crates/darkburn-mcc`, `crates/darkburn-import/src/gweike.rs` |
 | ZXing's barcode contents wiki; NTT DoCoMo's description of MECARD | Public documents; no licence recorded | The `WIFI:` and `MECARD:` text layouts for QR codes | `crates/darkburn-text/src/qr.rs` |
 
 The research notes are in `docs/research/`. The rows above draw on
-`laser-protocols-and-devices.md`, `other-controllers.md` and `mlaser-rea-findings.md`. The folder
-holds two more notes: `solidcraft-ui-reuse.md`, the study behind the SolidCraft sections of this
-file, and `lightburn-feature-inventory.md`, which `docs/PARITY-CHECKLIST.md` names as the source
-of its list.
+`laser-protocols-and-devices.md`, `other-controllers.md`, `mlaser-rea-findings.md` and, for the
+LightBurn row, `lightburn-feature-inventory.md`, which `docs/PARITY-CHECKLIST.md` names as the
+source of its list. The folder holds one more note: `solidcraft-ui-reuse.md`, the study behind
+the SolidCraft sections of this file.
 
 `docs/research/laser-protocols-and-devices.md` also records that two project files the owner
 had saved with LightBurn were looked at for their root attributes (`AppVersion`,
@@ -195,21 +223,50 @@ had saved with LightBurn were looked at for their root attributes (`AppVersion`,
 not in the repository. The test files in that format are written by
 `crates/darkburn-import/tests/gen_fixtures.py`, which uses one font name in that form.
 
+The same note records two more things that were read on the owner's computer. One is the device
+profile that LightBurn had stored for the owner's GRBL machine, read from a settings file: the
+bed size, the baud rate, the origin corner and the S value for full power. They describe the
+first target machine (`TARGET-01` in `docs/PARITY-CHECKLIST.md`). The other is the file list of
+a LightBurn 1.4.04 install folder and the `.inf` file in that folder, read for the note's remark
+on galvo boards. Neither the settings file nor any file of that folder is in the repository.
+
 The research notes name more projects as surveyed only: Rayforge, raydriver, the `ruida` crate
 by lyonlabs, galvoplotter and SnapmakerSACP-Python (MIT), gcodekit5 (MIT or Apache-2.0), glase
-(BSD-3-Clause), and LaserGRBL and rCandle (GNU GPL, version 3). The licences are as the notes
-give them. No crate file records anything taken from these projects, and no DarkBurn source
-file names them.
+(BSD-3-Clause), and LaserGRBL and rCandle (GNU GPL, version 3).
+
+The notes also name, as found or looked at and not used: Beam Bench (GNU GPL, version 3), whose
+documents `other-controllers.md` cites twice, once with a short quotation, for what is not
+public; RDWorksFileserver and RuiDa-Machine-Code (GNU GPL, version 3); RDCAM by 0x2b3bfa0 and an
+Emblaser exporter for Inkscape (GNU GPL, version 2), the second not read; LaserWeb4 (GNU AGPL,
+version 3); laser-cutterd, ruida_bridge and svg2gcode (MIT); lasercraft, ruida.net and Cubiio2RE
+(no licence), the last not read; All4Laser (in a group the notes mark as AGPL or GPL); cnccoder,
+grbli and rscnc (no licence given); an article on hackaday.com among the sources for the galvo
+board; and the owner's own Wine-Mlaser notes and two earlier projects.
+
+The licences in these two lists are as the notes give them. No crate file records anything
+taken from these projects, and no DarkBurn source file names them.
 
 No code from potrace, LaserGRBL, LibLaserCut, OpenLaser or any GRBL firmware is in DarkBurn. The
 image tracer in `crates/darkburn-raster/src/trace/` is DarkBurn's own: pixel-edge loops, corner
 detection and least-squares cubic fitting.
 
-File formats (DXF, PDF, HPGL, SVG, G-code, the AutoCAD shape font format SHX), the barcodes
-Code 128, Code 39, EAN-13, UPC-A and Interleaved 2 of 5, and the methods in
-`crates/darkburn-raster` and `crates/darkburn-vision` (dithering, distance transform, thinning,
-curve fitting, camera calibration) are written from public specifications and published papers.
-The crate files name each one.
+File formats (DXF, PDF and PDF-compatible Illustrator files, HPGL, SVG, G-code, the AutoCAD shape
+font format SHX), the AutoCAD colour index, the barcodes Code 128, Code 39, EAN-13, UPC-A and
+Interleaved 2 of 5, the sRGB transfer functions, and the methods in `crates/darkburn-raster`,
+`crates/darkburn-vision` and `crates/darkburn-geom` (dithering, distance transform, thinning,
+curve fitting, camera calibration, convex hull, shelf packing) are written from public
+specifications, published papers and textbook descriptions. The crate files name the papers,
+the barcode standards and the sRGB standard. For the file formats, the colour index and the
+methods of `crates/darkburn-geom` they say only that the description is public, and name no
+document.
+
+A few small published methods are written out in DarkBurn's own code as well: the FNV-1a hash of
+Fowler, Noll and Vo (`apps/darkburn/src/{files,text_render}.rs`,
+`crates/darkburn-core/src/document.rs`, `crates/darkburn-mcp/src/types.rs`,
+`crates/darkburn-galvo/src/job.rs`); CRC-32 and the ZIP layout, for the support data bundle that
+`apps/darkburn/src/help.rs` writes without a library; and, in tests only, the SplitMix64 and
+xorshift64* random number generators and a generator with the constants of Knuth's MMIX. Only
+the constants and the order of the steps come from the published descriptions.
 
 ## Assets
 
@@ -225,6 +282,7 @@ The crate files name each one.
 | `assets/styles/ui/themes/warning-label.json` | DarkBurn contributors | DarkBurn's own colour scheme, built from SolidCraft's Graphite theme (`graphite.json`) with new colours | MIT OR Apache-2.0 |
 | `assets/icons/ui/design/svg/model/db_*.svg` (40 files) | DarkBurn contributors | Original artwork in SolidCraft's icon style, written by `tools/make_icons.py` | MIT OR Apache-2.0 |
 | `assets/icons/app/darkburn-256.png`, `assets/icons/app/darkburn.ico` | DarkBurn contributors | DarkBurn's own mark, a rendering of `assets/icons/ui/design/svg/model/db_app.svg` | MIT OR Apache-2.0 |
+| `assets/locales/en.json`, `assets/locales/nb.json` | DarkBurn contributors | DarkBurn's own interface text in English and Norwegian, compiled into `darkburn` (`apps/darkburn/src/i18n.rs`). A test in that file writes `en.json` from the code when `DARKBURN_WRITE_LOCALES` is set; `nb.json` is the translation. Not copied from SolidCraft's `assets/locales` | MIT OR Apache-2.0 |
 
 Twelve of the copied theme files use the colours of a named palette. Each file names it in its
 `provenance` field. Authors, addresses and licences are as SolidCraft's `ATTRIBUTION.md` gives
@@ -257,7 +315,12 @@ one.
 | `docs/img/*.png` | Pictures of DarkBurn, drawn in the UI test harness by the ignored tests in `apps/darkburn/src/readme_shots.rs` |
 | `docs/research/img/*.png` (16 files) | Screen captures of DarkBurn's own window, saved by hand from the running program while it was built (`docs/WIRING-RULES.md`) |
 
-There is no SHX font and no `.chf` file in the repository. The tests build them in memory.
+There is no SHX font and no `.chf` file in the repository. The tests build them in memory. Two
+tests in `crates/darkburn-mcc/src/chf.rs` build a `.chf` file with the values and the size of a
+sample file of the Gweike control program, and keep the expected text in the test module. See
+the `darkburn-mcc` row under "Ported from other projects". `crates/darkburn-mcc/ATTRIBUTION.md`
+records that the values came through the owner's analysis and that no vendor file was opened
+for the crate.
 
 ## Built on
 
@@ -282,6 +345,13 @@ cargo about generate --locked --workspace --config packaging/about.toml packagin
 - Every package also carries this file and the `licenses/` folder. The Windows installer names
   each file of that folder (`packaging/windows/darkburn.wxs`), and packaging stops when one is
   not named there.
+- The one-line installers are not packages. `scripts/install.sh` installs the two programs, the
+  icon and a menu entry (on macOS `DarkBurn.app`), also when it takes them from a release
+  archive: this file, the `licenses/` folder and `THIRD-PARTY-LICENSES.txt` are not installed.
+  `scripts/install.ps1` installs them when it uses the MSI or the portable zip; after a build
+  from source it installs the two programs only. Neither script runs `cargo about`, so a build
+  from source has no `THIRD-PARTY-LICENSES.txt`. After a build from source this file and
+  `licenses/` are in the source checkout that the installer keeps in its build folder.
 - The list is made for one target. `packaging/about.toml` names the Windows target;
   `scripts/package-unix.sh` adds `--target` with the target of its own package.
 - The list leaves out libraries that are used only to build or to test.
@@ -319,6 +389,11 @@ the libraries").
 | Update check over HTTPS | ureq (MIT OR Apache-2.0), rustls (Apache-2.0 OR ISC OR MIT), ring (Apache-2.0 AND ISC) | As named |
 | MCP server | jsonschema (MIT), beside SolidCraft's `solidcraft-mcp-server` | As named |
 | Settings and files | serde, serde_json, ron | MIT OR Apache-2.0 |
+| Log messages, clock | log, web-time | MIT OR Apache-2.0 |
+| Compression in AI export; base64 pictures in SVG export and in LightBurn project files | flate2, base64 | MIT OR Apache-2.0 |
+| Random tokens in the MCP server | getrandom | MIT OR Apache-2.0 |
+| Resize border and taskbar icon on Windows | raw-window-handle (MIT OR Apache-2.0 OR Zlib), windows-sys (MIT OR Apache-2.0) | As named |
+| Waiting for USB transfers, only with the feature `usb`, which is off by default | futures-lite | Apache-2.0 OR MIT |
 
 `serialport` is under the Mozilla Public License 2.0. DarkBurn uses it unchanged. Its source
 code, for the version that `Cargo.lock` names, is at https://crates.io/crates/serialport; the
@@ -331,6 +406,22 @@ they are taken under Apache-2.0 and MIT. `Cargo.lock` also names `r-efi`
 (MIT OR Apache-2.0 OR LGPL-2.1-or-later). It is for UEFI targets only and is not built into
 DarkBurn for Windows, Linux or macOS.
 
+Both programs also contain the Rust standard library, which the compiler links into every Rust
+program. It does not come from crates.io and `Cargo.lock` does not name it, so `cargo about`
+does not list it and it is not in `THIRD-PARTY-LICENSES.txt`. It is the work of the Rust Project
+Developers (https://github.com/rust-lang/rust), under Apache-2.0 OR MIT. A few of its parts have
+other notices, among them its Unicode tables (Unicode-3.0). The file
+`share/doc/rust/COPYRIGHT-library.html` of a Rust toolchain lists every part and the libraries
+the standard library is itself built with. The workflows build the packages with Rust 1.99.1;
+the version is fixed in `.github/actions/prepare/action.yml`.
+
+On Windows both programs also have Microsoft's C runtime linked into them
+(`-C target-feature=+crt-static`, set in `scripts/package-common.ps1` and, for a build from
+source, in `scripts/install.ps1`), so that no Visual C++ package has to be installed. The
+runtime is Microsoft's. It comes with Microsoft's build tools, not from crates.io, so
+`THIRD-PARTY-LICENSES.txt` does not name it, and this repository records no licence terms for
+it.
+
 ### Fonts and data inside the libraries
 
 DarkBurn builds egui with its `default_fonts` feature, so egui's own fonts are compiled into
@@ -340,9 +431,10 @@ DarkBurn builds egui with its `default_fonts` feature, so egui's own fonts are c
 |---|---|---|---|
 | Hack Regular, the fallback font for symbols | egui (`epaint_default_fonts`) | Source Foundry Authors; Bitstream, Inc. | MIT and the Bitstream Vera licence (`licenses/Hack-LICENSE`) |
 | Ubuntu Light | egui (`epaint_default_fonts`) | Canonical Ltd. | Ubuntu Font Licence 1.0 (`licenses/Ubuntu-Font-Licence-1.0`) |
-| `egui-icons.ttf`, five glyphs from emoji-icon-font | egui (`epaint_default_fonts`) | John Slegers, https://github.com/jslegers/emoji-icon-font | MIT (`licenses/emoji-icon-font-LICENSE-MIT`) |
+| `egui-icons.ttf`, five glyphs from emoji-icon-font: the Android, Apple, GitHub and Windows logos and the word `git`. The logos are trademarks of their owners. DarkBurn's own code draws none of the five | egui (`epaint_default_fonts`) | John Slegers, https://github.com/jslegers/emoji-icon-font | MIT (`licenses/emoji-icon-font-LICENSE-MIT`) |
 | Unicode character data | The `icu_*` and `unicode-*` crates | Unicode, Inc. | Unicode-3.0 |
-| Text encoding tables | encoding_rs | WHATWG | BSD-3-Clause |
+| Text encoding tables | encoding_rs, which dxf and lopdf use | WHATWG | BSD-3-Clause |
+| The JSON Schema meta-schemas (drafts 4, 6, 7, 2019-09 and 2020-12) | `referencing`, which `jsonschema` uses | The JSON Schema project, https://json-schema.org (the address in each file's `$id`) | None stated in the crate, which is itself MIT. The project's specification repository (https://github.com/json-schema-org/json-schema-spec) gives its contents under BSD-3-Clause or the Academic Free License 3.0 |
 
 ### Used only to test and to build
 
@@ -353,6 +445,8 @@ These are not part of any package.
 | egui_kittest, with kittest | MIT OR Apache-2.0 | The headless UI test harness (`apps/darkburn/src/ui_harness.rs`, `docs/UI-TESTING.md`): it runs the real app without a window and draws it offscreen |
 | embed-resource | MIT | `apps/darkburn/build.rs`: puts the icon and the version resource into `darkburn.exe` on Windows |
 | toml | MIT OR Apache-2.0 | `crates/darkburn-ui/build.rs`: reads `palette.toml` and `aliases.toml` for the icon tables |
+| cargo-about (Embark Studios, https://github.com/EmbarkStudios/cargo-about) | MIT OR Apache-2.0 | `scripts/package-common.ps1`, `scripts/package-unix.sh`: writes `THIRD-PARTY-LICENSES.txt` when a package is made (see "Built on"). Installed with `cargo install`; `Cargo.lock` does not name it. The workflows use version 0.9.3, fixed in `.github/actions/prepare/action.yml`; add `--version 0.9.3` to the install line above for the same list. Only the list it writes is in a package |
+| The DejaVu and Liberation fonts (the Ubuntu 24.04 packages `fonts-dejavu-core` and `fonts-liberation`) | DejaVu: the Bitstream Vera licence, with the DejaVu changes in the public domain. Liberation: SIL Open Font License 1.1 | `.github/workflows/ci.yml` installs them on the Linux runner, because a few tests read the system's fonts (`crates/darkburn-text/tests/text.rs`, the SVG text test in `apps/darkburn/src/import.rs`). No file of them is in the repository |
 
 ## Licence texts
 

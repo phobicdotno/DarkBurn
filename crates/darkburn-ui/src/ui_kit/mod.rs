@@ -33,6 +33,8 @@ mod tree;
 mod value_focus;
 mod wheel;
 pub mod window_host;
+#[cfg(test)]
+mod window_kit_tests;
 
 pub use actions::*;
 pub use attention::*;

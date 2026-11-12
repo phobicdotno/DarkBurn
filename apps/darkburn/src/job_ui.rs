@@ -157,11 +157,7 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
             ctx.request_repaint();
         }
     }
-    // The maximised Preview is another window to egui than the one the user places and sizes. As
-    // one window, the placed one took the place and the size of the maximised one, and Restore
-    // had nothing to go back to.
     let mut command: Option<(&'static str, serde_json::Value)> = None;
-    let mut open = true;
     // Docked as a tab or in a window of its own, the Preview fills what it is given (Maximise
     // has nothing to do there); floating, it is its own window, sized and maximised as before.
     let hosted_id = Id::unique("db_preview_window_hosted");
@@ -171,10 +167,10 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
         .fill_body()
         .escape_here(crate::escape::only_window(ctx, hosted_id))
         .show_unless_floating(ctx, |ui| preview_body(ui, app, hosted_id, &mut command));
-    match hosted {
-        Some(closed) => open = !closed,
-        None => open = floating_preview(ctx, app, &mut command),
-    }
+    let open = match hosted {
+        Some(closed) => !closed,
+        None => floating_preview(ctx, app, &mut command),
+    };
     if !open {
         app.job.preview.open = false;
         app.job.preview.playing = false;

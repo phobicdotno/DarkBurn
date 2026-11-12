@@ -385,6 +385,7 @@ fn zz_debug_escape_after_cancel() {
         let layers = ctx.memory(|m| m.areas().visible_layer_ids());
         let id = egui::Id::unique(("shape_dialog", OFFSET));
         let area = egui::AreaState::load(&ctx, id).map(|a| a.rect());
+        eprintln!("DBG {at}: place {:?} open {:?}", window_host::place(&ctx, &crate::shape_ui::dock_key(OFFSET)), window_host::open_windows(&ctx));
         eprintln!(
             "DBG {at}: window {id:?} area {area:?} layers {layers:?} titles {:?} popup {} only {}",
             g.window_titles(),

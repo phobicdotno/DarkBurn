@@ -147,6 +147,8 @@ mod tools;
 #[cfg(test)]
 mod ui_bug_tests;
 #[cfg(test)]
+mod ui_dock_tests;
+#[cfg(test)]
 mod ui_harness;
 #[cfg(test)]
 mod ui_hunt2_tests;

@@ -111,6 +111,22 @@ for svg in "$out"/*.svg; do
     fi
 done
 
+# The page's own files are plain ASCII text: a letter that only looks like another, or a mark
+# that turns the reading order round, would make a command on the page say one thing and do
+# another. Other letters are written as entities (&rarr;) or, in style.css, as "\2192".
+for f in "$out"/*.html "$out"/*.css "$out"/*.js; do
+    [ -f "$f" ] || continue
+    if [ "$(LC_ALL=C tr -d ' -~\n' <"$f" | wc -c | tr -d ' ')" -ne 0 ]; then
+        LC_ALL=C grep -n '[^ -~]' "$f" | cut -c 1-120 >&2 || true
+        die "${f##*/} holds something that is not plain ASCII text (see the lines above; a tab and a Windows line end count)."
+    fi
+done
+
+# What this script does not judge: what style.css and site.js do. Both are the page's own
+# files, the policy allows them, and both can change what a visitor reads, the install
+# commands too (a style sheet can hide a line and show another). A change to either is read
+# like a change to a program.
+#
 # Each page carries a Content-Security-Policy line that allows the page's own files and nothing
 # else. A browser holds the page to it: nothing is fetched from another host and no script or
 # style inside the HTML runs, however it is written. The searches further down say the same
@@ -219,9 +235,13 @@ rm -f "$out/.rules" "$out/.rules-found"
 
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.
-if grep -Ein "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\]|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\]" "$out"/*.html; then
-    die "the page fetches something from another host (see the lines above)."
-fi
+for page in "$out"/*.html; do
+    # On one line first: an address may stand on the line after its attribute.
+    if tr '\n\r\t' '   ' <"$page" |
+        grep -Eio "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\][^\"'> ]{0,60}|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\][^\"'> ]{0,60}"; then
+        die "${page##*/} fetches something from another host (see the lines above)."
+    fi
+done
 for page in "$out"/*.html; do
     # On one line first: a <link> may be written over several.
     if tr '\n' ' ' <"$page" | grep -Eio '<link[^>]*>' |
@@ -234,6 +254,10 @@ for css in "$out"/*.css; do
     [ -f "$css" ] || continue
     if grep -Ein "@import|url\\([[:space:]]*[\"']?[[:space:]]*(https?:)?//|[\"'][[:space:]]*(https?:)?//" "$css"; then
         die "${css##*/} fetches something from another host (see the lines above)."
+    fi
+    # "\68ttps:" is "https:" to a browser.
+    if grep -Ein 'url\([^)]*[\]' "$css"; then
+        die "${css##*/} has an address with a backslash in it (see the lines above). Write the address out."
     fi
 done
 

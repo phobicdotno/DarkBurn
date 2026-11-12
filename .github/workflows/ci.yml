@@ -78,6 +78,19 @@ jobs:
       - name: Format
         run: cargo fmt -- --check
 
+      # The installers are the first thing a visitor runs, and no test reads them.
+      - name: The shell scripts parse and lint clean
+        if: ${{ !cancelled() }}
+        run: |
+          for f in scripts/*.sh; do sh -n "$f"; done
+          shellcheck scripts/*.sh
+
+      # Parsed only, never run. The Windows job below does the same under Windows PowerShell 5.1.
+      - name: The PowerShell scripts parse (PowerShell 7)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./.github/parse-ps1.ps1
+
   test:
     name: Clippy and tests (${{ matrix.system }})
     strategy:
@@ -106,6 +119,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libclang-dev libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
+
+      # "irm ... | iex" on a fresh Windows runs install.ps1 under Windows PowerShell 5.1, which
+      # does not know the newer syntax. Parsed only, never run.
+      - name: The PowerShell scripts parse (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./.github/parse-ps1.ps1
 
       - uses: ./.github/actions/prepare
         with:

@@ -18,6 +18,13 @@ use crate::tools::Tool;
 use darkburn_core::Editor;
 
 pub const APP_BAR_HEIGHT: f32 = 34.0;
+
+/// The main window less the application bar: where a floating window opens and stays, so it
+/// never lies over the bar, its menus and the main window's own buttons.
+pub fn room_under_the_bar(ctx: &egui::Context) -> Rect {
+    let screen = ctx.content_rect();
+    Rect::from_min_max(pos2(screen.left(), (screen.top() + APP_BAR_HEIGHT).min(screen.bottom())), screen.max)
+}
 pub const STATUS_BAR_HEIGHT: f32 = 24.0;
 pub const PALETTE_HEIGHT: f32 = 30.0;
 pub const TOOLS_WIDTH: f32 = 40.0;

@@ -10,7 +10,7 @@ use solidcraft_theme::Tokens;
 
 use crate::numeric::{self, Num};
 use crate::palette::layer_colour;
-use crate::shell::DarkBurn;
+use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 
 /// The device has a Z axis (otherwise the Z settings are greyed out).
 const DEVICE_HAS_Z: bool = false;
@@ -192,9 +192,14 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         s.sub = 0;
     }
     let title = "Cut Settings Editor";
+    // The editor opens in the middle of the room under the application bar. Where the kit puts a
+    // window that is given no place, two and a half rows above the middle of the main window,
+    // the top of this tall one lay over the bar and its menus in most main windows.
+    let middle = crate::shell::room_under_the_bar(ctx).center();
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
         .cards(2.7)
         .fields()
+        .placed(Align2::CENTER_CENTER, middle)
         .actions("OK", "Cancel", None)
         .show(ctx, true, |ui| body(ui, app, &mut s));
     s.edited |= app.editor.doc.layers != s.original;
@@ -266,8 +271,9 @@ fn body(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let list_w = 130.0;
     // The columns have a height of their own. The rule between them takes all the height it is
     // offered: offered all a window may have, it made the editor as tall as the main window,
-    // whatever was in it.
-    let height = ui.available_height().min(BODY_HEIGHT);
+    // whatever was in it. In a small main window they leave the height of the application bar
+    // unused, so the editor fits under the bar.
+    let height = (ui.available_height() - APP_BAR_HEIGHT).clamp(0.0, BODY_HEIGHT);
     ui.allocate_ui_with_layout(vec2(ui.available_width(), height), egui::Layout::left_to_right(egui::Align::Min), |ui| {
         // Layer list.
         ui.allocate_ui_with_layout(vec2(list_w, ui.available_height().max(300.0)), egui::Layout::top_down(egui::Align::Min), |ui| {

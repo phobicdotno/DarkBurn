@@ -1,0 +1,1 @@
+- Fix: Adjust Image and Trace Image are as tall as what is in them, no longer as tall as the whole app, and stay clear of the menus at the top

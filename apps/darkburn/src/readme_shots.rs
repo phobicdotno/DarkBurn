@@ -16,10 +16,9 @@
 //! bar and the date on the asset plate are today's, so make the pictures again after a version
 //! bump, and look at every one before it goes into the README.
 //!
-//! A window that floats over the main window opens at least [`DIALOG_TOP`] points down, clear of
-//! the application bar. Adjust Image is the exception: it is always as tall as the main window
-//! less 22 points (in `image_ui.rs` the rule between its two columns takes all the height a
-//! window may have), so the app can only put it at the very top.
+//! A window that floats over the main window is clear of the application bar. The Preview, the
+//! Cut Settings Editor and Adjust Image open under the bar by themselves; a picture that moves
+//! one puts its top at [`DIALOG_TOP`].
 
 use std::path::PathBuf;
 
@@ -42,9 +41,9 @@ const MARK: usize = 3;
 const HOLES: usize = 5;
 const LIGHT: usize = 9;
 
-/// Where the pictures put the top of a window that floats over the main window: clear of the
-/// application bar, so the bar and its buttons show whole. A window too tall for the room there
-/// is kept inside the main window by the app, higher up.
+/// Where the pictures put the top of a window they move: clear of the application bar, so the
+/// bar and its buttons show whole. A window too tall for the room there is kept inside the main
+/// window by the app, higher up.
 const DIALOG_TOP: f32 = 52.0;
 
 fn gui() -> Gui {
@@ -401,6 +400,8 @@ fn image_engraving() {
     let size = g.dialog_windows().last().expect("the Adjust Image window").size();
     let screen = g.screen();
     move_dialog(&mut g, pos2(screen.right() - size.x - 6.0, DIALOG_TOP));
+    let moved = *g.dialog_windows().last().expect("the Adjust Image window");
+    assert!((moved.top() - DIALOG_TOP).abs() < 1.0 && moved.bottom() <= screen.bottom(), "Adjust Image is at {moved:?}, top not at {DIALOG_TOP}");
     // The dots on the canvas and in the window are worked out on worker threads.
     for _ in 0..40 {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -437,12 +438,22 @@ fn cut_settings() {
     g.double_click_label(&format!("{LAYER:02}"));
     g.settle();
     assert_eq!(g.app().cut_settings_open, Some(LAYER));
-    let size = g.dialog_windows().last().expect("the Cut Settings Editor").size();
+    // The editor opens under the application bar, in the middle. It goes to the top right, so
+    // the grid shows beside it and it hides the whole of the boxes for numbers behind it, not
+    // all but a strip of them.
+    let opened = *g.dialog_windows().last().expect("the Cut Settings Editor");
     let screen = g.screen();
-    let left = screen.right() - size.x - 6.0;
+    assert!(
+        opened.top() >= crate::shell::APP_BAR_HEIGHT && opened.bottom() <= screen.bottom(),
+        "the editor opens under the application bar: {opened:?}"
+    );
+    let left = screen.right() - opened.width() - 6.0;
     move_dialog(&mut g, pos2(left, DIALOG_TOP));
     let window = *g.dialog_windows().last().expect("the Cut Settings Editor");
-    assert!(window.top() >= DIALOG_TOP - 1.0 && window.bottom() <= screen.bottom() - 6.0, "the editor is clear of the application bar: {window:?}");
+    assert!(
+        (window.min - pos2(left, DIALOG_TOP)).length() < 1.0 && window.size() == opened.size(),
+        "the editor moved to the top right: {window:?} from {opened:?}"
+    );
     // Show the whole grid in the part of the canvas the window leaves free.
     let canvas = g.canvas_rect();
     let (free, page_height) = (left - canvas.left(), f64::from(g.app().prefs.page_height));

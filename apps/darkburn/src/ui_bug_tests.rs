@@ -511,20 +511,54 @@ fn preview_check(g: &Gui, label: &str) -> Option<bool> {
     [view.shade_by_power, view.show_travel, view.invert].get(PREVIEW_CHECKS.iter().position(|l| *l == label)?).copied()
 }
 
-/// What is wrong with the Preview's three check boxes: each must be drawn inside the window,
-/// wide enough for its box and its label.
+/// What is wrong with the Preview's three check boxes: each must be drawn inside the window, as
+/// wide as its box, the gap and all of its label, with the label painted whole (to half a point:
+/// the label starts on a whole pixel). A box squeezed into the end of a row keeps its name for a
+/// screen reader and for `find_text`, but shows "...".
 fn preview_check_problems(g: &Gui, what: &str) -> Vec<String> {
+    let t = solidcraft_theme::Tokens::get();
     let window = preview_window(g);
+    let painted = g.painted();
     let mut bad = Vec::new();
     for label in PREVIEW_CHECKS {
+        let font = egui::FontId::proportional(t.font_label);
+        let words = g.ctx().fonts_mut(|f| f.layout_no_wrap(label.to_string(), font, egui::Color32::WHITE)).size().x;
         let rect = g.find_a11y(Some("CheckBox"), label).last().map(|n| n.rect);
-        let text = g.find_text(label);
+        let text = painted.iter().rev().find(|p| p.text == label);
         match (rect, text) {
-            (Some(r), Some(t)) if r.width() > 14.0 && r.height() > 0.0 && window.contains_rect(r) && window.contains_rect(t) => {}
-            _ => bad.push(format!("{what}: the check box {label:?} is at {rect:?}, its label at {text:?}, the window is {window:?}")),
+            (Some(r), Some(p))
+                if r.width() >= t.space_14 + t.space_6 + words - 0.5
+                    && r.height() > 0.0
+                    && window.contains_rect(r)
+                    && p.full.width() >= words - 0.5
+                    && p.rect.expand(0.5).contains_rect(p.full)
+                    && window.contains_rect(p.full) => {}
+            _ => bad.push(format!(
+                "{what}: the check box {label:?} is at {rect:?}, its label ({words} points wide) is painted as {text:?}, the window is {window:?}"
+            )),
         }
     }
     bad
+}
+
+/// The Preview of one filled square, 100 mm a side, on a layer at `speed` mm/s: an hour and more
+/// of scanning at 20 mm/s. Returns how long the job takes, in seconds.
+fn open_preview_of_a_fill(g: &mut Gui, speed: f64) -> f64 {
+    use serde_json::json;
+    if g.app().editor.doc.used_layers().is_empty() {
+        g.exec("shape.add_rect", json!({ "x": 20, "y": 20, "width": 100, "height": 100, "layer": 1 }));
+        g.exec("layer.set_mode", json!({ "layer": 1, "mode": "fill" }));
+    }
+    g.exec("layer.set_param", json!({ "layer": 1, "field": "speed", "value": speed }));
+    g.run_command("window.preview");
+    g.wait_for_job_build();
+    g.frames(4);
+    let total = g.app().job.preview.data.as_ref().map(|d| d.stats.seconds);
+    total.unwrap_or_else(|| panic!("the preview has a job: {:?}", g.app().job.preview.error))
+}
+
+fn size_of(r: egui::Rect) -> (f32, f32) {
+    (r.width(), r.height())
 }
 
 /// The Preview window keeps the size it opens at. It got 18 points wider with every frame, until
@@ -538,6 +572,9 @@ fn the_preview_window_keeps_its_size() {
     let later = preview_window(&g);
     g.screenshot("uibugs-preview");
     assert_eq!((first.width(), first.height()), (later.width(), later.height()), "60 frames later the window is {later:?}; it was {first:?}");
+    // And that size is the one it asks for, 760 by 600 points, 80 points in and 60 down. (It was a
+    // point or three off in height: the room for the buttons was not what they took.)
+    assert_eq!((later.min, size_of(later)), (egui::pos2(80.0, 60.0), (760.0, 600.0)), "the Preview opens as {later:?}");
     let screen = g.screen();
     assert!(later.width() < screen.width() - 200.0, "the Preview {later:?} is narrower than the main window {screen:?}");
     assert!(!crate::ui_harness::outside(screen, later), "the Preview {later:?} is inside the main window {screen:?}");
@@ -597,6 +634,235 @@ fn a_narrow_preview_window_keeps_its_size_and_its_check_boxes() {
     }
 }
 
+/// A job of an hour or more has a longer clock, "1h 07m 51s / 1h 07m 51s". The row with the time
+/// slider gave the clock 144 points whatever it said, so with such a job the window got 7 points
+/// wider with every frame (23 with a job of ten hours), until it was wider than the main window.
+#[test]
+fn the_preview_window_keeps_its_size_with_a_job_of_hours() {
+    let mut g = Gui::standard();
+    let screen = g.screen();
+    for (speed, at_least) in [(20.0, 3600.0), (2.0, 36_000.0), (0.05, 360_000.0)] {
+        let total = open_preview_of_a_fill(&mut g, speed);
+        assert!(total >= at_least, "at {speed} mm/s the job takes {total:.0} s");
+        let first = preview_window(&g);
+        g.frames(60);
+        let later = preview_window(&g);
+        assert_eq!(size_of(first), size_of(later), "{total:.0} s: 60 frames later the window is {later:?}; it was {first:?}");
+        assert!(later.width() < screen.width() - 200.0, "{total:.0} s: the Preview {later:?} is narrower than the main window {screen:?}");
+        // The clock is there, whole, at the end of the job and anywhere in it.
+        for part in [1.0, 0.0, 0.37, 0.5, 0.999] {
+            g.app().job.preview.t = total * part;
+            g.frames(10);
+            let window = preview_window(&g);
+            assert_eq!(size_of(window), size_of(first), "{total:.0} s, clock at {part}: the window is {window:?}; it was {first:?}");
+            let clock = format!("{} / {}", crate::job_build::format_time(total * part), crate::job_build::format_time(total));
+            let painted = g.painted().into_iter().rev().find(|p| p.text == clock).unwrap_or_else(|| panic!("the clock {clock:?} shows"));
+            assert!(painted.rect == painted.full && window.contains_rect(painted.full), "the clock {painted:?} is whole inside {window:?}");
+            let slider = g.find_a11y(Some("Slider"), "Time in the job").last().expect("the time slider").rect;
+            assert!(slider.width() >= 80.0 && slider.right() <= painted.full.left(), "the slider {slider:?} ends before the clock {painted:?}");
+        }
+        let problems = g.layout_problems();
+        assert!(problems.is_empty(), "{total:.0} s: {problems:#?}");
+    }
+    g.screenshot("uibugs-preview-long-job");
+}
+
+/// The bottom right corner follows the pointer that drags it: the window grows by what the
+/// pointer moved. (It grew by 16 points less in height, then by 2 less: the picture took a
+/// little less than the room the buttons leave, so the window was shorter than its own size.)
+#[test]
+fn the_preview_window_grows_by_what_its_corner_is_dragged() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    let before = preview_window(&g);
+    let corner = before.max - egui::vec2(3.0, 3.0);
+    g.drag(corner, corner + egui::vec2(60.0, 40.0));
+    let after = preview_window(&g);
+    assert_eq!(after.min, before.min, "the top left corner stays");
+    assert_eq!(size_of(after), (before.width() + 60.0, before.height() + 40.0), "dragged by (60, 40): {after:?} from {before:?}");
+    g.frames(30);
+    assert_eq!(preview_window(&g), after, "and it stays that size");
+    // Smaller again, by the same corner.
+    let corner = after.max - egui::vec2(3.0, 3.0);
+    g.drag(corner, corner - egui::vec2(100.0, 90.0));
+    let small = preview_window(&g);
+    assert_eq!(size_of(small), (after.width() - 100.0, after.height() - 90.0), "dragged by (-100, -90): {small:?} from {after:?}");
+}
+
+/// Taking hold of an edge does not change the size the pointer did not ask for. Every grab of
+/// the right edge made the window 2 points shorter (16 before that).
+#[test]
+fn taking_hold_of_the_previews_edge_does_not_make_it_shorter() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    let start = preview_window(&g);
+    for grab in 0..10 {
+        let r = preview_window(&g);
+        let grip = egui::pos2(r.right() - 1.0, r.center().y);
+        let dx = if grab % 2 == 0 { 6.0 } else { -6.0 };
+        g.drag(grip, grip + egui::vec2(dx, 0.0));
+        let now = preview_window(&g);
+        assert_eq!(now.height(), start.height(), "grab {grab}: the window is {now:?}; it started as {start:?}");
+        assert_eq!(now.width(), r.width() + dx, "grab {grab}: the right edge followed the pointer");
+    }
+    assert_eq!(preview_window(&g), start, "ten grabs later the window is as it was");
+    // The bottom edge too: the width stays.
+    for grab in 0..4 {
+        let r = preview_window(&g);
+        let grip = egui::pos2(r.center().x, r.bottom() - 1.0);
+        let dy = if grab % 2 == 0 { 10.0 } else { -10.0 };
+        g.drag(grip, grip + egui::vec2(0.0, dy));
+        let now = preview_window(&g);
+        assert_eq!(size_of(now), (start.width(), r.height() + dy), "bottom edge, grab {grab}: {now:?} from {r:?}");
+    }
+}
+
+/// How many rows the Preview's buttons under the picture are on.
+fn preview_button_rows(g: &Gui) -> usize {
+    let mut tops: Vec<i32> = ["Start here", "Run from here", "Send from here", "Save from here", "Save image", "Fit", "Maximise", "Refresh", "Close"]
+        .iter()
+        .filter_map(|label| g.find_a11y(Some("Button"), label).last().map(|n| n.rect.top().round() as i32))
+        .collect();
+    tops.sort_unstable();
+    tops.dedup();
+    tops.len()
+}
+
+/// Made narrower a little at a time, the Preview keeps its height while its buttons go to two,
+/// three and four rows, and has it still when it is wide again. (The picture left the buttons
+/// the room they took in the frame before, so a new row could make the window 20 points taller,
+/// and it stayed that tall.)
+#[test]
+fn the_preview_keeps_its_height_when_its_buttons_go_to_more_rows() {
+    // The pointer moves 6 points in one, two or three frames before it lets go: which frame a
+    // row of buttons wraps in decides what a height from the frame before does to the window.
+    for moves in [1, 2, 3] {
+        let mut g = Gui::standard();
+        open_preview(&mut g);
+        let start = preview_window(&g);
+        assert_eq!(preview_button_rows(&g), 1, "at {start:?} the buttons are on one row");
+        let mut most = 1;
+        let mut step = |g: &mut Gui, dx: f32| {
+            let r = preview_window(g);
+            let grip = egui::pos2(r.right() - 1.0, r.center().y);
+            g.drag_steps(grip, grip + egui::vec2(dx, 0.0), moves);
+            let now = preview_window(g);
+            let rows = preview_button_rows(g);
+            assert_eq!(
+                now.height(),
+                start.height(),
+                "{moves} moves a drag: at {:.0} points wide, {rows} rows of buttons, the window is {now:?}; it started as {start:?}",
+                now.width()
+            );
+            most = most.max(rows);
+            now.width() != r.width()
+        };
+        // Narrower until it stops at its narrowest, then wide again.
+        for _ in 0..200 {
+            if !step(&mut g, -6.0) {
+                break;
+            }
+        }
+        let narrow = preview_window(&g);
+        assert!(narrow.width() < 320.0, "the window went down to its narrowest: {narrow:?}");
+        for _ in 0..200 {
+            if preview_window(&g).width() >= start.width() {
+                break;
+            }
+            step(&mut g, 6.0);
+        }
+        assert!(most >= 4, "the buttons went to {most} rows on the way");
+        assert_eq!(preview_button_rows(&g), 1);
+        let wide = preview_window(&g);
+        assert!(wide.width() >= start.width(), "{wide:?}");
+        assert_eq!(wide.height(), start.height(), "wide again, the window is {wide:?}; it started as {start:?}");
+        let mut problems = preview_check_problems(&g, "wide again");
+        problems.extend(g.layout_problems());
+        assert!(problems.is_empty(), "{problems:#?}");
+    }
+}
+
+/// Maximise fills the room under the application bar; Restore puts the window back where it was,
+/// at the size it had. (Restore left it as big as the main window, and it lay over the bar and
+/// the main window's own minimise, maximise and close buttons.)
+#[test]
+fn restore_puts_the_preview_back_where_it_was() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    // Not where and how it opens: moved and sized first.
+    let r = preview_window(&g);
+    let grip = egui::pos2(r.center().x, r.top() + 14.0);
+    g.drag(grip, grip + egui::vec2(140.0, 90.0));
+    let r = preview_window(&g);
+    let corner = r.max - egui::vec2(3.0, 3.0);
+    g.drag(corner, corner + egui::vec2(-70.0, 50.0));
+    let before = preview_window(&g);
+    assert_eq!((before.min, size_of(before)), (r.min, (r.width() - 70.0, r.height() + 50.0)));
+    let screen = g.screen();
+    let bar = crate::shell::APP_BAR_HEIGHT;
+    for round in 0..2 {
+        g.click_a11y(Some("Button"), "Maximise");
+        g.frames(4);
+        assert!(g.app().job.preview.maximised);
+        let big = preview_window(&g);
+        assert!(big.top() >= bar && !crate::ui_harness::outside(screen, big), "round {round}: maximised, {big:?} is under the application bar");
+        assert!(
+            big.width() > screen.width() - 40.0 && big.height() > screen.height() - bar - 40.0,
+            "round {round}: maximised, {big:?} fills the room under the bar"
+        );
+        g.frames(30);
+        assert_eq!(preview_window(&g), big, "round {round}: the maximised window is steady");
+        let mut problems = preview_check_problems(&g, "maximised");
+        problems.extend(g.layout_problems());
+        assert!(problems.is_empty(), "round {round}: {problems:#?}");
+        assert_eq!(g.window_titles(), ["Preview"], "one Preview window");
+        g.click_a11y(Some("Button"), "Restore");
+        g.frames(4);
+        assert!(!g.app().job.preview.maximised);
+        assert_eq!(preview_window(&g), before, "round {round}: Restore puts the window back");
+        assert!(!g.find_a11y(Some("Button"), "Maximise").is_empty());
+    }
+    // Escape closes it from either state, and it comes back as it was.
+    g.click_a11y(Some("Button"), "Maximise");
+    g.frames(4);
+    g.escape();
+    assert!(!g.app().job.preview.open && !g.dialog_open());
+}
+
+/// The Preview opens under the application bar, whole, also in the smallest main window and
+/// with the interface scaled up in it. (In a 960 x 600 window it opened at the very top, over
+/// the bar; at 200 % its last row of buttons was below the bottom of the screen.)
+#[test]
+fn the_preview_opens_under_the_application_bar_in_any_window() {
+    let bar = crate::shell::APP_BAR_HEIGHT;
+    for (w, h, scale) in [(1600.0, 1000.0, 1.0), (1440.0, 960.0, 2.0), (960.0, 600.0, 1.0), (640.0, 400.0, 1.5), (480.0, 300.0, 2.0)] {
+        let mut g = Gui::new(w, h, scale);
+        g.allow_id_clashes();
+        open_preview(&mut g);
+        let screen = g.screen();
+        let window = preview_window(&g);
+        let what = format!("{w} x {h} points at scale {scale}");
+        assert!(window.top() >= bar - 0.5, "{what}: the Preview {window:?} opens under the application bar");
+        assert!(!crate::ui_harness::outside(screen, window), "{what}: the Preview {window:?} is inside {screen:?}");
+        for label in ["Start here", "Save image", "Fit", "Maximise", "Refresh", "Close"] {
+            let b = g.find_a11y(Some("Button"), label).last().unwrap_or_else(|| panic!("{what}: the button {label}")).rect;
+            assert!(window.contains_rect(b) && screen.contains_rect(b), "{what}: the button {label} at {b:?} is inside {window:?}");
+        }
+        g.frames(30);
+        assert_eq!(preview_window(&g), window, "{what}: the window is steady");
+        let problems = preview_check_problems(&g, &what);
+        assert!(problems.is_empty(), "{problems:#?}");
+        // Maximised it is under the bar too, and Restore still puts it back.
+        g.click_a11y(Some("Button"), "Maximise");
+        g.frames(4);
+        let big = preview_window(&g);
+        assert!(big.top() >= bar - 0.5 && !crate::ui_harness::outside(screen, big), "{what}: maximised, the Preview is at {big:?}");
+        g.click_a11y(Some("Button"), "Restore");
+        g.frames(4);
+        assert_eq!(preview_window(&g), window, "{what}: Restore puts the window back");
+    }
+}
+
 // ----- the Cut Settings Editor -----
 
 /// The Cut Settings Editor on a layer that fills, in a window of this size.
@@ -628,7 +894,7 @@ fn the_hint_under_the_cut_settings_layer_list_is_not_cut_off() {
 /// The fields of the Cut Settings Editor go down to the bottom of the window, so the rows of a
 /// fill layer down to Z offset show without scrolling in a window with the room. (They stopped
 /// 460 points down, with the lower third of the window empty.) And the window is no taller than
-/// its two columns: in a tall main window it leaves the application bar free.
+/// its two columns, so it fits under the application bar, where it opens.
 #[test]
 fn the_cut_settings_fields_go_down_to_the_bottom_of_the_window() {
     let g = open_cut_settings(1440.0, 960.0);
@@ -643,8 +909,35 @@ fn the_cut_settings_fields_go_down_to_the_bottom_of_the_window() {
     assert!(ok - last < 140.0, "{:.0} points lie between the last row ({last}) and the OK button ({ok})", ok - last);
     let room = g.screen().height() - crate::shell::APP_BAR_HEIGHT;
     assert!(window.height() <= room - 12.0, "the window ({:.0} points tall) fits under the application bar ({room:.0} points)", window.height());
+    assert!(window.top() >= crate::shell::APP_BAR_HEIGHT, "the window {window:?} is under the application bar");
     let problems = g.layout_problems();
     assert!(problems.is_empty(), "{problems:#?}");
+}
+
+/// The Cut Settings Editor opens in the middle of the room under the application bar, in a big
+/// main window and in the smallest. (It opened 70 points above the middle of the main window:
+/// at 1440 x 960 its top was at the very top, over the bar and the menus from Laser Tools to
+/// Help, with 126 points free below it.)
+#[test]
+fn the_cut_settings_editor_opens_under_the_application_bar() {
+    let bar = crate::shell::APP_BAR_HEIGHT;
+    for (w, h) in [(1440.0, 960.0), (1440.0, 880.0), (1600.0, 1000.0), (2560.0, 1400.0), (1280.0, 720.0), (960.0, 600.0)] {
+        let mut g = open_cut_settings(w, h);
+        let screen = g.screen();
+        let window = *g.dialog_windows().last().expect("the Cut Settings Editor");
+        assert!(window.top() >= bar && window.bottom() <= screen.bottom(), "{w} x {h}: the editor {window:?} is under the application bar");
+        let (above, below) = (window.top() - bar, screen.bottom() - window.bottom());
+        assert!((above - below).abs() <= 1.5, "{w} x {h}: {above} points above the editor {window:?} and {below} below it");
+        assert!((window.center().x - screen.center().x).abs() <= 1.5, "{w} x {h}: the editor {window:?} is in the middle");
+        g.frames(30);
+        assert_eq!(*g.dialog_windows().last().expect("the editor"), window, "{w} x {h}: the editor stays where it opened");
+        // The other tab is as tall: the window does not jump.
+        g.click_label("Advanced");
+        g.frames(4);
+        assert_eq!(*g.dialog_windows().last().expect("the editor"), window, "{w} x {h}: the Advanced tab is in the same window");
+        let problems = g.layout_problems();
+        assert!(problems.is_empty(), "{w} x {h}: {problems:#?}");
+    }
 }
 
 /// In the smallest window the editor still fits, and its fields scroll.
@@ -747,4 +1040,91 @@ fn nothing_clips_in_any_window_or_panel_with_a_machine_connected() {
     }
     assert!(g.app().machine.handle.is_connected(), "the simulator stayed connected");
     assert!(bad.is_empty(), "{} layout problems:\n{}", bad.len(), bad.into_iter().collect::<Vec<_>>().join("\n"));
+}
+
+// ----- Adjust Image and Trace Image -----
+
+/// An app with a small grey picture on the page, selected.
+fn gui_with_a_picture(width: f32, height: f32) -> Gui {
+    let mut g = Gui::new(width, height, 1.0);
+    let file = g.temp("ramp.png");
+    image::GrayImage::from_fn(90, 60, |x, y| image::Luma([((x * 2 + y * 3) % 256) as u8])).save(&file).expect("write the picture");
+    let r = g.exec("project.import", serde_json::json!({ "paths": [file.to_string_lossy()], "x": 100, "y": 100 }));
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
+    g
+}
+
+/// The two windows with a column of fields beside a picture, the command that opens each, and
+/// the last thing in its column of fields.
+const IMAGE_WINDOWS: [(&str, &str, &str); 2] =
+    [("tools.adjust_image", "Adjust Image", "Export..."), ("tools.trace_image", "Trace Image", "Delete image after tracing")];
+
+/// Adjust Image and Trace Image are as tall as what is in them: under the last row there is the
+/// row of OK and Cancel. (Both were as tall as the main window whatever was in them, with their
+/// lower third empty and their top edge across the application bar.)
+#[test]
+fn adjust_image_and_trace_image_are_no_taller_than_what_is_in_them() {
+    for (command, title, last_row) in IMAGE_WINDOWS {
+        let mut g = gui_with_a_picture(1440.0, 960.0);
+        g.run_command(command);
+        g.settle();
+        g.frames(4);
+        assert_eq!(g.window_titles(), [title]);
+        g.screenshot(&format!("uibugs-{}", title.to_lowercase().replace(' ', "-")));
+        let (screen, window) = (g.screen(), *g.dialog_windows().last().expect("the window"));
+        assert!(g.has_text(last_row), "{title}: {last_row} shows without scrolling: {:?}", g.visible_texts());
+        // The column of fields is the taller of the two with this picture: the row of OK and
+        // Cancel comes right under its last row.
+        let ok = g.find_text("OK").expect("the OK button").top();
+        let last = g.find_text(last_row).expect("the last row").bottom();
+        assert!(
+            ok > last && ok - last < 80.0,
+            "{title}: {:.0} points lie between {last_row} ({last}) and the OK button ({ok}) of {window:?}",
+            ok - last
+        );
+        assert!(window.top() >= crate::shell::APP_BAR_HEIGHT, "{title}: the window {window:?} leaves the application bar free");
+        assert!(!crate::ui_harness::outside(screen, window), "{title}: the window {window:?} is inside {screen:?}");
+        let problems = g.layout_problems();
+        assert!(problems.is_empty(), "{title}: {problems:#?}");
+        g.frames(20);
+        assert_eq!(*g.dialog_windows().last().expect("the window"), window, "{title}: the window stays as it is");
+    }
+}
+
+/// In a small main window Adjust Image and Trace Image fit under the application bar, and what
+/// does not show scrolls.
+#[test]
+fn adjust_image_and_trace_image_fit_a_small_window_under_the_application_bar() {
+    for (command, title, last_row) in IMAGE_WINDOWS {
+        for (width, height) in [(960.0, 600.0), (1100.0, 700.0)] {
+            let mut g = gui_with_a_picture(width, height);
+            g.run_command(command);
+            g.settle();
+            g.frames(4);
+            assert_eq!(g.window_titles(), [title]);
+            let (screen, window) = (g.screen(), *g.dialog_windows().last().expect("the window"));
+            let at = format!("{title} in {width} x {height}");
+            assert!(!crate::ui_harness::outside(screen, window), "{at}: the window {window:?} is inside {screen:?}");
+            assert!(window.top() >= crate::shell::APP_BAR_HEIGHT, "{at}: the window {window:?} leaves the application bar free");
+            let problems = g.layout_problems();
+            assert!(problems.is_empty(), "{at}: {problems:#?}");
+            let ok = g.find_text("OK").expect("the OK button");
+            assert!(window.contains_rect(ok), "{at}: the OK button {ok:?} is inside {window:?}");
+            let over = pos2_in_the_fields(window);
+            for _ in 0..12 {
+                if g.find_text(last_row).is_some_and(|r| r.bottom() < ok.top()) {
+                    break;
+                }
+                g.scroll(over, egui::vec2(0.0, -200.0));
+            }
+            let r = g.find_text(last_row).unwrap_or_else(|| panic!("{at}: the fields scroll down to {last_row}: {:?}", g.visible_texts()));
+            assert!(window.contains_rect(r) && r.bottom() < ok.top(), "{at}: {last_row} at {r:?} is inside {window:?}, above the OK button");
+            assert_eq!(*g.dialog_windows().last().expect("the window"), window, "{at}: scrolling does not move or resize the window");
+        }
+    }
+}
+
+/// A point over the column of fields of an image window: a quarter in from its left edge.
+fn pos2_in_the_fields(window: egui::Rect) -> egui::Pos2 {
+    egui::pos2(window.left() + window.width() * 0.25, window.center().y)
 }

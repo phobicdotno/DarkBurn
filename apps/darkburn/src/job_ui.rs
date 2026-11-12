@@ -73,6 +73,69 @@ fn clock(t: f64) -> String {
 
 /// The width of the Preview's speed list, in points: room for "500x" and the arrow.
 const SPEED_LIST_WIDTH: f32 = 84.0;
+/// The Preview opens 760 by 600 points where the main window has the room.
+const PREVIEW_SIZE: egui::Vec2 = vec2(760.0, 600.0);
+/// The gap round a maximised Preview, and the least a Preview that opens leaves free.
+const PREVIEW_MARGIN: f32 = 8.0;
+/// The picture in the Preview is never less tall than this. (It was 120 points: in the smallest
+/// main window with the interface at 200 % the window was then taller than the screen.)
+const PICTURE_MIN_HEIGHT: f32 = 40.0;
+
+/// The width of `text` as a label on one row, in points.
+fn label_width(ui: &Ui, text: &str) -> f32 {
+    egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x
+}
+
+/// The most room the clock beside the time slider can need for a job `total` seconds long: the
+/// length of the job twice, with the widest digit of the font for every digit.
+fn widest_clock(ui: &Ui, total: f64) -> f32 {
+    let widest = ('0'..='9').map(|d| (label_width(ui, &d.to_string()), d)).fold((0.0, '0'), |a, b| if b.0 > a.0 { b } else { a }).1;
+    let text: String = format!("{0} / {0}", clock(total)).chars().map(|c| if c.is_ascii_digit() { widest } else { c }).collect();
+    label_width(ui, &text)
+}
+
+/// How many rows items of these widths take in a row `room` points wide that wraps, `gap` points
+/// apart. The rule is egui's: an item that does not fit what is left of a row starts the next
+/// one, unless it is the first on its row.
+fn wrapped_rows(widths: &[f32], room: f32, gap: f32) -> usize {
+    let (mut rows, mut used) = (1, 0.0_f32);
+    for width in widths {
+        if used > 0.0 && room - used < *width {
+            rows += 1;
+            used = 0.0;
+        }
+        used += width + gap;
+    }
+    rows
+}
+
+/// What the Preview remembers of the buttons under its picture from one frame to the next. The
+/// picture comes first and takes the room the buttons leave, so their height must be known
+/// before they are laid out.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct ButtonRows {
+    /// The width the buttons had to share, and the height they took in it.
+    room: f32,
+    height: f32,
+    /// How wide each of them was, in order.
+    widths: Vec<f32>,
+}
+
+impl ButtonRows {
+    /// The height the buttons will take in a row `room` points wide. In the width they had last
+    /// it is the height they took. In another width (the window is being resized) the rows are
+    /// counted from the widths of the buttons: with the height of the frame before, a row more
+    /// made the window that much taller for good, when the pointer let go in that very frame.
+    fn height_in(&self, room: f32, gap: egui::Vec2) -> f32 {
+        if room == self.room {
+            return self.height;
+        }
+        let before = wrapped_rows(&self.widths, self.room, gap.x) as f32;
+        let row = (self.height - (before - 1.0) * gap.y) / before;
+        let rows = wrapped_rows(&self.widths, room, gap.x) as f32;
+        rows * row + (rows - 1.0) * gap.y
+    }
+}
 
 fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     if !app.job.preview.open {
@@ -92,20 +155,35 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
             ctx.request_repaint();
         }
     }
-    let id = Id::unique("db_preview_window");
-    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true);
+    // The maximised Preview is another window to egui than the one the user places and sizes. As
+    // one window, the placed one took the place and the size of the maximised one, and Restore
+    // had nothing to go back to.
+    let maximised = app.job.preview.maximised;
+    let window_id = |maximised: bool| Id::unique(if maximised { "db_preview_window_max" } else { "db_preview_window" });
+    let id = window_id(maximised);
+    // The Preview keeps to the room under the application bar. Over the bar it hid the menus and
+    // the main window's own minimise, maximise and close buttons.
     let screen = ctx.content_rect();
-    window = if app.job.preview.maximised {
-        window.fixed_pos(screen.min + vec2(8.0, 8.0)).fixed_size(screen.size() - vec2(16.0, 16.0))
+    let room = crate::shell::room_under_the_bar(ctx);
+    let inside = room.shrink(PREVIEW_MARGIN);
+    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true).constrain_to(room);
+    window = if maximised {
+        window.fixed_pos(inside.min).fixed_size(inside.size().max(egui::Vec2::ZERO))
     } else {
-        window.default_size([760.0, 600.0]).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
+        // As big as it likes where there is the room, 80 points in and 60 down as before.
+        let size = PREVIEW_SIZE.min(inside.size()).max(egui::Vec2::ZERO);
+        window.default_size(size).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
     };
     let mut open = true;
     let mut command: Option<(&'static str, serde_json::Value)> = None;
-    window.open(&mut open).show(ctx, |ui| preview_body(ui, app, &mut command));
+    window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, &mut command));
     // Escape closes the Preview, unless a dialog on top of it wants the key.
     if crate::escape::closes(ctx, id) {
         open = false;
+    }
+    if app.job.preview.maximised != maximised {
+        // Maximise or Restore was clicked: the other window comes up where this one was, in front.
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id(app.job.preview.maximised)));
     }
     if !open {
         app.job.preview.open = false;
@@ -140,7 +218,7 @@ pub fn from_here_actions(family: crate::machine_api::Family) -> (bool, bool) {
         Family::Galvo | Family::DesignOnly | Family::FileOnly => (false, false),
     }
 }
-fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) {
+fn preview_body(ui: &mut Ui, app: &mut DarkBurn, window: Id, command: &mut Option<(&'static str, serde_json::Value)>) {
     let t = Tokens::get();
     let pending = app.job.pending.as_ref().map(|(task, _)| task.progress());
     let revision = app.editor.revision();
@@ -164,7 +242,14 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
                 p.t = 0.0;
                 p.playing = true;
             }
-            ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(80.0);
+            // The slider takes what the clock after it leaves. The clock is as wide as it says: it
+            // had 144 points whatever it said, which "1h 07m 51s / 1h 07m 51s" does not fit in,
+            // so with a job of an hour or more the row was wider than the window and the window
+            // grew with every frame. The room is that of the widest clock this job can show, so
+            // the slider keeps its length while the job plays.
+            let text = format!("{} / {}", clock(p.t), clock(total));
+            let room = label_width(ui, &text).max(widest_clock(ui, total)).ceil();
+            ui.spacing_mut().slider_width = (ui.available_width() - room - ui.spacing().item_spacing.x).max(80.0);
             let mut tt = p.t;
             let slider = ui.add(egui::Slider::new(&mut tt, 0.0..=total.max(0.001)).show_value(false));
             crate::a11y::slider(ui, &slider, "Time in the job");
@@ -172,7 +257,7 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
                 p.t = tt;
                 p.playing = false;
             }
-            ui.label(format!("{} / {}", clock(p.t), clock(total)));
+            ui.label(text);
         });
         // The speed list has a width of its own: a plain `ui_kit::dropdown` takes all the width that
         // is left, which left the check boxes after it none and pushed the row past the window's
@@ -223,27 +308,35 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
         }
     }
 
-    // The picture takes the room the buttons under it leave. In a narrow window they wrap to more
-    // rows, so the room they need is what they took in the last frame (40 points before there is
-    // one), and two points to spare. With 40 points whatever the rows, two rows of buttons made
-    // the window taller every frame, and one row left it 16 points shorter than its own size, so
-    // the corner jumped away from the pointer that took hold of it.
-    let footer_id = Id::unique("db_preview_footer_height");
-    let reserve = match ui.data(|d| d.get_temp::<f32>(footer_id)) {
-        Some(footer) => footer + ui.spacing().item_spacing.y + 2.0,
+    // The picture takes the room the buttons under it leave, to the point: the buttons' height
+    // (40 points before they have been laid out once) and the gap above them. With a point more
+    // or less the window is not as tall as the size it asked for, and loses or gains the
+    // difference every time an edge or a corner is taken hold of: with 40 points whatever the
+    // rows it lost 16, with two points to spare it lost 2, and the corner ended that far from
+    // the pointer. In a narrow window the buttons wrap to more rows; see `ButtonRows`.
+    let rows_id = window.with("button_rows");
+    let gap = ui.spacing().item_spacing;
+    let avail = ui.available_size();
+    let remembered = ui.data(|d| d.get_temp::<ButtonRows>(rows_id));
+    let reserve = match &remembered {
+        Some(rows) => rows.height_in(avail.x, gap) + gap.y,
         None => 40.0,
     };
-    let avail = ui.available_size();
-    let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - reserve).max(120.0)), Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - reserve).max(PICTURE_MIN_HEIGHT)), Sense::click_and_drag());
     draw_preview(ui, app, rect, &response, bed);
 
+    let sizes: std::cell::RefCell<Vec<egui::Vec2>> = Default::default();
     let buttons = ui.horizontal_wrapped(|ui| {
         let have = app.job.preview.data.is_some();
         let op = app.job.preview.data.as_ref().and_then(|d| d.sim.state_at(app.job.preview.t)).map_or(0, |s| s.op_index);
         let file_kind = crate::machine_job::machine_file_kind(app.machine.active());
         // Not `add_enabled_ui`: a button in a scope of its own sees only what is left of the row,
         // and breaks its label there letter by letter instead of going to the next row.
-        let b = |ui: &mut Ui, label: &str, on: bool| ui.add_enabled(on, |ui: &mut Ui| ui_kit::button(ui, label, ui_kit::Button::Small)).clicked();
+        let b = |ui: &mut Ui, label: &str, on: bool| {
+            let button = ui.add_enabled(on, |ui: &mut Ui| ui_kit::button(ui, label, ui_kit::Button::Small));
+            sizes.borrow_mut().push(button.rect.size());
+            button.clicked()
+        };
         if b(ui, "Start here", have) {
             *command = Some(("job.preview_start_here", serde_json::json!({ "op_index": op })));
         }
@@ -264,7 +357,9 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             *command = Some(("job.preview_save_from_here", serde_json::json!({ "path": path.to_string_lossy(), "op_index": op })));
         }
         if let Some(s) = start_op {
-            ui.label(egui::RichText::new(format!("Starts at operation {s}")).color(t.text_dim));
+            // On one row, like a button: it goes to the next row whole.
+            let note = ui.add(egui::Label::new(egui::RichText::new(format!("Starts at operation {s}")).color(t.text_dim)).extend());
+            sizes.borrow_mut().push(note.rect.size());
         }
         if b(ui, "Save image", have) {
             save_image = true;
@@ -283,8 +378,23 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, command: &mut Option<(&'static 
             close = true;
         }
     });
-    let footer = buttons.response.rect.height();
-    ui.data_mut(|d| d.insert_temp(footer_id, footer));
+    // Not from the frame egui lays out as narrow as it goes to find the least width of the window
+    // (when an edge is taken hold of): that frame is not shown, and its buttons are squeezed.
+    // The first frame of the window is not shown either. It is laid out at the window's size,
+    // but its rows are less tall than they will be, so their height is counted, not measured.
+    let sizing = ui.is_sizing_pass();
+    if remembered.is_none() || !sizing {
+        let sizes = sizes.into_inner();
+        let widths: Vec<f32> = sizes.iter().map(|size| size.x).collect();
+        let height = if sizing {
+            let row = sizes.iter().map(|size| size.y).fold(ui.spacing().interact_size.y, f32::max);
+            let rows = wrapped_rows(&widths, avail.x, gap.x) as f32;
+            rows * row + (rows - 1.0) * gap.y
+        } else {
+            buttons.response.rect.height()
+        };
+        ui.data_mut(|d| d.insert_temp(rows_id, ButtonRows { room: avail.x, height, widths }));
+    }
     if save_image {
         let shift = ui.input(|i| i.modifiers.shift);
         if let Some(path) = rfd::FileDialog::new().add_filter("PNG image", &["png"]).set_file_name("preview.png").save_file() {
@@ -969,5 +1079,44 @@ pub fn paint_overlay(painter: &egui::Painter, xf: &Xf, app: &DarkBurn, ink: Colo
         painter.line_segment([c - vec2(8.0, 0.0), c + vec2(8.0, 0.0)], st);
         painter.line_segment([c - vec2(0.0, 8.0), c + vec2(0.0, 8.0)], st);
         painter.circle_stroke(c, 4.0, st);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buttons_are_counted_onto_rows_the_way_a_wrapping_row_lays_them_out() {
+        assert_eq!(wrapped_rows(&[80.0, 100.0, 110.0, 110.0, 90.0, 30.0, 70.0, 60.0, 50.0], 800.0, 8.0), 1);
+        // Two that fit to the point stay on one row; a hair less room and the second goes down.
+        assert_eq!(wrapped_rows(&[80.0, 100.0], 188.0, 8.0), 1);
+        assert_eq!(wrapped_rows(&[80.0, 100.0], 187.9, 8.0), 2);
+        // Three a row, the gap after the third does not count.
+        assert_eq!(wrapped_rows(&[100.0; 9], 316.0, 8.0), 3);
+        assert_eq!(wrapped_rows(&[100.0; 9], 315.0, 8.0), 5);
+        // One wider than the row has a row of its own, and the first never starts a new row.
+        assert_eq!(wrapped_rows(&[300.0, 20.0, 20.0], 100.0, 8.0), 2);
+        assert_eq!(wrapped_rows(&[20.0, 300.0, 20.0], 100.0, 8.0), 3);
+        assert_eq!(wrapped_rows(&[], 100.0, 8.0), 1);
+    }
+
+    #[test]
+    fn the_height_of_the_button_rows_follows_the_width_they_get() {
+        let gap = vec2(8.0, 4.0);
+        // Six buttons, 640 points with their gaps, on one row 20 points tall.
+        let rows = ButtonRows { room: 700.0, height: 20.0, widths: vec![100.0; 6] };
+        assert_eq!(rows.height_in(700.0, gap), 20.0);
+        assert_eq!(rows.height_in(640.0, gap), 20.0);
+        assert_eq!(rows.height_in(639.0, gap), 44.0, "five and one");
+        assert_eq!(rows.height_in(300.0, gap), 68.0, "three rows of two");
+        assert_eq!(rows.height_in(50.0, gap), 140.0, "one a row");
+        // Laid out on three rows last, and wide again now.
+        let rows = ButtonRows { room: 300.0, height: 68.0, widths: vec![100.0; 6] };
+        assert_eq!(rows.height_in(300.0, gap), 68.0);
+        assert_eq!(rows.height_in(700.0, gap), 20.0);
+        // In the width they had last it is the height they took, whatever the count says.
+        let rows = ButtonRows { room: 300.0, height: 71.5, widths: vec![100.0; 6] };
+        assert_eq!(rows.height_in(300.0, gap), 71.5);
     }
 }

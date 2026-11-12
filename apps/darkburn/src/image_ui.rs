@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use darkburn_core::{CutSetting, ImageAdjust, ShapeId, ShapeKind};
 use darkburn_raster::{AdjustPreset, Adjustments, ImageMode, ImageSettings, PresetLibrary};
 use darkburn_ui::ui_kit;
-use egui::{Color32, Context, Id, Rect, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2, vec2};
+use egui::{Align2, Color32, Context, Id, Rect, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_theme::Tokens;
 
@@ -20,7 +20,7 @@ use crate::image_render;
 use crate::images;
 use crate::numeric::{self, Num};
 use crate::scan_offsets::{self, ScanOffsetTable};
-use crate::shell::DarkBurn;
+use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 
 /// Dots on a side of the Adjust Image preview.
 const PREVIEW_SIDE: u32 = 280;
@@ -515,9 +515,35 @@ fn flag(ui: &mut Ui, label: &str, v: &mut Option<bool>) {
     }
 }
 
+/// The gap between two columns side by side, with room for a rule down its middle. Returns where
+/// the rule goes; [`column_rule`] draws it once the row is laid out and its height is known.
+/// Not `ui.separator()`: in a row that takes all the height it is offered, and offered all the
+/// height a window may have it made Adjust Image and Trace Image as tall as the main window,
+/// whatever was in them.
+fn column_gap(ui: &mut Ui) -> f32 {
+    // As wide as egui's own separator.
+    let (gap, _) = ui.allocate_exact_size(vec2(6.0, 0.0), Sense::hover());
+    gap.center().x
+}
+
+/// The rule in a [`column_gap`], as tall as the row of columns.
+fn column_rule(ui: &Ui, x: f32, row: Rect) {
+    ui.painter().vline(x, row.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+}
+
+/// The body of Adjust Image or Trace Image, kept short enough for the window to fit under the
+/// application bar; what does not fit scrolls. The kit offers a body the height of the main
+/// window less the window's own header and footer, and in a small main window a window that
+/// tall has its top edge over the bar.
+fn under_the_bar(ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+    let height = (ui.available_height() - APP_BAR_HEIGHT).max(0.0);
+    egui::ScrollArea::vertical().id_salt("image_window_body").max_height(height).auto_shrink([false, true]).show(ui, body);
+}
+
 fn adjust_body(ui: &mut Ui, app: &mut DarkBurn, d: &mut AdjustDialog) {
     let t = Tokens::get();
-    ui.horizontal_top(|ui| {
+    let mut rule = 0.0;
+    let row = ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(330.0);
             let a = &mut d.args;
@@ -549,7 +575,7 @@ fn adjust_body(ui: &mut Ui, app: &mut DarkBurn, d: &mut AdjustDialog) {
             }
             presets_section(ui, app, d);
         });
-        ui.separator();
+        rule = column_gap(ui);
         ui.vertical(|ui| {
             let side = PREVIEW_SIDE as f32 * 0.9;
             ui.label(egui::RichText::new("Before and after").size(t.font_small).color(t.text_dim));
@@ -574,6 +600,7 @@ fn adjust_body(ui: &mut Ui, app: &mut DarkBurn, d: &mut AdjustDialog) {
             }
         });
     });
+    column_rule(ui, rule, row.response.rect);
 }
 
 fn presets_section(ui: &mut Ui, app: &mut DarkBurn, d: &mut AdjustDialog) {
@@ -710,7 +737,8 @@ fn open_trace(app: &mut DarkBurn) -> Result<(), String> {
 
 fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
     let t = Tokens::get();
-    ui.horizontal_top(|ui| {
+    let mut rule = 0.0;
+    let row = ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(320.0);
             let a = &mut d.args;
@@ -765,7 +793,7 @@ fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
                 ui_kit::status_line(ui, n, ui_kit::StatusTone::Error);
             }
         });
-        ui.separator();
+        rule = column_gap(ui);
         ui.vertical(|ui| {
             let side = 340.0f32;
             let (w, h) = d.size_mm;
@@ -831,6 +859,7 @@ fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
             ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
         });
     });
+    column_rule(ui, rule, row.response.rect);
 }
 
 // ----- Convert to Bitmap window -----
@@ -917,8 +946,11 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         let (closed, action) = ui_kit::Window::new(Id::unique("db_adjust_image"), "settings", "Adjust Image")
             .cards(2.9)
             .fields()
+            // In the middle of the room under the application bar. Where the kit puts a window
+            // that is given no place, a tall one reaches over the bar in a small main window.
+            .placed(Align2::CENTER_CENTER, crate::shell::room_under_the_bar(ctx).center())
             .actions("OK", "Cancel", Some("Apply"))
-            .show(ctx, true, |ui| adjust_body(ui, app, &mut d));
+            .show(ctx, true, |ui| under_the_bar(ui, |ui| adjust_body(ui, app, &mut d)));
         d.sync(app);
         match (closed, action) {
             (_, ui_kit::Action::Ok) => d.commit(app),
@@ -937,8 +969,9 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         let (closed, action) = ui_kit::Window::new(Id::unique("db_trace_image"), "trace", "Trace Image")
             .cards(2.9)
             .fields()
+            .placed(Align2::CENTER_CENTER, crate::shell::room_under_the_bar(ctx).center())
             .actions("OK", "Cancel", None)
-            .show(ctx, true, |ui| trace_body(ui, &mut d));
+            .show(ctx, true, |ui| under_the_bar(ui, |ui| trace_body(ui, &mut d)));
         match (closed, action) {
             (_, ui_kit::Action::Ok) => {
                 if let Err(e) = image_ops::trace(&mut app.editor, &d.ids, &d.effective()) {

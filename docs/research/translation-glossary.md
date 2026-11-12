@@ -16,7 +16,9 @@ language picks its own words, the ones its laser users already know.
   their line: ar, cs, da, de, el, es-ES, es-LA, fi, fr, hu, it, ja, ko, nl, pl, pt, ru, sl, sv,
   tr, zh-CN, zh-TW.
 - A language shows in the Language menu once its file is there.
-- `cargo test -p darkburn i18n` checks every file against the rules below.
+- `cargo test -p darkburn i18n` checks every file against the rules below
+  (`every_locale_file_keeps_the_rules_of_the_english_text`), and `cargo test -p darkburn
+  language_fonts` that every character of a file has a glyph in the fonts picked for it.
 
 ## Rules the checker holds every file to
 

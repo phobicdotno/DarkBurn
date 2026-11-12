@@ -107,6 +107,9 @@ mod palette;
 mod panels;
 #[cfg(test)]
 mod paths_hunt4_tests;
+mod pendant_ui;
+#[cfg(test)]
+mod pendant_ui_tests;
 #[cfg(test)]
 mod polish_tests;
 mod prefs;

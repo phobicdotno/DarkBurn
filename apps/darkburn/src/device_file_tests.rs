@@ -250,7 +250,8 @@ fn every_preference_survives_export_and_import() {
     let (mut tried, mut lost) = (0, Vec::new());
     for path in &paths {
         let name = path.join(".");
-        if path[0] == "recent" || path[0] == "mcp" {
+        // The pendant, like agent access, is only switched on at this computer.
+        if path[0] == "recent" || path[0] == "mcp" || name == "opts.pendant" {
             continue;
         }
         // The first other value the setting keeps (settings are brought into range when read).

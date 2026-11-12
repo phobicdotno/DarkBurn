@@ -108,6 +108,8 @@ pub fn shared_defaults(settings_dir: Option<&Path>) -> Option<crate::prefs::Pref
     let mut prefs = candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())?;
     // AI agent access is switched on by the person at this computer, never by a file.
     prefs.mcp = Default::default();
+    // So is the pendant: it opens a USB device.
+    prefs.opts.pendant = false;
     Some(prefs)
 }
 

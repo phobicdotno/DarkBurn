@@ -512,10 +512,13 @@ fn every_preference_survives_a_restart_and_is_in_force() {
     let _ = std::fs::remove_file(&file);
     // Import keeps what AI agents may do as it was here; a file never changes that.
     assert_eq!(imported.mcp, crate::mcp_ui::McpPrefs::default(), "import changed what AI agents may do");
+    // So does the pendant switch.
+    assert!(!imported.opts.pendant, "import switched the pendant on");
+    imported.opts.pendant = p.opts.pendant;
     assert_eq!(
         Prefs { recent: p.recent.clone(), mcp: p.mcp.clone(), ..imported },
         p,
-        "import does not bring every setting (the recent projects and the AI agent access aside)"
+        "import does not bring every setting (the recent projects, the AI agent access and the pendant aside)"
     );
 
     // A restart with them.

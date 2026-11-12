@@ -1,0 +1,4 @@
+# DarkBurn: let the logged-in user open the XHC wireless pendant receiver (Mlaser PHB02,
+# USB 10ce:eba0). Without this rule only root may open /dev/hidraw* on most Linux systems.
+# Install: sh packaging/linux/install-pendant-rule.sh
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="10ce", ATTRS{idProduct}=="eba0", MODE="0660", TAG+="uaccess"

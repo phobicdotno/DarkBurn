@@ -18,9 +18,12 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 - [ ] Byte `0x18` as a reset while a job runs: whether it halts (needs `M999`), resets quietly, or is ignored when grbl mode is off. The stop sequence sends `0x18`, then `M999`, then `M5`.
 - [ ] `M999` and `$X` clear a halt; the text printed on `M112` / `0x18` (`ALARM: ...` or `!!`) is recognised as an alarm.
 - [ ] `$H` homes and answers `ok` when finished; `G28.2` is not needed.
+- [ ] `M400` at the end of a job returns only after the last move.
+- [ ] Answers come in the order of the lines: a line sent while `M400`, a dwell or homing is under way (`suspend`, `M114`, `M220`) is answered after it. The driver counts on this to tell which line an `ok` belongs to.
 - [ ] `cat /sd/config.txt` prints the file, and `config-set sd <key> <value>` changes it and what it prints back; whether a reset is needed before the new value applies.
 - [ ] Air assist on `M106` / `M107` (the profile default) versus `M7` / `M8` / `M9`, and `M108` / `M109` on the board in use.
 - [ ] `M220 S<percent>` works as feed override while a job runs.
+- [ ] Dwell: the job writes `G4 P<seconds>`. Whether the board reads `P` as seconds (grbl mode) or as milliseconds, in which case dot mode and the start and end pause of a cut are a thousand times too short.
 - [ ] `G53 G0` machine-coordinate moves work.
 - [ ] G-code clustering (collinear same-power moves merged) gives identical burn results and a measurable raster speed gain.
 
@@ -31,11 +34,13 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 - [ ] `M3` / `M4` with `S`, inline mode (`M3 I` / `M4 I` / `M5 I`), and the fan mode (`M106 P<tool> S<0-255>` / `M107 P<tool>`) on the actual firmware configuration; which of them the board's `LASER_FEATURE` / `SPINDLE_FEATURE` accepts.
 - [ ] Fire button command per mode (`M3 S<n>` then `M5`, or `M106` / `M107`); the laser really goes off on `M5`, also in inline mode.
 - [ ] `M410` quick stop clears the planner without halting and the laser goes off afterwards.
+- [ ] `M410` and `M112` sent while `M400`, a dwell or homing is under way act at once, not after it (this may depend on how the firmware was built), and whether the command they end is still answered. Lines the board had taken in before the stop: whether they still run after it.
 - [ ] `M112`: the board prints `Error:Printer halted. kill() called!` and stops answering until reset; the driver then refuses everything until reconnect.
 - [ ] `M503` output matches the parsed form (`M92`, `M203`, `M201`, `M206`, `M211`); `M500` stores, `M501` loads; settings writes such as `M92 X100` apply at once.
 - [ ] `M211 S0/S1` soft endstops: the travel check in the driver agrees with the board's limits.
 - [ ] Homing: `G28 X Y` (the default; Z is never homed) leaves the laser safe, and `G28` without axes is not used.
 - [ ] `G92.1` clears the work offset (used by "clear origin"); some builds lack it.
+- [ ] Dwell: `G4 P<milliseconds>` waits that long, and with `M3 S<n>` in force the laser stays on through it (dot mode, the start and end pause of a cut).
 - [ ] `M400` at the end of a job returns only after the last move.
 - [ ] Answers come in the order of the lines: a line sent while `M400`, a dwell or homing is under way (the position request `M114`, say) is answered after it. The driver counts on this to tell which line an `ok` belongs to.
 - [ ] Unknown commands print `echo:Unknown command` and still send `ok` (reported as a job line warning, job continues).
@@ -44,6 +49,7 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 
 ### Snapmaker
 - [ ] `M115` identifies a Snapmaker; the accepted names (`Snapmaker`, `Marlin`).
+- [ ] Answers come in the order of the lines, also for a line sent while `M400`, a dwell or homing is under way, and `G4 P` is read as milliseconds (both as for Marlin).
 - [ ] The `;Header Start` field names and units written by `snapmaker::header` are accepted by the touchscreen (work speed, estimated time, bounds, power).
 - [ ] Laser power command: `M106 P0 S<0-255>` / `M107 P0` (the default here) versus `M3 P<percent>` / `M5` on the 2.0 laser modules.
 - [ ] Focus: the Z position (`focus_height + material_height`) that puts the 1.6 W, 10 W and 40 W modules at focus.
@@ -61,6 +67,7 @@ the laser off or the lens covered, before the matching checklist item is ticked.
 - [ ] A real controller that answers `ok` per line streams correctly at window 1 and 4.
 - [ ] The `status` template: that the reply is a `<State,MPos:x,y,z>` report and is not followed by `ok`.
 - [ ] `M400` at the end of a job is understood; clear `finish_sync` where it is not.
+- [ ] Dwell: the job writes `G4 P<seconds>`, as GRBL reads it. A controller that reads `P` as milliseconds dwells a thousand times too short.
 - [ ] Answers come in the order of the lines, also for a line sent while `M400` waits for the motion to end.
 
 ### Common

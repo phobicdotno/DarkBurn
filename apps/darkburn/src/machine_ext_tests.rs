@@ -106,8 +106,11 @@ fn every_gcode_simulator_runs_a_job_to_the_end() {
 fn every_gcode_simulator_pauses_resumes_and_stops() {
     for kind in [SimGcode::Grbl, SimGcode::Smoothie, SimGcode::Marlin, SimGcode::Snapmaker, SimGcode::Custom] {
         let mut h = connected(kind, 1.0);
-        // A slow job: 150 mm at 600 mm/min is 15 s of machine time.
-        let lines = vec!["G21 G90".to_owned(), "M4 S100".to_owned(), "G0 X10 Y10".to_owned(), "G1 X160 Y10 F600".to_owned(), "M5".to_owned()];
+        // A slow job: 150 mm at 600 mm/min is 15 s of machine time. Fifty pieces, more than a
+        // controller plans ahead, so the pause comes while lines are still to be sent.
+        let mut lines = vec!["G21 G90".to_owned(), "M4 S100".to_owned(), "G0 X10 Y10".to_owned()];
+        lines.extend((1..=50).map(|i| format!("G1 X{} Y10 F600", 10 + 3 * i)));
+        lines.push("M5".to_owned());
         h.start_job(JobRequest::gcode(lines)).unwrap();
         assert!(h.wait_for(T, |s, _| s.state == LaserState::Busy), "{kind:?} busy");
         if kind != SimGcode::Custom {

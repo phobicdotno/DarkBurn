@@ -1133,22 +1133,24 @@ impl Worker {
     }
 
     fn pause(&mut self) {
-        if self.job.is_none() || self.snap.paused {
+        // Not during a stop: the job object is still there until the stop ends, but there is
+        // nothing left to pause, and the pause command would reach the controller after it.
+        if self.job.is_none() || self.snap.paused || self.stop.is_some() {
             return;
         }
         self.snap.paused = true;
-        for l in render_lines(&self.cfg.commands.pause, &[]) {
-            self.enqueue_front(l);
-        }
+        let mut lines = Vec::new();
         // A controller that keeps the laser at the last power command (Marlin outside inline
         // mode, a fan output) would burn one spot while the head stands still: off first.
         if self.job.as_ref().is_some_and(|j| j.power_on.is_some()) {
             match &self.cfg.power.style {
-                PowerStyle::Command { off, .. } => self.enqueue_front(off.clone()),
+                PowerStyle::Command { off, .. } => lines.push(off.clone()),
                 // A controller that holds the last `S` of its `M3`/`M4` (see `pump_send`).
-                _ => self.enqueue_front("M5".to_owned()),
+                _ => lines.push("M5".to_owned()),
             }
         }
+        lines.extend(render_lines(&self.cfg.commands.pause, &[]));
+        self.enqueue_urgent(lines, Tag::Plain);
     }
 
     fn resume(&mut self) {
@@ -1156,17 +1158,21 @@ impl Worker {
             return;
         }
         self.snap.paused = false;
+        let mut lines = render_lines(&self.cfg.commands.resume, &[]);
         // The power the pause switched off, back on before the job's next line.
-        if let Some(on) = self.job.as_ref().and_then(|j| j.power_on.clone()) {
-            self.enqueue_front(on);
-        }
-        for l in render_lines(&self.cfg.commands.resume, &[]) {
-            self.enqueue_front(l);
-        }
+        lines.extend(self.job.as_ref().and_then(|j| j.power_on.clone()));
+        self.enqueue_urgent(lines, Tag::Plain);
     }
 
-    fn enqueue_front(&mut self, text: String) {
-        self.queue.push_front(Out { text, tag: Tag::Plain, urgent: true });
+    /// Queues lines that go out ahead of everything else, window or not, in the order given
+    /// and behind urgent lines that already wait. A pause and a resume that arrive together
+    /// must not change places: the laser would be switched on and then off for the rest of
+    /// the job.
+    fn enqueue_urgent(&mut self, lines: Vec<String>, tag: Tag) {
+        let at = self.queue.iter().take_while(|o| o.urgent).count();
+        for (i, text) in lines.into_iter().enumerate() {
+            self.queue.insert(at + i, Out { text, tag: tag.clone(), urgent: true });
+        }
     }
 
     /// The fire button never stays on while another command runs: homing and long moves
@@ -1188,9 +1194,7 @@ impl Worker {
         if self.snap.fire_on || self.stop.is_none() {
             // Drop queued fire-on lines first so they cannot switch the laser on afterwards.
             self.queue.retain(|o| o.tag != Tag::Fire);
-            for l in render_lines(&self.cfg.commands.fire_off, &[]) {
-                self.queue.push_front(Out { text: l, tag: Tag::StopStep, urgent: true });
-            }
+            self.enqueue_urgent(render_lines(&self.cfg.commands.fire_off, &[]), Tag::StopStep);
         }
         self.snap.fire_on = false;
         self.emit(MachineEvent::FireOff);
@@ -1579,7 +1583,9 @@ impl Worker {
             Tag::Home => {
                 if let Some(msg) = err_text {
                     self.emit(MachineEvent::Error { message: msg, line: sent.text });
-                } else if self.inflight.iter().all(|s| s.tag != Tag::Home) && !self.queue.iter().any(|o| o.tag == Tag::Home) {
+                } else if self.stop.is_none() && self.inflight.iter().all(|s| s.tag != Tag::Home) && !self.queue.iter().any(|o| o.tag == Tag::Home) {
+                    // Not during a stop: the answer may be the stop's own, with the homing
+                    // cut off.
                     self.emit(MachineEvent::Homed);
                 }
             }
@@ -1716,7 +1722,12 @@ impl Worker {
                 self.write(&b)?;
             }
             PollMode::M114 => {
-                let busy = self.inflight.iter().any(|s| s.tag == Tag::Poll) || self.queue.iter().any(|o| o.tag == Tag::Poll);
+                // Not while the answer to a line that waits for the motion is owed (the `M400`
+                // at the end of a job, homing): behind it the request could not be answered
+                // before the motion ends anyway, and from a controller that answers out of
+                // turn its `ok` would be taken for that line's.
+                let busy = self.inflight.iter().any(|s| matches!(s.tag, Tag::Poll | Tag::JobSync | Tag::Home))
+                    || self.queue.iter().any(|o| o.tag == Tag::Poll);
                 if !busy && self.stop.is_none() && !(self.snap.alarm.is_some() && self.cfg.halt_needs_power_cycle) {
                     self.last_poll = now;
                     self.queue.push_back(Out { text: "M114".into(), tag: Tag::Poll, urgent: false });
@@ -1853,6 +1864,10 @@ impl Worker {
             let p = j.progress();
             self.snap.job = Some(p.clone());
             self.snap.activity = Activity::Idle;
+            // A pause that came when the controller already had every line held nothing
+            // back. It ends with the job: the controller takes its pause command when the
+            // motion is done, and the resume command behind it leaves it ready for the next.
+            self.resume();
             self.emit(MachineEvent::JobFinished(p));
         }
     }

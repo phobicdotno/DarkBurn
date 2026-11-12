@@ -6,10 +6,11 @@
 //! Model: lines go into a planner of limited size. `ok` is sent when a line has been accepted
 //! into the planner, so a full planner holds the `ok` back (that is the flow control). `M400`,
 //! a dwell and homing are answered when they are done, and the lines behind them wait until
-//! then: answers always come in the order of the lines. The exceptions are a quick stop or a
-//! kill (`M410`, `M112`), which ends such a command instead of waiting for it, and `resume`
-//! while suspended, without which the command would never end. Motion runs on a simulated
-//! clock that advances while the driver reads.
+//! then: answers come in the order of the lines. Two exceptions are this emulator's own
+//! choice, not something read from a firmware: a quick stop or a kill (`M410`, `M112`) ends
+//! such a command instead of waiting for it, and `resume` is taken while suspended, without
+//! which the command would never end. Motion runs on a simulated clock that advances while the
+//! driver reads.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io;
@@ -460,17 +461,19 @@ impl LineEmulator {
 
     fn process_inbox(&mut self) {
         loop {
-            if self.busy_with_a_command() {
-                // A quick stop or a kill does not wait for the command to end: it ends it.
-                // What had come in before it and still waits has its turn afterwards. While
-                // suspended nothing runs, so `resume` is the other line that cannot wait.
+            if self.busy_with_a_command() && !self.inbox.iter().any(|l| is_stop_line(l)) {
+                // Suspended, nothing runs and the command cannot end: `resume` is the one
+                // line that does not wait behind it.
                 let paused = self.paused;
-                let Some(i) = self.inbox.iter().position(|l| is_stop_line(l) || (paused && is_resume_line(l))) else { break };
+                let Some(i) = self.inbox.iter().position(|l| paused && is_resume_line(l)) else { break };
                 if let Some(line) = self.inbox.remove(i) {
                     self.try_line(&line);
                 }
                 continue;
             }
+            // Not busy, or a quick stop or a kill has come in: that ends the command instead
+            // of waiting for it, so the lines up to it have their turn now, in order, and
+            // the stop takes what they planned away with the rest.
             let Some(line) = self.inbox.front().cloned() else { break };
             if self.try_line(&line) {
                 self.inbox.pop_front();
@@ -1145,13 +1148,32 @@ mod tests {
         e.advance(Duration::from_millis(500));
         drain(&mut e);
         e.receive(b"M410\nM5\n");
-        // The move is gone at once. The lines that waited have their turn now, in order.
+        // The move is gone at once. What waited is answered in its order: the position
+        // request, then the stop, then the line behind the stop.
         assert_eq!(e.planner_len(), 0);
         let r = drain(&mut e);
-        assert!(r.starts_with("ok\nX:5.00 Y:0.00 "), "the stop is answered, then the position request: {r}");
+        assert!(r.starts_with("X:5.00 Y:0.00 "), "{r}");
+        assert_eq!(r.matches("ok").count(), 3, "{r}");
         assert!(!e.laser_armed(), "{r}");
         e.advance(Duration::from_secs(20));
         assert!((e.stats().burned_mm - 5.0).abs() < 1e-9, "{} mm", e.stats().burned_mm);
+    }
+
+    /// Nothing that was sent before a quick stop runs after it, also when it waited behind a
+    /// dwell: the stop takes it away with the rest.
+    #[test]
+    fn a_move_that_waited_behind_a_dwell_does_not_run_after_a_quick_stop() {
+        let mut e = LineEmulator::new(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+        e.receive(b"M3 S255\nG1 X10 F600\nG4 P5000\nG1 X50\nG1 X90\n");
+        e.advance(Duration::from_millis(1500));
+        assert_eq!(drain(&mut e).matches("ok").count(), 2, "the moves behind the dwell wait");
+        e.receive(b"M410\n");
+        assert_eq!(e.planner_len(), 0);
+        assert_eq!(drain(&mut e).matches("ok").count(), 3, "the two moves and the stop");
+        e.advance(Duration::from_secs(60));
+        assert_eq!(e.planner_len(), 0);
+        assert!((e.stats().burned_mm - 10.0).abs() < 1e-9, "{} mm burned", e.stats().burned_mm);
+        assert!((e.machine_position()[0] - 10.0).abs() < 1e-9);
     }
 
     /// Suspended, nothing runs. A command that waits for the motion to end, sent then, must

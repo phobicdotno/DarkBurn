@@ -52,6 +52,9 @@ pub struct TranslateOptions {
     /// with the next cut. For controllers that are not known to switch the laser off for `G0`
     /// by themselves (a custom G-code device).
     pub travel_s0: bool,
+    /// Write the time of a dwell (`G4 P`) in milliseconds. The input gives seconds, as GRBL
+    /// reads it; Marlin and its relatives read `P` as milliseconds.
+    pub dwell_p_ms: bool,
 }
 
 impl Default for TranslateOptions {
@@ -72,6 +75,7 @@ impl Default for TranslateOptions {
             end_script: String::new(),
             home_command: None,
             travel_s0: false,
+            dwell_p_ms: false,
         }
     }
 }
@@ -111,6 +115,7 @@ impl TranslateOptions {
             end_script: g.end_script.clone(),
             home_command: g.auto_home_on_start.then(|| home_command(p)),
             travel_s0: p.kind == DeviceKind::Custom,
+            dwell_p_ms: matches!(p.kind, DeviceKind::Marlin | DeviceKind::Snapmaker),
         }
     }
 }
@@ -351,6 +356,16 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
     }
 
     if !is_motion_word && !words.iter().any(|(l, _)| *l == 'S') {
+        let dwell = words.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9));
+        if dwell && opts.dwell_p_ms {
+            for w in &mut words {
+                if w.0 == 'P'
+                    && let Ok(seconds) = w.1.parse::<f64>()
+                {
+                    w.1 = format!("{}", (seconds * 1000.0).round().max(0.0) as i64);
+                }
+            }
+        }
         out.push(join(&words));
         return;
     }
@@ -544,6 +559,24 @@ mod tests {
 
     fn run(lines: &[&str], o: &TranslateOptions) -> Vec<String> {
         translate(lines.iter().copied(), o)
+    }
+
+    /// The job gives a dwell in seconds, as GRBL reads `G4 P`. Marlin and Snapmaker read `P`
+    /// as milliseconds: unchanged, a quarter of a second would be a quarter of a millisecond
+    /// (dot mode and the pauses at the start and end of a cut would do nothing).
+    #[test]
+    fn a_dwell_is_written_in_the_unit_the_controller_reads() {
+        let src = ["M3", "G1 X10 Y10 F600 S500", "G4 P0.25", "S0", "G4 P1.5", "G0 X0 Y0", "M5"];
+        for kind in [DeviceKind::Marlin, DeviceKind::Snapmaker] {
+            let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(kind)));
+            assert!(out.iter().any(|l| l == "G4 P250") && out.iter().any(|l| l == "G4 P1500"), "{kind:?}: {out:?}");
+            assert!(!out.iter().any(|l| l.contains("P0.25")), "{kind:?}: {out:?}");
+        }
+        // Seconds stay for a controller that reads them (and where the unit is not known).
+        for kind in [DeviceKind::Smoothie, DeviceKind::Custom] {
+            let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(kind)));
+            assert!(out.iter().any(|l| l == "G4 P0.25") && out.iter().any(|l| l == "G4 P1.5"), "{kind:?}: {out:?}");
+        }
     }
 
     /// A custom controller is not known to switch the laser off for `G0` by itself.

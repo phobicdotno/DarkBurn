@@ -1,1 +1,1 @@
-ci macos  first test run on macOS (Apple silicon)
+ci all  one whole run on the three systems

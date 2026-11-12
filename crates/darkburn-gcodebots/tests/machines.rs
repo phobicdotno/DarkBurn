@@ -308,7 +308,7 @@ fn smoothie_home_and_air_assist() {
     m.set_air(true).unwrap();
     assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.air_on())));
     m.set_air(false).unwrap();
-    assert!(m.as_ref().wait_until(T, |_| !emu.with(|e| !e.air_on())));
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| !e.air_on())), "the air stays on");
     m.disconnect();
 }
 
@@ -508,6 +508,209 @@ fn a_position_request_behind_the_last_moves_does_not_end_the_job_early() {
     m.disconnect();
 }
 
+/// A cut of `pieces` pieces of `mm` each along X at 50 mm/s, translated for the profile.
+fn one_cut(p: &DeviceProfile, pieces: usize, mm: usize) -> Job {
+    let mut src = vec!["G21".to_owned(), "G90".to_owned(), "M4 S0".to_owned(), "G0 X10 Y10".to_owned()];
+    for i in 1..=pieces {
+        src.push(format!("G1 X{} Y10 S500 F3000", 10 + mm * i));
+    }
+    src.push("M5".to_owned());
+    let out = translate(src.iter().map(String::as_str), &TranslateOptions::for_profile(p));
+    let n = out.len();
+    Job::from_lines(out).with_total(n)
+}
+
+/// Pause and Resume that reach the driver in one breath go out in that order: laser off, then
+/// laser on. The other way round the rest of the cut runs with the laser off.
+#[test]
+fn pause_and_resume_in_one_breath_keep_their_order() {
+    for round in 0..3 {
+        let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(4.0));
+        let mut p = marlin_profile();
+        p.gcode.marlin_power = MarlinPowerMode::M3;
+        p.gcode.air_assist.on.clear();
+        p.gcode.air_assist.off.clear();
+        let (m, mut log) = connect(&p, &emu);
+        m.start_job(one_cut(&p, 60, 1)).unwrap();
+        assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 12)));
+        m.pause().unwrap();
+        m.resume().unwrap();
+        assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+        emu.with(|e| {
+            let switches: Vec<&String> = e.stats().arrived.iter().filter(|l| l.starts_with("M3") || l.starts_with("M5")).collect();
+            assert!((e.stats().burned_mm - 60.0).abs() < 1e-6, "round {round}: the whole cut burns, {} mm: {switches:?}", e.stats().burned_mm);
+            assert!(!e.laser_armed());
+        });
+        m.disconnect();
+    }
+}
+
+/// A pause that comes when the controller already has every line holds nothing back: the job
+/// runs to its end. It must not leave the driver or the controller paused afterwards, with
+/// the next job refused.
+#[test]
+fn a_pause_in_the_last_moments_of_a_job_does_not_outlast_it() {
+    for (flavor, p) in [(EmuFlavor::Smoothie, smoothie_profile()), (EmuFlavor::Marlin, marlin_profile())] {
+        let emu = LineEmuHandle::with_config(EmuConfig::new(flavor).with_time_scale(1.0));
+        let (m, mut log) = connect(&p, &emu);
+        // 0.8 s of motion, all of it in the planner at once.
+        m.start_job(one_cut(&p, 8, 5)).unwrap();
+        assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().arrived.iter().any(|l| l == "M400"))), "{flavor:?}");
+        m.pause().unwrap();
+        assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))), "{flavor:?}");
+        emu.with(|e| {
+            assert_eq!(e.planner_len(), 0, "{flavor:?}: finished with moves still to run");
+            assert!((e.stats().burned_mm - 40.0).abs() < 1e-6, "{flavor:?}: the whole cut burns, {} mm", e.stats().burned_mm);
+        });
+        assert!(m.as_ref().wait_until(T, |s| !s.paused), "{flavor:?}: still paused after the job ended");
+        assert!(
+            m.as_ref().wait_until(T, |s| matches!(s.state, MachineState::Idle) && emu.with(|e| !e.is_paused())),
+            "{flavor:?}: {:?}",
+            m.snapshot().state
+        );
+        // The next job runs.
+        m.start_job(one_cut(&p, 8, 5)).unwrap();
+        assert!(log.wait_n(m.as_ref(), T, 2, |e| matches!(e, MachineEvent::JobFinished(_))), "{flavor:?}: the next job never finished");
+        emu.with(|e| assert!((e.stats().burned_mm - 80.0).abs() < 1e-6, "{flavor:?}: {} mm", e.stats().burned_mm));
+        m.disconnect();
+    }
+}
+
+/// A Pause that comes while a stop is under way pauses nothing. Its command must not reach
+/// the controller: the stop ends the driver's pause, and the controller would be left
+/// paused with the next job standing still.
+#[test]
+fn a_pause_during_a_stop_is_not_sent() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Plain).with_time_scale(1.0));
+    let mut p = DeviceProfile::for_kind(DeviceKind::Custom);
+    p.gcode.s_max = 255.0;
+    (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+    p.gcode.custom.pause = "M107 P3".into();
+    p.gcode.custom.resume = "M106 P3".into();
+    p.gcode.custom.stop = "M410".into();
+    let (m, mut log) = connect(&p, &emu);
+    m.start_job(long_cut_job(&p)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_on() && e.planner_len() >= 1)), "never started cutting");
+    m.stop().unwrap();
+    m.pause().unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Stopped)));
+    worker_passes(m.as_ref(), 25);
+    let tail = emu.with(|e| e.stats().arrived[e.stats().arrived.len().saturating_sub(5)..].to_vec());
+    assert!(!tail.iter().any(|l| l == "M107 P3"), "the pause command went out during the stop: {tail:?}");
+    assert!(!m.snapshot().paused);
+    m.disconnect();
+}
+
+/// A stop while the machine homes: the answer that comes back is the stop's, not the
+/// homing's. The driver must not say the machine is homed.
+#[test]
+fn a_homing_that_a_stop_cut_off_is_not_reported_as_done() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Marlin).with_time_scale(1.0));
+    let p = marlin_profile();
+    let (m, mut log) = connect(&p, &emu);
+    m.home().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.stats().arrived.iter().any(|l| l.starts_with("G28")))), "homing was never sent");
+    m.stop().unwrap();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Stopped)));
+    assert!(!emu.with(|e| e.homed()), "the stop came too late for this test: the homing was done");
+    assert_eq!(log.count(|e| matches!(e, MachineEvent::Homed)), 0, "homed was reported for a homing that was cut off");
+    m.disconnect();
+}
+
+/// A controller that answers out of turn. Every line gets its `ok` at once, a position request
+/// too, but `M400` is answered only when the test says the motion is done. No firmware is
+/// known to work like this; the driver must not report a job finished early if one does.
+#[derive(Clone, Default)]
+struct OutOfTurn(std::sync::Arc<std::sync::Mutex<OutOfTurnState>>);
+
+#[derive(Default)]
+struct OutOfTurnState {
+    rx: Vec<u8>,
+    out: Vec<u8>,
+    lines: Vec<String>,
+    m400_waits: bool,
+    motion_done: bool,
+}
+
+impl OutOfTurn {
+    fn sent(&self, text: &str) -> usize {
+        self.0.lock().unwrap().lines.iter().filter(|l| *l == text).count()
+    }
+}
+
+impl Transport for OutOfTurn {
+    fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        let mut s = self.0.lock().unwrap();
+        for &b in data {
+            if b != b'\n' {
+                s.rx.push(b);
+                continue;
+            }
+            let line = String::from_utf8_lossy(&std::mem::take(&mut s.rx)).trim().to_owned();
+            match line.as_str() {
+                "" => continue,
+                "M400" => s.m400_waits = true,
+                "M115" => s.out.extend_from_slice(b"FIRMWARE_NAME:Marlin 2.1.2 (Github) PROTOCOL_VERSION:1.0 MACHINE_TYPE:Laser\nok\n"),
+                "M114" => s.out.extend_from_slice(b"X:0.00 Y:0.00 Z:0.00 E:0.00 Count X:0 Y:0 Z:0\nok\n"),
+                _ => s.out.extend_from_slice(b"ok\n"),
+            }
+            s.lines.push(line);
+        }
+        Ok(())
+    }
+    fn read(&mut self, buf: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        let end = Instant::now() + timeout;
+        loop {
+            {
+                let mut s = self.0.lock().unwrap();
+                if s.m400_waits && s.motion_done {
+                    s.m400_waits = false;
+                    s.out.extend_from_slice(b"ok\n");
+                }
+                if !s.out.is_empty() {
+                    let n = buf.len().min(s.out.len());
+                    buf[..n].copy_from_slice(&s.out[..n]);
+                    s.out.drain(..n);
+                    return Ok(n);
+                }
+            }
+            if Instant::now() >= end {
+                return Ok(0);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn name(&self) -> String {
+        "out-of-turn".to_owned()
+    }
+}
+
+/// While the answer to the `M400` that ends a job is owed, the driver sends no position request
+/// of its own. Behind the `M400` it could not be answered before the motion ends anyway, and
+/// from a controller that answers out of turn its `ok` would be taken for the `M400`'s.
+#[test]
+fn the_driver_asks_for_no_position_while_it_waits_for_the_end_of_the_motion() {
+    let link = OutOfTurn::default();
+    let p = marlin_profile();
+    let m = p.connect(Box::new(link.clone())).expect("connect");
+    let mut log = Log::new();
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::Connected(_) | MachineEvent::ConnectFailed(_))), "no handshake result");
+    assert_eq!(m.snapshot().connection, ConnectionState::Connected);
+    m.start_job(one_cut(&p, 4, 5)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| link.sent("M400") == 1), "the job never came to its end");
+    let asked = link.sent("M114");
+    // Three of the driver's position requests would fall into this wait.
+    std::thread::sleep(Duration::from_millis(1600));
+    log.drain(m.as_ref());
+    assert_eq!(log.count(|e| matches!(e, MachineEvent::JobFinished(_))), 0, "finished before the motion was");
+    assert_eq!(link.sent("M114"), asked, "a position request went out while the M400 was unanswered");
+    link.0.lock().unwrap().motion_done = true;
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    // The position requests go on afterwards.
+    assert!(m.as_ref().wait_until(T, |_| link.sent("M114") > asked));
+    m.disconnect();
+}
+
 /// A custom G-code controller is not known to switch the laser off by itself when the head
 /// stands still: it holds the last `S` of an `M3`/`M4`. A pause in the middle of a cut must
 /// switch it off, and the rest of the cut must burn after the resume.
@@ -550,6 +753,44 @@ fn custom_pause_in_a_cut_switches_the_laser_off_and_resume_puts_it_back() {
         assert!(e.stats().burns.iter().all(|b| (b.power - 128.0 / 255.0).abs() < 1e-9), "the power after the resume is the cut's own");
         assert!(!e.laser_armed());
     });
+    m.disconnect();
+}
+
+/// Pause, resume and fire-off templates of more than one line go out in the order they are
+/// written, the laser-off of a pause ahead of them and the laser-on of a resume behind them.
+#[test]
+fn templates_of_several_lines_go_out_in_the_order_written() {
+    let emu = LineEmuHandle::with_config(EmuConfig::new(EmuFlavor::Plain).with_time_scale(1.0));
+    let mut p = DeviceProfile::for_kind(DeviceKind::Custom);
+    p.gcode.s_max = 255.0;
+    p.gcode.transfer = TransferMode::Buffered;
+    (p.gcode.start_script, p.gcode.end_script) = (String::new(), String::new());
+    p.gcode.custom.pause = "M107\nM9".into();
+    p.gcode.custom.resume = "M8\nM106 S255".into();
+    p.gcode.custom.fire_on = "M3 S{s}".into();
+    p.gcode.custom.fire_off = "M5\nM107 P2".into();
+    let (m, mut log) = connect(&p, &emu);
+    let from = |mark: usize| emu.with(|e| e.stats().arrived[mark..].iter().filter(|l| l.starts_with('M')).cloned().collect::<Vec<_>>());
+    let mark = emu.with(|e| e.stats().arrived.len());
+    m.fire(5.0, Duration::from_secs(5)).unwrap();
+    assert!(m.as_ref().wait_until(T, |_| emu.with(|e| e.laser_armed())));
+    m.fire_off().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| from(mark).len() >= 3), "{:?}", from(mark));
+    assert_eq!(from(mark)[1..], ["M5", "M107 P2"], "fire off");
+
+    m.start_job(one_cut(&p, 60, 1)).unwrap();
+    assert!(m.as_ref().wait_until(T, |s| s.job.as_ref().is_some_and(|j| j.lines_acked >= 12)));
+    let mark = emu.with(|e| e.stats().arrived.len());
+    m.pause().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| from(mark).len() >= 3), "{:?}", from(mark));
+    assert_eq!(from(mark), ["M5", "M107", "M9"], "pause");
+    let mark = emu.with(|e| e.stats().arrived.len());
+    m.resume().unwrap();
+    assert!(m.as_ref().wait_until(T, |_| from(mark).len() >= 3), "{:?}", from(mark));
+    // The job's own word and power: `M4`, half of full power.
+    assert_eq!(from(mark)[..3], ["M8", "M106 S255", "M4 S128"], "resume");
+    assert!(log.wait(m.as_ref(), T, |e| matches!(e, MachineEvent::JobFinished(_))));
+    emu.with(|e| assert!((e.stats().burned_mm - 60.0).abs() < 1e-6, "the whole cut burns, {} mm", e.stats().burned_mm));
     m.disconnect();
 }
 

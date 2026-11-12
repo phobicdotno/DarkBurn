@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.522 (build 6)
+## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates
@@ -106,6 +106,12 @@
 - New: install with one line: a curl line on Linux and macOS, a PowerShell line on Windows
 - New: ready-made packages for Linux (x86_64 and arm64) and macOS (Apple silicon and Intel), next to the Windows installer and the portable zip
 - Fix: A simulated G-code machine could say a job was finished a moment before its last moves had run
+- Fix: Pause and Resume pressed right after each other on a Marlin, Snapmaker or custom G-code laser could leave the laser off for the rest of the job
+- Fix: A pause in the last moments of a job on a Smoothieware, Marlin or custom G-code laser no longer stays on after the job, with the next job refused
+- Fix: Dot mode and the pauses at the start and end of a cut were a thousand times too short on Marlin and Snapmaker lasers
+- Fix: Stop while a Marlin or custom G-code laser is homing no longer reports it as homed
+- Fix: Pause pressed during a stop no longer sends the pause command of a custom G-code device after the stop
+- Fix: Pause, resume and fire-off commands of several lines on a custom G-code device were sent in reverse order
 
 - New front page for the project
 - The ribbon now shrinks to icons and a » menu on narrow windows

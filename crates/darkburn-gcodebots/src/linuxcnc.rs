@@ -93,6 +93,8 @@ pub fn write_program(job_lines: &[String], p: &DeviceProfile, o: &LinuxCncOption
         ),
         home_command: None,
         travel_s0: false,
+        // LinuxCNC reads `G4 P` in seconds, as the job writes it.
+        dwell_p_ms: false,
     };
     let body = translate(job_lines.iter().map(String::as_str), &opts);
     let mut out = format!("({})\n", o.title.replace(['(', ')', '\n'], " "));

@@ -53,6 +53,7 @@ done
 
 # The folder is made new each time. Only a folder this script made is ever removed.
 mark=.made-by-build-site
+[ ! -e "$root/site/$mark" ] || die "site/ must not hold a file named $mark: that is this script's own mark."
 if [ -e "$out" ]; then
     if [ -f "$out/$mark" ]; then
         rm -rf "$out"
@@ -140,7 +141,7 @@ for page in "$out"/*.html; do
         die "$name has an http-equiv besides the policy line, or a <base>. Neither belongs on the page."
     # The policy allows every file of the page's own host as script. The page has one.
     if printf '%s\n' "$flat" | grep -Eio '<script[^>]*>?' | grep -vx '<script src="site.js">'; then
-        die "$name has a <script> that is not exactly <script src=\"site.js\"> (see the lines above)."
+        die "$name has a <script> that is not exactly <script src=\"site.js\"> (see the lines above). A comment counts too: write &lt;script there."
     fi
 done
 rm -f "$out/.head"
@@ -173,7 +174,7 @@ for page in "$out"/*.html; do
     # On one line first: an attribute may stand on a line of its own.
     if tr '\n\r\t' '   ' <"$page" |
         grep -Eio "<style|<[a-z][^>]*[[:space:]\"'/](on[a-z]+|style)[[:space:]]*=[^>]{0,40}|(href|src|action|formaction|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*javascript:[^>]{0,40}"; then
-        die "${page##*/}: style, a handler or a javascript: address inside the HTML (see the lines above). Put it in site.js or style.css."
+        die "${page##*/}: style, a handler or a javascript: address inside the HTML (see the lines above). Put it in site.js or style.css. A comment counts too: write &lt; for < there."
     fi
 done
 
@@ -202,6 +203,9 @@ check_refs() {
         file=${ref%%[?#]*}
         if [ ! -f "$out/$file" ] && [ ! -f "$out/$file/index.html" ]; then
             printf 'build-site: %s points to %s, which is not there.\n' "${1##*/}" "$ref" >&2
+            case $file in
+                fonts/*) printf 'build-site: a new font is copied by name: add it to the cp lines and to the list of published files in this script.\n' >&2 ;;
+            esac
             missing=1
         fi
     done <"$refs"

@@ -44,19 +44,21 @@ mod tests {
         let field = egui::Id::unique("answer_keys_field");
         if typing {
             // A text field that has the keyboard (its state marks it as a text edit).
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let mut text = String::new();
                 let r = ui.add(egui::TextEdit::singleline(&mut text).id(field));
                 r.request_focus();
             });
+            out.textures_delta.clear();
         }
-        let _ = ctx.run_ui(input, |ui| {
+        let mut out = ctx.run_ui(input, |ui| {
             if typing {
                 let mut text = String::new();
                 ui.add(egui::TextEdit::singleline(&mut text).id(field));
             }
             got = answer_key(ui.ctx(), keys, yes_enabled);
         });
+        out.textures_delta.clear();
         got
     }
 

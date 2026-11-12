@@ -421,6 +421,14 @@ fn key_cell(ui: &mut Ui, app: &mut DarkBurn, slot: &str, default: &str) {
     });
 }
 
+/// A fixed-width column cell with its content at the left.
+fn left_cell(ui: &mut Ui, width: f32, height: f32, w: impl egui::Widget) {
+    ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(width);
+        ui.add(w);
+    });
+}
+
 fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
     ui.set_min_width(660.0);
@@ -450,7 +458,7 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let filter = app.extras.hotkeys.filter.to_lowercase();
     ui.horizontal(|ui| {
         let head = |ui: &mut Ui, w: f32, text: String| {
-            ui.add_sized([w, 18.0], egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).truncate());
+            left_cell(ui, w, 18.0, egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).truncate());
         };
         head(ui, 250.0, tr("hotkeys.command", "Command"));
         head(ui, KEY_CELL, tr("hotkeys.key", "Key"));
@@ -465,7 +473,7 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             }
             let second = keymap::second_of(id);
             ui.horizontal(|ui| {
-                ui.add_sized([250.0, 22.0], egui::Label::new(shown).truncate());
+                left_cell(ui, 250.0, 22.0, egui::Label::new(shown).truncate());
                 key_cell(ui, app, id, default);
                 key_cell(ui, app, &second, keymap::second_default(id));
                 if ui_kit::button(ui, tr("hotkeys.clear", "Clear"), ui_kit::Button::Small).clicked() {

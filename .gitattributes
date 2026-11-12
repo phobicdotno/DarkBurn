@@ -5,6 +5,8 @@
 /site/*.html text eol=lf
 /site/*.css text eol=lf
 /site/*.js text eol=lf
+/site/.htaccess text eol=lf
 /scripts/build-site.sh text eol=lf
+/scripts/deploy-site.sh text eol=lf
 /assets/icons/ui/design/svg/model/db_app.svg text eol=lf
 /assets/fonts/ibm-plex-sans/OFL.txt text eol=lf

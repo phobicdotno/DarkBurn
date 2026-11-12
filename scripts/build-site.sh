@@ -9,11 +9,13 @@
 # a plain copy. Nothing is downloaded and nothing is changed.
 #
 # Then it checks the result: every file the page points to is there, nothing on the page is
-# fetched from another host, and every page carries its Content-Security-Policy line.
+# fetched from another host, every page carries its Content-Security-Policy line, and the
+# rules for the host (.htaccess) hold nothing but what this script knows.
 #
 # To look at the page:
 #   sh scripts/build-site.sh && python3 -m http.server -d target/site
-# .github/workflows/pages.yml runs this script and publishes the folder.
+# scripts/deploy-site.sh runs this script and uploads the folder to the host.
+# .github/workflows/site.yml runs it as a check.
 set -eu
 
 die() {
@@ -30,8 +32,8 @@ esac
 
 [ -f "$root/site/index.html" ] || die "site/index.html is not there."
 
-# Only plain files are published. A link could point at a file outside the repository, and what
-# packs the folder for GitHub Pages puts the file itself in the place of a link.
+# Only plain files are published. A link could point at a file outside the repository, and an
+# upload puts the file itself in the place of a link.
 fonts=$root/assets/fonts
 icons=$root/assets/icons
 for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
@@ -78,9 +80,10 @@ for p in "$out"/img/*.png; do
 done
 
 # Only these files are published. A page or a drawing anywhere else (a sub-folder of site/,
-# a .htm or .xhtml file) would be served without any of the checks below.
+# a .htm or .xhtml file) would be served without any of the checks below, and the host runs
+# PHP: a .php file would be a program on it.
 odd=$(cd "$out" && find . -type f ! -name "$mark" |
-    grep -Evx '\./(index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9_-]+\.png|fonts/(IBMPlexSans-Variable\.ttf|IBMPlexMono-Regular\.ttf|OFL\.txt))' |
+    grep -Evx '\./(\.htaccess|index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9_-]+\.png|fonts/(IBMPlexSans-Variable\.ttf|IBMPlexMono-Regular\.ttf|OFL\.txt))' |
     head -n 3 | tr '\n' ' ')
 [ -z "$odd" ] || die "not on the list of files this script publishes: $odd"
 
@@ -146,6 +149,39 @@ for page in "$out"/*.html; do
 done
 rm -f "$out/.head"
 
+# The rules for the host, .htaccess. The host sends the policy once more, as a header on every
+# file, with the one thing a line in a page cannot say: no other site may show the page in a
+# frame. The header is compared with the policy above, so the two cannot drift apart.
+#
+# The file can do far more than that. The host runs PHP, and one line in .htaccess can make it
+# run a picture as a program, send every visitor elsewhere or ask for a password. So each line
+# is one of the few kinds below, and anything else is refused. A new kind of line is named
+# here first.
+rules=$out/.htaccess
+[ -f "$rules" ] || die "site/.htaccess is not there."
+[ "$(LC_ALL=C tr -d ' -~\n' <"$rules" | wc -c | tr -d ' ')" -eq 0 ] ||
+    die ".htaccess holds something that is not plain ASCII text (a tab and a Windows line end count)."
+# A line that ends with "\" goes on in the next one, also when it is a comment.
+if grep -n '\\$' "$rules"; then
+    die ".htaccess has a line that ends with a backslash (see the lines above)."
+fi
+header="Header set Content-Security-Policy \"default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'\""
+[ "$(grep -c 'Content-Security-Policy' "$rules")" -eq 1 ] ||
+    die ".htaccess names Content-Security-Policy more than once, or not at all. It is set in one line: $header"
+kinds='</?IfModule( mod_(headers|rewrite)\.c)?>
+</?FilesMatch( "[^"]*")?>
+Header set (X-Frame-Options|X-Content-Type-Options|Referrer-Policy|Permissions-Policy|Cache-Control) "[^"]*"
+ErrorDocument 404 /404\.html
+RewriteEngine On
+RewriteBase /
+RewriteCond [^ ]+ [^ ]+( \[NC\])?
+RewriteRule [^ ]+ (-|https://%\{HTTP_HOST\}(/|%\{REQUEST_URI\})) \[R=(301|404),L\]'
+odd=$(sed 's/^ *//' "$rules" | grep -v '^#' | grep -v '^$' | grep -vFx -- "$header" |
+    grep -Evx -e "$(printf '%s' "$kinds" | tr '\n' '|')" | head -n 3 || true)
+[ -z "$odd" ] || die ".htaccess holds a line this script does not know: $odd"
+grep -qFx -- "  $header" "$rules" ||
+    die ".htaccess does not set the policy as this script knows it. The line must be: $header"
+
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.
 if grep -Ein "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\]|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\]" "$out"/*.html; then
@@ -192,9 +228,9 @@ check_refs() {
                 continue
                 ;;
             /*)
-                # 404.html needs such addresses: GitHub shows that page at any depth.
+                # 404.html needs such addresses: the host shows that page at any depth.
                 if [ "${1##*/}" != 404.html ]; then
-                    printf 'build-site: %s points to %s. An address that starts with "/" breaks under phobicdotno.github.io/DarkBurn/.\n' "${1##*/}" "$ref" >&2
+                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is looked at in a folder: a preview, or phobic.no/darkburn/.\n' "${1##*/}" "$ref" >&2
                     missing=1
                     continue
                 fi

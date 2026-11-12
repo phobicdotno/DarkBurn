@@ -1,0 +1,41 @@
+# The rules of the web page for the host that serves it (Apache). The page is hosted the way
+# the other pages on phobic.no are: the folder that scripts/build-site.sh makes is uploaded as
+# it is, this file with it. scripts/deploy-site.sh does both.
+
+<IfModule mod_headers.c>
+  # The same policy as the line in index.html, and one thing a line in a page cannot say: no
+  # other site may show the page in a frame. scripts/build-site.sh checks this line. To change
+  # the policy, change it there first.
+  Header set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'"
+  Header set X-Frame-Options "DENY"
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  # A browser asks again for the page and its code each time, so an upload shows at once.
+  # The fonts change rarely and may be kept.
+  <FilesMatch "\.(html|js|css)$">
+    Header set Cache-Control "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.ttf$">
+    Header set Cache-Control "public, max-age=31536000"
+  </FilesMatch>
+</IfModule>
+
+# The page's own "not found". Its addresses start with "/", so it works at any depth.
+ErrorDocument 404 /404.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  # Plain http is sent to https first, so the page and the install commands it shows always
+  # arrive encrypted.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+  # The two folders are not pages: no list of their files.
+  RewriteRule ^(img|fonts)/?$ - [R=404,L]
+  # One address for the front page. THE_REQUEST is the browser's own request line, so this
+  # does not fire when the server itself looks for index.html.
+  RewriteCond %{THE_REQUEST} \s/+index(\.html)?[\s?#] [NC]
+  RewriteRule ^ https://%{HTTP_HOST}/ [R=301,L]
+</IfModule>

@@ -374,6 +374,7 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, window: Id, command: &mut Optio
         None => 40.0,
     };
     let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - reserve).max(PICTURE_MIN_HEIGHT)), Sense::click_and_drag());
+    solidcraft_ui_registry::publish_rect("preview:picture", rect);
     draw_preview(ui, app, rect, &response, bed);
 
     let sizes: std::cell::RefCell<Vec<egui::Vec2>> = Default::default();

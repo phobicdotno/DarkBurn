@@ -380,14 +380,24 @@ fn zz_debug_escape_after_cancel() {
     g.sample_design();
     g.run_command("tools.offset");
     g.frames(2);
+    let dump = |g: &Gui, at: &str| {
+        let ctx = g.ctx();
+        let layers = ctx.memory(|m| m.areas().visible_layer_ids());
+        let id = egui::Id::unique(("shape_dialog", OFFSET));
+        let area = egui::AreaState::load(&ctx, id).map(|a| a.rect());
+        eprintln!(
+            "DBG {at}: window {id:?} area {area:?} layers {layers:?} titles {:?} popup {} only {}",
+            g.window_titles(),
+            egui::Popup::is_any_open(&ctx),
+            crate::escape::only_window(&ctx, id)
+        );
+    };
+    dump(&g, "first");
     g.click_label("Cancel");
     g.run_command("tools.offset");
     g.frames(2);
-    let ctx = g.ctx();
-    let layers = ctx.memory(|m| m.areas().visible_layer_ids());
-    let id = egui::Id::unique(("shape_dialog", OFFSET));
-    eprintln!("window {id:?} layers {layers:?} popup {} focus {:?}", egui::Popup::is_any_open(&ctx), ctx.memory(|m| m.focused()));
+    dump(&g, "again");
     g.escape();
-    eprintln!("open after Esc: {:?}", g.app().shape_ui.open);
+    eprintln!("DBG open after Esc: {:?}", g.app().shape_ui.open);
     panic!("debug");
 }

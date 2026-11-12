@@ -250,6 +250,27 @@ mod tests {
         }
     }
 
+    /// The names of Japanese, Korean, Chinese and Arabic in themselves get a glyph for every
+    /// character from the system fonts picked for them. A script with no font on this computer
+    /// is skipped (CI installs fonts-noto-cjk).
+    #[test]
+    fn the_system_fonts_picked_for_a_script_draw_its_language_name() {
+        for l in LANGUAGES.iter().filter(|l| !l.script.preferred_fonts().is_empty()) {
+            let chars = characters(l.name);
+            let lack = undrawable(darkburn_ui::fonts::base_font_definitions(), &chars);
+            assert!(!lack.is_empty(), "{} is drawn without a system font", l.code);
+            let faces = pick(system(), l.script.preferred_fonts(), &lack);
+            if faces.is_empty() {
+                eprintln!("{}: no font for {:?} on this computer, skipped", l.code, l.script);
+                continue;
+            }
+            assert!(faces.len() <= 4);
+            let extra = faces.iter().enumerate().map(|(i, f)| (format!("f{i}"), FontData::from_blob(f.clone(), f.index))).collect();
+            let defs = darkburn_ui::fonts::with_fallbacks(darkburn_ui::fonts::base_font_definitions(), extra);
+            assert_eq!(undrawable(defs, &chars), Vec::<char>::new(), "{}", l.code);
+        }
+    }
+
     #[test]
     fn a_latin_language_needs_no_system_font() {
         assert!(wanted("en", false).is_empty());

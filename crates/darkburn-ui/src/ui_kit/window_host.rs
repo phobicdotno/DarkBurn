@@ -525,11 +525,11 @@ pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
 }
 
 /// The pointer was moved since its button went down, beyond a click's wobble: a press and
-/// release on a button in a window (its Cancel, say) is not a drop, even held long.
+/// release on a button in a window (its Cancel, say) is not a drop, even held long. (6 points:
+/// egui's own wobble allowance for a click.)
 fn moved_since_press(ctx: &Context) -> bool {
     ctx.input(|i| {
-        i.pointer.is_decidedly_dragging()
-            && i.pointer.press_origin().zip(i.pointer.latest_pos()).is_some_and(|(from, to)| from.distance(to) > i.options.max_click_dist)
+        i.pointer.is_decidedly_dragging() && i.pointer.press_origin().zip(i.pointer.latest_pos()).is_some_and(|(from, to)| from.distance(to) > 6.0)
     })
 }
 

@@ -732,31 +732,22 @@ mod tests {
     }
 
     /// One frame at time `t` (seconds) with these events, a dock area at the right and a
-    /// window `a` (a movable card) over it, as the app has them.
-    fn drop_frame(ctx: &Context, t: f64, events: Vec<egui::Event>) {
+    /// window `a` (a movable card) over it, as the app has them. Gives the card's response.
+    fn drop_frame(ctx: &Context, t: f64, events: Vec<egui::Event>) -> egui::Response {
+        let mut card = None;
         let input =
             egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), time: Some(t), events, ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
-            dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(800.0, 0.0), Pos2::new(1200.0, 800.0)));
-            let shown = egui::Area::new(Id::unique("card")).default_pos(Pos2::new(850.0, 100.0)).show(ui.ctx(), |ui| {
+            dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(400.0, 0.0), Pos2::new(1200.0, 800.0)));
+            let shown = egui::Area::new(Id::unique("card")).default_pos(Pos2::new(450.0, 100.0)).show(ui.ctx(), |ui| {
                 // The card's body: pressed and held there, as on a window's empty space.
                 ui.allocate_space(vec2(200.0, 100.0));
             });
             dock_on_drop(ui.ctx(), "a", &shown.response);
-            let r = &shown.response;
-            eprintln!(
-                "DBG t={t} rect={:?} dragged={} started={} stopped={} origin={:?} latest={:?} place={:?} presses={:?}",
-                r.rect,
-                r.dragged(),
-                r.drag_started(),
-                r.drag_stopped(),
-                ui.ctx().input(|i| i.pointer.press_origin()),
-                ui.ctx().input(|i| i.pointer.latest_pos()),
-                place(ui.ctx(), "a").placement,
-                with(ui.ctx(), |s| s.presses.clone())
-            );
+            card = Some(shown.response);
         });
         out.textures_delta.clear();
+        card.expect("drawn")
     }
 
     fn button(pos: Pos2, pressed: bool) -> egui::Event {
@@ -766,12 +757,15 @@ mod tests {
     #[test]
     fn a_long_press_on_a_window_over_a_dock_area_is_not_a_drop() {
         let ctx = Context::default();
-        let on = Pos2::new(900.0, 140.0);
-        drop_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(on)]);
-        drop_frame(&ctx, 0.1, vec![button(on, true)]);
+        drop_frame(&ctx, 0.0, vec![]);
+        let card = drop_frame(&ctx, 0.05, vec![]).rect;
+        let on = card.center();
+        assert!(target_at(&ctx, on).is_some(), "the card sits over the dock area");
+        drop_frame(&ctx, 0.08, vec![egui::Event::PointerMoved(on)]);
+        assert!(drop_frame(&ctx, 0.1, vec![button(on, true)]).dragged(), "the press is on the card");
         // Held still for well over egui's longest click, which then counts it a drag.
         for i in 1..=8 {
-            drop_frame(&ctx, 0.1 + f64::from(i) * 0.25, vec![]);
+            assert!(drop_frame(&ctx, 0.1 + f64::from(i) * 0.25, vec![]).dragged());
         }
         assert!(ctx.input(|i| i.pointer.is_decidedly_dragging()), "egui calls a press held this long a drag");
         drop_frame(&ctx, 2.5, vec![button(on, false)]);
@@ -780,18 +774,18 @@ mod tests {
 
         // A real drag by the same card is one: docked where it is let go.
         drop_frame(&ctx, 3.0, vec![button(on, true)]);
-        for (i, x) in [910.0, 940.0, 980.0].into_iter().enumerate() {
-            drop_frame(&ctx, 3.1 + i as f64 * 0.1, vec![egui::Event::PointerMoved(Pos2::new(x, 160.0))]);
+        for (i, dx) in [10.0, 40.0, 80.0].into_iter().enumerate() {
+            drop_frame(&ctx, 3.1 + i as f64 * 0.1, vec![egui::Event::PointerMoved(on + vec2(dx, 20.0))]);
         }
-        drop_frame(&ctx, 3.5, vec![button(Pos2::new(980.0, 160.0), false)]);
+        drop_frame(&ctx, 3.5, vec![button(on + vec2(80.0, 20.0), false)]);
         assert_eq!(place(&ctx, "a").placement, Placement::Docked("Right".into()));
 
         // A wobble smaller than a click's, held long, is not one either. (The card moved with the
         // drag: pressed where it is now.)
         update(&ctx, "a", |p| p.float(None));
-        let on = Pos2::new(1000.0, 170.0);
-        drop_frame(&ctx, 4.0, vec![egui::Event::PointerMoved(on)]);
-        drop_frame(&ctx, 4.1, vec![button(on, true)]);
+        let on = drop_frame(&ctx, 4.0, vec![]).rect.center();
+        drop_frame(&ctx, 4.05, vec![egui::Event::PointerMoved(on)]);
+        assert!(drop_frame(&ctx, 4.1, vec![button(on, true)]).dragged());
         drop_frame(&ctx, 4.4, vec![egui::Event::PointerMoved(on + vec2(3.0, 2.0))]);
         drop_frame(&ctx, 5.5, vec![]);
         drop_frame(&ctx, 5.6, vec![button(on + vec2(3.0, 2.0), false)]);

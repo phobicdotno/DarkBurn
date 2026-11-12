@@ -56,6 +56,17 @@ cargo test -p darkburn ui_smoke_tests::
 
 Pictures of what each test saw land in `target/ui-snapshots/`. Look at them.
 
+## The web page
+
+`site/` is the page at https://darkburn.phobic.no. It says about DarkBurn what the [README](README.md) says, in fewer words: change the README first, then the page.
+
+```sh
+sh scripts/build-site.sh
+python3 -m http.server -d target/site
+```
+
+The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there and that nothing is fetched from another host. A push to `main` publishes it (`.github/workflows/pages.yml`).
+
 ## Changelog and version
 
 Do not edit `CHANGELOG.md`, the version in the root `Cargo.toml` or the ticks in `docs/PARITY-CHECKLIST.md`. A change the user can see gets one line in a new file `docs/changelog-fragments/<short-name>.md`, written like the lines in [CHANGELOG.md](CHANGELOG.md): short, casual, no technical detail, starting `- Fix: ` or `- New: `. The maintainer folds the fragments into `CHANGELOG.md` and sets the version.

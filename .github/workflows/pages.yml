@@ -1,0 +1,115 @@
+# Publishes the web page, https://darkburn.phobic.no, with GitHub Pages.
+#
+# The page is site/. scripts/build-site.sh puts it together with the pictures, the fonts and the
+# icon it shows, and checks it. This workflow hands that folder to GitHub Pages.
+#
+#   A push to main that changes the page or what it shows, or a run by hand
+#   (Actions > pages > Run workflow):
+#     the page is built and published.
+#   A pull request that changes the same files:
+#     the page is built and checked. Nothing is published.
+#
+# Three things are set once, by hand. A workflow cannot set them:
+#   Settings > Pages > Build and deployment > Source: GitHub Actions
+#   Settings > Pages > Custom domain: darkburn.phobic.no, then "Enforce HTTPS" once it is offered
+#   In the DNS of phobic.no:  darkburn  CNAME  phobicdotno.github.io.
+# Until Pages is switched on with that source, a run builds and checks the page, says in a
+# notice that nothing was published, and passes.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/img/**
+      - assets/fonts/**
+      - assets/icons/app/**
+      - assets/icons/ui/design/svg/model/db_app.svg
+      - scripts/build-site.sh
+      - .github/workflows/pages.yml
+  pull_request:
+    # The same files as above.
+    paths:
+      - site/**
+      - docs/img/**
+      - assets/fonts/**
+      - assets/icons/app/**
+      - assets/icons/ui/design/svg/model/db_app.svg
+      - scripts/build-site.sh
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+# Nothing by default. Each job asks for what it needs.
+permissions: {}
+
+# One publication at a time, and one that has started is left to finish.
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build the page
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      publish: ${{ steps.pages.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Put the page together and check it
+        run: sh scripts/build-site.sh _site
+
+      # "workflow" is what GitHub answers when the source is GitHub Actions. With any other
+      # source, or with Pages off, publishing would fail, so the run says so and stops here.
+      - name: Is GitHub Pages set to publish from workflows
+        id: pages
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if answer=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>&1); then
+            kind=$answer
+          else
+            case $answer in
+              *"HTTP 404"*) kind=off ;;
+              *) echo "::error title=Could not ask GitHub about Pages::$answer"; exit 1 ;;
+            esac
+          fi
+          if [ "$kind" = workflow ]; then
+            echo "publish=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >>"$GITHUB_OUTPUT"
+            echo "::notice title=Built, not published::GitHub Pages is not set to publish from GitHub Actions (found: $kind). Set it under Settings, Pages, Source, then run this workflow again."
+          fi
+
+      - uses: actions/upload-pages-artifact@v5
+        if: steps.pages.outputs.publish == 'true'
+        with:
+          path: _site
+
+  publish:
+    name: Publish
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

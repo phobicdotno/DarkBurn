@@ -283,6 +283,7 @@ the constants and the order of the steps come from the published descriptions.
 | `assets/icons/ui/design/svg/model/db_*.svg` (40 files) | DarkBurn contributors | Original artwork in SolidCraft's icon style, written by `tools/make_icons.py` | MIT OR Apache-2.0 |
 | `assets/icons/app/darkburn-256.png`, `assets/icons/app/darkburn.ico` | DarkBurn contributors | DarkBurn's own mark, a rendering of `assets/icons/ui/design/svg/model/db_app.svg` | MIT OR Apache-2.0 |
 | `assets/locales/en.json`, `assets/locales/nb.json` | DarkBurn contributors | DarkBurn's own interface text in English and Norwegian, compiled into `darkburn` (`apps/darkburn/src/i18n.rs`). A test in that file writes `en.json` from the code when `DARKBURN_WRITE_LOCALES` is set; `nb.json` is the translation. Not copied from SolidCraft's `assets/locales` | MIT OR Apache-2.0 |
+| `site/*` | DarkBurn contributors | DarkBurn's own web page, https://darkburn.phobic.no. `scripts/build-site.sh` puts it together with copies of the pictures in `docs/img`, of the two IBM Plex fonts above with their licence text, and of the app icon. The page fetches nothing from another host | MIT OR Apache-2.0 |
 
 Twelve of the copied theme files use the colours of a named palette. Each file names it in its
 `provenance` field. Authors, addresses and licences are as SolidCraft's `ATTRIBUTION.md` gives

@@ -12,10 +12,11 @@ name: ci
 on:
   push:
     branches: [main]
-    # Not for a push that changes only the front page or the documents: nothing that is built
-    # or tested reads them. The one exception is docs/PARITY-CHECKLIST.md, which is built into
-    # darkburn-mcp. Other .md files stay in, because some are built in or packaged.
-    paths: ["**", "!README.md", "!docs/**", "docs/PARITY-CHECKLIST.md"]
+    # Not for a push that changes only the front page, the documents or the web page: nothing
+    # that is built or tested reads them (pages.yml builds the web page). The one exception is
+    # docs/PARITY-CHECKLIST.md, which is built into darkburn-mcp. Other .md files stay in,
+    # because some are built in or packaged.
+    paths: ["**", "!README.md", "!docs/**", "!site/**", "docs/PARITY-CHECKLIST.md"]
   # No paths here. A check that is required for merging must report on every pull request,
   # and one that is filtered away never does.
   pull_request:

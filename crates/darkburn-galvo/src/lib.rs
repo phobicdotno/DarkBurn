@@ -17,6 +17,8 @@
 //! No real USB device is ever opened unless the `usb` feature is on and
 //! `UsbTransport::open` is called by the application.
 
+// The lint named below is new; an older clippy does not know it and would stop on the name.
+#![allow(unknown_lints)]
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 pub mod codec;

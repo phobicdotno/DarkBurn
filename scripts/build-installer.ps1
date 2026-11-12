@@ -41,10 +41,13 @@ if (-not (Test-Path $Icon)) { throw "missing the app icon: $Icon" }
 $Msi = Join-Path $Dist "darkburn-$Version-windows-x64.msi"
 Remove-Item -Force $Msi -ErrorAction SilentlyContinue
 
+# Beside the stage folder, not in it: the portable zip is filled from the stage.
+$LicenceRtf = Join-Path (Split-Path $Stage) 'licence.rtf'
+New-LicenceRtf $LicenceRtf
 Invoke-Native 'wix build' {
   wix build (Join-Path $Root 'packaging\windows\darkburn.wxs') -arch x64 `
     -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
-    -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$Icon" `
+    -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$Icon" -d "LicenceRtf=$LicenceRtf" `
     -o $Msi
 }
 # wix writes its debug symbols next to the MSI; keep them out of the release assets.

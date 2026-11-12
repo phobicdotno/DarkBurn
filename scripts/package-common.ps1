@@ -55,6 +55,31 @@ function Write-Sha256File([string] $Path) {
   Write-Output "SHA-256: $hash  $name"
 }
 
+# The licence page of the installer wizard takes an RTF file. This writes one from the two
+# licence texts DarkBurn is under. Without it the wizard shows WiX's placeholder text.
+function New-LicenceRtf([string] $OutFile) {
+  $text = "DarkBurn is licensed under the MIT License or the Apache License, Version 2.0, at your option. Both follow.`n`n" +
+    (Get-Content -Raw (Join-Path $Root 'LICENSE-MIT')).Trim() + "`n`n`n" +
+    (Get-Content -Raw (Join-Path $Root 'LICENSE-APACHE')).Trim() + "`n"
+  $rtf = New-Object System.Text.StringBuilder
+  [void]$rtf.Append('{\rtf1\ansi\deff0{\fonttbl{\f0\fnil Segoe UI;}}\fs18 ')
+  foreach ($ch in $text.ToCharArray()) {
+    $code = [int]$ch
+    if ($code -eq 13) { continue }
+    elseif ($code -eq 10) { [void]$rtf.Append("\par`r`n") }
+    elseif ($code -eq 9) { [void]$rtf.Append('\tab ') }
+    elseif ($code -eq 92 -or $code -eq 123 -or $code -eq 125) { [void]$rtf.Append('\').Append($ch) }
+    elseif ($code -gt 126) {
+      # Anything outside plain ASCII as a numbered character (a signed 16-bit number in RTF).
+      if ($code -gt 32767) { $code -= 65536 }
+      [void]$rtf.Append('\u').Append($code).Append('?')
+    }
+    else { [void]$rtf.Append($ch) }
+  }
+  [void]$rtf.Append('}')
+  [System.IO.File]::WriteAllText($OutFile, $rtf.ToString(), [System.Text.Encoding]::ASCII)
+}
+
 function Get-PeSubsystem([string] $Path) {
   $bytes = [System.IO.File]::ReadAllBytes($Path)
   $pe = [BitConverter]::ToInt32($bytes, 0x3C)

@@ -3,7 +3,7 @@
   DarkBurn MSI (WiX Toolset v5, with the UI and Util extensions). Built by scripts/build-installer.ps1:
 
     wix build packaging/windows/darkburn.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
-      -d Version=0.0.24 -d BinDir=... -d IconPath=... -o dist/darkburn-0.0.24-windows-x64.msi
+      -d Version=0.0.24 -d BinDir=... -d IconPath=... -d LicenceRtf=... -o dist/darkburn-0.0.24-windows-x64.msi
 
   One package that installs for the current user by default (no admin rights; into
   %LocalAppData%\Apps\DarkBurn) or for all users (Program Files\DarkBurn, asks for admin) - the
@@ -76,6 +76,13 @@
     </Feature>
 
     <ui:WixUI Id="WixUI_Advanced" />
+    <!-- The licence page of the wizard: both licence texts, written as one RTF file by
+         scripts/build-installer.ps1. Without this the wizard shows WiX's placeholder text. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenceRtf)" />
+    <!-- An install for all users goes to Program Files\DarkBurn. The wizard's own default is
+         [ProgramFilesFolder], which is "Program Files (x86)" for a 64-bit package. Set after
+         the wizard's default and before the wizard hands the folder on. -->
+    <SetProperty Id="WixPerMachineFolder" Value="[ProgramFiles64Folder][ApplicationFolderName]" Before="WixSetPerUserFolder" Sequence="both" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT" Value="DarkBurn $(var.Version) is installed. Start it from the Start menu." />
   </Package>
 

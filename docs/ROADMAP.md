@@ -18,4 +18,4 @@ Build order for reaching the parity checklist. Each phase ends with a working bu
 | 12 | Trocen, TopWisdom, galvo, other G-code firmwares | TROCEN, TOPW, GALVO, GCODE |
 | 13 | Native Gweike controller backend, once the protocol is confirmed on the real card | MCC-06, MCC-07, TARGET-03 |
 
-Phase 3 is the first point where DarkBurn can replace LightBurn for the Atomstack.
+Phase 3 is the first point where DarkBurn can run a job on the Atomstack.

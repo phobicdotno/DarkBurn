@@ -1,1 +1,1 @@
-release linux  first packaging run on real runners
+release windows  first Windows packaging run on real runners: the MSI and the portable zip

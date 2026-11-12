@@ -1,1 +1,1 @@
-ci windows  first run on a real runner
+ci linux  second run, after the Pulse key test fix

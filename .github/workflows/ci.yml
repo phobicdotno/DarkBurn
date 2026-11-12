@@ -127,4 +127,5 @@ jobs:
       - name: Tests
         if: ${{ !cancelled() && steps.build-tests.conclusion == 'success' }}
         timeout-minutes: 30
-        run: cargo test --workspace --locked
+        # --no-fail-fast: one run shows every crate that fails, not only the first.
+        run: cargo test --workspace --locked --no-fail-fast

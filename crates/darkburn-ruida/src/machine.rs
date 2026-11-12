@@ -116,6 +116,10 @@ pub struct RuidaMachine<T: Transport = Box<dyn Transport>> {
     /// Copies of a datagram that were sent and never answered in time. Each may still be
     /// acknowledged late; such an acknowledge must not be taken for the next datagram's.
     late_acks: usize,
+    /// The same on the jog port: how many answers to key commands may still arrive (copies
+    /// sent, less answers seen), and the time after which they are given up.
+    panel_owed: usize,
+    panel_owed_until: Instant,
 }
 
 impl<T: Transport> RuidaMachine<T> {
@@ -132,6 +136,8 @@ impl<T: Transport> RuidaMachine<T> {
             bytes_sent: 0,
             resends: 0,
             late_acks: 0,
+            panel_owed: 0,
+            panel_owed_until: Instant::now(),
         }
     }
 
@@ -439,17 +445,45 @@ impl<T: Transport> RuidaMachine<T> {
 
     /// Send one command on the jog / wireless-panel port and wait for its `CC`.
     /// Only on UDP; on USB use the data-channel equivalents.
+    ///
+    /// A key release is held to more than a key press. The answers carry no number, so the
+    /// answer to an earlier command that was sent twice may still arrive and cannot be told
+    /// from the answer to this one. For a press the worst case is a key that was not pressed.
+    /// A release that is lost while such a leftover answer passes for its own leaves the key
+    /// held down on the controller (the laser firing, an axis moving) with nobody the wiser.
+    /// So a release counts as answered only once more answers have come than earlier commands
+    /// can still be owed. It is never held back for that: it goes out at once, and is sent
+    /// again while its answer is in doubt, which does no harm.
     pub fn send_panel(&mut self, cmd: PanelCommand) -> Result<()> {
         if self.t.framing() != Framing::Udp {
             return Err(RuidaError::Unsupported("the jog port exists only over Ethernet".into()));
         }
+        let release = matches!(cmd, PanelCommand::KeyUp(_));
+        if Instant::now() >= self.panel_owed_until {
+            self.panel_owed = 0;
+        }
+        // What waits on the port now was sent before this command went out: not its answer.
+        while self.t.recv(Channel::Jog, Duration::ZERO)?.is_some() {
+            self.panel_owed = self.panel_owed.saturating_sub(1);
+        }
+        // Answers of earlier commands that may still come, and answers seen since this one
+        // first went out.
+        let earlier = self.panel_owed;
+        let mut seen = 0;
         let mut attempt = 0;
         loop {
             self.t.send(Channel::Jog, &cmd.encode())?;
+            self.panel_owed += 1;
+            self.panel_owed_until = Instant::now() + self.cfg.timeout;
             if let Some(r) = self.t.recv(Channel::Jog, self.cfg.timeout)?
                 && r.first() == Some(&0xCC)
             {
-                return Ok(());
+                self.panel_owed = self.panel_owed.saturating_sub(1);
+                seen += 1;
+                if !release || seen > earlier {
+                    return Ok(());
+                }
+                // A release, and this answer may be an earlier command's: sent again at once.
             }
             if attempt >= self.cfg.retries {
                 return Err(RuidaError::Timeout("no reply on the jog port".into()));

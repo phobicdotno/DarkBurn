@@ -634,3 +634,67 @@ fn a_late_acknowledge_is_not_taken_for_the_next_datagram() {
     drop(e);
     assert_eq!(m.resends, 2, "the lost move was sent again");
 }
+
+/// The Pulse key (and each jog key) held down by the program.
+fn key_is_down(emu: &Emu, key: PanelKey) -> bool {
+    let e = lock(emu);
+    let last = e.panel_received.iter().rev().find(|c| matches!(c, PanelCommand::KeyDown(k) | PanelCommand::KeyUp(k) if *k == key));
+    matches!(last, Some(PanelCommand::KeyDown(_)))
+}
+
+#[test]
+fn a_late_answer_to_a_key_press_is_not_taken_for_the_answer_to_its_release() {
+    use Fate::*;
+    // The answer to the key press is late, so the press is sent again and both copies get
+    // answered. The release is then lost on the way: the leftover answer to the press must not
+    // pass for its own, or the key stays down on the controller and nobody notices.
+    // In the first script the leftover answer is there before the release goes out, in the
+    // second it arrives after.
+    for script in [[Late, Pass, Lost], [Late, Late, Lost]] {
+        for key in [PanelKey::Pulse, PanelKey::PlusX] {
+            let emu = emulator(EmulatorConfig::default());
+            let cfg = MachineConfig { timeout: std::time::Duration::from_millis(40), ..Default::default() };
+            let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), cfg);
+            m.connect().unwrap();
+            let n = m.transport().sent;
+            m.transport_mut().script = [vec![Pass; n], script.to_vec()].concat();
+            let resends = m.resends;
+            m.panel_key(key, true).unwrap();
+            assert_eq!(m.resends, resends + 1);
+            assert!(key_is_down(&emu, key));
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key), "{key:?}: the release never reached the controller and nobody noticed");
+            assert_eq!(m.resends, resends + 2, "{key:?}: the lost release was sent again");
+            // Right after that the key still works, at the price of one release sent twice:
+            // the answer to the lost copy could still come.
+            m.panel_key(key, true).unwrap();
+            assert!(key_is_down(&emu, key));
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key));
+            assert!(m.resends <= resends + 3);
+            // And once that answer is given up the link is as good as new: nothing is sent twice.
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let resends = m.resends;
+            let sent = m.transport().sent;
+            m.panel_key(key, true).unwrap();
+            m.panel_key(key, false).unwrap();
+            assert!(!key_is_down(&emu, key));
+            assert_eq!((m.resends, m.transport().sent), (resends, sent + 2));
+        }
+    }
+}
+
+#[test]
+fn a_release_that_is_never_answered_is_an_error_also_after_a_late_answer() {
+    use Fate::*;
+    let emu = emulator(EmulatorConfig::default());
+    let mut m = RuidaMachine::new(Scripted::new(emu.clone(), &[]), MachineConfig::default());
+    m.connect().unwrap();
+    let n = m.transport().sent;
+    // Press: answered late. Release: every copy is lost.
+    m.transport_mut().script = [vec![Pass; n], vec![Late, Pass], vec![Lost; 16]].concat();
+    m.panel_key(PanelKey::Pulse, true).unwrap();
+    let r = m.panel_key(PanelKey::Pulse, false);
+    assert!(matches!(r, Err(RuidaError::Timeout(_))), "a release that never arrived was reported as done: {r:?}");
+    assert!(key_is_down(&emu, PanelKey::Pulse));
+}

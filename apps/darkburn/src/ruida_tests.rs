@@ -747,7 +747,10 @@ fn no_move_runs_under_a_held_pulse_key() {
     for (name, go) in moves {
         let (mut h, emu, _server) = firing();
         let r = go(&mut h);
-        let end = Instant::now() + Duration::from_secs(1);
+        // The key goes up when the controller has the packet, which takes a moment on a busy
+        // computer: one second was too short on a loaded build server. Five is still well
+        // inside the nine seconds after which `firing` would let the key go by itself.
+        let end = Instant::now() + Duration::from_secs(5);
         while pulse_is_down(&emu) && Instant::now() < end {
             h.wait_for(Duration::from_millis(20), |_, _| false);
         }

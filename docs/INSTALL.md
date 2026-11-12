@@ -18,10 +18,10 @@ Find your case:
 
 ## Windows: the MSI
 
-The file is `darkburn-<version>-windows-x64.msi`. Once a release is out it is on the [Releases](https://github.com/phobicdotno/DarkBurn/releases/latest) page: download it and open it. No MSI has been published yet.
+The file is `darkburn-<version>-windows-x64.msi`. Once a release is out it is on the [Releases](https://github.com/phobicdotno/DarkBurn/releases/latest) page: download it and open it.
 
 - **For you alone, by default.** It installs into `%LocalAppData%\Apps\DarkBurn` and needs no admin rights.
-- **For everyone on the computer:** choose "Anyone who uses this computer" in the wizard, or give `msiexec` the setting `ALLUSERS=1` as shown below. That installs into `Program Files\DarkBurn` and asks for admin rights.
+- **For everyone on the computer:** choose "Install for all users of this machine" in the wizard, or give `msiexec` the setting `ALLUSERS=1` as shown below. That installs into `Program Files\DarkBurn` and asks for admin rights.
 - **Shortcuts:** a DarkBurn entry in the Start menu, and a shortcut on the desktop. The desktop shortcut is optional.
 - **File types:** `.dbrn` projects open with DarkBurn. So do `.dbdev` (device profile), `.dbclb` (cut library), `.dbart` (art library) and `.dbhk` (hotkeys) files.
 - **What it holds:** `darkburn.exe`, `darkburn-mcp.exe` (the MCP server for [AI agents](../README.md#ai-agents)), the licences and the README. The C runtime is linked in, so no Visual C++ redistributable is needed.
@@ -58,7 +58,7 @@ msiexec /x darkburn-<version>-windows-x64.msi REMOVE_SETTINGS=1
 
 ## Windows: the portable zip
 
-The file is `darkburn-<version>-windows-x64-portable.zip`, from the same Releases page once a release is out. No zip has been published yet.
+The file is `darkburn-<version>-windows-x64-portable.zip`, from the same Releases page once a release is out.
 
 - Unzip it anywhere (a USB stick works) and run `darkburn.exe`. Nothing is registered with Windows: no Start menu entry and no file types.
 - The zip holds one folder, `darkburn-<version>-windows-x64-portable`, with `darkburn.exe`, `darkburn-mcp.exe`, the licences, the README and `portable.txt`.
@@ -103,15 +103,16 @@ In PowerShell (Windows PowerShell 5.1 or PowerShell 7):
 irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
 ```
 
-**This script has not been run on Windows yet.** PowerShell 7.7 has parsed it with no errors, and that is all.
+**This script has not been run on Windows yet.** PowerShell 7.7 on Linux has run it against stand-ins for the build tools, the Windows installer, the registry, the Start menu shortcut and GitHub. Windows PowerShell 5.1 has not run it. The build server only checks, with Windows PowerShell 5.1, that it parses.
 
-It looks for a release first. With an MSI in the latest release it installs that, silently and for you alone. With only a portable zip it unpacks that, and leaves `portable.txt` out, so your settings live in `%AppData%\DarkBurn`. With no release, which is today's case, it builds from source.
+It looks for a release first. With an MSI in the latest release it installs that, silently and for you alone. With only a portable zip it unpacks that, licence texts included, and leaves `portable.txt` out, so your settings live in `%AppData%\DarkBurn`. With no release, which is today's case, it builds from source.
 
 It stops, and changes nothing, in these cases:
 
-- DarkBurn or `darkburn-mcp` is running. Close it and run the line again.
+- DarkBurn or `darkburn-mcp` is running. Close it and run the line again. That holds for the uninstall too: its setting stays until DarkBurn has been removed.
 - DarkBurn is installed for all users. Update that copy with a newer MSI from an administrator prompt, or remove it in Settings > Apps first.
 - DarkBurn is installed from an MSI and the script would have to build from source, or the release has only a zip. Uninstall first, then run the line again.
+- The PowerShell window is the 32-bit one on 64-bit Windows. Open the ordinary PowerShell from the Start menu and run the line there.
 
 ## Options for the one-line installers
 
@@ -121,7 +122,7 @@ Each block is one command: copy it whole. All the settings are in the [table bel
 
 A setting goes in front of `sh`. An option goes after `sh -s --`.
 
-Let the script install Rust with rustup when it is missing or too old.
+Let the script install Rust with rustup when it is missing or too old. A Rust that is too old and came from a system package is left as it is: rustup goes in beside it, and the build uses rustup's.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh \
@@ -160,7 +161,7 @@ curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/i
 
 A setting is set on the line before, and stays for that PowerShell window.
 
-Let the script install Rust with rustup when it is missing or too old.
+Let the script install Rust with rustup when it is missing, and update it when it is too old and came from rustup.
 
 ```powershell
 $env:DARKBURN_INSTALL_RUST = '1'
@@ -181,7 +182,7 @@ $env:DARKBURN_FROM_SOURCE = '1'
 irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
 ```
 
-Remove DarkBurn and what the installer built. Your settings are kept, and the script clears this setting again. More under [uninstalling](#uninstalling).
+Remove DarkBurn and what the installer built. Your settings are kept, and the script clears this setting once DarkBurn is removed. More under [uninstalling](#uninstalling).
 
 ```powershell
 $env:DARKBURN_UNINSTALL = '1'
@@ -190,13 +191,13 @@ irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.
 
 ## Settings
 
-The settings are environment variables. On Linux and macOS they go in front of `sh`. On Windows they are set first and stay for that PowerShell window, except `DARKBURN_UNINSTALL`, which the script clears. To clear another one, open a new PowerShell window, or remove it by name, for example `Remove-Item Env:\DARKBURN_FROM_SOURCE`.
+The settings are environment variables. On Linux and macOS they go in front of `sh`. On Windows they are set first and stay for that PowerShell window, except `DARKBURN_UNINSTALL`, which the script clears once DarkBurn is removed. To clear another one, open a new PowerShell window, or remove it by name, for example `Remove-Item Env:\DARKBURN_FROM_SOURCE`.
 
 | Setting | What it does |
 |---|---|
 | `DARKBURN_REF` | The branch, tag or commit to install. A bare version number means its tag. A branch or a commit is always built from source. Left out, it is the latest release when that has a file for this computer, else `main`. |
 | `DARKBURN_FROM_SOURCE=1` | Build from source even when a release exists. |
-| `DARKBURN_INSTALL_RUST=1` | Install Rust with rustup when it is missing or too old. Left out, the script says what to install and stops. |
+| `DARKBURN_INSTALL_RUST=1` | Install Rust with rustup when it is missing or too old. Left out, the script says what to install and stops. On Windows a Rust that is too old and did not come from rustup has to be updated by hand. |
 | `DARKBURN_PREFIX` | Where the programs go: `<prefix>/bin` on Linux and macOS (`~/.local` when left out), the folder itself on Windows (`%LocalAppData%\Apps\DarkBurn`). On macOS the app always goes to `~/Applications`. |
 | `DARKBURN_BUILD_DIR` | Where the source is kept and built (`~/.cache/darkburn-build`, `%LocalAppData%\darkburn-build`). |
 | `DARKBURN_REPO` | The git address or local path of another copy of DarkBurn. With it set, the script always builds from source. |
@@ -217,6 +218,7 @@ A release is to have a `.sha256` file beside each download. When it has one, the
 - **The build** stays in `~/.cache/darkburn-build` (about 3 GB), so the next update has less to do. Uninstalling removes it.
 - **Settings** live in `~/.local/share/darkburn`. Uninstalling keeps them.
 - **PATH:** when `~/.local/bin` is not on your PATH, the script says so and prints the line to add.
+- **Other folders:** when `XDG_DATA_HOME` or `XDG_CACHE_HOME` is set, the script uses it in place of `~/.local/share` or `~/.cache`.
 
 ### macOS (untested)
 
@@ -245,7 +247,7 @@ The MSI and the portable zip are described under [Windows: the MSI](#windows-the
 
 | Platform | Today |
 |---|---|
-| **Windows** | The platform DarkBurn is developed on. |
+| **Windows** | Developed on Windows first. Its test run on a Windows build server has not passed yet. |
 | **Linux** | Builds from source, and the test suite runs there. |
 | **macOS** | Untested: never built, never run. |
 
@@ -253,9 +255,9 @@ The CI workflow runs the lints and tests on Windows, Linux and macOS; the releas
 
 Both install scripts are new.
 
-- `install.sh` was run on Linux (Ubuntu 24.04, x86_64) from start to finish: the real build, a second run as an update, and the uninstall. It has had fixes since, and those were run with only the compile step replaced by a stand-in.
+- `install.sh` was run on Linux (Ubuntu 24.04, x86_64) from start to finish: the real build, a second run as an update, and the uninstall. It has had fixes since. Those were run with the compile step replaced by a stand-in, and the one that installs rustup beside an old Rust with a stand-in for rustup as well.
 - Its macOS half has been run only against stand-ins for the macOS tools, and its ready-made-build path only against a stand-in release, because no release exists.
-- `install.ps1` has been parsed by PowerShell 7.7 with no errors. It has not been run on Windows.
+- `install.ps1` has not been run on Windows. Windows PowerShell 5.1 has not run it either; the build server only checks that it parses there. PowerShell 7.7 on Linux has run it against stand-ins: the build from source, an update, the release paths with their checksums, and the uninstall.
 
 ## First start
 
@@ -288,7 +290,7 @@ curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/i
   | sh -s -- --uninstall
 ```
 
-This removes the two programs, the build folder, and the menu entry, icon and file type on Linux or `DarkBurn.app` on macOS. It removes only what the installer made: a build folder or a `DarkBurn.app` that it did not make is kept. Rust and the system packages are left as they are. If you installed with `DARKBURN_PREFIX` or `DARKBURN_BUILD_DIR`, set the same ones here.
+This removes the two programs, the build folder, and the menu entry, icon and file type on Linux or `DarkBurn.app` on macOS. It removes only what the installer made: a build folder or a `DarkBurn.app` that it did not make is kept. Rust and the system packages are left as they are. The desktop's lookup tables under `~/.local/share/mime` and `~/.local/share/applications` stay; other programs share them. If you installed with `DARKBURN_PREFIX` or `DARKBURN_BUILD_DIR`, set the same ones here.
 
 **Windows**, with the one-line installer.
 
@@ -309,10 +311,10 @@ This removes the files the installer put in place, its Start menu entry and the 
 |---|---|
 | Linux | `~/.local/share/darkburn` |
 | macOS | `~/Library/Application Support/DarkBurn` |
-| Windows | `%AppData%\DarkBurn` |
+| Windows | `%AppData%\DarkBurn\data` |
 | Windows, portable zip | `settings`, beside `darkburn.exe` |
 
-Delete the folder if you want the settings gone too.
+Delete the folder if you want the settings gone too. On Windows delete the one above it, `%AppData%\DarkBurn`.
 
 - On Linux a start with `--safe-mode` leaves a folder of its own, `~/.local/share/no.phobic.darkburn`. Uninstalling keeps that too.
 - While MCP control is switched on, the channel's port and token are in `control.json`: `%AppData%\DarkBurn\control.json` on Windows, `~/.config/DarkBurn/control.json` on Linux and macOS.
@@ -321,7 +323,7 @@ Delete the folder if you want the settings gone too.
 
 Piping a download into a shell is a matter of trust. Both scripts are plain text in this repository: [scripts/install.sh](../scripts/install.sh) and [scripts/install.ps1](../scripts/install.ps1).
 
-A download that is cut off runs nothing. `install.sh` is one group in braces, and a shell runs none of such a group before it has read all of it; this was tried at every cut-off point in dash, bash and busybox sh. `install.ps1` is one function, called on its last line.
+A download that is cut off runs nothing. `install.sh` is one group in braces, and a shell runs none of such a group before it has read all of it; this was tried at every cut-off point in dash, bash and busybox sh. `install.ps1` is one block in braces, and PowerShell reads all of a block before it runs any of it; every cut-off point was checked with PowerShell 7.7's parser.
 
 To read before you run on Linux and macOS, download the script.
 

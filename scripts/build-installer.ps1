@@ -12,7 +12,7 @@
   moved to package-common.ps1, WiX v5 with the UI and Util extensions, MSI validation, a .sha256 file.
 
   The MSI installs per user by default (no admin rights) and for all users with ALLUSERS=1 or the
-  wizard's "Anyone who uses this computer" choice. Upgrades replace an earlier install (stable
+  wizard's "Install for all users of this machine" choice. Upgrades replace an earlier install (stable
   UpgradeCode). Uninstall keeps the settings folder; REMOVE_SETTINGS=1 removes it too.
 
   Needs (all user-level, no admin):

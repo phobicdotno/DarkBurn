@@ -56,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/i
 irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex
 ```
 
-No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source. That needs Rust 1.95 or newer and about 3.5 GB of disk, and the first build took 13 minutes on a four-core computer. macOS is untested, and the Windows script has been parsed by PowerShell 7.7 with no errors but has not been run on Windows yet.
+No release is published yet, so there is no MSI to download yet, and both lines build DarkBurn from source. That needs Rust 1.95 or newer, a C toolchain and about 3.5 GB of disk, and the first build took 13 minutes on a four-core computer. macOS is untested. The Windows script has not been run on Windows yet; PowerShell 7.7 on Linux has run it against stand-ins for the Windows parts.
 
 Everything else (options, uninstall, what gets installed, building by hand): [docs/INSTALL.md](docs/INSTALL.md).
 
@@ -261,10 +261,10 @@ Everything in these lists is ticked as done on the [parity checklist](docs/PARIT
 </details>
 
 <details>
-<summary><b>Safety guards.</b> Warnings, checks and switches between you and an accidental start. None of them has been tried on a real machine.</summary>
+<summary><b>Safety guards.</b> Warnings, checks and switches between you and an accidental start.</summary>
 <br>
 
-Most of these are checklist items. The badge, the Arm step, the cross-machine test and the `unsafe` rule come from the code and the changelog.
+None of these has been tried on a real machine. Most of them are checklist items. The badge, the Arm step, the cross-machine test and the `unsafe` rule come from the code and the changelog.
 
 - The Laser panel shows a SIMULATOR or REAL MACHINE badge, and connecting to a real machine asks first.
 - A pre-job checklist can be shown before every start.
@@ -379,7 +379,7 @@ The six commands, what they need and how to run the tests are in [docs/INSTALL.m
 ## Written from scratch
 
 - No LightBurn code, icons, artwork, images or help text is in DarkBurn.
-- The people and agents who write DarkBurn's code work from the [parity checklist](docs/PARITY-CHECKLIST.md), a written list of what the program should do, and the [build rules](docs/BUILD-RULES.md) forbid opening LightBurn or its files.
+- The people and agents who write DarkBurn's code work from the [parity checklist](docs/PARITY-CHECKLIST.md), a written list of what the program should do, and the [build rules](docs/BUILD-RULES.md) forbid opening LightBurn.
 - No GPL, LGPL or AGPL code is copied. Code ported from MIT and Apache projects is credited in [ATTRIBUTION.md](ATTRIBUTION.md).
 - DarkBurn is not affiliated with LightBurn Software. The product names on this page are trademarks of their owners.
 

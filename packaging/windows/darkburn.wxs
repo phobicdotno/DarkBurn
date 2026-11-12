@@ -7,7 +7,7 @@
 
   One package that installs for the current user by default (no admin rights; into
   %LocalAppData%\Apps\DarkBurn) or for all users (Program Files\DarkBurn, asks for admin) - the
-  wizard's "Just for me / Anyone who uses this computer" page chooses, and so does the command
+  wizard's "Install just for you / Install for all users of this machine" page chooses, and so does the command
   line: `msiexec /i darkburn.msi` (per user), `msiexec /i darkburn.msi ALLUSERS=1` (all users).
   `INSTALLFOLDER`-style override on the command line: APPLICATIONFOLDER=D:\Tools\DarkBurn.
 

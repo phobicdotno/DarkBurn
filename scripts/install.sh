@@ -624,7 +624,8 @@ Or let this installer do it:
     fi
 }
 
-# Stops when rustc is older than the rust-version of the checkout $1.
+# Stops when rustc is older than the rust-version of the checkout $1. With DARKBURN_INSTALL_RUST=1
+# it gets a newer one first: from rustup when the old one is rustup's, else by installing rustup.
 check_rust_version() {
     rust_need=$(toml_value "$1/Cargo.toml" workspace.package rust-version)
     [ -n "$rust_need" ] || rust_need=$MIN_RUST_FALLBACK
@@ -640,14 +641,29 @@ With rustup, pick a toolchain with:
     rustup default stable
 and run this installer again."
     fi
-    if has rustup && [ "${DARKBURN_INSTALL_RUST:-}" = 1 ]; then
-        step "Rust ${rust_have:-?} is older than $rust_need: installing the stable toolchain with rustup"
-        rustup toolchain install stable --profile minimal ||
-            die "rustup could not install the stable toolchain."
-        RUSTUP_TOOLCHAIN=stable
-        export RUSTUP_TOOLCHAIN
+    if [ "${DARKBURN_INSTALL_RUST:-}" = 1 ]; then
+        if has rustup; then
+            step "Rust ${rust_have:-?} is older than $rust_need: installing the stable toolchain with rustup"
+            rustup toolchain install stable --profile minimal ||
+                die "rustup could not install the stable toolchain."
+            RUSTUP_TOOLCHAIN=stable
+            export RUSTUP_TOOLCHAIN
+        else
+            # This Rust is not rustup's (a distribution package, say), so rustup cannot update it.
+            # rustup puts the current Rust in its own folder, and that folder goes first on PATH
+            # for the rest of this run. The old Rust is left as it is.
+            step "Rust ${rust_have:-?} is older than $rust_need and does not come from rustup: installing rustup beside it"
+            install_rust
+            PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+        fi
         rust_have=$(rustc_version_of "$(cd "$1" && rustc --version 2>/dev/null)")
-        if [ -n "$rust_have" ] && version_ge "$rust_have" "$rust_need"; then return 0; fi
+        if [ -n "$rust_have" ] && version_ge "$rust_have" "$rust_need"; then
+            say "    Rust $rust_have (DarkBurn needs $rust_need or newer)"
+            return 0
+        fi
+        die "Rust ${rust_have:-?} is still too old after the install with rustup: DarkBurn needs $rust_need or newer.
+The rustc in use is $(command -v rustc 2>/dev/null || say 'not found').
+If that is not rustup's, put ${CARGO_HOME:-$HOME/.cargo}/bin first on your PATH and run this installer again."
     fi
     if has rustup; then
         die "Rust ${rust_have:-?} is too old: DarkBurn needs $rust_need or newer.
@@ -658,7 +674,9 @@ and run this installer again (or set DARKBURN_INSTALL_RUST=1 and it does that fo
     die "Rust ${rust_have:-?} is too old: DarkBurn needs $rust_need or newer.
 This Rust does not come from rustup. Install the current one with:
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-then open a new terminal and run this installer again."
+then open a new terminal and run this installer again.
+Or let this installer do it (the old Rust stays, rustup goes in beside it):
+    curl -fsSL $INSTALL_URL | DARKBURN_INSTALL_RUST=1 sh"
 }
 
 # The build folder is reused between runs. It is marked so that neither a re-run nor --uninstall

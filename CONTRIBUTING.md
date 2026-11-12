@@ -4,7 +4,7 @@ DarkBurn is pre-release. It has never burned a job on a real machine: the machin
 
 ## The most useful help right now
 
-Testing on real hardware. [docs/HARDWARE-CHECKS.md](docs/HARDWARE-CHECKS.md) lists what was built from public documents and still needs a check on a real controller. If you have one of those machines, try an item, stay at the machine with its own stop button within reach, and open an [issue](https://github.com/phobicdotno/DarkBurn/issues) that says what you did and what the machine did, with the controller and its firmware version.
+Testing on real hardware. [docs/HARDWARE-CHECKS.md](docs/HARDWARE-CHECKS.md) lists what still needs a check on a real controller. If you have one of those machines, try an item, stay at the machine with its own stop button within reach, and open an [issue](https://github.com/phobicdotno/DarkBurn/issues) that says what you did and what the machine did, with the controller and its firmware version.
 
 Bug reports are welcome too. Say what you did, what you expected and what happened, and attach the file if one is involved. Security and safety problems go through [SECURITY.md](SECURITY.md), not a public issue.
 
@@ -42,7 +42,7 @@ The full text is in [docs/BUILD-RULES.md](docs/BUILD-RULES.md). Read it before y
 - **Credit what you port.** Code from MIT, Apache-2.0, BSD or zlib projects may be ported, with credit in [ATTRIBUTION.md](ATTRIBUTION.md).
 - **Never connect to a real machine** in code, tests or demos. No serial port, USB device or network address of a controller. Every driver talks through a transport trait, and tests use the simulators or loopback.
 - **Every behaviour gets a test.** A bug fix comes with a test that fails without the fix.
-- **Formatted and lint-free.** Rust edition 2024, `cargo fmt` with the repository's `rustfmt.toml`, clippy clean. `unsafe` is forbidden.
+- **Formatted and lint-free.** Rust edition 2024, `cargo fmt` with the repository's `rustfmt.toml`, clippy clean. `unsafe` is forbidden in the crates; the app allows it in one Windows file.
 - **Geometry** is in millimetres, Y up, origin at the machine origin.
 - **Every action is a command.** What the user can do in the app is a registered command that the UI calls. See [docs/WIRING-RULES.md](docs/WIRING-RULES.md).
 

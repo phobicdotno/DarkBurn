@@ -32,20 +32,27 @@
     DARKBURN_PREFIX          Folder the programs go into        [%LocalAppData%\Apps\DarkBurn]
     DARKBURN_BUILD_DIR       Where the source is kept and built [%LocalAppData%\darkburn-build]
     DARKBURN_FROM_SOURCE=1   Build from source even when a release exists
-    DARKBURN_INSTALL_RUST=1  Install Rust with rustup when it is missing or too old
+    DARKBURN_INSTALL_RUST=1  Install Rust with rustup when it is missing, and update it when it
+                             is too old and came from rustup
     DARKBURN_UNINSTALL=1     Remove what this installer (or the MSI) put on the computer.
                              Settings in %AppData%\DarkBurn are kept. The variable is cleared
                              afterwards, so the next run installs again.
 
-  The whole script is one function, called on the last line, so a download that was cut off
-  runs nothing. Nothing that is downloaded is ever run as script text.
+  The whole script is one block in braces, holding one function and the call to it, so a
+  download that was cut off runs nothing. Nothing that is downloaded is ever run as script text.
 #>
 
+# One block: PowerShell reads all of a block before it runs any of it, and the function inside
+# is gone from your session when the block ends. The lines inside are not indented again.
+& {
 function Install-DarkBurn {
     # With `irm | iex` this runs in your own PowerShell session. A strict mode set there (some
     # profiles do) would stop this script at the first variable or property that is not set.
     Set-StrictMode -Off
     $ErrorActionPreference = 'Stop'
+    # PowerShell 7.4 and newer: when this is set in your session, a program that ends with an
+    # error code is reported as a PowerShell error. The script reads the exit codes itself.
+    $PSNativeCommandUseErrorActionPreference = $false
     # The progress bar makes downloads in Windows PowerShell 5.1 many times slower.
     $ProgressPreference = 'SilentlyContinue'
 
@@ -93,7 +100,7 @@ function Install-DarkBurn {
     $savedEnv = @{}
     function Set-EnvOrRemove([string] $Name, [string] $Value) {
         if ([string]::IsNullOrEmpty($Value)) {
-            Remove-Item -LiteralPath "Env:\$Name" -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath "Env:\$Name" -ErrorAction Ignore
         } else {
             [Environment]::SetEnvironmentVariable($Name, $Value)
         }
@@ -181,15 +188,19 @@ function Install-DarkBurn {
     # Windows does not let a running program be replaced. Asked at the start, and once more
     # just before the files are written: a build takes long enough for DarkBurn to be started.
     function Assert-NotRunning {
-        if (Get-Process -Name 'darkburn', 'darkburn-mcp' -ErrorAction SilentlyContinue) {
+        if (Get-Process -Name 'darkburn', 'darkburn-mcp' -ErrorAction Ignore) {
             throw 'DarkBurn (or its MCP server, darkburn-mcp) is running. Close it and run the installer again.'
         }
     }
 
     # A folder setting as a full path. A relative path is taken from PowerShell's current
     # folder, which is not always the folder Windows has for the process.
+    # No backslash is left at the end: before the closing quote of APPLICATIONFOLDER="..." on the
+    # msiexec command line it would be read as an escaped quote. A drive root (C:\) keeps its own.
     function Resolve-Folder([string] $Path) {
-        return [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+        $full = [IO.Path]::GetFullPath($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path))
+        if ($full.Length -gt 3) { $full = $full.TrimEnd('\', '/') }
+        return $full
     }
 
     function Get-StartMenuLink {
@@ -257,7 +268,8 @@ function Install-DarkBurn {
             $sumFile = "$file.sha256"
             Invoke-WebRequest -UseBasicParsing -Uri $sumAsset.browser_download_url -OutFile $sumFile
             $first = [string](Get-Content -LiteralPath $sumFile -TotalCount 1)
-            $want = ($first.Trim() -split '\s+')[0].ToLower()
+            $want = ''
+            if ($first) { $want = ($first.Trim() -split '\s+')[0].ToLower() }
             $have = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()
             if ($want -ne $have) {
                 throw ("The SHA-256 of $Name does not match the one published with the release.`n" +
@@ -281,14 +293,54 @@ function Install-DarkBurn {
         }
     }
 
+    # Takes out what an earlier run of this script put into the install folder (from the zip or
+    # from source): the files its list names, and nothing else. A line is a file name, or
+    # licenses\<file name> for a licence text. The licenses folder goes when it is empty afterwards.
+    # True when there was a list.
+    function Remove-InstalledFiles([string] $InstallDir, [bool] $Tell) {
+        $manifest = Join-Path $InstallDir $ManifestName
+        if (-not (Test-Path -LiteralPath $manifest)) { return $false }
+        $licences = Join-Path $InstallDir 'licenses'
+        foreach ($name in @(Get-Content -LiteralPath $manifest)) {
+            $name = $name.Trim()
+            $folder = $InstallDir
+            if ($name.StartsWith('licenses\')) {
+                $folder = $licences
+                $name = $name.Substring(9)
+            }
+            if (-not $name -or $name.StartsWith('#') -or $name -match '[\\/:]' -or $name -eq '..') { continue }
+            $file = Join-Path $folder $name
+            if (Test-Path -LiteralPath $file -PathType Leaf) {
+                Remove-Item -LiteralPath $file -Force
+                if ($Tell) { Say "  removed $file" }
+            }
+        }
+        if ((Test-Path -LiteralPath $licences -PathType Container) -and @(Get-ChildItem -LiteralPath $licences -Force).Count -eq 0) {
+            Remove-Item -LiteralPath $licences -Force
+        }
+        Remove-Item -LiteralPath $manifest -Force
+        return $true
+    }
+
     # Copies files into the install folder and writes down their names, so that uninstalling
     # removes exactly these.
-    function Install-Files([string[]] $Files, [string] $InstallDir) {
+    function Install-Files([string[]] $Files, [string] $InstallDir, [string] $LicenceFolder) {
         New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        # What an earlier run put here goes first, so a file that is no longer shipped does not stay.
+        Remove-InstalledFiles $InstallDir $false | Out-Null
         $names = @()
         foreach ($file in $Files) {
             Copy-Item -LiteralPath $file -Destination $InstallDir -Force
             $names += (Split-Path -Leaf $file)
+        }
+        # The licence texts ATTRIBUTION.md points to (the zip has them in a folder of their own).
+        if ($LicenceFolder -and (Test-Path -LiteralPath $LicenceFolder -PathType Container)) {
+            $target = Join-Path $InstallDir 'licenses'
+            New-Item -ItemType Directory -Force -Path $target | Out-Null
+            foreach ($text in @(Get-ChildItem -LiteralPath $LicenceFolder -File)) {
+                Copy-Item -LiteralPath $text.FullName -Destination $target -Force
+                $names += ('licenses\' + $text.Name)
+            }
         }
         $manifest = @('# Files put here by the DarkBurn installer (scripts/install.ps1). Uninstalling removes them.') + $names
         Set-Content -LiteralPath (Join-Path $InstallDir $ManifestName) -Value $manifest -Encoding ASCII
@@ -305,7 +357,7 @@ function Install-DarkBurn {
         # install folder. Without it they live in %AppData%\DarkBurn, as with the MSI.
         $files = @(Get-ChildItem -LiteralPath $exe.DirectoryName -File | Where-Object { $_.Name -ne 'portable.txt' } | ForEach-Object { $_.FullName })
         Step "Installing into $InstallDir"
-        Install-Files $files $InstallDir
+        Install-Files $files $InstallDir (Join-Path $exe.DirectoryName 'licenses')
     }
 
     # ---------------------------------------------------------------------------------------
@@ -376,7 +428,8 @@ function Install-DarkBurn {
                 "If the lines above name a lock file or a broken repository, delete $Dir and run the installer again.")
         }
         foreach ($candidate in @("refs/remotes/origin/$Ref", "refs/tags/$Ref", $Ref)) {
-            $commit = ([string](Get-ToolOutput { git $gitDir $workTree rev-parse -q --verify "$candidate^{commit}" })).Trim()
+            $commit = [string](Get-ToolOutput { git $gitDir $workTree rev-parse -q --verify "$candidate^{commit}" })
+            if ($commit) { $commit = $commit.Trim() }
             if ($commit -match '^[0-9a-f]{40,64}$') {
                 if (-not (Test-ToolRun { git $gitDir $workTree -c core.longpaths=true checkout -q -f --detach $commit })) {
                     throw "Could not check out $Name $Ref.`n$retry"
@@ -469,10 +522,15 @@ function Install-DarkBurn {
                 Step "Rust $rustHave is older than ${rustNeed}: installing the stable toolchain with rustup"
                 Invoke-Tool 'rustup toolchain install' { rustup toolchain install stable --profile minimal }
                 Set-TempEnv 'RUSTUP_TOOLCHAIN' 'stable'
-            } else {
+            } elseif (Test-Tool 'rustup') {
                 throw ("Rust $rustHave is too old: DarkBurn needs $rustNeed or newer.`n" +
                     "Update it with: rustup update stable`n" +
                     "and run the installer again (or set DARKBURN_INSTALL_RUST=1 and it does that for you).")
+            } else {
+                # No rustup: this Rust came from somewhere else, and only what installed it updates it.
+                throw ("Rust $rustHave is too old: DarkBurn needs $rustNeed or newer.`n" +
+                    "rustup was not found, so this installer cannot update Rust, with or without DARKBURN_INSTALL_RUST=1.`n" +
+                    "Update Rust the way it was installed, or install rustup (https://rustup.rs), and run the installer again.")
             }
         } else {
             Say "    Rust $rustHave (DarkBurn needs $rustNeed or newer)"
@@ -529,18 +587,7 @@ function Install-DarkBurn {
         }
 
         # An install made by this script from the zip or from source: the files it wrote down.
-        $manifest = Join-Path $InstallDir $ManifestName
-        if (Test-Path -LiteralPath $manifest) {
-            foreach ($name in @(Get-Content -LiteralPath $manifest)) {
-                $name = $name.Trim()
-                if (-not $name -or $name.StartsWith('#') -or $name -match '[\\/:]' -or $name -eq '..') { continue }
-                $file = Join-Path $InstallDir $name
-                if (Test-Path -LiteralPath $file -PathType Leaf) {
-                    Remove-Item -LiteralPath $file -Force
-                    Say "  removed $file"
-                }
-            }
-            Remove-Item -LiteralPath $manifest -Force
+        if (Remove-InstalledFiles $InstallDir $true) {
             if (@(Get-ChildItem -LiteralPath $InstallDir -Force).Count -eq 0) { Remove-Item -LiteralPath $InstallDir -Force }
             $link = Get-StartMenuLink
             if (Test-Path -LiteralPath $link) {
@@ -612,14 +659,19 @@ function Install-DarkBurn {
     $buildDir = Resolve-Folder (Get-Setting 'DARKBURN_BUILD_DIR' (Join-Path $env:LOCALAPPDATA 'darkburn-build'))
 
     if ($env:DARKBURN_UNINSTALL -eq '1') {
-        # One shot: cleared first, so that the next run in this window installs again.
-        Remove-Item Env:\DARKBURN_UNINSTALL -ErrorAction SilentlyContinue
         Uninstall-DarkBurn $installDir $buildDir
+        # One shot: cleared once the removal went through, so that the next run in this window
+        # installs again. When it stopped (DarkBurn still open), the same line removes it.
+        Remove-Item Env:\DARKBURN_UNINSTALL -ErrorAction Ignore
         return
     }
 
+    # A 32-bit PowerShell on 64-bit Windows is shown the 32-bit half of the registry. A DarkBurn
+    # installed for all users is not in it, and this script would install a second copy.
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        throw 'This is the 32-bit PowerShell. Open the ordinary PowerShell from the Start menu and run the installer again.'
+    }
     $arch = $env:PROCESSOR_ARCHITECTURE
-    if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
     Say "DarkBurn installer (pre-release) for Windows $arch"
     if ($arch -ne 'AMD64' -and $arch -ne 'ARM64') { throw 'DarkBurn needs 64-bit Windows.' }
     if ($arch -eq 'ARM64') { Say 'Windows on ARM is untested. The release is an x64 program, which Windows 11 runs through emulation.' }
@@ -655,7 +707,19 @@ function Install-DarkBurn {
             if ($version -and (Test-Version $version)) {
                 $msi = Get-ReleaseFile $release "darkburn-$version-windows-x64.msi" $work
                 if ($msi) {
-                    Install-Msi $msi $installDir $customDir
+                    # Files this script put there from the zip or from source go first. Windows
+                    # Installer keeps a file without a version number (darkburn-mcp.exe) when it
+                    # was written after it was made, and an update by this script does that.
+                    Assert-NotRunning
+                    $hadFiles = Remove-InstalledFiles $installDir $false
+                    try {
+                        Install-Msi $msi $installDir $customDir
+                    } catch {
+                        if (-not $hadFiles) { throw }
+                        throw ("$($_.Exception.Message)`n" +
+                            "The copy this installer had put into $installDir was taken out first, so DarkBurn is not installed now.`n" +
+                            "Run the installer again; DARKBURN_FROM_SOURCE=1 builds from source instead.")
+                    }
                     $done = "release v$version, MSI"
                     $registered = Get-ItemProperty -Path 'HKCU:\Software\DarkBurn' -ErrorAction SilentlyContinue
                     if ($registered -and $registered.InstallDir) { $installDir = ([string]$registered.InstallDir).TrimEnd('\') }
@@ -687,7 +751,7 @@ function Install-DarkBurn {
             $bin = Build-FromSource $work $buildDir $sourceRef
             Assert-NotRunning
             Step "Installing into $installDir"
-            Install-Files @((Join-Path $bin 'darkburn.exe'), (Join-Path $bin 'darkburn-mcp.exe')) $installDir
+            Install-Files @((Join-Path $bin 'darkburn.exe'), (Join-Path $bin 'darkburn-mcp.exe')) $installDir ''
             $commit = Get-ToolOutput { git "--git-dir=$(Join-Path $buildDir 'DarkBurn\.git')" rev-parse --short HEAD }
             $done = "built from $sourceRef at $commit"
             $builtHere = $true
@@ -717,3 +781,4 @@ function Install-DarkBurn {
 }
 
 Install-DarkBurn
+}

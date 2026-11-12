@@ -138,7 +138,7 @@ Every build needs a SolidCraft checkout next to this one (`../solidcraft`), at t
 - **UpgradeCode** `D7B4E1A2-5C3F-4E8A-9B61-2F0A8C4D7E15` is what makes a new MSI replace an older install.
   Never change it. The component GUIDs in `darkburn.wxs` stay put too.
 - Installs for the current user by default (into `%LocalAppData%\Apps\DarkBurn`, no admin rights) and for all
-  users on request (`ALLUSERS=1`, or "Anyone who uses this computer" in the wizard; into `Program Files\DarkBurn`).
+  users on request (`ALLUSERS=1`, or "Install for all users of this machine" in the wizard; into `Program Files\DarkBurn`).
 - Silent installs: `msiexec /i darkburn-<version>-windows-x64.msi /qn` (per user),
   `msiexec /i ... ALLUSERS=1 /qn` (all users, from an elevated prompt), `APPLICATIONFOLDER=D:\Tools\DarkBurn`
   to choose the folder.

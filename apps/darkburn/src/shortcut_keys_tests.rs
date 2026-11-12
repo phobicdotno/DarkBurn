@@ -328,6 +328,20 @@ fn f2_starts_a_job_on_the_simulator() {
     let cmd = press(&mut a, Key::F2, Modifiers::NONE).unwrap();
     assert_eq!(cmd, "job.start");
     a.run(&egui::Context::default(), cmd);
+    // A key starts the job the way a button does: the job is built in the background and a frame
+    // hands it to the laser. Without a window, wait for the build and hand it over here.
+    let end = Instant::now() + Duration::from_secs(20);
+    let job = loop {
+        let (task, _) = a.job.pending.as_mut().expect("F2 builds the job");
+        if let Some(done) = task.poll().cloned() {
+            break done.expect("the job builds");
+        }
+        assert!(Instant::now() < end, "timed out building the job");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let (_, then) = a.job.pending.take().unwrap();
+    crate::job_cmds::finish(&mut a, job, then);
+    assert!(a.job.message.is_none(), "{:?}", a.job.message.as_ref().map(|m| &m.text));
     wait(&mut a, "the job under way", |a| state(a) == LaserState::Busy || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     a.machine.stop_and_close();
     wait(&mut a, "stopped", |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));

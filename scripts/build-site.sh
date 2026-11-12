@@ -165,15 +165,15 @@ for css in "$out"/*.css; do
     fi
 done
 
-# No script or style inside the HTML: the policy line allows only files, so a browser would
-# refuse them.
-if grep -Ein "<script[[:space:]]*>|<script[[:space:]][^>]*>[^<]|<style|[[:space:]]style[[:space:]]*=|javascript:" "$out"/*.html; then
-    die "script or style inside the HTML (see the lines above). Put it in site.js or style.css."
-fi
+# No style and no handler inside the HTML: the policy line allows only files, so a browser
+# would refuse them. (Script inside the HTML is refused further up: the only <script> is the
+# one for site.js.) The search looks inside tags only, so the page may use these words in its
+# text.
 for page in "$out"/*.html; do
     # On one line first: an attribute may stand on a line of its own.
-    if tr '\n' ' ' <"$page" | grep -Eio "<[a-z][^>]*[[:space:]\"'/]on[a-z]+[[:space:]]*=[^>]{0,40}"; then
-        die "${page##*/}: a handler inside a tag (see the lines above). Put it in site.js."
+    if tr '\n\r\t' '   ' <"$page" |
+        grep -Eio "<style|<[a-z][^>]*[[:space:]\"'/](on[a-z]+|style)[[:space:]]*=[^>]{0,40}|(href|src|action|formaction|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*javascript:[^>]{0,40}"; then
+        die "${page##*/}: style, a handler or a javascript: address inside the HTML (see the lines above). Put it in site.js or style.css."
     fi
 done
 
@@ -207,11 +207,14 @@ check_refs() {
     done <"$refs"
 }
 for page in "$out"/*.html; do
+    # The tags of the page, one on a line: an address in the text of the page (a line of code
+    # that is shown) is not an address the page points to.
+    tr '\n\r\t' '   ' <"$page" | grep -Eio '<[a-z][^>]*>' >"$out/.tags" || true
     {
-        grep -Eio "(src|href|poster)[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')" "$page" |
+        grep -Eio "(src|href|poster)[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')" "$out/.tags" |
             sed "s/^[^=]*=[[:space:]]*.//; s/.\$//"
         # srcset: a list with commas between; each entry is an address and then a size.
-        grep -Eio "srcset[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')" "$page" |
+        grep -Eio "srcset[[:space:]]*=[[:space:]]*(\"[^\"]*\"|'[^']*')" "$out/.tags" |
             sed "s/^[^=]*=[[:space:]]*.//; s/.\$//" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]].*$//'
         # The picture that other sites show for a link to the page.
         sed -n 's/.*property="og:image" content="https:\/\/darkburn\.phobic\.no\/\([^"]*\)".*/\1/p' "$page"
@@ -224,7 +227,7 @@ for css in "$out"/*.css; do
         sed "s/^[^(]*([[:space:]]*//; s/[[:space:]]*)\$//; s/^[\"']//; s/[\"']\$//" >"$refs" || true
     check_refs "$css"
 done
-rm -f "$refs"
+rm -f "$refs" "$out/.tags"
 [ "$missing" -eq 0 ] || die "see the lines above."
 
 printf 'The page is in %s (%s files).\n' "$out" "$(find "$out" -type f ! -name "$mark" | wc -l | tr -d ' ')"

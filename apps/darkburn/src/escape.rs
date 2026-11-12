@@ -21,11 +21,18 @@ pub fn window_open(ctx: &Context) -> bool {
     !window_layers(ctx).is_empty()
 }
 
+/// The window with this id is the only one open (no other dialog, menu or drop-down list is
+/// open above or beside it), so Escape is its own. For a `ui_kit::Window` without a footer,
+/// which closes on Escape itself when this is so (`escape_here`).
+pub fn only_window(ctx: &Context, window: Id) -> bool {
+    window_layers(ctx).iter().all(|l| l.id == window)
+}
+
 /// Escape was pressed and belongs to the window with this id: nothing else (another dialog, a
 /// menu, a drop-down list) is open above or beside it. The key is used up, so nothing later in
 /// the frame acts on it too.
 pub fn closes(ctx: &Context, window: Id) -> bool {
-    window_layers(ctx).iter().all(|l| l.id == window) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+    only_window(ctx, window) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
 }
 
 #[cfg(test)]

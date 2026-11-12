@@ -243,6 +243,9 @@ impl DarkBurn {
             "window.reset_layout" => {
                 self.prefs.reset_layout();
                 ctx.memory_mut(|m| m.reset_areas());
+                // The Preview floats again at its first place and size.
+                self.job.preview.layout = self.job.preview.layout.wrapping_add(1);
+                self.job.preview.maximised = false;
                 self.view_cmd = Some(ViewCmd::ZoomPage);
             }
             other => {

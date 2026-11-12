@@ -77,6 +77,8 @@ const SPEED_LIST_WIDTH: f32 = 84.0;
 const PREVIEW_SIZE: egui::Vec2 = vec2(760.0, 600.0);
 /// The gap round a maximised Preview, and the least a Preview that opens leaves free.
 const PREVIEW_MARGIN: f32 = 8.0;
+/// The Preview's key in the stored window layout.
+pub const PREVIEW_KEY: &str = "db_preview";
 /// The picture in the Preview is never less tall than this. (It was 120 points: in the smallest
 /// main window with the interface at 200 % the window was then taller than the screen.)
 const PICTURE_MIN_HEIGHT: f32 = 40.0;
@@ -158,32 +160,20 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     // The maximised Preview is another window to egui than the one the user places and sizes. As
     // one window, the placed one took the place and the size of the maximised one, and Restore
     // had nothing to go back to.
-    let maximised = app.job.preview.maximised;
-    let window_id = |maximised: bool| Id::unique(if maximised { "db_preview_window_max" } else { "db_preview_window" });
-    let id = window_id(maximised);
-    // The Preview keeps to the room under the application bar. Over the bar it hid the menus and
-    // the main window's own minimise, maximise and close buttons.
-    let screen = ctx.content_rect();
-    let room = crate::shell::room_under_the_bar(ctx);
-    let inside = room.shrink(PREVIEW_MARGIN);
-    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true).constrain_to(room);
-    window = if maximised {
-        window.fixed_pos(inside.min).fixed_size(inside.size().max(egui::Vec2::ZERO))
-    } else {
-        // As big as it likes where there is the room, 80 points in and 60 down as before.
-        let size = PREVIEW_SIZE.min(inside.size()).max(egui::Vec2::ZERO);
-        window.default_size(size).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
-    };
-    let mut open = true;
     let mut command: Option<(&'static str, serde_json::Value)> = None;
-    window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, &mut command));
-    // Escape closes the Preview, unless a dialog on top of it wants the key.
-    if crate::escape::closes(ctx, id) {
-        open = false;
-    }
-    if app.job.preview.maximised != maximised {
-        // Maximise or Restore was clicked: the other window comes up where this one was, in front.
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id(app.job.preview.maximised)));
+    let mut open = true;
+    // Docked as a tab or in a window of its own, the Preview fills what it is given (Maximise
+    // has nothing to do there); floating, it is its own window, sized and maximised as before.
+    let hosted_id = Id::unique("db_preview_window_hosted");
+    let hosted = ui_kit::Window::new(hosted_id, "db_app", "Preview")
+        .dockable(PREVIEW_KEY)
+        .width(PREVIEW_SIZE.x)
+        .fill_body()
+        .escape_here(crate::escape::only_window(ctx, hosted_id))
+        .show_unless_floating(ctx, |ui| preview_body(ui, app, hosted_id, &mut command));
+    match hosted {
+        Some(closed) => open = !closed,
+        None => open = floating_preview(ctx, app, &mut command),
     }
     if !open {
         app.job.preview.open = false;
@@ -192,6 +182,57 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     if let Some((id, args)) = command {
         run_command(ctx, app, id, &args);
     }
+}
+
+/// The Preview floating in the main window: its own window, which the user moves, sizes and
+/// maximises. Returns false when it was closed.
+fn floating_preview(ctx: &egui::Context, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) -> bool {
+    // The maximised Preview is another window to egui than the one the user places and sizes. As
+    // one window, the placed one took the place and the size of the maximised one, and Restore
+    // had nothing to go back to.
+    let maximised = app.job.preview.maximised;
+    let layout = app.job.preview.layout;
+    let window_id = |maximised: bool| Id::unique((if maximised { "db_preview_window_max" } else { "db_preview_window" }, layout));
+    let id = window_id(maximised);
+    // The Preview keeps to the room under the application bar. Over the bar it hid the menus and
+    // the main window's own minimise, maximise and close buttons.
+    let screen = ctx.content_rect();
+    let room = crate::shell::room_under_the_bar(ctx);
+    let inside = room.shrink(PREVIEW_MARGIN);
+    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true);
+    window = if maximised {
+        window.constrain_to(room).fixed_pos(inside.min).fixed_size(inside.size().max(egui::Vec2::ZERO))
+    } else {
+        // Its edges and corner stay clear of the main window's resize border, which takes the
+        // pointer first: at the bottom of the screen the corner could not be taken hold of.
+        let keep = darkburn_ui::titlebar::keep_clear_of_border(ctx).max(PREVIEW_MARGIN);
+        let free = Rect::from_min_max(pos2(room.left() + keep, room.top()), room.max - vec2(keep, keep));
+        // As big as it likes where there is the room, 80 points in and 60 down as before.
+        let size = PREVIEW_SIZE.min(free.size() - vec2(0.0, PREVIEW_MARGIN)).max(egui::Vec2::ZERO);
+        window.constrain_to(free).default_size(size).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
+    };
+    let mut open = true;
+    let shown = window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, command));
+    if let Some(shown) = &shown {
+        // From its title bar it can be docked as a tab (dragged onto a panel area, or from the
+        // title bar's menu) or put in a window of its own.
+        ui_kit::window_host::dock_on_drop(ctx, PREVIEW_KEY, &shown.response);
+        // The title bar less its close button, which keeps its click; not a stop for the Tab key.
+        let r = shown.response.rect;
+        let height = ctx.global_style().spacing.interact_size.y + 8.0;
+        let title = Rect::from_min_size(r.min, vec2((r.width() - 2.0 * height).max(0.0), height));
+        let ui = egui::Ui::new(ctx.clone(), id.with("title_menu"), egui::UiBuilder::new().layer_id(shown.response.layer_id).max_rect(title));
+        ui.interact(title, id.with("title_menu"), Sense::CLICK).context_menu(|ui| ui_kit::window_host::place_menu(ui, PREVIEW_KEY));
+    }
+    // Escape closes the Preview, unless a dialog on top of it wants the key.
+    if crate::escape::closes(ctx, id) {
+        open = false;
+    }
+    if app.job.preview.maximised != maximised {
+        // Maximise or Restore was clicked: the other window comes up where this one was, in front.
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id(app.job.preview.maximised)));
+    }
+    open
 }
 
 /// Run a command from a button; errors show in a message window.

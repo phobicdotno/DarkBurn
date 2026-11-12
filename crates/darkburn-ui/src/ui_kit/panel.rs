@@ -1013,6 +1013,8 @@ pub struct Window<'a> {
     left_slot: bool,
     page_header_in_titlebar: bool,
     dock_key: Option<&'a str>,
+    /// Esc may close a footerless window floating in the main window this frame.
+    escape_here: bool,
 }
 
 /// How [`Window::content`] lays itself out for where the window is shown.
@@ -1026,10 +1028,12 @@ struct Chrome<'k> {
     body_height: Option<f32>,
     /// The window's key, for the header's place menu.
     place: Option<&'k str>,
+    /// Esc closes a window without a footer (one that has a footer closes by its Cancel).
+    escape: bool,
 }
 
 impl Chrome<'_> {
-    const CARD: Chrome<'static> = Chrome { header: true, keys: true, body_height: None, place: None };
+    const CARD: Chrome<'static> = Chrome { header: true, keys: true, body_height: None, place: None, escape: false };
 }
 
 impl<'a> Window<'a> {
@@ -1056,7 +1060,37 @@ impl<'a> Window<'a> {
             left_slot: false,
             page_header_in_titlebar: false,
             dock_key: None,
+            escape_here: true,
         }
+    }
+
+    /// An outer width of its own, in points, instead of one and a half cards.
+    pub fn width(mut self, width: f32) -> Self {
+        if width.is_finite() && width > 0.0 {
+            self.width = width.min(Tokens::get().form_card_width * 16.0);
+        }
+        self
+    }
+
+    /// A body `width` points wide, with the window's padding around it.
+    pub fn body_width(self, width: f32) -> Self {
+        let t = Tokens::get();
+        self.width(width + 2.0 * t.space_12 + 2.0)
+    }
+
+    /// The body has no padding and no scroll area of its own: it fills the window (a picture
+    /// that takes all the room there is).
+    pub fn fill_body(mut self) -> Self {
+        self.body_padding = false;
+        self
+    }
+
+    /// For a window without a footer floating in the main window: whether Esc is this window's
+    /// to take this frame (no other window, menu or list is open beside it). In a window of its
+    /// own Esc is always its own; a tab leaves Esc to the main window.
+    pub fn escape_here(mut self, here: bool) -> Self {
+        self.escape_here = here;
+        self
     }
 
     /// A settings window the user can resize, pop out into a window of its own, or dock as a
@@ -1170,6 +1204,23 @@ impl<'a> Window<'a> {
         self.surface(ctx, false, |ui| self.content(ui, valid, body, |_| {}))
     }
 
+    /// A dockable window that floats as a window of the caller's own making (one with behaviour
+    /// the card has not, such as a picture the user sizes freely): docked or in a window of its
+    /// own it is drawn here, without a footer, and the result says whether it was closed. `None`:
+    /// it floats, and the caller draws it this frame (with [`super::window_host::place_menu`] and
+    /// [`super::window_host::dock_on_drop`] on its title bar, so it can be moved from there).
+    pub fn show_unless_floating(self, ctx: &egui::Context, body: impl FnOnce(&mut Ui)) -> Option<bool> {
+        use super::window_host as host;
+        let key = self.dock_key?;
+        let place = host::place(ctx, key);
+        let docked = matches!(&place.placement, host::Placement::Docked(area) if host::area_on_screen(ctx, area));
+        if !docked && place.placement != host::Placement::Detached {
+            host::shown(ctx, key, self.title);
+            return None;
+        }
+        Some(self.actions("", "", None).hosted(ctx, key, true, body, |_| {}).0)
+    }
+
     /// A pinned left action slot, independent of the right-aligned footer buttons.
     pub fn show_with_left(
         mut self,
@@ -1267,6 +1318,19 @@ impl<'a> Window<'a> {
             }
             if chrome.keys && !self.escape_closes {
                 ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            }
+            // A window without a footer closes on Esc itself, as its close button does, unless a
+            // menu or list of its own is open (Esc closes that first). The key is used up.
+            if chrome.keys
+                && chrome.escape
+                && self.escape_closes
+                && self.closeable
+                && !self.has_footer()
+                && ui.is_enabled()
+                && !egui::Popup::is_any_open(ui.ctx())
+                && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                close = true;
             }
             let action = if !self.has_footer() {
                 super::Action::None
@@ -1439,7 +1503,7 @@ impl Window<'_> {
         };
         let mut ui = Ui::new(ctx.clone(), self.id.with("docked"), egui::UiBuilder::new().layer_id(layer).max_rect(rect));
         ui.set_clip_rect(rect);
-        let chrome = Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None };
+        let chrome = Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None, escape: false };
         let shown = self.content_in(&mut ui, valid, body, left, chrome);
         solidcraft_ui_registry::publish_rect("dialog:window", rect);
         shown
@@ -1476,7 +1540,7 @@ impl Window<'_> {
                 ui.painter().rect_filled(rect, 0.0, Tokens::get().dialog_body);
                 height = Some(rect.height() - self.chrome_height(true));
             }
-            let chrome = Chrome { header: true, keys: true, body_height: height, place: Some(key) };
+            let chrome = Chrome { header: true, keys: true, body_height: height, place: Some(key), escape: true };
             self.content_in(ui, valid, body, left, chrome)
         });
         (shown.0 || closed_by_system, shown.1)
@@ -1496,10 +1560,14 @@ impl Window<'_> {
         use super::window_host as host;
         let frame = Panel::card_frame(ctx);
         let margin = frame.total_margin().sum();
-        let screen = ctx.content_rect().size();
+        // The card keeps clear of the main window's resize border, which takes the pointer
+        // before the card does: at the bottom of the screen the card's own corner was under it.
+        let keep = crate::titlebar::keep_clear_of_border(ctx);
+        let room = ctx.content_rect().shrink(keep);
+        let screen = room.size();
         let (outer_width, body_height) = match place.size {
             Some([w, h]) => {
-                let h = h.min(dimension(screen.y) - Tokens::get().space_24);
+                let h = h.min(dimension(ctx.content_rect().height()) - Tokens::get().space_24.max(2.0 * keep));
                 (w.min(dimension(screen.x)), Some(h - margin.y - self.chrome_height(true)))
             }
             None => (self.width.min(dimension(screen.x)), None),
@@ -1517,7 +1585,8 @@ impl Window<'_> {
             .scroll(false)
             .frame(frame)
             .fade_in(false)
-            .fade_out(false);
+            .fade_out(false)
+            .constrain_to(room);
         let stored = place.pos.map(egui::Pos2::from);
         let window = match (self.anchor, self.placed, stored) {
             (Some((align, offset)), _, _) => window.anchor(align, offset),
@@ -1534,7 +1603,7 @@ impl Window<'_> {
         };
         let resize_id = self.id.with("db_resize");
         let shown = super::container::FeatureWindow::new(window, self.id, frame).show(ctx, |ui| {
-            let chrome = Chrome { header: true, keys: true, body_height, place: Some(key) };
+            let chrome = Chrome { header: true, keys: true, body_height, place: Some(key), escape: self.escape_here };
             let result = self.content_in(ui, valid, body, left, chrome);
             super::Container::finish_content(ui, frame);
             resize_grips(ui, resize_id, key, margin);
@@ -1619,17 +1688,7 @@ fn drop_on_dock(ctx: &egui::Context, id: egui::Id, key: &str, stored: bool, resp
     {
         host::moved(ctx, key, state.left_top_pos());
     }
-    if !(response.dragged() || response.drag_stopped()) {
-        return;
-    }
-    let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| host::target_at(ctx, p)) else { return };
-    if response.drag_stopped() {
-        host::update(ctx, key, |p| p.dock(&area));
-        return;
-    }
-    if let Some(rect) = host::target_rect(ctx, &area) {
-        host::paint_drop_hint(ctx, rect);
-    }
+    host::dock_on_drop(ctx, key, response);
 }
 
 /// A page's existing icon, translated label key, stable handle and draw callback.

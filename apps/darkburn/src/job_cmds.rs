@@ -222,6 +222,9 @@ pub struct PreviewUi {
     pub pan: egui::Vec2,
     pub fitted: bool,
     pub error: Option<String>,
+    /// Counts layout resets: the floating Preview is a new window to egui after one, so it opens
+    /// at its first place and size again.
+    pub layout: u32,
 }
 
 impl Default for PreviewUi {
@@ -238,6 +241,7 @@ impl Default for PreviewUi {
             pan: egui::Vec2::ZERO,
             fitted: false,
             error: None,
+            layout: 0,
         }
     }
 }

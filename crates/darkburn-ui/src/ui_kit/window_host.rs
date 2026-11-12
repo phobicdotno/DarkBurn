@@ -48,6 +48,9 @@ pub struct WindowPlace {
     pub native_pos: Option<[f32; 2]>,
     /// Inner size of the native window.
     pub native_size: Option<[f32; 2]>,
+    /// Where its tab is among the windows docked in the same area, in the order they were
+    /// docked there: lower first.
+    pub tab: Option<u32>,
 }
 
 /// Every window's place, by the window's key.
@@ -206,7 +209,7 @@ fn now(ctx: &Context) -> u64 {
 
 /// Once a frame, before any window is drawn: the app's stored places and the kit's agree
 /// afterwards. A change made in the UI goes to `places`; otherwise `places` (just loaded, or
-/// changed by the app) is what the kit uses.
+/// changed by the app, such as a layout reset) is what the kit uses.
 pub fn sync(ctx: &Context, places: &mut WindowPlaces) {
     with(ctx, |s| {
         if s.dirty {
@@ -214,6 +217,9 @@ pub fn sync(ctx: &Context, places: &mut WindowPlaces) {
             s.dirty = false;
         } else if s.places != *places {
             s.places = places.clone();
+            // A native window no longer meant to be one opens afresh when it is one again.
+            let detached: BTreeSet<String> = s.places.iter().filter(|(_, p)| p.placement == Placement::Detached).map(|(k, _)| k.clone()).collect();
+            s.opened.retain(|k, _| detached.contains(k));
         }
     });
 }
@@ -233,6 +239,9 @@ pub fn update(ctx: &Context, key: &str, change: impl FnOnce(&mut WindowPlace)) {
         if after != before {
             if let Some(area) = after.area().filter(|a| before.area() != Some(*a)) {
                 s.activate.insert(area.to_string(), key.to_string());
+                // Its tab goes after those already there.
+                let last = s.places.iter().filter(|(k, p)| k.as_str() != key && p.area() == Some(area)).filter_map(|(_, p)| p.tab).max();
+                after.tab = Some(last.map_or(0, |t| t.saturating_add(1)));
             }
             if after.placement != Placement::Detached {
                 s.opened.remove(key);
@@ -276,16 +285,28 @@ pub fn target_rect(ctx: &Context, area: &str) -> Option<Rect> {
     with(ctx, |s| s.targets.get(area).filter(|t| t.frame + 1 >= frame).map(|t| t.rect))
 }
 
-/// The windows docked in `area` that are open (shown this frame or the last), in key order.
+/// The windows docked in `area` that are open (shown this frame or the last), in the order
+/// they were docked there (the stored order, so it is the same after a restart).
 pub fn docked_tabs(ctx: &Context, area: &str) -> Vec<DockedTab> {
     let frame = now(ctx);
     with(ctx, |s| {
-        s.shown
+        let mut tabs: Vec<(u32, DockedTab)> = s
+            .shown
             .iter()
             .filter(|(k, shown)| shown.frame + 1 >= frame && s.places.get(*k).and_then(WindowPlace::area) == Some(area))
-            .map(|(k, shown)| DockedTab { key: k.clone(), title: shown.title.clone() })
-            .collect()
+            .map(|(k, shown)| (s.places.get(k).and_then(|p| p.tab).unwrap_or(0), DockedTab { key: k.clone(), title: shown.title.clone() }))
+            .collect();
+        // Stable: windows with the same place (stored before tabs had one) keep key order.
+        tabs.sort_by_key(|(tab, _)| *tab);
+        tabs.into_iter().map(|(_, t)| t).collect()
     })
+}
+
+/// Every window drawn through the kit as a dockable window this frame or the last, wherever it
+/// is: (key, title), in key order.
+pub fn open_windows(ctx: &Context) -> Vec<(String, String)> {
+    let frame = now(ctx);
+    with(ctx, |s| s.shown.iter().filter(|(_, shown)| shown.frame + 1 >= frame).map(|(k, shown)| (k.clone(), shown.title.clone())).collect())
 }
 
 /// The tab group of `area` has window `key` in front (none: a panel), with this body rectangle
@@ -347,12 +368,38 @@ pub(crate) fn area_on_screen(ctx: &Context, area: &str) -> bool {
 }
 
 /// The size and position a native window opens with: what was stored when it opened, kept the
-/// same while it is open so the system's own moves are not fought.
+/// same while it is open so the system's own moves are not fought. A stored position that is no
+/// longer on a screen near the main window (a monitor since unplugged) is left to the system,
+/// which opens the window where it can be seen; a stored size is kept to the monitor's.
 pub(crate) fn native_opening(ctx: &Context, key: &str) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+    let (main, monitor) = ctx.input(|i| (i.viewport().outer_rect, i.viewport().monitor_size));
     with(ctx, |s| {
         let stored = s.places.get(key).map(|p| (p.native_size, p.native_pos)).unwrap_or_default();
-        *s.opened.entry(key.to_string()).or_insert(stored)
+        let size = stored.0.map(|v| match monitor.filter(|m| m.x > 0.0 && m.y > 0.0) {
+            Some(m) => clamp_size([v[0].min(m.x), v[1].min(m.y)]),
+            None => v,
+        });
+        let pos = stored.1.filter(|p| native_pos_reachable(main, monitor, *p));
+        *s.opened.entry(key.to_string()).or_insert((size, pos))
     })
+}
+
+/// Whether a native window's stored outer position `pos` is still where it can be seen: on the
+/// main window's monitor or on one beside it. The system does not say where its other monitors
+/// are, so "beside" is one monitor's width or height away from the main window. With the main
+/// window or its monitor unknown, the position is trusted.
+pub fn native_pos_reachable(main: Option<Rect>, monitor: Option<Vec2>, pos: [f32; 2]) -> bool {
+    if !finite(pos) {
+        return false;
+    }
+    match (main, monitor) {
+        (Some(main), Some(m)) if main.is_finite() && m.x > 0.0 && m.y > 0.0 => {
+            // The title bar must be reachable: the corner at least a little inside that room.
+            let room = Rect::from_min_max(main.min - m, main.max + m).shrink2(vec2(MIN_SIZE.x * 0.25, 8.0));
+            room.contains(Pos2::new(pos[0] + MIN_SIZE.x * 0.25, pos[1]))
+        }
+        _ => true,
+    }
 }
 
 /// The native window of `key` is now `size` (inner) at `pos` (outer, if known).
@@ -399,8 +446,6 @@ pub fn paint_drop_hint(ctx: &Context, rect: Rect) {
 /// The header button that moves the window: back into the main window, into a window of its
 /// own, or into a panel area as a tab.
 pub(crate) fn place_button(ui: &mut egui::Ui, rect: Rect, key: &str) {
-    let place = place(ui.ctx(), key);
-    let areas = areas(ui.ctx());
     let mut pick: Option<Placement> = None;
     super::Menu::button_with(
         ui,
@@ -409,40 +454,73 @@ pub(crate) fn place_button(ui: &mut egui::Ui, rect: Rect, key: &str) {
             solidcraft_ui_registry::publish_target("dialog:place", response.rect);
             response
         },
-        |ui| {
-            ui.set_min_width(super::LIST_W);
-            if place.placement != Placement::Floating
-                && super::MenuItem::new("window.float", solidcraft_ui_text::tr_label("Float in the main window"), "").show(ui).clicked()
-            {
-                pick = Some(Placement::Floating);
-            }
-            if place.placement != Placement::Detached
-                && super::MenuItem::new("window.detach", solidcraft_ui_text::tr_label("Open in its own window"), "").show(ui).clicked()
-            {
-                pick = Some(Placement::Detached);
-            }
-            if !areas.is_empty() {
-                super::Menu::separator(ui);
-                super::Menu::heading(ui, solidcraft_ui_text::tr_label("Dock as tab"));
-            }
-            for (area, label) in &areas {
-                if place.area() == Some(area.as_str()) {
-                    continue;
-                }
-                let id = format!("window.dock.{area}");
-                if super::MenuItem::new(&id, label, "").show(ui).clicked() {
-                    pick = Some(Placement::Docked(area.clone()));
-                }
-            }
-        },
+        |ui| pick = place_items(ui, key),
     );
+    apply_pick(ui.ctx(), key, pick);
+}
+
+/// The same choices as the header's place button, for a window with a title bar of its own
+/// (the caller shows them as the title bar's context menu).
+pub fn place_menu(ui: &mut egui::Ui, key: &str) {
+    let pick = place_items(ui, key);
+    apply_pick(ui.ctx(), key, pick);
+}
+
+fn place_items(ui: &mut egui::Ui, key: &str) -> Option<Placement> {
+    let place = place(ui.ctx(), key);
+    let areas = areas(ui.ctx());
+    let mut pick: Option<Placement> = None;
+    ui.set_min_width(super::LIST_W);
+    if place.placement != Placement::Floating
+        && super::MenuItem::new("window.float", solidcraft_ui_text::tr_label("Float in the main window"), "").show(ui).clicked()
+    {
+        pick = Some(Placement::Floating);
+    }
+    if place.placement != Placement::Detached
+        && super::MenuItem::new("window.detach", solidcraft_ui_text::tr_label("Open in its own window"), "").show(ui).clicked()
+    {
+        pick = Some(Placement::Detached);
+    }
+    if !areas.is_empty() {
+        super::Menu::separator(ui);
+        super::Menu::heading(ui, solidcraft_ui_text::tr_label("Dock as tab"));
+    }
+    for (area, label) in &areas {
+        if place.area() == Some(area.as_str()) {
+            continue;
+        }
+        let id = format!("window.dock.{area}");
+        if super::MenuItem::new(&id, label, "").show(ui).clicked() {
+            pick = Some(Placement::Docked(area.clone()));
+        }
+    }
+    pick
+}
+
+fn apply_pick(ctx: &Context, key: &str, pick: Option<Placement>) {
     if let Some(to) = pick {
-        update(ui.ctx(), key, |p| match to {
+        update(ctx, key, |p| match to {
             Placement::Floating => p.float(None),
             Placement::Detached => p.detach(),
             Placement::Docked(area) => p.dock(&area),
         });
-        egui::Popup::close_all(ui.ctx());
+        egui::Popup::close_all(ctx);
+    }
+}
+
+/// A window with a title bar of its own is being dragged (`response` is its move response):
+/// over a panel area, show that it will dock there; dropped there, it becomes a tab.
+pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
+    if !(response.dragged() || response.drag_stopped()) {
+        return;
+    }
+    let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| target_at(ctx, p)) else { return };
+    if response.drag_stopped() {
+        update(ctx, key, |p| p.dock(&area));
+        return;
+    }
+    if let Some(rect) = target_rect(ctx, &area) {
+        paint_drop_hint(ctx, rect);
     }
 }
 

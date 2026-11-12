@@ -11,54 +11,75 @@ fn show_every_panel(g: &mut Gui) {
     g.frames(3);
 }
 
-/// Switches to `code`, checks that `edit` (the Edit menu) and `general` (the first settings page)
-/// show translated, and returns every layout problem seen. Pictures: `lang-<code>-*.png`.
-fn layout_in(code: &str, edit: &str, general: &str, help_title: &str) -> Vec<String> {
+/// What one view shows in one language: its layout problems and the texts cut short with "...".
+struct View {
+    name: &'static str,
+    problems: Vec<String>,
+    elided: Vec<String>,
+}
+
+fn look(g: &mut Gui, code: &str, name: &'static str) -> View {
+    g.screenshot(&format!("lang-{code}-{name}"));
+    let elided = g.painted().into_iter().filter(|p| p.elided).map(|p| p.text).collect();
+    View { name, problems: g.layout_problems(), elided }
+}
+
+/// Every panel, the settings and the longest help topic in `code`. `edit`, `general` and
+/// `help_title` are the Edit menu, the first settings page and the help topic's title in it.
+fn views_in(code: &str, edit: &str, general: &str, help_title: &str) -> Vec<View> {
     let mut g = Gui::standard();
     g.run_command(&format!("lang.{code}"));
     g.settle();
     assert_eq!(crate::i18n::language(), code);
     assert!(g.has_text(edit), "{code}: no {edit:?} in {:?}", g.visible_texts());
-    let mut problems = Vec::new();
+    let mut out = Vec::new();
 
     show_every_panel(&mut g);
     g.settle();
-    problems.extend(g.layout_problems().into_iter().map(|p| format!("{code}, every panel: {p}")));
-    g.screenshot(&format!("lang-{code}-panels"));
+    out.push(look(&mut g, code, "panels"));
 
     g.run_command("edit.settings");
     g.settle();
     assert!(g.has_text(general), "{code}: no {general:?} in the settings: {:?}", g.visible_texts());
-    problems.extend(g.layout_problems().into_iter().map(|p| format!("{code}, settings: {p}")));
-    g.screenshot(&format!("lang-{code}-settings"));
+    out.push(look(&mut g, code, "settings"));
     g.close_dialogs();
 
     g.run_command("help.quick");
     g.app().extras.help_topic = "camera_selection".into();
     g.settle();
     assert!(g.has_text(help_title), "{code}: no {help_title:?} in the help: {:?}", g.visible_texts());
-    problems.extend(g.layout_problems().into_iter().map(|p| format!("{code}, help: {p}")));
-    g.screenshot(&format!("lang-{code}-help"));
+    out.push(look(&mut g, code, "help"));
     g.close_dialogs();
 
     crate::i18n::set_language("en");
-    problems
+    out
+}
+
+/// No layout problems, and no more texts cut short in any view than in English.
+fn fits_like_english(code: &str, edit: &str, general: &str, help_title: &str) {
+    let english = views_in("en", "Edit", "General", "Choosing a camera");
+    let views = views_in(code, edit, general, help_title);
+    let mut bad = Vec::new();
+    for (en, v) in english.iter().zip(&views) {
+        bad.extend(v.problems.iter().map(|p| format!("{code}, {}: {p}", v.name)));
+        if v.elided.len() > en.elided.len() {
+            bad.push(format!("{code}, {}: cut short {:?}, in English only {:?}", v.name, v.elided, en.elided));
+        }
+    }
+    assert!(bad.is_empty(), "{} problems:\n{}", bad.len(), bad.join("\n"));
 }
 
 #[test]
 fn german_fits_the_window() {
-    let problems = layout_in("de", "Bearbeiten", "Allgemein", "Eine Kamera wählen");
-    assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
+    fits_like_english("de", "Bearbeiten", "Allgemein", "Eine Kamera wählen");
 }
 
 #[test]
 fn french_fits_the_window() {
-    let problems = layout_in("fr", "Édition", "Général", "Choisir une caméra");
-    assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
+    fits_like_english("fr", "Édition", "Général", "Choisir une caméra");
 }
 
 #[test]
 fn italian_fits_the_window() {
-    let problems = layout_in("it", "Modifica", "Generale", "Scegliere una telecamera");
-    assert!(problems.is_empty(), "{} problems:\n{}", problems.len(), problems.join("\n"));
+    fits_like_english("it", "Modifica", "Generale", "Scegliere una telecamera");
 }

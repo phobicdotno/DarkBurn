@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Cartella del registro lavori",
   "settings.job_log_dir_hint": "cartella delle impostazioni di DarkBurn",
   "settings.job_log_show": "Mostra il registro lavori",
-  "settings.job_log_text": "Una riga per lavoro in job_log.csv: inizio, durata, file, dispositivo, esito.",
+  "settings.job_log_text": "Per lavoro in job_log.csv: inizio, durata, file, dispositivo, esito.",
   "settings.jobs": "Lavori",
   "settings.length_units": "Lunghezze",
   "settings.node_size": "Dimensione dei nodi",

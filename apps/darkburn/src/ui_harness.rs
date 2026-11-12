@@ -68,6 +68,8 @@ pub struct Painted {
     pub full: Rect,
     /// A word was broken across rows (a label squeezed into too narrow a space).
     pub broken_word: bool,
+    /// The text was cut short with an ellipsis to fit its room.
+    pub elided: bool,
 }
 
 /// One lock for everything that makes the software rasteriser work: making a GPU device,
@@ -290,7 +292,7 @@ impl Gui {
                             && b.glyphs.first().is_some_and(|g| g.chr.is_alphanumeric())
                     });
                     if !text.trim().is_empty() && rect.is_positive() {
-                        out.push(Painted { text, rect, full, broken_word });
+                        out.push(Painted { text, rect, full, broken_word, elided: t.galley.elided });
                     }
                 }
                 egui::epaint::Shape::Vec(v) => v.iter().for_each(|x| walk(x, clip, out)),

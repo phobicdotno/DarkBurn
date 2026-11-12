@@ -199,12 +199,15 @@ quoted „like this“.
 - Bed: Arbeitstisch. Work area: Arbeitsbereich. Panel: Bedienfeld. Toolbar: Werkzeugleiste.
 - Ribbon: Menüband (tab Home: Start). Hotkeys: Tastenkürzel. Settings: Einstellungen.
 - Theme: Design. Art library: Grafikbibliothek. Move (panel): Bewegen. Cut shapes: Formen zerschneiden.
-- Cut table columns: Ebene, Modus, V/Leist, Aus, Anz, Luft.
+- Cut table columns: Ebene, Modus, V/Leist, Ausg., Anz, Luft. The output column is "Ausg."
+  (Ausgabe), never "Aus": that reads as "Off" above a tick box.
 
 ## French (fr)
 
-"Vous" in help texts; commands as infinitives ("Décaler les formes"). A normal space before
-: ; ? and ! (the checker counts the colon at the end). Key names stay as in English: Ctrl, Shift,
+"Vous" in help texts; commands as infinitives ("Décaler les formes"). A no-break space
+(U+00A0) goes before : ; ? and ! and inside « », never a normal space: with a normal space the
+punctuation or the closing » can wrap onto a line of its own. A test checks it (the checker
+counts the colon at the end). Key names stay as in English: Ctrl, Shift,
 Esc. Panel labels that are not translated yet are quoted « like this ».
 
 - Job: tâche. Cut (laser): découpe, découper. Cut (clipboard): Couper.
@@ -225,6 +228,8 @@ Esc. Panel labels that are not translated yet are quoted « like this ».
 - Variable text: Texte variable. Selection: sélection. Page: page. Canvas: zone de dessin.
 - Bed: plateau. Work area: zone de travail. Panel: panneau. Toolbar: barre d'outils.
 - Ribbon: ruban (tab Home: Accueil). Hotkeys: raccourcis. Settings and preferences: Paramètres.
+- Take the key (from another command): Prendre la touche (not "reprendre", which means taking it back).
+- Toolbar icon sizes agree with the plural « Icônes »: Petites, Moyennes, Grandes.
 - Theme: thème. Art library: Bibliothèque graphique. Move (panel): Déplacement.
 - Cut shapes: Diviser les formes. Feeder: chargeur. Camera control: Contrôle caméra.
 - Cut table columns: Calque, Mode, Vit/Puis, Sor, Vis, Air.
@@ -252,6 +257,8 @@ English: Ctrl, Shift, Esc. Panel labels that are not translated yet are quoted �
 - Variable text: Testo variabile. Selection: selezione. Page: pagina. Canvas: area di disegno.
 - Bed: piano di lavoro. Work area: area di lavoro. Panel: pannello. Toolbar: barra degli strumenti.
 - Ribbon: barra multifunzione (tab Home: Home). Hotkeys: scorciatoie. Settings: Impostazioni.
+- Edit (menu, clipboard and undo): Modifica. Modify (ribbon tab, changing shapes): Trasforma.
+- Toolbar icon sizes agree with the plural «Icone»: Piccole, Medie, Grandi.
 - Theme: tema. Art library: Libreria grafica. Move (panel): Sposta. Cut shapes: Dividi forme.
 - Feeder: caricatore. Camera control: Controllo telecamera.
 - Cut table columns: Livello, Modalità, Vel/Pot, Usc, Vis, Aria.

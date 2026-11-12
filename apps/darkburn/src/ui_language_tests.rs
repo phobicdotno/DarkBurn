@@ -83,3 +83,53 @@ fn french_fits_the_window() {
 fn italian_fits_the_window() {
     fits_like_english("it", "Modifica", "Generale", "Scegliere una telecamera");
 }
+
+/// The cut table's column headers in `code`, left to right as painted, with the overlaps
+/// between neighbours. A header longer than its narrow column runs into the next one.
+fn cut_header_overlaps(code: &str) -> Vec<String> {
+    use crate::i18n::tr;
+    let mut g = Gui::standard();
+    g.run_command(&format!("lang.{code}"));
+    g.settle();
+    let labels = [
+        tr("cuts.col.layer", "Layer"),
+        tr("cuts.col.mode", "Mode"),
+        tr("cuts.col.speed_power", "Spd/Pwr"),
+        tr("cuts.col.out", "Out"),
+        tr("cuts.col.show", "Vis"),
+        tr("cuts.col.air", "Air"),
+    ];
+    let painted = g.painted();
+    let anchor = painted.iter().find(|p| p.text == labels[2]).map(|p| p.full);
+    crate::i18n::set_language("en");
+    let Some(anchor) = anchor else {
+        return vec![format!("{code}: no cut table header {:?} in {:?}", labels[2], g.visible_texts())];
+    };
+    let mut rects = Vec::new();
+    for l in &labels {
+        let near = painted
+            .iter()
+            .filter(|p| &p.text == l && (p.full.center().y - anchor.center().y).abs() < 2.0 && (p.full.left() - anchor.left()).abs() < 400.0)
+            .min_by(|a, b| (a.full.left() - anchor.left()).abs().total_cmp(&(b.full.left() - anchor.left()).abs()));
+        match near {
+            Some(p) => rects.push((l.clone(), p.full)),
+            None => return vec![format!("{code}: cut table header {l:?} is not drawn")],
+        }
+    }
+    let mut out = Vec::new();
+    for w in rects.windows(2) {
+        let ((a, ra), (b, rb)) = (&w[0], &w[1]);
+        if ra.right() > rb.left() - 1.0 {
+            out.push(format!("{code}: header {a:?} {ra:?} runs into {b:?} {rb:?}"));
+        }
+    }
+    out
+}
+
+/// "Ausg." in German is longer than "Out": every language's headers still end before the
+/// next column's header begins [I18N-04].
+#[test]
+fn cut_table_headers_fit_their_columns_in_every_language() {
+    let bad: Vec<String> = ["en", "nb", "de", "fr", "it"].iter().flat_map(|c| cut_header_overlaps(c)).collect();
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

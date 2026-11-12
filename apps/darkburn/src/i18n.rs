@@ -252,15 +252,39 @@ mod tests {
         }
     }
 
-    /// German, French and Italian translate every English text, and the Language menu offers
+    /// Why translation file `t` is not fit to ship next to English `en`: a key English does not
+    /// have, an empty text, or fewer than nine in ten of the English keys. A text the program
+    /// gains later may be missing; it shows in English until somebody translates it, so adding
+    /// a text in English and Norwegian only never breaks this check.
+    fn translation_gaps(en: &BTreeMap<String, String>, t: &BTreeMap<String, String>) -> Vec<String> {
+        let mut out = Vec::new();
+        for (k, v) in t {
+            if !en.contains_key(k) {
+                out.push(format!("has {k}, English does not"));
+            }
+            if v.trim().is_empty() {
+                out.push(format!("{k} is empty"));
+            }
+        }
+        let done = en.keys().filter(|k| t.contains_key(*k)).count();
+        if done * 10 < en.len() * 9 {
+            out.push(format!("only {done} of {} English texts are translated", en.len()));
+        }
+        out
+    }
+
+    fn locale(code: &str) -> BTreeMap<String, String> {
+        serde_json::from_str(crate::languages::file(code).unwrap()).unwrap()
+    }
+
+    /// German, French and Italian translate the English texts, and the Language menu offers
     /// them [I18N-04].
     #[test]
-    fn german_french_and_italian_cover_every_english_key() {
+    fn german_french_and_italian_are_translated_and_offered() {
         let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
         for (code, file) in [("de", "Datei"), ("fr", "Fichier"), ("it", "File")] {
-            let t: BTreeMap<String, String> = serde_json::from_str(crate::languages::file(code).unwrap()).unwrap();
-            let missing: Vec<_> = en.keys().filter(|k| !t.contains_key(*k)).collect();
-            assert!(missing.is_empty(), "{code}.json lacks: {missing:?}");
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
             assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
             set_language(code);
             assert_eq!(tr("menu.File", "File"), file, "{code}");
@@ -268,9 +292,97 @@ mod tests {
         set_language("en");
     }
 
+    /// A builder who adds a few texts in English and Norwegian only does not break the German,
+    /// French and Italian checks; the new texts show in English there.
+    #[test]
+    fn texts_added_in_english_only_keep_the_other_languages_passing() {
+        let mut en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for i in 0..8 {
+            en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
+        }
+        for code in ["de", "fr", "it"] {
+            assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
+        }
+        // The check still catches a file that is mostly missing, a key English lacks and an empty text.
+        let half: BTreeMap<String, String> = locale("de").into_iter().step_by(2).collect();
+        assert!(!translation_gaps(&en, &half).is_empty());
+        let mut odd = locale("de");
+        odd.insert("no.such.key".into(), "X".into());
+        odd.insert("menu.File".into(), " ".into());
+        let gaps = translation_gaps(&en, &odd);
+        assert!(gaps.iter().any(|g| g.contains("no.such.key")) && gaps.iter().any(|g| g.contains("menu.File is empty")), "{gaps:?}");
+    }
+
+    /// Two different English words seen side by side keep two different translations: the Edit
+    /// menu (clipboard, undo) and the Modify ribbon tab (changing shapes) [I18N-04].
+    #[test]
+    fn edit_and_modify_are_different_words_in_every_language() {
+        for (code, text) in crate::languages::files() {
+            let t: BTreeMap<String, String> = serde_json::from_str(text).unwrap();
+            if let (Some(edit), Some(modify)) = (t.get("menu.Edit"), t.get("ribbon.tab.modify")) {
+                assert_ne!(edit, modify, "{code}: Edit and Modify are both {edit:?}");
+            }
+        }
+    }
+
+    /// The output column of the cut table holds tick boxes; a header that reads as "Off" makes a
+    /// ticked layer look switched off.
+    #[test]
+    fn the_output_column_header_does_not_read_as_off() {
+        let off = [("de", "Aus"), ("nb", "Av"), ("fr", "Arrêt"), ("it", "Spento"), ("en", "Off")];
+        for (code, word) in off {
+            set_language(code);
+            assert_ne!(tr("cuts.col.out", "Out"), word, "{code}");
+        }
+        set_language("en");
+    }
+
+    /// French keeps a no-break space before : ; ? ! and inside « »: with a normal space the
+    /// punctuation can wrap onto a line of its own.
+    #[test]
+    fn french_punctuation_stays_on_the_line_of_its_word() {
+        let mut bad = Vec::new();
+        for (k, v) in locale("fr") {
+            let chars: Vec<char> = v.chars().collect();
+            for (i, c) in chars.iter().enumerate() {
+                let space_before = i > 0 && chars[i - 1] == ' ';
+                let space_after = chars.get(i + 1) == Some(&' ');
+                if (matches!(c, ':' | ';' | '?' | '!' | '\u{bb}') && space_before) || (*c == '\u{ab}' && space_after) {
+                    bad.push(format!("{k}: {v}"));
+                    break;
+                }
+            }
+        }
+        assert!(bad.is_empty(), "normal space where a no-break space belongs:\n{}", bad.join("\n"));
+    }
+
+    /// Corrections from the review of the German, French and Italian files: words that agree
+    /// with the label they belong to, and words that mean what the button does [I18N-04].
+    #[test]
+    fn reviewed_translations_keep_their_corrections() {
+        let want = [
+            // "Toolbar icons" is plural in French and Italian; its size choices agree with it.
+            ("fr", "choice.Small", "Petites"),
+            ("fr", "choice.Medium", "Moyennes"),
+            ("fr", "choice.Large", "Grandes"),
+            ("it", "choice.Small", "Piccole"),
+            ("it", "choice.Medium", "Medie"),
+            ("it", "choice.Large", "Grandi"),
+            // The key is taken from another command, not taken back.
+            ("fr", "hotkeys.take", "Prendre la touche"),
+            ("de", "cuts.col.out", "Ausg."),
+            ("it", "ribbon.tab.modify", "Trasforma"),
+        ];
+        for (code, key, text) in want {
+            assert_eq!(locale(code).get(key).map(String::as_str), Some(text), "{code} {key}");
+        }
+        assert!(!locale("fr")["help.hotkeys.p1"].contains("reprendre"));
+    }
+
     #[test]
     fn translated_text_is_used_and_english_is_the_fallback() {
-        // The language is global; this test is the only one that changes it.
+        // Each test thread has its own language (see `ACTIVE`), so switching it here does not
+        // change the text under other tests.
         set_language("nb");
         assert_eq!(tr("menu.File", "File"), "Fil");
         assert_eq!(tr("no.such.key", "Fallback"), "Fallback");

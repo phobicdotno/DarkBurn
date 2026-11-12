@@ -289,6 +289,22 @@ fn the_preview_keeps_playing_docked_and_in_a_window_of_its_own() {
             if let Placement::Docked(area) = &place {
                 let area = g.rect_of(&format!("panel:area:{area}")).expect("the panel area");
                 assert!(p.pan.x + bed.x <= area.width(), "{what}: the bed {bed:?} at {:?} is wider than the tab {area:?}", p.pan);
+                // And no taller than the picture, which lies between the readout above it and
+                // the buttons under it.
+                let at = |label: &str| g.find_a11y(None, label).into_iter().map(|n| n.rect).find(|r| area.contains(r.center()));
+                let buttons = at("Start here").expect("the Preview's buttons");
+                let readout = g
+                    .a11y()
+                    .into_iter()
+                    .filter(|n| n.label.as_deref().is_some_and(|l| l.contains("Operation")))
+                    .map(|n| n.rect)
+                    .find(|r| area.contains(r.center()));
+                let readout = readout.expect("the Preview's readout");
+                assert!(
+                    p.pan.y + bed.y <= buttons.top() - readout.bottom(),
+                    "{what}: the bed {bed:?} at {:?} runs under the buttons at {buttons:?}",
+                    p.pan
+                );
             }
         }
         // It plays on while it is there.

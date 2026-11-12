@@ -79,6 +79,9 @@ const PREVIEW_SIZE: egui::Vec2 = vec2(760.0, 600.0);
 const PREVIEW_MARGIN: f32 = 8.0;
 /// The Preview's key in the stored window layout.
 pub const PREVIEW_KEY: &str = "db_preview";
+
+/// Frames the job is fitted to the picture again after the Preview moved to another place.
+const PREVIEW_REFIT_FRAMES: u8 = 3;
 /// The picture in the Preview is never less tall than this. (It was 120 points: in the smallest
 /// main window with the interface at 200 % the window was then taller than the screen.)
 const PICTURE_MIN_HEIGHT: f32 = 40.0;
@@ -159,13 +162,16 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
     }
     let mut command: Option<(&'static str, serde_json::Value)> = None;
     // Moved to a tab, a window of its own or back to floating, the picture has another size:
-    // the job is fitted to it again, as it was where it came from.
+    // the job is fitted to it again, as it was where it came from. Over a few frames: the
+    // buttons under the picture find their rows at the new width first, which sets its height.
     let placement = ui_kit::window_host::place(ctx, PREVIEW_KEY).placement;
     let placed_id = Id::unique("db_preview_placement");
-    if ctx.data(|d| d.get_temp::<ui_kit::window_host::Placement>(placed_id)).is_some_and(|was| was != placement) {
+    let (was, refits) = ctx.data(|d| d.get_temp::<(ui_kit::window_host::Placement, u8)>(placed_id)).unzip();
+    let refits = if was.is_some_and(|was| was != placement) { PREVIEW_REFIT_FRAMES } else { refits.unwrap_or(0) };
+    if refits > 0 {
         app.job.preview.fitted = false;
     }
-    ctx.data_mut(|d| d.insert_temp(placed_id, placement));
+    ctx.data_mut(|d| d.insert_temp(placed_id, (placement, refits.saturating_sub(1))));
     // Docked as a tab or in a window of its own, the Preview fills what it is given (Maximise
     // has nothing to do there); floating, it is its own window, sized and maximised as before.
     let hosted_id = Id::unique("db_preview_window_hosted");

@@ -1,6 +1,6 @@
-<h1 align="center">
-  <img src="docs/readme-banner.png" width="760" alt="DarkBurn. Status: pre-release. Design, arrange, preview and burn. One program for laser cutters and engravers. Written in Rust.">
-</h1>
+<p align="center">
+  <img src="docs/readme-banner.png" width="760" height="364" alt="DarkBurn. Status: pre-release. Design, arrange, preview and burn. One program for laser cutters and engravers. Written in Rust.">
+</p>
 
 <p align="center">
   <a href="#install">Install</a> ·

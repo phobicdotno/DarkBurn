@@ -58,7 +58,7 @@ Pictures of what each test saw land in `target/ui-snapshots/`. Look at them.
 
 ## The web page
 
-`site/` is the page at https://darkburn.phobic.no. It says about DarkBurn what the [README](README.md) says, in fewer words: change the README first, then the page.
+`site/` is the page for https://darkburn.phobic.no. It says about DarkBurn what the [README](README.md) says, in fewer words: change the README first, then the page.
 
 ```sh
 sh scripts/build-site.sh
@@ -67,7 +67,7 @@ python3 -m http.server -d target/site
 
 The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there, that nothing is fetched from another host and that every page carries its Content-Security-Policy line. That line allows only the page's own files, so script and style go in `site/site.js` and `site/style.css`, never inside the HTML. `site/` holds four files and the script publishes a fixed list of files: a new file is named in `scripts/build-site.sh` first. A push to `main` that changes the page, the pictures, the fonts or the icon publishes it, once GitHub Pages is switched on for the repository. What the owner sets by hand for that is listed at the top of `.github/workflows/pages.yml`.
 
-The picture at the top of the README, `docs/readme-banner.png`, shows the top of the page: status, headline and the line under it. When one of those changes on the page, the picture is drawn again.
+The picture at the top of the README, `docs/readme-banner.png`, shows the top of the page: status, headline and the line under it. When one of those changes on the page, the picture is drawn again from `tools/readme-banner.html`; the two commands are at the top of that file.
 
 ## Changelog and version
 

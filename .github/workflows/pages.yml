@@ -12,24 +12,29 @@
 # Five things are set once, by hand, in this order. A workflow cannot set them:
 #   0. Verify phobic.no for the account, before anything else: the account's own Settings >
 #      Pages > Add a domain. GitHub shows a TXT record named
-#      _github-pages-challenge-phobicdotno.phobic.no. Add it to the DNS of phobic.no, press
-#      Verify, and leave the record there for good: without it the verification lapses.
-#      From then on only repositories of this account can publish a GitHub Pages site at
-#      phobic.no or at a name directly under it, and a claim that somebody else's page has
-#      made on such a name is dropped. (It also takes such a name away from a site of your
-#      own that is published from another account or an organisation.) This comes first
-#      because this file is public: without it anybody can put darkburn.phobic.no on a page
-#      of their own before you do, and GitHub would then serve that page at the name.
+#      _github-pages-challenge-phobicdotno.phobic.no. Add it to the DNS of phobic.no, wait
+#      until it answers (up to 24 hours), press Verify, and leave the record there for good:
+#      without it the verification lapses. From then on only repositories of this account
+#      can publish a GitHub Pages site at phobic.no or at a name directly under it, and
+#      GitHub releases phobic.no from anybody else's page. (It also takes such a name away
+#      from a site of your own that is published from another account or an organisation.)
+#      This comes first because this file is public: without it anybody can put
+#      darkburn.phobic.no on a page of their own before you do, and GitHub would then serve
+#      that page at the name.
 #   1. Settings > Pages > Build and deployment > Source: GitHub Actions.
 #      Then Actions > pages > Run workflow, on main. The page is now at
 #      https://phobicdotno.github.io/DarkBurn/
 #   2. In the same sitting: Settings > Pages > Custom domain: darkburn.phobic.no, Save. The
 #      field must keep the name. A message that the DNS check failed is expected: the record
 #      is not there yet. A message that the domain is already taken is not: stop, and do not
-#      go on to step 3 until step 0 is done and the name saves. Until step 3 has taken
-#      effect, the address of step 1 forwards to a name that does not answer.
+#      go on to step 3 until step 0 is done and the name saves. If it still does not save
+#      then, add darkburn.phobic.no itself as a second domain in step 0 and verify it too.
+#      Until step 3 has taken effect, the address of step 1 forwards to a name that does not
+#      answer.
 #   3. In the DNS of phobic.no:  darkburn  CNAME  phobicdotno.github.io.
-#      and no other record for darkburn. phobic.no should have no wildcard record.
+#      and no other record for darkburn. phobic.no should have no wildcard record. If
+#      phobic.no has CAA records, one of them must name letsencrypt.org: without it GitHub
+#      cannot get the certificate and step 4 is never offered.
 #   4. Back under Settings > Pages: "Enforce HTTPS", once it is offered (GitHub says up to 24
 #      hours). Until this box is ticked the page is also served without encryption, and the
 #      address of step 1 forwards there: somebody on a visitor's network can then change the
@@ -40,7 +45,7 @@
 #        curl -sI http://darkburn.phobic.no/ | sed -n '1p;/^[Ll]ocation:/p'
 #      must show 301 and Location: https://darkburn.phobic.no/
 # A run of this workflow that publishes says so in a warning while the custom domain is not
-# set or HTTPS is not enforced.
+# set, HTTPS is not enforced or GitHub does not report the domain as verified.
 #
 # The DNS record goes first and Pages second whenever the page is to go away or to move:
 # before Pages is switched off or the site unpublished, before the custom domain is removed
@@ -128,12 +133,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           kind='' cname='' https='' verified=''
-          if answer=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '[.build_type // "none", .cname // "none", (.https_enforced // false | tostring), .protected_domain_state // "unknown"] | join(" ")' 2>&1); then
-            read -r kind cname https verified <<<"$answer" || true
+          # One value on a line, so that an odd value cannot shift the others.
+          if answer=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type // "none", .cname // "none", (.https_enforced // false | tostring), .protected_domain_state // "unknown"' 2>&1); then
+            { read -r kind; read -r cname; read -r https; read -r verified; } <<<"$answer" || true
           else
             case $answer in
               *"HTTP 404"*) kind=off ;;
-              *) echo "::error title=Could not ask GitHub about Pages::$answer"; exit 1 ;;
+              *) echo "::error title=Could not ask GitHub about Pages::${answer//[$'\r\n']/ }"; exit 1 ;;
             esac
           fi
           if [ "$kind" = workflow ]; then
@@ -141,13 +147,12 @@ jobs:
             # Things set by hand (see the top of this file), looked at on every publication.
             if [ "$cname" != darkburn.phobic.no ]; then
               echo "::warning title=Custom domain::GitHub Pages does not have the custom domain darkburn.phobic.no (step 2 at the top of pages.yml). If the DNS record for darkburn exists, no page holds the name."
+            elif [ "$verified" != verified ]; then
+              echo "::warning title=phobic.no is not verified::GitHub does not report the custom domain as verified. See step 0 at the top of pages.yml. If phobic.no is listed as verified under the account's Settings, Pages, this warning says too much."
             fi
             if [ "$https" != true ]; then
               echo "::warning title=HTTPS is not enforced::The page is also served without encryption (step 4 at the top of pages.yml)."
             fi
-            case $verified in
-              unverified | pending) echo "::warning title=phobic.no is not verified::See step 0 at the top of pages.yml." ;;
-            esac
           else
             echo "publish=false" >>"$GITHUB_OUTPUT"
             echo "::notice title=Built, not published::GitHub Pages is not set to publish from GitHub Actions (found: $kind). Set it under Settings, Pages, Source, then run this workflow again."

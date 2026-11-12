@@ -1,4 +1,10 @@
-# The web page and the script that builds it are read byte for byte (by sh, and by the script's
-# own checks), so they keep Unix line ends in every checkout, also on Windows.
-/site/** text eol=lf
+# The web page, the script that builds it and two files the script copies are read byte for
+# byte (by sh, and by the script's own checks), so they keep Unix line ends in every checkout,
+# also on Windows. In a checkout made before this file existed: delete these files and check
+# them out again.
+/site/*.html text eol=lf
+/site/*.css text eol=lf
+/site/*.js text eol=lf
 /scripts/build-site.sh text eol=lf
+/assets/icons/ui/design/svg/model/db_app.svg text eol=lf
+/assets/fonts/ibm-plex-sans/OFL.txt text eol=lf

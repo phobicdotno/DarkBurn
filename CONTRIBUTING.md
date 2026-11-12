@@ -67,6 +67,8 @@ python3 -m http.server -d target/site
 
 The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there, that nothing is fetched from another host and that every page carries its Content-Security-Policy line. That line allows only the page's own files, so script and style go in `site/site.js` and `site/style.css`, never inside the HTML. A push to `main` that changes the page, the pictures, the fonts or the icon publishes it, once GitHub Pages is switched on for the repository. What the owner sets by hand for that is listed at the top of `.github/workflows/pages.yml`.
 
+The picture at the top of the README, `docs/readme-banner.png`, shows the top of the page: status, headline and the line under it. When one of those changes on the page, the picture is drawn again.
+
 ## Changelog and version
 
 Do not edit `CHANGELOG.md`, the version in the root `Cargo.toml` or the ticks in `docs/PARITY-CHECKLIST.md`. A change the user can see gets one line in a new file `docs/changelog-fragments/<short-name>.md`, written like the lines in [CHANGELOG.md](CHANGELOG.md): short, casual, no technical detail, starting `- Fix: ` or `- New: `. The maintainer folds the fragments into `CHANGELOG.md` and sets the version.

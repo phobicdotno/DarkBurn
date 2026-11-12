@@ -213,6 +213,9 @@ pub enum GateRefusal {
     LaserFramesQueued,
     /// The read is not allowed.
     ReadNotAllowed(String),
+    /// HARD block: the write would fire or enable the CO2 laser (or start a FIFO holding CO2
+    /// output) while the CO2 water cooling is not reported OK. No arming level lifts this.
+    Co2WaterAlarm,
 }
 
 impl std::fmt::Display for GateRefusal {
@@ -228,6 +231,7 @@ impl std::fmt::Display for GateRefusal {
             GateRefusal::StreamRunning => write!(f, "a job is streaming: stop it first"),
             GateRefusal::LaserFramesQueued => write!(f, "card FIFO holds frames queued while laser armed: clear it first"),
             GateRefusal::ReadNotAllowed(s) => write!(f, "{s}"),
+            GateRefusal::Co2WaterAlarm => write!(f, "Water Cooling System alarm: CO2 laser blocked"),
         }
     }
 }
@@ -282,6 +286,10 @@ pub struct SafetyGate {
     pub last_status_ms: Option<u64>,
     /// Active card alarm or restart-required condition.
     pub machine_fault: Option<String>,
+    /// The CO2 chiller input reads OK in the last status. False until a status says otherwise.
+    pub co2_water_ok: bool,
+    /// Frames that switch a CO2 port on went into the FIFO and it was not cleared since.
+    pub card_fifo_has_co2: bool,
     last_alarm: (u32, u32),
     leases: BTreeMap<u32, u64>,
 }
@@ -305,6 +313,8 @@ impl SafetyGate {
             last_do_word: None,
             last_status_ms: None,
             machine_fault: None,
+            co2_water_ok: false,
+            card_fifo_has_co2: false,
             last_alarm: (0, 0),
             leases: BTreeMap::new(),
         }
@@ -357,7 +367,42 @@ impl SafetyGate {
             actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;
+        let water_was_ok = self.co2_water_ok;
+        self.co2_water_ok = self.config.safety.co2_water_input.is_some_and(|p| status.di_level(p) == self.config.safety.co2_water_ok_level);
+        if !self.co2_water_ok {
+            let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
+            let co2_queued = self.card_fifo_has_co2 && self.fifo_running;
+            if (co2_on || co2_queued || water_was_ok && self.arming.state() == ArmState::LaserArmed)
+                && !actions.iter().any(|a| matches!(a, GateAction::Estop))
+            {
+                self.arming.disarm("Water Cooling System alarm");
+                if !actions.iter().any(|a| matches!(a, GateAction::Stop(_))) {
+                    actions.push(GateAction::Stop("Water Cooling System alarm: CO2 laser blocked".into()));
+                }
+            }
+        }
         actions
+    }
+
+    /// True if `w` switches a CO2 port on, directly or from inside a FIFO frame.
+    fn turns_co2_on(&self, w: &SafeWrite) -> bool {
+        let mask = SafetyConfig::port_mask(&self.config.safety.co2_do_ports);
+        let words = w.words();
+        match w.register() {
+            REG_COMMAND => {
+                words.len() >= 4 && words[0] == crate::command::CMD_9999 && words[1] == crate::command::MISC_DO && words[2] & words[3] & mask != 0
+            }
+            REG_FIFO_DATA => match crate::fifo::parse_fifo_words(words) {
+                Ok(f) => f.items.iter().any(|i| {
+                    i.opcode() == crate::fifo::OP_MISC
+                        && i.payload().first() == Some(&crate::command::MISC_DO)
+                        && i.payload().get(2).is_some_and(|v| v & mask != 0)
+                }),
+                // A frame the gate cannot read is not one it can vouch for.
+                Err(_) => true,
+            },
+            _ => false,
+        }
     }
 
     fn comm_ok(&self, now_ms: u64) -> bool {
@@ -366,6 +411,14 @@ impl SafetyGate {
 
     /// Decide whether `w` may be sent now.
     pub fn check_write(&mut self, w: &SafeWrite, now_ms: u64) -> Result<(), GateRefusal> {
+        // HARD block first, ahead of every arming and fault check: the CO2 tube never fires
+        // without its cooling water. Nothing (arming, operator confirmation) overrides this.
+        if !self.co2_water_ok {
+            let starts_co2_queue = w.register() == REG_FIFO_CONTROL && w.words() == [crate::command::FIFO_START] && self.card_fifo_has_co2;
+            if starts_co2_queue || self.turns_co2_on(w) {
+                return Err(GateRefusal::Co2WaterAlarm);
+            }
+        }
         let policy = w.policy();
         if !self.arming.allows(policy) {
             return Err(GateRefusal::NeedsArming { policy, state: self.arming.state(), estop_latched: self.arming.estop_latched() });
@@ -439,6 +492,9 @@ impl SafetyGate {
                 if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
                     self.card_fifo_has_laser = true;
                 }
+                if self.turns_co2_on(w) {
+                    self.card_fifo_has_co2 = true;
+                }
             }
             REG_FIFO_CONTROL => match words.first() {
                 Some(2) => self.fifo_running = true,
@@ -446,6 +502,7 @@ impl SafetyGate {
                 Some(1) => {
                     self.fifo_running = false;
                     self.card_fifo_has_laser = false;
+                    self.card_fifo_has_co2 = false;
                 }
                 _ => {}
             },
@@ -503,8 +560,17 @@ mod tests {
     use crate::command::{self, MachineParams};
     use crate::fifo::FifoItem;
 
+    /// IN11 high: the CO2 chiller reports water OK.
+    const WATER_OK: u32 = 1 << 10;
+
     fn status(a1: u32, a2: u32, proc: u32, param: u32) -> StatusBlock {
+        status_io(a1, a2, proc, param, WATER_OK, 0)
+    }
+
+    fn status_io(a1: u32, a2: u32, proc: u32, param: u32, di: u32, do_word: u32) -> StatusBlock {
         let mut w = vec![0u32; 36];
+        w[Status::Di as usize] = di;
+        w[Status::Do as usize] = do_word;
         w[Status::Alarm1 as usize] = a1;
         w[Status::Alarm2 as usize] = a2;
         w[Status::ProcessingStatus as usize] = proc;
@@ -711,6 +777,111 @@ mod tests {
         assert_eq!(g.check_write(&command::fifo_start().unwrap(), 0), Err(GateRefusal::LaserFramesQueued));
         g.after_send(&command::fifo_clear().unwrap(), 0);
         assert!(g.check_write(&command::fifo_start().unwrap(), 0).is_ok());
+    }
+
+    fn co2_on() -> SafeWrite {
+        SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap()
+    }
+
+    fn laser_armed(g: &mut SafetyGate) {
+        g.arming.arm_motion().unwrap();
+        let t = g.arming.begin_job().unwrap();
+        g.arming.arm_laser(true, Some(&t)).unwrap();
+    }
+
+    #[test]
+    fn co2_is_hard_blocked_without_cooling_water() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        // no status seen yet: the water is unknown, so it is not OK
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // chiller off (IN11 low): blocked even fully laser-armed with the job token
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // other inputs high do not count
+        g.observe_status(1, &status_io(0, 0, 0, 0, !WATER_OK & 0xFFF, 0));
+        assert_eq!(g.check_write(&co2_on(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // chiller on: the normal arming rules apply again
+        g.observe_status(2, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_on(), 2).is_ok());
+        // a bulk DO write that keeps DO9 on is just as blocked
+        g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0));
+        let bulk = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0xFFFF, 0x101], &SafetyConfig::default(), None).unwrap();
+        assert_eq!(g.check_write(&bulk, 3), Err(GateRefusal::Co2WaterAlarm));
+    }
+
+    #[test]
+    fn water_alarm_blocks_only_the_co2_laser() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        // the fibre gate (DO5), motion and switching CO2 off stay as before
+        let fibre = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x10, 0x10], &SafetyConfig::default(), None).unwrap();
+        assert!(g.check_write(&fibre, 0).is_ok());
+        assert!(g.check_write(&jog(), 0).is_ok());
+        assert!(g.check_write(&command::do_off(9).unwrap(), 0).is_ok());
+        assert!(g.check_write(&command::stop_all_no_decel().unwrap(), 0).is_ok());
+    }
+
+    #[test]
+    fn water_alarm_while_co2_is_on_stops_and_disarms() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert!(g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0x100)).is_empty());
+        let acts = g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0x100));
+        assert!(matches!(acts.as_slice(), [GateAction::Stop(m)] if m.contains("Water Cooling")));
+        assert_eq!(g.arming.state(), ArmState::Disarmed);
+        // a later poll with DO9 still on asks for the stop again until it is off
+        assert_eq!(g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0x100)).len(), 1);
+        assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+    }
+
+    #[test]
+    fn water_lost_while_laser_armed_disarms() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        let acts = g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(acts.len(), 1);
+        assert_eq!(g.arming.state(), ArmState::Disarmed);
+    }
+
+    #[test]
+    fn co2_in_the_fifo_needs_water_to_go_in_and_to_start() {
+        // a FIFO DO record switching DO9 on: [frame, header(12 bytes, 9999), 2, mask, value]
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_frame, 0), Err(GateRefusal::Co2WaterAlarm));
+        // queued while the water was OK ...
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_frame, 1).is_ok());
+        g.after_send(&co2_frame, 1);
+        assert!(g.card_fifo_has_co2);
+        // ... cannot be started once the water alarm is up
+        g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 2), Err(GateRefusal::Co2WaterAlarm));
+        // and a running CO2 stream is stopped
+        laser_armed(&mut g);
+        g.observe_status(3, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        g.after_send(&command::fifo_start().unwrap(), 3);
+        g.fifo_running = true;
+        let acts = g.observe_status(4, &status_io(0, 0, 0, 0, 0, 0));
+        assert!(matches!(acts.as_slice(), [GateAction::Stop(_)]));
+        // clearing the FIFO forgets the CO2 content
+        g.after_send(&command::fifo_clear().unwrap(), 5);
+        assert!(!g.card_fifo_has_co2);
+    }
+
+    #[test]
+    fn unwatched_chiller_blocks_co2_for_good() {
+        let mut cfg = GateConfig::default();
+        cfg.safety.co2_water_input = None;
+        let mut g = SafetyGate::new(cfg);
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0xFFF, 0));
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
     }
 
     #[test]

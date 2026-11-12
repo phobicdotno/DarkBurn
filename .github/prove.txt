@@ -1,1 +1,1 @@
-ci windows  second run: the Pulse key fix is in, and Windows PowerShell 5.1 parses the scripts
+release macos  first macOS packaging run: Apple silicon and Intel

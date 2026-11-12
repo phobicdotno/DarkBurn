@@ -450,7 +450,8 @@ mod tests {
 
     /// One pass of an egui context, as a frame of the program has.
     fn pass(ctx: &egui::Context) {
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        // Nothing draws the textures here: they are let go of on purpose.
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
     }
 
     /// The whole way for a language the interface font cannot draw: [`frame`] works out its

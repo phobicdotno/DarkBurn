@@ -93,6 +93,14 @@ pub struct SafetyConfig {
     pub stop_vd_range: (u32, u32),
     /// Soft limits per axis-list index (X, Y) as inclusive card words (mm * K).
     pub soft_limits_word: [(i64, i64); 2],
+    /// DO ports that fire or enable the CO2 tube. Switching one on needs the CO2 water cooling
+    /// to report OK (see [`co2_water_input`](Self::co2_water_input)).
+    pub co2_do_ports: Vec<u32>,
+    /// Digital input wired to the CO2 chiller's water alarm. `None` means it cannot be watched,
+    /// which blocks the CO2 laser outright: an unwatched chiller never passes for a running one.
+    pub co2_water_input: Option<u32>,
+    /// Level of [`co2_water_input`](Self::co2_water_input) that means "water OK".
+    pub co2_water_ok_level: bool,
 }
 
 impl Default for SafetyConfig {
@@ -108,12 +116,17 @@ impl Default for SafetyConfig {
             max_jog_distance_word: 4_000_000,
             stop_vd_range: (2000, 100_000),
             soft_limits_word: [(0, 1_371_000), (0, 950_000)],
+            // Owner's M3 Ultra, Mlaser BkHardPara.xml: CO2WaterWarning="11" CO2WaterWarningType="1".
+            // Capture 2026-11-12: IN11 went 0 -> 1 when the chiller was powered on, so high = OK.
+            co2_do_ports: vec![9],
+            co2_water_input: Some(11),
+            co2_water_ok_level: true,
         }
     }
 }
 
 impl SafetyConfig {
-    fn port_mask(ports: &[u32]) -> u32 {
+    pub(crate) fn port_mask(ports: &[u32]) -> u32 {
         ports.iter().filter(|p| (1..=16).contains(*p)).fold(0, |m, p| m | (1 << (p - 1)))
     }
 }

@@ -646,3 +646,62 @@ fn a_language_switch_in_one_test_does_not_reach_another() {
     let other = std::thread::spawn(crate::i18n::language).join().unwrap();
     assert_eq!(other, "en");
 }
+
+// A settings window docks as a tab when dropped on a panel area, floats again when its tab is
+// dragged out, resizes from its corner and opens in a window of its own from the header menu.
+#[test]
+fn a_settings_window_docks_floats_resizes_and_detaches() {
+    use darkburn_ui::ui_kit::window_host::Placement;
+    let placement = |g: &Gui| g.app().prefs.windows.get("settings").map(|p| p.placement.clone()).unwrap_or_default();
+    let mut g = Gui::standard();
+    g.app().settings_open = true;
+    g.frames(3);
+    let label = "Play a sound on errors";
+    assert!(g.has_text(label), "{:?}", g.visible_texts());
+    let win = g.rect_of("dialog:window").expect("the Settings window");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+
+    // Drag it by its header onto the right panel area: it becomes a tab there.
+    g.drag(egui::pos2(win.left() + 120.0, win.top() + 12.0), area.center());
+    assert_eq!(placement(&g), Placement::Docked("RightTop".into()));
+    g.frames(3);
+    assert!(g.rect_of("panel:tab:window:settings").is_some(), "{:?}", g.rects("panel:tab:"));
+    let area = g.rect_of("panel:area:RightTop").unwrap();
+    let at = g.find_text(label).expect("the settings show in the tab");
+    assert!(area.contains(at.center()), "{at:?} in {area:?}");
+    assert!(!g.window_titles().iter().any(|t| t == "Settings"), "no floating window while docked");
+    g.screenshot("settings-docked");
+
+    // Drag the tab onto the canvas: it floats there.
+    let tab = g.rect_of("panel:tab:window:settings").unwrap();
+    let to = g.canvas_rect().center();
+    g.drag(tab.center(), to);
+    assert_eq!(placement(&g), Placement::Floating);
+    g.frames(3);
+    let before = g.rect_of("dialog:window").expect("floating again");
+    assert!(g.rect_of("panel:tab:window:settings").is_none());
+
+    // Drag the corner: the window grows and remembers its size.
+    let corner = g.rect_of("dialog:resize:corner").expect("a resize corner");
+    g.drag(corner.center(), corner.center() + egui::vec2(80.0, 60.0));
+    g.frames(2);
+    let after = g.rect_of("dialog:window").unwrap();
+    assert!(after.width() > before.width() + 40.0, "{before:?} -> {after:?}");
+    assert!(g.app().prefs.windows["settings"].size.is_some());
+    assert!(g.has_text(label));
+
+    // The header menu opens it in a window of its own (the test harness shows that inside).
+    g.click_id("dialog:place");
+    g.click_label("Open in its own window");
+    assert_eq!(placement(&g), Placement::Detached);
+    g.frames(3);
+    assert!(g.has_text(label), "{:?}", g.visible_texts());
+    g.screenshot("settings-detached-fallback");
+
+    // Closed and opened again, it comes back where it was left.
+    g.click_label("Close");
+    assert!(!g.app().settings_open);
+    g.app().settings_open = true;
+    g.frames(3);
+    assert_eq!(placement(&g), Placement::Detached);
+}

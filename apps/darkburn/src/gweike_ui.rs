@@ -161,6 +161,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         used.iter().filter(|l| **l < darkburn_core::layer::COLOUR_LAYERS).map(|l| (*l, app.editor.doc.layer(*l).name.clone())).collect();
     let defaults: Vec<(usize, crate::gweike_workflow::LayerMap)> = doc_layers.iter().map(|(l, _)| (*l, s.map_of(*l, &app.editor.doc))).collect();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_gweike"), "settings", &tr("gweike.title", "Gweike craft file and card simulator"))
+        .dockable("db_gweike")
         .cards(5.0)
         .fields()
         .actions("", "Close", None)

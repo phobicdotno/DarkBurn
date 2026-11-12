@@ -839,11 +839,11 @@ fn options_window(ctx: &egui::Context, app: &mut DarkBurn) {
     }
     let (closed, action) = {
         let prefs = &mut app.prefs;
-        ui_kit::Window::new(egui::Id::unique("db_import_options"), "import", "Import options").fields().actions("", "Close", None).show(
-            ctx,
-            true,
-            |ui| import_options_body(ui, prefs),
-        )
+        ui_kit::Window::new(egui::Id::unique("db_import_options"), "import", "Import options")
+            .dockable("db_import_options")
+            .fields()
+            .actions("", "Close", None)
+            .show(ctx, true, |ui| import_options_body(ui, prefs))
     };
     if closed || action != ui_kit::Action::None {
         app.fio.options_open = false;
@@ -1035,8 +1035,10 @@ fn print_window(ctx: &egui::Context, app: &mut DarkBurn) {
 fn backups_window(ctx: &egui::Context, app: &mut DarkBurn) {
     let Some(list) = app.fio.backups.clone() else { return };
     let mut load: Option<PathBuf> = None;
-    let (closed, action) =
-        ui_kit::Window::new(egui::Id::unique("db_prefs_backups"), "folder", "Preferences backups").actions("", "Close", None).show(ctx, true, |ui| {
+    let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_prefs_backups"), "folder", "Preferences backups")
+        .dockable("db_prefs_backups")
+        .actions("", "Close", None)
+        .show(ctx, true, |ui| {
             if list.is_empty() {
                 ui.label("There are no backups yet. One is made when DarkBurn starts with changed settings.");
             }

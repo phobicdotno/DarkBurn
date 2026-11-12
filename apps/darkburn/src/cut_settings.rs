@@ -197,6 +197,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     // the top of this tall one lay over the bar and its menus in most main windows.
     let middle = crate::shell::room_under_the_bar(ctx).center();
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
+        .dockable("cut_settings_window")
         .cards(2.7)
         .fields()
         .placed(Align2::CENTER_CENTER, middle)

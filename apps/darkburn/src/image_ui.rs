@@ -944,6 +944,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         d.sync(app);
         d.refresh_preview(ctx, app);
         let (closed, action) = ui_kit::Window::new(Id::unique("db_adjust_image"), "settings", "Adjust Image")
+            .dockable("db_adjust_image")
             .cards(2.9)
             .fields()
             // In the middle of the room under the application bar. Where the kit puts a window
@@ -1013,8 +1014,11 @@ fn offsets_window(ctx: &Context, app: &mut DarkBurn) {
     let mut t = scan_offsets::current();
     let before = t.clone();
     let mut pick: Option<bool> = None;
-    let (closed, action) =
-        ui_kit::Window::new(Id::unique("db_scan_offsets"), "settings", "Scanning Offset").fields().actions("", "Close", None).show(ctx, true, |ui| {
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_scan_offsets"), "settings", "Scanning Offset")
+        .dockable("db_scan_offsets")
+        .fields()
+        .actions("", "Close", None)
+        .show(ctx, true, |ui| {
             ui_kit::section_heading(ui, "Blank areas");
             ui_kit::checkbox(ui, "Fast skip of blank areas", &mut t.fast_skip);
             if t.fast_skip {

@@ -575,8 +575,14 @@ fn a_long_press_in_a_floating_window_over_a_panel_does_not_dock_it() {
 }
 
 /// The floating Preview's title bar.
+/// A point on the Preview's title bar that nothing else is drawn over.
 fn preview_title(g: &Gui) -> egui::Pos2 {
-    window(g, "Preview").left_top() + vec2(160.0, 12.0)
+    let win = window(g, "Preview");
+    let nodes = g.a11y();
+    (0..30)
+        .map(|i| win.left_top() + vec2(120.0 + 20.0 * i as f32, 12.0))
+        .find(|p| nodes.iter().filter(|n| n.rect.contains(*p)).all(|n| n.rect.width() > win.width() * 0.8))
+        .unwrap_or_else(|| panic!("a free place on the Preview's title bar {win:?}"))
 }
 
 #[test]
@@ -585,11 +591,6 @@ fn the_floating_preview_docks_when_its_title_bar_is_dragged_onto_a_panel() {
     open_preview(&mut g);
     assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Floating);
     let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
-    eprintln!("DBG win={:?} title={:?} area={:?} screen={:?}", window(&g, "Preview"), preview_title(&g), area, g.screen());
-    for n in g.a11y().iter().filter(|n| n.rect.contains(preview_title(&g))) {
-        eprintln!("DBG node {} {:?} {:?}", n.role, n.label, n.rect);
-    }
-    eprintln!("DBG windows {:?}", g.find_a11y(Some("Window"), "Preview").iter().map(|n| n.rect).collect::<Vec<_>>());
     g.drag(preview_title(&g), area.center());
     g.frames(3);
     assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Docked("RightTop".into()));

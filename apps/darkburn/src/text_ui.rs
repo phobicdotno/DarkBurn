@@ -1108,6 +1108,8 @@ fn edit_dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut d = std::mem::take(&mut app.text.edit);
     let tk = Tokens::get();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_text_edit"), "text", "Edit Text Shapes")
+        // Kept open while texts are tried out with Apply: it docks and pops out like the others.
+        .dockable("db_text_edit")
         .cards(3.2)
         .actions("OK", "Cancel", Some("Apply"))
         .show(ctx, true, |ui| {

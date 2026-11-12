@@ -1,8 +1,8 @@
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
-- New: Help, Project Notes and Material Test can be docked as tabs too
+- New: Help, Project Notes, Material Test and Edit Text Shapes can be docked as tabs too
 - New: docked tabs keep their order the next time the program starts
 - Fix: a window moved to the bottom of the screen can be resized from its bottom corner again
 - Fix: a window saved off the screen (an unplugged monitor) opens where you can see it
 - Fix: Reset to Default Layout puts every docked or popped-out window back where it first opened
 - Fix: closing a popped-out window with its own close button, Esc or Close works as it does inside the main window
-- Fix: clicking a button in a window that sits over a panel no longer docks the window
+- Fix: clicking a button in a window that sits over a panel no longer docks the window, even when the button is held down a while

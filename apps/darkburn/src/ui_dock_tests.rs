@@ -342,8 +342,11 @@ const ONE_SHOT: &[&str] = &[
     "Export Gweike G-code",
     "Print",
     "Macro 1",
+    // Set up, then OK traces the picture once and closes the window.
+    "Trace Image",
     // Picks a machine or walks through setting one up, step by step, then closes.
     "Find my laser",
+    "Network bridge setup",
     "New device: Type",
     "New device: Connection",
     "New device: Name and size",
@@ -351,10 +354,21 @@ const ONE_SHOT: &[&str] = &[
     "New device: Summary",
 ];
 
+/// A new project with a rectangle, an ellipse, a text and a picture, all selected: the windows
+/// that need a text or a picture selected open too.
 fn fresh_design(g: &mut Gui) {
+    use serde_json::json;
     g.close_dialogs();
     crate::files::new_project(&mut g.app());
-    g.sample_design();
+    g.exec("shape.add_rect", json!({"x": 20, "y": 20, "width": 80, "height": 50, "layer": 1}));
+    g.exec("shape.add_ellipse", json!({"x": 140, "y": 30, "width": 60, "height": 40, "layer": 2}));
+    g.exec("text.add", json!({"text": "Ab", "x": 30, "y": 120, "height": 10, "font": "IBM Plex Sans"}));
+    {
+        let mut app = g.app();
+        let picture = crate::images::testutil::png(60, 40, |x, y| ((x * 3 + y * 5) % 256) as u8);
+        crate::images::testutil::add_image(&mut app.editor.doc, picture, (60, 40), (30.0, 20.0), (160.0, 120.0), 3);
+    }
+    g.exec("edit.select_all", json!({}));
 }
 
 /// Each window open now: a dockable kit window, or one of the one-shot windows.
@@ -367,26 +381,153 @@ fn unwrapped(g: &Gui, what: &str, out: &mut std::collections::BTreeSet<String>) 
     }
 }
 
-#[test]
-fn every_window_that_stays_open_docks() {
-    let mut g = Gui::standard();
-    let mut out = std::collections::BTreeSet::new();
-    let ids: Vec<&str> = commands::COMMANDS.iter().chain(crate::machine_ui::COMMANDS).map(|c| c.id).collect();
+/// The windows nothing in a menu opens, beyond those the other UI tests open by state.
+fn more_state_cases() -> Vec<crate::ui_smoke_tests::OpenDialog> {
+    vec![("network bridge setup", Box::new(|a| a.machine.conn.bridge = Some(crate::connections::BridgeWizard::default())))]
+}
+
+/// Every command, then every window opened by state, each over a fresh design; the windows
+/// that are open after each go to `seen` by title.
+fn walk(g: &mut Gui, skip: impl Fn(&str) -> bool, out: &mut std::collections::BTreeSet<String>, seen: &mut std::collections::BTreeSet<String>) {
+    let ids: Vec<&str> = commands::COMMANDS.iter().chain(crate::machine_ui::COMMANDS).map(|c| c.id).filter(|id| !skip(id)).collect();
     for id in ids {
-        fresh_design(&mut g);
+        fresh_design(g);
         g.run_command(id);
         g.wait_for_job_build();
         g.frames(2);
-        unwrapped(&g, id, &mut out);
+        unwrapped(g, id, out);
+        seen.extend(g.window_titles());
     }
-    for (what, open) in crate::ui_smoke_tests::state_dialog_cases() {
-        fresh_design(&mut g);
+    for (what, open) in crate::ui_smoke_tests::state_dialog_cases().into_iter().chain(more_state_cases()) {
+        fresh_design(g);
         open(&mut g.app());
         g.frames(3);
-        unwrapped(&g, what, &mut out);
+        unwrapped(g, what, out);
+        seen.extend(g.window_titles());
     }
     g.close_dialogs();
+}
+
+#[test]
+fn every_window_that_stays_open_docks() {
+    let mut out = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut g = Gui::standard();
+    walk(&mut g, |_| false, &mut out, &mut seen);
+    // Again with the simulator connected and its settings read: the machine windows show more.
+    // (Commands that act on the machine or leave the app are left out, as in the other tests
+    // with a machine connected.)
+    let mut g = Gui::standard();
+    g.run_command("machine.connect");
+    g.run_command("machine.read_settings");
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while g.app().machine.handle.snapshot().grbl_settings.is_empty() {
+        assert!(std::time::Instant::now() < end, "the simulator answered with its settings");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        g.frames(2);
+    }
+    walk(&mut g, |id| id.starts_with("machine.") || id == "file.exit", &mut out, &mut seen);
     assert!(out.is_empty(), "windows that stay open but are not dockable kit windows: {out:#?}");
+    // The walk reached the windows that need a text or a picture selected.
+    for title in ["Edit Text Shapes", "Adjust Image", "Trace Image", "Network bridge setup"] {
+        assert!(seen.contains(title), "{title} was opened by the walk: {seen:?}");
+    }
+}
+
+// ----- every kit window in the code docks, or is a one-shot listed here -----
+
+/// The kit windows in the code that are not dockable, by the key in their `Id::unique(..)`, and
+/// why: each opens for one answer or one step and closes with it.
+const NOT_DOCKABLE: &[(&str, &str)] = &[
+    ("about", "read once and closed"),
+    ("db_updates", "read once and closed"),
+    ("db_file_message", "a message and its one button"),
+    ("db_job_message", "a message and its one button"),
+    ("db_import_warnings", "a message and its one button"),
+    ("db_import_progress", "shows while files are read and closes by itself"),
+    ("db_job_progress", "shows while the job is prepared and closes by itself"),
+    ("db_pdf_pages", "picks the page of a file being imported, then the import goes on"),
+    ("db_save_changes", "asked before going on"),
+    ("db_restore", "asked once when the program starts after a crash"),
+    ("db_job_bounds", "asked before the job goes on"),
+    ("db_job_checklist", "ticked before a job starts; Start or Cancel closes it"),
+    ("db_export", "set up, then Export does it once"),
+    ("db_print", "set up, then Print does it once"),
+    ("db_qr_dialog", "set up, then OK makes the code once"),
+    ("db_trace_image", "set up, then OK traces once"),
+    ("db_convert_bitmap", "set up, then Convert does it once"),
+    ("db_macro_edit", "edits one macro; OK saves it and closes"),
+    ("db_find_laser", "picks a machine, then closes"),
+    ("db_device_wizard", "walks through setting up a machine, then closes"),
+    ("db_bridge_wizard", "walks through setting up a network bridge, then closes"),
+];
+
+/// Files that build a window on plain egui, and why: the floating Preview (its own window, sized
+/// and maximised freely; docked or in a window of its own it goes through the kit) and the
+/// agent's request to start the machine (a one-shot safety prompt).
+const PLAIN_EGUI: &[&str] = &["job_ui.rs", "mcp_ui.rs"];
+
+fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("the source folder") {
+        let path = entry.expect("a source file").path();
+        if path.is_dir() {
+            sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// A window a test or a later change adds without going through the kit's dock is caught here
+/// even when no command or state in the walk above opens it.
+#[test]
+fn every_kit_window_in_the_code_docks_or_is_a_listed_one_shot() {
+    let mut files = Vec::new();
+    sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+    let (mut bad, mut found) = (Vec::new(), std::collections::BTreeSet::new());
+    let mut kit_windows = 0;
+    for path in files {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if name.ends_with("_tests.rs") || name == "ui_harness.rs" {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read the source");
+        // The program's code, not its unit tests.
+        let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or_default();
+        for (at, _) in code.match_indices("Window::new(") {
+            let line = code[..at].lines().count();
+            let here = format!("{name}:{line}");
+            let before = &code[..at];
+            if before.ends_with("FeatureWindow::") {
+                continue;
+            }
+            if before.ends_with("egui::") {
+                if !PLAIN_EGUI.contains(&name.as_str()) {
+                    bad.push(format!("{here}: a window on plain egui"));
+                }
+                continue;
+            }
+            kit_windows += 1;
+            // The call up to where the window is shown.
+            let rest = &code[at..];
+            let end = rest.find(".show").unwrap_or(rest.len());
+            let call = &rest[..end];
+            if call.contains(".dockable(") {
+                continue;
+            }
+            let key = call.split_once("unique(\"").and_then(|(_, k)| k.split_once('"')).map(|(k, _)| k.to_string());
+            match key {
+                Some(k) if NOT_DOCKABLE.iter().any(|(n, _)| *n == k) => {
+                    found.insert(k);
+                }
+                k => bad.push(format!("{here}: {k:?} is neither dockable nor in NOT_DOCKABLE")),
+            }
+        }
+    }
+    assert!(kit_windows > 30, "the kit windows were found: {kit_windows}");
+    assert!(bad.is_empty(), "windows that miss the dock: {bad:#?}");
+    let stale: Vec<_> = NOT_DOCKABLE.iter().map(|(k, _)| *k).filter(|k| !found.contains(*k)).collect();
+    assert!(stale.is_empty(), "NOT_DOCKABLE names windows the code no longer has: {stale:?}");
 }
 
 #[test]
@@ -408,4 +549,55 @@ fn a_click_in_a_floating_window_over_a_panel_does_not_dock_it() {
     g.run_command("tools.offset");
     g.frames(2);
     assert_eq!(g.window_titles(), [OFFSET], "it opens floating again");
+}
+
+#[test]
+fn a_long_press_in_a_floating_window_over_a_panel_does_not_dock_it() {
+    // Held still on Cancel for longer than egui's longest click, which egui then counts a drag
+    // of the window: still not a drop.
+    let mut g = Gui::standard();
+    g.sample_design();
+    let key = crate::shape_ui::dock_key(OFFSET);
+    g.run_command("tools.offset");
+    g.frames(2);
+    let card = g.rect_of("dialog:window").expect("the dialog is open");
+    assert!(window_host::target_at(&g.ctx(), card.center()).is_some(), "the dialog is over a dock area: {card:?}");
+    let cancel = g.find_text("Cancel").expect("the Cancel button").center();
+    g.press_pos(cancel);
+    g.frames(4);
+    g.release_pos(cancel);
+    g.frames(2);
+    assert_eq!(window_host::place(&g.ctx(), &key).placement, Placement::Floating, "a press held still is not a drop");
+    assert!(g.window_titles().iter().any(|t| t == OFFSET), "it is still open, floating: {:?}", g.window_titles());
+    g.close_dialogs();
+}
+
+/// The floating Preview's title bar.
+fn preview_title(g: &Gui) -> egui::Pos2 {
+    window(g, "Preview").left_top() + vec2(160.0, 12.0)
+}
+
+#[test]
+fn the_floating_preview_docks_when_its_title_bar_is_dragged_onto_a_panel() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Floating);
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    g.drag(preview_title(&g), area.center());
+    g.frames(3);
+    assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Docked("RightTop".into()));
+    assert!(g.rect_of(&format!("panel:tab:window:{}", crate::job_ui::PREVIEW_KEY)).is_some(), "its tab: {:?}", g.rects("panel:tab:"));
+    assert!(g.app().job.preview.open, "still open");
+}
+
+#[test]
+fn the_floating_previews_title_bar_menu_puts_it_in_a_window_of_its_own() {
+    let mut g = Gui::standard();
+    open_preview(&mut g);
+    g.right_click_pos(preview_title(&g));
+    g.click_label("Open in its own window");
+    g.frames(3);
+    assert_eq!(placement(&g, crate::job_ui::PREVIEW_KEY), Placement::Detached);
+    assert!(g.app().job.preview.open, "still open");
+    assert!(g.window_titles().iter().any(|t| t == "Preview"), "{:?}", g.window_titles());
 }

@@ -189,6 +189,9 @@ struct State {
     activate: BTreeMap<String, String>,
     /// A native window's size and position as it was opened, kept while it stays open.
     opened: BTreeMap<String, (Option<[f32; 2]>, Option<[f32; 2]>)>,
+    /// A window being dragged by its title bar or card: where the press began, and whether the
+    /// pointer has since gone further from there than a click may.
+    presses: BTreeMap<String, (Pos2, bool)>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -511,7 +514,7 @@ fn apply_pick(ctx: &Context, key: &str, pick: Option<Placement>) {
 /// A window with a title bar of its own is being dragged (`response` is its move response):
 /// over a panel area, show that it will dock there; dropped there, it becomes a tab.
 pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
-    if !(response.dragged() || response.drag_stopped()) || !moved_since_press(ctx) {
+    if !moved_since_press(ctx, key, response) {
         return;
     }
     let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| target_at(ctx, p)) else { return };
@@ -524,10 +527,38 @@ pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
     }
 }
 
-/// The pointer is dragging, not clicking: a press and release on a button in a window (its
-/// Cancel, say) is not a drop.
-fn moved_since_press(ctx: &Context) -> bool {
-    ctx.input(|i| i.pointer.is_decidedly_dragging())
+/// The window is being dragged and the pointer has gone further than a click's wobble from where
+/// its button went down: a press and release on a button in a window (its Cancel, say) is not a
+/// drop, however long the button was held. (egui counts a press held still for long as a drag,
+/// and forgets where it began on the frame the button is let go, so the start is kept here.)
+fn moved_since_press(ctx: &Context, key: &str, response: &egui::Response) -> bool {
+    let dragging = response.dragged() || response.drag_stopped();
+    let (origin, latest) = ctx.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+    let wobble = ctx.options(|o| o.input_options.max_click_dist);
+    with(ctx, |s| {
+        if !dragging {
+            s.presses.remove(key);
+            return false;
+        }
+        // A new press starts afresh, also when the end of the last one was not seen.
+        let stale = s.presses.get(key).is_none_or(|(from, _)| origin.is_some_and(|o| o != *from));
+        if (response.drag_started() || stale)
+            && let Some(from) = origin.or(latest)
+        {
+            s.presses.insert(key.to_string(), (from, false));
+        }
+        let moved = match s.presses.get_mut(key) {
+            Some((from, moved)) => {
+                *moved |= latest.is_some_and(|p| p.distance(*from) > wobble);
+                *moved
+            }
+            None => false,
+        };
+        if response.drag_stopped() {
+            s.presses.remove(key);
+        }
+        moved
+    })
 }
 
 #[cfg(test)]
@@ -698,5 +729,90 @@ mod tests {
         frame(&ctx, |_| {});
         frame(&ctx, |ui| shown(ui.ctx(), "a", "A"));
         assert_eq!(native_opening(&ctx, "a"), (Some([700.0, 500.0]), Some([10.0, 20.0])));
+    }
+
+    /// One frame at time `t` (seconds) with these events, a dock area at the right and a
+    /// window `a` (a movable card with one big button) over it, as the app has them.
+    fn drop_frame(ctx: &Context, t: f64, events: Vec<egui::Event>) {
+        let input =
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), time: Some(t), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(800.0, 0.0), Pos2::new(1200.0, 800.0)));
+            let shown = egui::Area::new(Id::new("card")).default_pos(Pos2::new(850.0, 100.0)).show(ui.ctx(), |ui| {
+                ui.add_sized([200.0, 100.0], egui::Button::new("Cancel"));
+            });
+            dock_on_drop(ui.ctx(), "a", &shown.response);
+        });
+        out.textures_delta.clear();
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn a_long_press_on_a_window_over_a_dock_area_is_not_a_drop() {
+        let ctx = Context::default();
+        let on = Pos2::new(900.0, 140.0);
+        drop_frame(&ctx, 0.0, vec![egui::Event::PointerMoved(on)]);
+        drop_frame(&ctx, 0.1, vec![button(on, true)]);
+        // Held still for well over egui's longest click, which then counts it a drag.
+        for i in 1..=8 {
+            drop_frame(&ctx, 0.1 + f64::from(i) * 0.25, vec![]);
+        }
+        assert!(ctx.input(|i| i.pointer.is_decidedly_dragging()), "egui calls a press held this long a drag");
+        drop_frame(&ctx, 2.5, vec![button(on, false)]);
+        drop_frame(&ctx, 2.6, vec![]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Floating, "a press held still is not a drop");
+
+        // A real drag by the same card is one: docked where it is let go.
+        drop_frame(&ctx, 3.0, vec![button(on, true)]);
+        for (i, x) in [910.0, 940.0, 980.0].into_iter().enumerate() {
+            drop_frame(&ctx, 3.1 + i as f64 * 0.1, vec![egui::Event::PointerMoved(Pos2::new(x, 160.0))]);
+        }
+        drop_frame(&ctx, 3.5, vec![button(Pos2::new(980.0, 160.0), false)]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Docked("Right".into()));
+
+        // A wobble smaller than a click's, held long, is not one either. (The card moved with the
+        // drag: pressed where it is now.)
+        update(&ctx, "a", |p| p.float(None));
+        let on = Pos2::new(1000.0, 170.0);
+        drop_frame(&ctx, 4.0, vec![egui::Event::PointerMoved(on)]);
+        drop_frame(&ctx, 4.1, vec![button(on, true)]);
+        drop_frame(&ctx, 4.4, vec![egui::Event::PointerMoved(on + vec2(3.0, 2.0))]);
+        drop_frame(&ctx, 5.5, vec![]);
+        drop_frame(&ctx, 5.6, vec![button(on + vec2(3.0, 2.0), false)]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Floating, "a click's wobble is not a drop");
+    }
+
+    #[test]
+    fn a_native_window_opens_on_the_screens_there_are_now() {
+        let ctx = Context::default();
+        // Stored on a monitor far to the right that is gone now, bigger than this one.
+        update(&ctx, "far", |p| {
+            p.detach();
+            p.native_pos = Some([9000.0, 9000.0]);
+            p.native_size = Some([4000.0, 3000.0]);
+        });
+        update(&ctx, "near", |p| {
+            p.detach();
+            p.native_pos = Some([200.0, 150.0]);
+            p.native_size = Some([640.0, 480.0]);
+        });
+        let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), ..Default::default() };
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                outer_rect: Some(Rect::from_min_size(Pos2::new(100.0, 50.0), vec2(1200.0, 800.0))),
+                monitor_size: Some(vec2(1920.0, 1080.0)),
+                ..Default::default()
+            },
+        );
+        let mut seen = None;
+        let mut out = ctx.run_ui(input, |ui| seen = Some((native_opening(ui.ctx(), "far"), native_opening(ui.ctx(), "near"))));
+        out.textures_delta.clear();
+        let (far, near) = seen.expect("drawn");
+        assert_eq!(far, (Some([1920.0, 1080.0]), None), "the system places it, no bigger than the monitor");
+        assert_eq!(near, (Some([640.0, 480.0]), Some([200.0, 150.0])), "a place on this monitor is kept");
     }
 }

@@ -31,7 +31,8 @@ struct Native {
 fn native_context(native: Rc<RefCell<Native>>) -> Context {
     let ctx = Context::default();
     ctx.set_embed_viewports(false);
-    ctx.set_immediate_viewport_renderer(move |ctx, mut viewport| {
+    // Per thread, as each test runs on its own.
+    Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
         let (events, keys) = {
             let mut n = native.borrow_mut();
             n.drawn += 1;
@@ -65,7 +66,7 @@ fn show_window(ctx: &Context, places: &mut WindowPlaces, key: &str, events: Vec<
     let mut closed = false;
     root_frame(ctx, events, |ui| {
         host::sync(ui.ctx(), places);
-        let (c, _) = Window::new(Id::new(("kit_test", key)), "settings", "Test window")
+        let (c, _) = Window::new(Id::unique(("kit_test", key)), "settings", "Test window")
             .dockable(key)
             .actions("", "", None)
             .escape_here(escape_here)
@@ -127,7 +128,7 @@ fn a_floating_window_stored_off_the_screen_comes_back_inside_it() {
     let mut rect = Rect::NOTHING;
     for _ in 0..4 {
         show_window(&ctx, &mut places, "kit_far", vec![], true);
-        rect = egui::AreaState::load(&ctx, Id::new(("kit_test", "kit_far"))).and_then(|a| a.rect().is_finite().then(|| a.rect())).unwrap_or(rect);
+        rect = egui::AreaState::load(&ctx, Id::unique(("kit_test", "kit_far"))).and_then(|a| a.rect().is_finite().then(|| a.rect())).unwrap_or(rect);
     }
     let keep = crate::titlebar::keep_clear_of_border(&ctx);
     assert!(SCREEN.shrink(keep - 0.5).contains_rect(rect), "{rect:?} inside {SCREEN:?}, {keep} clear of its edges");
@@ -161,7 +162,7 @@ fn windows_docked_in_one_area_keep_their_order_across_a_restart() {
             host::sync(ui.ctx(), places);
             host::dock_areas(ui.ctx(), &[("Right", "Right")]);
             for key in ["zeta", "alpha", "mid"] {
-                Window::new(Id::new(("kit_order", key)), "settings", key).dockable(key).actions("", "", None).show(ui.ctx(), true, |ui| {
+                Window::new(Id::unique(("kit_order", key)), "settings", key).dockable(key).actions("", "", None).show(ui.ctx(), true, |ui| {
                     ui.label(key);
                 });
             }
@@ -194,7 +195,7 @@ fn windows_docked_in_one_area_keep_their_order_across_a_restart() {
 fn a_layout_reset_floats_every_window_at_its_first_place() {
     let ctx = Context::default();
     let mut places = WindowPlaces::new();
-    let id = Id::new(("kit_test", "kit_reset"));
+    let id = Id::unique(("kit_test", "kit_reset"));
     let first = |ctx: &Context| egui::AreaState::load(ctx, id).map(|a| a.rect());
     for _ in 0..3 {
         show_window(&ctx, &mut places, "kit_reset", vec![], true);

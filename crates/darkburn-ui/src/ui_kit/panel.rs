@@ -1464,7 +1464,10 @@ impl Window<'_> {
                 return (false, super::Action::None);
             };
             let native = class != egui::ViewportClass::EmbeddedWindow;
-            let mut height = None;
+            // Shown inside the main window instead (no native windows here): its own size, kept
+            // clear of the screen edges so the footer stays in reach.
+            let screen = dimension(ui.ctx().content_rect().height()) - Tokens::get().space_24 * 3.0;
+            let mut height = Some(size.y.min(screen) - self.chrome_height(true));
             if native {
                 let (inner, outer, close) = ui.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().close_requested()));
                 host::native_moved(ui.ctx(), key, inner.map(|r| r.size()), outer.map(|r| r.min));
@@ -1537,7 +1540,7 @@ impl Window<'_> {
         });
         if let Some(shown) = &shown {
             solidcraft_ui_registry::publish_rect("dialog:window", shown.response.rect);
-            drop_on_dock(ctx, key, &shown.response);
+            drop_on_dock(ctx, key, place.pos.is_some(), &shown.response);
         }
         shown.and_then(|r| r.inner).unwrap_or((false, super::Action::None))
     }
@@ -1605,9 +1608,11 @@ fn resize_grips(ui: &mut Ui, id: egui::Id, key: &str, margin: egui::Vec2) {
 
 /// While the floating card is dragged over a panel area, show that it will dock there; dropped
 /// there, it becomes a tab.
-fn drop_on_dock(ctx: &egui::Context, key: &str, response: &egui::Response) {
+fn drop_on_dock(ctx: &egui::Context, key: &str, stored: bool, response: &egui::Response) {
     use super::window_host as host;
-    if response.dragged() {
+    // Where the card is now (dragged, or kept on screen by egui) is where it opens next time. A
+    // card never moved keeps opening centred: its first frames are still finding their size.
+    if stored || response.dragged() {
         host::moved(ctx, key, response.rect.min);
     }
     if !(response.dragged() || response.drag_stopped()) {

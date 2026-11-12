@@ -667,7 +667,8 @@ fn a_settings_window_docks_floats_resizes_and_detaches() {
     g.frames(3);
     assert!(g.rect_of("panel:tab:window:settings").is_some(), "{:?}", g.rects("panel:tab:"));
     let area = g.rect_of("panel:area:RightTop").unwrap();
-    let at = g.find_text(label).expect("the settings show in the tab");
+    // The tab is shorter than the window was: its first rows show, the rest scroll.
+    let at = g.find_text("Lengths").unwrap_or_else(|| panic!("the settings show in the tab: {:?}", g.visible_texts()));
     assert!(area.contains(at.center()), "{at:?} in {area:?}");
     assert!(!g.window_titles().iter().any(|t| t == "Settings"), "no floating window while docked");
     g.screenshot("settings-docked");
@@ -681,21 +682,23 @@ fn a_settings_window_docks_floats_resizes_and_detaches() {
     let before = g.rect_of("dialog:window").expect("floating again");
     assert!(g.rect_of("panel:tab:window:settings").is_none());
 
-    // Drag the corner: the window grows and remembers its size.
-    let corner = g.rect_of("dialog:resize:corner").expect("a resize corner");
-    g.drag(corner.center(), corner.center() + egui::vec2(80.0, 60.0));
+    // Drag the right edge: the window grows and remembers its size. (Its bottom corner sits on
+    // the app window's own resize border here, which is on top, so the edge is the grip to use.)
+    assert!(g.rect_of("dialog:resize:corner").is_some(), "a resize corner");
+    let edge = g.rect_of("dialog:resize:right").expect("a resize edge");
+    g.drag(edge.center(), edge.center() + egui::vec2(80.0, 0.0));
     g.frames(2);
     let after = g.rect_of("dialog:window").unwrap();
     assert!(after.width() > before.width() + 40.0, "{before:?} -> {after:?}");
     assert!(g.app().prefs.windows["settings"].size.is_some());
-    assert!(g.has_text(label));
+    assert!(g.has_text("Lengths"));
 
     // The header menu opens it in a window of its own (the test harness shows that inside).
     g.click_id("dialog:place");
     g.click_label("Open in its own window");
     assert_eq!(placement(&g), Placement::Detached);
     g.frames(3);
-    assert!(g.has_text(label), "{:?}", g.visible_texts());
+    assert!(g.has_text("Lengths"), "{:?}", g.visible_texts());
     g.screenshot("settings-detached-fallback");
 
     // Closed and opened again, it comes back where it was left.

@@ -261,7 +261,7 @@ check_refs() {
             /*)
                 # 404.html needs such addresses: the host shows that page at any depth.
                 if [ "${1##*/}" != 404.html ]; then
-                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is looked at in a folder, as in a preview.\n' "${1##*/}" "$ref" >&2
+                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is not at the top of its name: opened as a file, or in a trial folder.\n' "${1##*/}" "$ref" >&2
                     missing=1
                     continue
                 fi

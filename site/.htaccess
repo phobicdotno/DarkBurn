@@ -29,8 +29,9 @@
 # The licence text of the fonts holds a copyright sign.
 AddDefaultCharset utf-8
 
-# The page's own "not found". Its addresses start with "/", so it works at any depth. The
-# page is served under its own name only (see the first rule below).
+# The page's own "not found". Its addresses start with "/", so it works at any depth, as long
+# as the folder is the top of a name. Under the main name the first rule below sends every
+# address on to the page's own name; a trial needs a name of its own.
 ErrorDocument 404 /404.html
 
 <IfModule mod_rewrite.c>

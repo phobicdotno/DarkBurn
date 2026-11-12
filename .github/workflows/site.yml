@@ -5,14 +5,18 @@
 # rules for the host (site/.htaccess). This workflow runs that script, so a change that breaks
 # the page shows on the pull request.
 #
-# Once a day, and when it is started by hand (Actions > site > Run workflow), it also asks
-# the host for every file of the page and compares it with what main builds. On the host the
-# page can be changed by everything that can write there: the one login, the host's control
-# panel, a fault in a program of another site. That shows here the day after. The run is
-# also red while main holds a change to the page that is not uploaded yet, which is worth
-# knowing too. Until the name darkburn.phobic.no exists, there is nothing to compare and the
-# run says so. (GitHub stops daily runs after 60 days in which nothing happens in the
-# repository, and says so by mail.)
+# Once a day, and when it is started by hand on main (Actions > site > Run workflow), it also
+# asks the host for every file of the page and compares it with what main builds, and it
+# looks at the headers and the "not found" page that the rules for the host give. On the host
+# the page can be changed by everything that can write there: the one login, the host's
+# control panel, a fault in a program of another site. A file of the page that was changed,
+# and rules that were taken away, show here the day after. A file that was added on the host
+# does not: only a list of the folder shows that, and scripts/deploy-site.sh prints one at
+# each upload. The run is also red while main holds a change to the page that is not uploaded
+# yet, which is worth knowing too. While the name darkburn.phobic.no does not answer in DNS
+# there is nothing to compare; the run says so in a warning and passes. That exception is
+# taken out once the page is up. (In a public repository GitHub switches schedules off after
+# 60 days without activity in the repository, and says so by mail.)
 #
 # Nothing is published from here. The page is hosted on the owner's own web host and gets
 # there by hand, from a checkout of main:
@@ -27,7 +31,7 @@
 # up for an earlier plan, it is undone in this order: first the DNS record (darkburn CNAME
 # phobicdotno.github.io.), then, under Settings > Pages, the custom domain and the site itself
 # (Unpublish site). A TXT record _github-pages-challenge-phobicdotno.phobic.no stays: it keeps
-# other accounts from using a name under phobic.no on GitHub Pages.
+# other accounts from using phobic.no, or a name directly under it, on GitHub Pages.
 name: site
 
 on:
@@ -57,15 +61,16 @@ on:
       - .github/workflows/site.yml
   workflow_dispatch:
   schedule:
-    # Daily, at a minute that is not the full hour, when GitHub is busiest.
+    # Daily. Not at the full hour, when GitHub is busiest and starts schedules late.
     - cron: "23 4 * * *"
 
 # Nothing by default. Each job asks for what it needs.
 permissions: {}
 
-# A new run for the same branch or pull request takes the place of the run before it.
+# A new run for the same branch or pull request takes the place of the run before it. A run
+# on the schedule, a run by hand and a run for a push do not get in each other's way.
 concurrency:
-  group: site-${{ github.ref }}
+  group: site-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 defaults:
@@ -75,6 +80,8 @@ defaults:
 jobs:
   build:
     name: Build the page
+    # Not on the schedule: the job below builds the page itself.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -93,7 +100,8 @@ jobs:
 
   live:
     name: The page on the host is the page on main
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # A run by hand on another branch would compare that branch with the host.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -109,23 +117,65 @@ jobs:
       - name: Compare it with what the host sends
         run: |
           url=https://darkburn.phobic.no
-          # curl ends with 6 when the name does not exist.
+          ask() { curl -sS --connect-timeout 10 -m 20 "$@"; }
+          # One try first: when nothing can be compared, the run says why in one line.
           status=0
-          curl -sS -m 30 -o /dev/null "$url/" || status=$?
-          if [ "$status" -eq 6 ]; then
-            echo "::notice title=Nothing to compare yet::The name darkburn.phobic.no does not exist yet."
-            exit 0
-          fi
-          bad=0
+          ask -o /dev/null "$url/" || status=$?
+          case $status in
+            0) ;;
+            6)
+              # Right while the name is not set up at the host. Once the page is up this
+              # branch is taken out: from then on a name that is gone is a fault.
+              echo "::warning title=Nothing to compare::The name darkburn.phobic.no does not answer in DNS. Before the page is set up at the host that is as it should be."
+              exit 0
+              ;;
+            35 | 51 | 60)
+              echo "::error title=The certificate of the page is not in order::curl ended with $status (its reason is the line above). A browser shows visitors a warning. Nothing was compared."
+              exit 1
+              ;;
+            *)
+              echo "::error title=The host does not answer::curl ended with $status (its reason is the line above). Nothing was compared."
+              exit 1
+              ;;
+          esac
+          differ='' count=0
           # Every file of the page but the rules for the host, which a host does not hand out.
           while IFS= read -r f; do
+            count=$((count + 1))
             case $f in
               index.html) address=$url/ ;;
               *) address=$url/$f ;;
             esac
-            if ! curl -fsS -m 60 -o live.tmp "$address" || ! cmp -s live.tmp "target/site/$f"; then
-              echo "::error title=The page on the host is not the page on main::$f does not answer or is not what main builds. Either main holds a change that is not uploaded yet (sh scripts/deploy-site.sh), or the file was changed on the host."
-              bad=1
+            code=$(ask -o live.tmp -w '%{http_code}' "$address") || code="nothing (curl ended with $?)"
+            if [ "$code" != 200 ]; then
+              echo "$f: the host answers $code"
+              differ="$differ$f "
+            elif ! cmp -s live.tmp "target/site/$f"; then
+              echo "$f: not the file main builds"
+              differ="$differ$f "
             fi
           done < <(cd target/site && find . -type f ! -name .made-by-build-site ! -name .htaccess | sed 's|^\./||' | LC_ALL=C sort)
-          exit "$bad"
+          # The rules are not handed out, but what they do shows: the headers they set, and
+          # the "not found" page. Rules that were changed or taken away on the host show here.
+          heads=$(ask -o /dev/null -D - "$url/" | tr -d '\r') || heads=''
+          while IFS= read -r want; do
+            if ! printf '%s\n' "$heads" | grep -qixF -- "$want"; then
+              echo "the header is not sent: $want"
+              differ="$differ.htaccess "
+            fi
+          done < <(sed -n 's/^ *Header set \([A-Za-z-]*\) "\(.*\)"$/\1: \2/p' target/site/.htaccess)
+          code=$(ask -o live.tmp -w '%{http_code}' "$url/no-such-page") || code=none
+          if [ "$code" != 404 ] || ! cmp -s live.tmp target/site/404.html; then
+            echo "no-such-page: the host answers $code, or not with 404.html"
+            differ="$differ.htaccess "
+          fi
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=Nothing was compared::The build left no files in target/site."
+            exit 1
+          fi
+          if [ -n "$differ" ]; then
+            differ=$(printf '%s' "$differ" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' ')
+            echo "::error title=The page on the host is not the page on this commit::Not as built here: ${differ% } (the lines above say how). Either main holds a change that is not uploaded yet (sh scripts/deploy-site.sh USER), or the page was changed on the host."
+            exit 1
+          fi
+          echo "$count files and the headers are as built here."

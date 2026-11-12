@@ -22,11 +22,13 @@
 # page and https. This script
 #   1. builds the folder afresh with scripts/build-site.sh, which also checks it,
 #   2. uploads every file to httpd.www/darkburn/ on ssh.phobic.no under a second name
-#      (x.new) and then gives each its place, the pages last. A visitor is never sent half a
-#      file, and an upload that stops before that leaves the page as it was,
+#      (x.new) and then gives each its place, the pages last. This way a visitor is never
+#      sent half a file, and an upload that stops before that leaves the page as it was. The
+#      x.new files of a run that stopped stay on the host until the next run,
 #   3. reads what the folder on the host then holds and names what is not part of the page,
 #   4. asks the page for its front page, its script and style, its headers, the forward from
-#      http and its "not found" page, and says what it found.
+#      http, its "not found" page and the folder's address under the main name, and says
+#      what it found.
 #
 # Set once, by hand, at the host: the name darkburn.phobic.no for the folder
 # httpd.www/darkburn, the way the other names under phobic.no are set up there. Until then
@@ -40,11 +42,15 @@
 #   DARKBURN_SITE_HOST   the host
 #   DARKBURN_SITE_DIR    the folder; its last part is "darkburn" or starts with "darkburn-"
 #   DARKBURN_SITE_URL    the address to ask in step 4; a trial without it is not asked
+# A trial folder on the real host is seen only under a name of its own: under phobic.no/ the
+# rules send it on to the real page.
 # And for a host or a day that needs it:
 #   DARKBURN_SITE_ANY_STATE=1   upload the real page from a state that is not a clean main
 #   DARKBURN_SITE_IN_PLACE=1    write each file straight over the old one. Only for a host
 #                               that cannot give a file the place of another: the upload then
-#                               stops at the first "rename", with the page as it was.
+#                               stops at the first "rename", with the page as it was. In
+#                               this mode a visitor can be sent half a file while it is on
+#                               its way.
 set -eu
 
 die() {
@@ -76,7 +82,7 @@ case $user in
     '' | -* | *[!A-Za-z0-9._@-]*) die "the user name may hold letters, digits, dot, dash, underscore and @, and does not start with a dash." ;;
 esac
 case $host in
-    '' | -* | *[!A-Za-z0-9.-]*) die "the host name may hold letters, digits, dot and dash, and does not start with a dash." ;;
+    '' | -* | *. | *[!a-z0-9.-]*) die "the host name may hold small letters, digits, dot and dash, and does not start with a dash or end with a dot." ;;
 esac
 case $dir in
     '' | -* | /* | */ | *..* | *//* | *[!A-Za-z0-9._/-]*) die "the folder on the host is a plain path from the login folder, such as $real_dir." ;;
@@ -87,8 +93,8 @@ esac
 case /$dir/ in
     */./*) die "the folder on the host is a plain path from the login folder, such as $real_dir." ;;
 esac
-case $dir in
-    */darkburn | */darkburn-*) ;;
+case $dir:${dir##*/} in
+    */*:darkburn | */*:darkburn-*) ;;
     *) die "the folder on the host is a folder of its own inside the folder of the sites, and its name is darkburn or starts with darkburn-, such as $real_dir or $real_dir-trial: not $dir." ;;
 esac
 case $url in
@@ -98,6 +104,7 @@ esac
 case $url in
     *[!A-Za-z0-9._~:/@%+-]*) die "the address of the page is a plain address, such as $real_url." ;;
 esac
+[ "$real" = no ] || [ -n "$url" ] || die "DARKBURN_SITE_URL is set to nothing. Leave it out for the real page."
 
 command -v sftp >/dev/null 2>&1 ||
     die "sftp is not installed. It comes with OpenSSH, and with Git for Windows."
@@ -170,7 +177,7 @@ count=$(grep -c '' "$files")
 printf 'Uploading %s files (%s) to %s:%s as %s.\n' "$count" "$state" "$host" "$dir" "$user"
 printf 'A line that a folder could not be made ("remote mkdir ...: Failure") only says that it is there already.\n'
 [ -z "${DARKBURN_SITE_IN_PLACE-}" ] ||
-    printf 'So does a line that a file could not be removed: there was no x.new file left to remove.\n'
+    printf 'A line that a file could not be removed only says that no x.new file was left there.\n'
 # -b stops at the first command that fails. By itself it also forbids the question for a
 # password; the option before it allows the question again. What sftp writes about each
 # command goes to a file; its questions and its errors still show.
@@ -191,6 +198,7 @@ if [ "$st" -ne 0 ]; then
         die "the upload stopped at \"$at\" (see the lines above). The page on the host is as it was. Run this again."
     else
         case $at in
+            ls*) die "every file is in its place, but the list of the folder could not be read (see the lines above). Look there yourself for files that are not part of the page." ;;
             rename*) [ "$placed" -gt 1 ] || die "the upload stopped at \"$at\" (see the lines above): the host could not give a file the place of the old one. The page on the host is as it was. Run this again with DARKBURN_SITE_IN_PLACE=1." ;;
         esac
         die "the upload stopped at \"$at\" (see the lines above). $how. Run this again."
@@ -289,6 +297,9 @@ case $got in
                 *) note "$real_folder_url should forward to $real_url/ or not be there (it answers: $(said "$got")). Under the main name the page shares what a browser keeps apart by name with everything else on phobic.no." ;;
             esac
         fi
+        ;;
+    30?" $url/")
+        note "$url/ forwards to itself. The host does not tell the rules in .htaccess that a request came over https."
         ;;
     30?' '*)
         note "$url/ forwards to ${got#* }, so the page was not asked. If that is where the page is, give that address in DARKBURN_SITE_URL."

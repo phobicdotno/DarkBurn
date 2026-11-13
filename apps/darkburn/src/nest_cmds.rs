@@ -519,6 +519,7 @@ mod tests {
     fn bad_arguments_are_refused_and_change_nothing() {
         let mut app = app();
         let r = add_rect(&mut app, 300.0, 300.0, 20.0, 20.0, 0);
+        select(&mut app, &[]);
         assert!(run(&mut app, TRUE, json!({})).is_err(), "nothing selected");
         select(&mut app, &[r]);
         let rev = app.editor.revision();

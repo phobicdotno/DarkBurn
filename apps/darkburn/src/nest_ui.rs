@@ -216,7 +216,7 @@ pub fn show(ctx: &Context, app: &mut DarkBurn) {
     let (mut go, mut stop, mut close) = (false, false, false);
     let mut open = true;
     let screen = ctx.content_rect();
-    let win = Id::new("nest_dialog");
+    let win = Id::unique("nest_dialog");
     egui::Window::new(title)
         .id(win)
         .open(&mut open)

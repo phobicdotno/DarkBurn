@@ -151,10 +151,15 @@ fn skip_escape(chars: &[char], mut i: usize) -> usize {
 
 /// Imports HPGL text.
 pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError> {
+    import_with_budget(bytes, opts, 2_000_000)
+}
+
+/// [`import`] with `budget` the most items (lines, circles, arcs, rectangles) it keeps.
+fn import_with_budget(bytes: &[u8], opts: &HpglOptions, budget: usize) -> Result<Imported, ImportError> {
     let upm = if opts.units_per_mm.is_finite() && opts.units_per_mm > 0.0 { opts.units_per_mm } else { 40.0 };
     let text = String::from_utf8_lossy(bytes);
     let chars: Vec<char> = text.chars().collect();
-    let mut st = State { pos: Point::ZERO, down: false, relative: false, pen: 1, current: None, out: Imported::default(), budget: 2_000_000 };
+    let mut st = State { pos: Point::ZERO, down: false, relative: false, pen: 1, current: None, out: Imported::default(), budget };
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut commands = 0usize;
     let mut i = 0;
@@ -264,6 +269,10 @@ pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError>
                 let corner = if cmd == "ER" { st.pos + d.to_vec2() } else { d };
                 let o = st.pos;
                 st.flush();
+                if st.budget == 0 {
+                    continue;
+                }
+                st.budget -= 1;
                 let mut p = BezPath::new();
                 p.move_to(o);
                 p.line_to((corner.x, o.y));
@@ -350,4 +359,24 @@ pub fn export(items: &[Item], opts: &HpglExportOptions) -> String {
     }
     s.push_str("PU;SP0;\n");
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(src: &str, budget: usize) -> usize {
+        import_with_budget(src.as_bytes(), &HpglOptions::default(), budget).unwrap().items.len()
+    }
+
+    #[test]
+    fn edge_rectangles_count_against_the_item_budget() {
+        // Lines spend the budget; rectangles ignored it, so a file of millions of EA/ER
+        // instructions could still pile up without limit.
+        assert_eq!(paths("IN;PA0,0;EA400,400;EA800,800;ER40,40;", 1), 1);
+        // Rectangles and lines share one counter.
+        assert_eq!(paths("IN;PA0,0;EA400,400;PD800,800;PU;", 1), 1);
+        assert_eq!(paths("IN;PD400,400;PU;EA800,800;", 1), 1);
+        assert_eq!(paths("IN;PD400,400;PU;EA800,800;", 2), 2);
+    }
 }

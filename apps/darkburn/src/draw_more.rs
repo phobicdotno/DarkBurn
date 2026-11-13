@@ -223,18 +223,14 @@ fn add_arc(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     Ok(json!({ "id": id.0, "centre": [m.center.x, m.center.y], "radius": m.radius, "sweep_degrees": m.sweep.to_degrees() }))
 }
 
-/// `path` with a gap of `length` left in every closed sub-path just before its start point: each
-/// becomes an open path that starts where it did, runs the same way and stops `length` short of
-/// closing. Open sub-paths stay as they are. `Ok(None)` when no sub-path is closed; `Err` with the
-/// length of the shortest closed outline when the gap would take all of one.
-pub fn gap_path(path: &BezPath, length: f64) -> Result<Option<BezPath>, f64> {
-    gap_contours(gpath::contours(path), length).map(|cs| cs.map(|cs| gpath::from_contours(cs.iter())))
-}
-
 fn is_closed(c: &Contour) -> bool {
     c.is_closed_within(1e-6)
 }
 
+/// A gap of `length` left in every closed sub-path of `cs` just before its start point: each
+/// becomes an open path that starts where it did, runs the same way and stops `length` short of
+/// closing. Open sub-paths stay as they are. `Ok(None)` when no sub-path is closed; `Err` with the
+/// length of the shortest closed outline when the gap would take all of one.
 fn gap_contours(cs: Vec<Contour>, length: f64) -> Result<Option<Vec<Contour>>, f64> {
     if !cs.iter().any(is_closed) {
         return Ok(None);
@@ -651,7 +647,7 @@ mod tests {
         let ccw = gpath::contour_direction(&old);
         run(&mut a, "shape.open_gap", json!({ "length": 3 })).unwrap();
         let c = only_contour(&a, id);
-        let centre = Point::new(50.0, 50.0);
+        let centre = old.bounding_box().unwrap().center();
         assert!(close(c.start().unwrap(), start));
         assert!((c.end().unwrap().distance(centre) - 10.0).abs() < 1e-3, "the end is on the circle");
         assert!((c.length() - (total - 3.0)).abs() < 1e-6, "{} {}", c.length(), total);

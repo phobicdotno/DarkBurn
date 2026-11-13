@@ -98,6 +98,7 @@ mod mcp_inspect;
 mod mcp_tests;
 mod mcp_ui;
 mod misc_cmds;
+mod model_import;
 #[cfg(test)]
 mod monkey_tests;
 mod motion_cmds;
@@ -106,6 +107,7 @@ mod motion_cmds_tests;
 mod motion_read;
 #[cfg(test)]
 mod motion_ui_tests;
+mod multi_trace;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod nest_cmds;

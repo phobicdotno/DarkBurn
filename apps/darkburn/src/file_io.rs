@@ -54,6 +54,14 @@ pub struct FileIo {
     held: Option<Box<Loaded>>,
 }
 
+#[cfg(test)]
+impl FileIo {
+    /// Files are being read on the worker.
+    pub fn reading(&self) -> bool {
+        self.job.is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Pick {
     Import,
@@ -161,6 +169,10 @@ pub fn start_import(app: &mut DarkBurn, paths: Vec<PathBuf>, at: Option<Point>) 
 /// Opens a file that is not a DarkBurn project: a LightBurn project becomes the open project,
 /// artwork starts a new project holding it. On a worker thread.
 pub fn start_open(app: &mut DarkBurn, path: PathBuf) {
+    if crate::model_import::is_model(&path) {
+        crate::model_import::open_files(app, vec![path], None);
+        return;
+    }
     if formats::is_device_profile(&path) {
         device_profile_hook(app, &path);
         return;
@@ -173,6 +185,11 @@ fn start_job(app: &mut DarkBurn, paths: Vec<PathBuf>, at: Option<Point>, open: b
     let (devices, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| formats::is_device_profile(p));
     for d in devices {
         device_profile_hook(app, &d);
+    }
+    // 3D models go to the Import 3D Model window [IMG-25].
+    let (models, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| crate::model_import::is_model(p));
+    if !models.is_empty() {
+        crate::model_import::open_files(app, models, at);
     }
     if paths.is_empty() {
         return;
@@ -536,13 +553,16 @@ pub(crate) fn instance_tick(ctx: &egui::Context, app: &mut DarkBurn) {
 fn run_pick(app: &mut DarkBurn, pick: Pick) {
     match pick {
         Pick::Import => {
-            let all: Vec<&str> = import::import_extensions().into_iter().chain(formats::LIBRARY_EXTENSIONS.iter().copied()).collect();
+            let models = darkburn_import::mesh::MESH_EXTENSIONS;
+            let all: Vec<&str> =
+                import::import_extensions().into_iter().chain(formats::LIBRARY_EXTENSIONS.iter().copied()).chain(models.iter().copied()).collect();
             let mut dialog = rfd::FileDialog::new()
                 .add_filter("All artwork and images", &all)
                 .add_filter("SVG", import::VECTOR_EXTENSIONS)
                 .add_filter("DXF, PDF, Illustrator, PLT, RD", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "rd"])
                 .add_filter("LightBurn projects", &["lbrn", "lbrn2"])
-                .add_filter("Images", import::BITMAP_EXTENSIONS);
+                .add_filter("Images", import::BITMAP_EXTENSIONS)
+                .add_filter("3D models (STL, OBJ)", &models);
             if let Some(dir) = app.project_path.as_deref().and_then(Path::parent) {
                 dialog = dialog.set_directory(dir);
             }

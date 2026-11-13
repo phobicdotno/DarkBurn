@@ -429,6 +429,8 @@ pub(crate) fn state_dialog_cases() -> Vec<OpenDialog> {
         ("job message", Box::new(|a| a.job.message = Some(crate::job_cmds::Message { title: "No job".into(), text: "Nothing to run.".into() }))),
         ("file message", Box::new(|a| crate::files::show_message(a, "Could not open", "x.dbrn: the file is damaged".into()))),
         ("import warnings", Box::new(|a| a.fio.warnings = Some(vec![("a.dxf".into(), vec!["Spline approximated".into(); 12])]))),
+        ("trace image files", Box::new(|a| a.images.multi = Some(crate::multi_trace::state_case_dialog()))),
+        ("import 3d model", Box::new(|a| a.images.depth.dialog = Some(crate::model_import::state_case_dialog()))),
         ("devices", Box::new(|a| a.machine.dlg.devices = true)),
         ("macro", Box::new(|a| a.machine.dlg.macro_edit = Some((0, "G0 X0 Y0".into())))),
         ("controller info", Box::new(|a| a.machine.dlg.controller_info = true)),

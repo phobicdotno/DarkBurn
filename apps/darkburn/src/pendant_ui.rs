@@ -34,9 +34,18 @@
 //! long after its key was pressed, perhaps with nobody at the machine any more. Stop is
 //! carried out however old it is. A late Pause only ever pauses, it never sets a paused job
 //! going again, and of several Pause presses that arrive together only the first counts.
+//!
+//! One window at a time: every window that opened the receiver would get every key press, so
+//! one Start would start a job in each window and one arrow would move each machine. Before it
+//! opens the receiver a window takes a lock on [`LOCK_FILE`] in the settings folder, and holds
+//! it while the pendant is on. Another window with the pendant on shows that the pendant is in
+//! use and tries again every [`LOCK_RETRY`], so it takes over when the first window closes or
+//! turns the pendant off. The system lets go of the lock when a window ends, also in a crash.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::fs::{File, TryLockError};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use darkburn_pendant::{Connector, Key, KeySet, Leds, Pendant, PendantError, PendantEvent, PollOptions, Stamped};
@@ -59,6 +68,10 @@ pub enum PendantStatus {
     Looking,
     Connected(String),
     Unavailable(PendantError),
+    /// On, but another DarkBurn window has the receiver.
+    InUse,
+    /// On, but the lock that keeps other windows off the receiver could not be taken.
+    NoLock(String),
 }
 
 impl PendantStatus {
@@ -68,6 +81,8 @@ impl PendantStatus {
             PendantStatus::Looking => "Looking for the receiver".into(),
             PendantStatus::Connected(name) => format!("Connected: {name}"),
             PendantStatus::Unavailable(e) => format!("Not available: {e}"),
+            PendantStatus::InUse => "In use by another DarkBurn window".into(),
+            PendantStatus::NoLock(e) => format!("Not opened: no other DarkBurn window could be kept off the receiver ({e})"),
         }
     }
 }
@@ -88,6 +103,12 @@ struct Waiting {
 /// The most key presses that wait for a drawn frame; the oldest is dropped beyond that.
 const MAX_WAITING: usize = 16;
 
+/// The lock file, in the settings folder, held by the one window that has the receiver open.
+pub const LOCK_FILE: &str = "pendant.lock";
+
+/// How often a window that wants the pendant tries again to take it from another window.
+pub const LOCK_RETRY: Duration = Duration::from_secs(1);
+
 pub struct PendantUi {
     pendant: Option<Pendant>,
     pub status: PendantStatus,
@@ -99,11 +120,29 @@ pub struct PendantUi {
     pub make_connector: Option<MakeConnector>,
     /// [`MAX_AGE`]; a field so that tests on a loaded computer can allow more.
     pub max_age: Duration,
+    /// Held while this window has the receiver open: no other DarkBurn window opens it then.
+    /// After `pendant`, so a window that goes away closes the receiver before it lets go.
+    lock: Option<File>,
+    /// When to try again for a lock another window holds.
+    next_try: Option<Instant>,
+    /// Where the lock is. None: [`LOCK_FILE`] in the settings folder, or in the system's
+    /// temporary folder when there is no settings folder.
+    pub lock_path: Option<PathBuf>,
 }
 
 impl Default for PendantUi {
     fn default() -> Self {
-        PendantUi { pendant: None, status: PendantStatus::Off, held: KeySet::EMPTY, waiting: VecDeque::new(), make_connector: None, max_age: MAX_AGE }
+        PendantUi {
+            pendant: None,
+            status: PendantStatus::Off,
+            held: KeySet::EMPTY,
+            waiting: VecDeque::new(),
+            make_connector: None,
+            max_age: MAX_AGE,
+            lock: None,
+            next_try: None,
+            lock_path: None,
+        }
     }
 }
 
@@ -144,7 +183,7 @@ pub fn permission_message() -> String {
 /// and Pause are carried out here. The other keys wait for [`frame`].
 pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
     let want = app.prefs.opts.pendant && !app.safe_mode;
-    if want && app.pendant.pendant.is_none() {
+    if want && app.pendant.pendant.is_none() && owner(ctx, app) {
         let connector = match &app.pendant.make_connector {
             Some(make) => make(),
             // Tests never reach the real receiver, even with every setting switched on.
@@ -154,11 +193,16 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
         let ctx2 = ctx.clone();
         app.pendant.pendant = Some(Pendant::start(connector, PollOptions::default(), Some(Box::new(move || ctx2.request_repaint()))));
         app.pendant.status = PendantStatus::Looking;
-    } else if !want && let Some(p) = app.pendant.pendant.take() {
-        p.stop();
+    } else if !want {
+        if let Some(p) = app.pendant.pendant.take() {
+            p.stop();
+            app.pendant.held = KeySet::EMPTY;
+            app.pendant.waiting.clear();
+        }
+        // After the receiver is closed: now another window may open it.
+        app.pendant.lock = None;
+        app.pendant.next_try = None;
         app.pendant.status = PendantStatus::Off;
-        app.pendant.held = KeySet::EMPTY;
-        app.pendant.waiting.clear();
     }
     let events = app.pendant.pendant.as_ref().map(Pendant::poll_stamped).unwrap_or_default();
     let now = Instant::now();
@@ -173,6 +217,47 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
         p.set_leds(leds(app));
     }
     STATUS.with(|s| *s.borrow_mut() = app.pendant.status.clone());
+}
+
+/// Whether this window may open the receiver: it holds the lock, or has just taken it. Tries
+/// at most once per [`LOCK_RETRY`] and wakes the window for the next try.
+fn owner(ctx: &egui::Context, app: &mut DarkBurn) -> bool {
+    if app.pendant.lock.is_some() {
+        return true;
+    }
+    let now = Instant::now();
+    if app.pendant.next_try.is_some_and(|t| now < t) {
+        return false;
+    }
+    let path = app.pendant.lock_path.clone().unwrap_or_else(|| app.settings_dir.clone().unwrap_or_else(std::env::temp_dir).join(LOCK_FILE));
+    match take_lock(&path) {
+        Ok(Some(f)) => {
+            app.pendant.lock = Some(f);
+            app.pendant.next_try = None;
+            return true;
+        }
+        Ok(None) => app.pendant.status = PendantStatus::InUse,
+        Err(e) => {
+            log::warn!("pendant: no lock: {e}");
+            app.pendant.status = PendantStatus::NoLock(e.to_string());
+        }
+    }
+    app.pendant.next_try = Some(now + LOCK_RETRY);
+    ctx.request_repaint_after(LOCK_RETRY);
+    false
+}
+
+/// The lock on `path`, or None while another window (another process) holds it.
+fn take_lock(path: &Path) -> std::io::Result<Option<File>> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let f = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)?;
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(e),
+    }
 }
 
 /// Once per drawn frame, after [`logic`]: carry out the key presses that waited for the window

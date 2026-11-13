@@ -38,7 +38,16 @@ fn app_with(emu: &EmulatorHandle) -> (DarkBurn, Arc<AtomicUsize>) {
     // tests about late presses set their own limit.
     assert_eq!(a.pendant.max_age, pendant_ui::MAX_AGE);
     a.pendant.max_age = Duration::from_secs(60);
+    // A lock of its own, so tests that run at the same time do not hold each other off.
+    a.pendant.lock_path = Some(lock_path());
     (a, made)
+}
+
+/// A lock file no other test uses.
+fn lock_path() -> std::path::PathBuf {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!("darkburn-pendant-locks-{}", std::process::id()));
+    dir.join(format!("{}.lock", N.fetch_add(1, Ordering::SeqCst)))
 }
 
 /// One drawn frame, as far as the pendant goes: the app's logic, then the window's part.
@@ -554,4 +563,48 @@ fn a_settings_file_never_turns_the_pendant_on() {
     std::fs::write(dir.join(crate::extras::DEFAULTS_FILE), theirs.to_json()).unwrap();
     assert!(!crate::extras::shared_defaults(Some(&dir)).unwrap().opts.pendant, "shared defaults switched the pendant on");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn only_one_window_has_the_receiver_and_another_takes_over_when_it_is_done() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let (mut b, made_b) = app_with(&emu);
+    b.pendant.lock_path = a.pendant.lock_path.clone();
+    let ctx = egui::Context::default();
+    a.prefs.opts.pendant = true;
+    b.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    settle(&ctx, &mut b);
+    assert_eq!(b.pendant.status, PendantStatus::InUse, "the second window waits");
+    assert!(!b.pendant.running());
+    assert_eq!(made_b.load(Ordering::SeqCst), 0, "the second window never reached for the receiver");
+    assert_eq!(emu.connects(), 1);
+
+    // The first window's keys are its own: the second window's machine stays where it is.
+    for app in [&mut a, &mut b] {
+        connect_sim(&ctx, app);
+        run(app, "machine.move_to", json!({ "x": 100, "y": 100 })).unwrap();
+        pump(&ctx, app, "the move", |a| state(a) == LaserState::Ready && pos(a) == (100.0, 100.0));
+    }
+    tap(&emu, Key::Right);
+    pump(&ctx, &mut a, "the first machine moved", |a| state(a) == LaserState::Ready && pos(a).0 > 100.0);
+    settle(&ctx, &mut b);
+    assert_eq!(pos(&b), (100.0, 100.0), "one key press moved a second machine");
+
+    // Turned off in the first window: the second one takes the receiver.
+    a.prefs.opts.pendant = false;
+    pendant_ui::logic(&ctx, &mut a);
+    assert_eq!(a.pendant.status, PendantStatus::Off);
+    pump(&ctx, &mut b, "the second window taking over", connected);
+    a.prefs.opts.pendant = true;
+    settle(&ctx, &mut a);
+    assert_eq!(a.pendant.status, PendantStatus::InUse);
+
+    // A window that goes away lets go too.
+    drop(b);
+    pump(&ctx, &mut a, "the first window taking it back", connected);
+    let lock = a.pendant.lock_path.clone().unwrap();
+    drop(a);
+    let _ = std::fs::remove_file(lock);
 }

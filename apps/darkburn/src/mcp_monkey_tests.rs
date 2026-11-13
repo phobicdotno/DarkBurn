@@ -547,7 +547,8 @@ fn policy_for(seed: u64, hardware: bool) -> McpPolicy {
 /// With machine control off (the default), no generated call reaches a machine command.
 #[test]
 fn mcp_monkey_with_machine_control_off() {
-    for seed in [1, 3] {
+    // Seed 13 has the policy seed 1 had; seed 1 ran too few commands once the catalog grew.
+    for seed in [13, 3] {
         let m = mcp_monkey(seed, MCP_LINES, policy_for(seed, false));
         let seen = m.seen.borrow();
         assert!(seen.ran > 20, "seed {seed}: only {} commands ran", seen.ran);

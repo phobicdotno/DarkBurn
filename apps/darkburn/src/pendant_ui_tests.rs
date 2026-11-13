@@ -508,7 +508,7 @@ fn pendant_texts_follow_the_interface_language() {
     crate::i18n::set_language("nb");
     assert_eq!(PendantStatus::Off.text(), "Av");
     assert_eq!(PendantStatus::Looking.text(), "Ser etter mottakeren");
-    assert_eq!(PendantStatus::Connected("XHC WHB04B".into()).text(), "Tilkoblet: XHC WHB04B");
+    assert_eq!(PendantStatus::Connected("XHC pendant 10ce:eba0".into()).text(), "Tilkoblet: XHC pendant 10ce:eba0");
     assert_eq!(PendantStatus::Unavailable(PendantError::NotFound).text(), "Ikke tilgjengelig: ingen mottaker for håndkontrollen er satt inn");
     let denied = PendantStatus::Unavailable(PendantError::PermissionDenied { path: "/dev/hidraw3".into() }).text();
     assert_eq!(denied, "Ikke tilgjengelig: ingen tillatelse til å åpne mottakeren for håndkontrollen (/dev/hidraw3)");
@@ -527,7 +527,7 @@ fn pendant_texts_follow_the_interface_language() {
     ] {
         assert_eq!(PendantStatus::Unavailable(e.clone()).text(), format!("Not available: {e}"));
     }
-    assert_eq!(PendantStatus::Connected("XHC WHB04B".into()).text(), "Connected: XHC WHB04B");
+    assert_eq!(PendantStatus::Connected("XHC pendant 10ce:eba0".into()).text(), "Connected: XHC pendant 10ce:eba0");
     assert!(pendant_ui::permission_message().starts_with("The pendant receiver is plugged in, but this user may not open it."));
 }
 

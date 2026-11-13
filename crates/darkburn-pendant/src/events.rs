@@ -91,7 +91,7 @@ mod tests {
     fn press_and_release() {
         let mut t = KeyTracker::new();
         assert_eq!(feed(&mut t, [0x04, 0x10, 0x08, 0x00, 0x00, 0x08]), vec![KeyDown(Key::Start)]);
-        // The same set again (a repeat or the idle tick while held) gives nothing.
+        // The same set again (a repeated report) gives nothing.
         assert_eq!(feed(&mut t, [0x04, 0x10, 0x08, 0x00, 0x00, 0x08]), vec![]);
         assert_eq!(feed(&mut t, [0x04, 0x10, 0x00, 0x00, 0x00, 0x10]), vec![KeyUp(Key::Start)]);
         assert_eq!(feed(&mut t, [0x04, 0x10, 0x00, 0x00, 0x00, 0x10]), vec![]);

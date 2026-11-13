@@ -28,3 +28,23 @@ ignore-dev-dependencies = true
 ignore-build-dependencies = true
 workarounds = ["ring"]
 targets = ["x86_64-pc-windows-msvc"]
+
+# hidapi is MIT, but on macOS it compiles the HIDAPI C library it bundles (etc/hidapi, version
+# 0.15.0) into the program. That library is offered under GPL v3, a BSD-style licence or the
+# original HIDAPI licence, at the user's choice; DarkBurn takes the BSD-style licence (see
+# ATTRIBUTION.md). The list names both, with the C library's own BSD text, on every target:
+# cargo about has no per-target setting, and on Linux and Windows no C code of it is built.
+# The checksums are SHA-256 of the files in hidapi 2.6.7; a new hidapi version that changes
+# either file stops cargo about until they are checked again.
+[hidapi.clarify]
+license = "MIT AND BSD-3-Clause"
+
+[[hidapi.clarify.files]]
+path = "LICENSE.txt"
+license = "MIT"
+checksum = "778d971f6152990cee1644e7aadcd51a68050dd73f76463c5a9c1863ca495d73"
+
+[[hidapi.clarify.files]]
+path = "etc/hidapi/LICENSE-bsd.txt"
+license = "BSD-3-Clause"
+checksum = "30eb1bef29b46f8ba7ab8b416035dbd93cb034a45481dd97815b944284582cd2"

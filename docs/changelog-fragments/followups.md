@@ -1,0 +1,1 @@
+- Fix: the licence list in the Mac download now has the licence of the code that talks to the wireless pendant

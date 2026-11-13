@@ -1,8 +1,8 @@
 //! The poll thread: opens the receiver, reads key reports, sends LED changes, and opens the
 //! receiver again after it is unplugged.
 //!
-//! LED messages are queued by the receiver and the pendant takes one per wake (a key press, or
-//! its own wake every few seconds). So the thread sends only when the wanted LED state differs
+//! LED messages are queued by the receiver and the pendant takes one each time it wakes, as at
+//! a key press. So the thread sends only when the wanted LED state differs
 //! from what it last sent, and never more often than [`PollOptions::led_min_gap`]: a burst of
 //! changes ends up as one message with the last state.
 //!

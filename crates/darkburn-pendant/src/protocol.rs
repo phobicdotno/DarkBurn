@@ -9,13 +9,11 @@
 
 use std::fmt;
 
-/// USB vendor id of the receiver (Chengdu XHC).
+/// USB vendor id of the receiver.
 pub const VENDOR_ID: u16 = 0x10ce;
 
-/// The receiver ids DarkBurn opens. XHC makes about twenty receivers in the range
-/// `0xeb61..=0xeba1` that may speak the same reports, but only `0xeba0` (the orange MLASER
-/// pendant, model PHB02) has been checked on a real device. Add others here only after they are
-/// checked.
+/// The receiver ids DarkBurn opens: only `0xeba0`, the one receiver checked on a real device.
+/// Another receiver is added here only after it is checked on a real device.
 pub const PRODUCT_IDS: &[u16] = &[0xeba0];
 
 /// The vendor-defined HID usage page the receiver reports on.

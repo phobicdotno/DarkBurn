@@ -754,7 +754,7 @@ mod tests {
     fn holes_stay_with_their_outline_and_open_lines_stand_alone() {
         // Counter-clockwise (Y up) when `ccw`, else clockwise.
         let rect = |r: Rect, ccw: bool| {
-            let mut corners = vec![(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)];
+            let mut corners = [(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)];
             if !ccw {
                 corners.reverse();
             }

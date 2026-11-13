@@ -203,6 +203,13 @@ fn images(a: &DarkBurn) -> usize {
     a.editor.doc.iter().filter(|s| matches!(s.kind, darkburn_core::ShapeKind::Image(_))).count()
 }
 
+/// The bytes of the one picture in the document.
+fn picture(a: &DarkBurn) -> Vec<u8> {
+    let d = &a.editor.doc;
+    let key = d.iter().find_map(|s| if let darkburn_core::ShapeKind::Image(i) = &s.kind { Some(i.image.clone()) } else { None }).expect("a picture");
+    d.images.get(&key).expect("its image data").bytes.to_vec()
+}
+
 fn paths(a: &DarkBurn) -> usize {
     a.editor.doc.iter().filter(|s| !matches!(s.kind, darkburn_core::ShapeKind::Image(_))).count()
 }
@@ -241,11 +248,11 @@ fn trace_from_the_camera_can_keep_the_picture_and_capture_again() {
     run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
     crate::capture_trace::open(&mut a).unwrap();
     let mut d = a.images.trace.take().unwrap();
-    let first = d.ids[0];
+    let first = picture(&a);
     crate::capture_trace::again(&mut a, &mut d).unwrap();
-    assert_ne!(d.ids[0], first, "a new picture");
-    assert!(a.editor.doc.get(first).is_none(), "in place of the old one");
-    assert_eq!(images(&a), 1);
+    assert_ne!(picture(&a), first, "a new picture");
+    assert_eq!(images(&a), 1, "in place of the old one");
+    assert!(a.editor.doc.get(d.ids[0]).is_some(), "the window is on the new picture");
     d.args.delete_image = false;
     crate::capture_trace::finish(&mut a, &d).unwrap();
     assert_eq!((images(&a), paths(&a)), (1, 1), "picture and paths");
@@ -284,11 +291,10 @@ fn the_camera_panel_traces_a_fresh_picture() {
 
     click_beside(&mut g, "Update overlay", "Trace");
     g.frames(3);
-    let first = g.app().images.trace.as_ref().unwrap().ids[0];
+    let first = picture(&g.app());
     g.click_label("Capture again");
     g.frames(3);
-    let now = g.app().images.trace.as_ref().unwrap().ids[0];
-    assert_ne!(now, first, "Capture again took a new picture");
+    assert_ne!(picture(&g.app()), first, "Capture again took a new picture");
     assert_eq!(images(&g.app()), 1);
     g.click_label("OK");
     g.frames(3);

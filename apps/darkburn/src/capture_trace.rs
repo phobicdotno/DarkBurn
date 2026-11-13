@@ -38,8 +38,16 @@ impl Capture {
     }
 }
 
-/// Take a picture and put it on the bed as an image shape.
+/// Take a picture and put it on the bed as an image shape. A running camera is asked for a new
+/// picture now rather than the one the viewfinder last showed.
 fn take_picture(app: &mut DarkBurn) -> Result<ShapeId, String> {
+    if app.vision.live
+        && let Some(src) = app.vision.source.as_mut()
+    {
+        let img = src.grab().map_err(|e| e.to_string())?;
+        app.vision.raw = Some(img);
+        app.vision.frame_gen += 1;
+    }
     if app.vision.source.is_some() || app.vision.raw.is_some() {
         crate::vision_cmds::update_overlay(app)?;
     }

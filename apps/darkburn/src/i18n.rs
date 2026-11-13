@@ -424,6 +424,55 @@ mod tests {
         assert!(!locale("fr")["help.hotkeys.p1"].contains("reprendre"));
     }
 
+    /// The laser panel's Start button is not translated yet, so the setting that names it says
+    /// "Start" in every language; a translated word would point at a button that is not there.
+    #[test]
+    fn the_ignore_start_setting_names_the_button_as_it_reads() {
+        for (code, text) in crate::languages::files() {
+            let t: BTreeMap<String, String> = serde_json::from_str(text).unwrap();
+            if let Some(label) = t.get("settings.ignore_start") {
+                assert!(label.contains("Start"), "{code}: {label:?}");
+            }
+        }
+    }
+
+    /// One English term keeps one word throughout a Spanish or Portuguese file (see the
+    /// glossary): Width, Height, Reset and a backup copy of a file. A backup path, the outline
+    /// an image keeps, is a sense of its own.
+    #[test]
+    fn spanish_and_portuguese_use_one_word_per_term() {
+        let width = ["settings.width", "settings.capture_width", "cmd.arrange.same_width"];
+        let height = ["settings.height", "settings.capture_height", "settings.font_height", "cmd.arrange.same_height"];
+        let reset = ["cmd.laser.pnc_reset", "cmd.window.reset_layout", "hotkeys.reset_all", "settings.reset_all"];
+        let backup = ["cmd.file.prefs_backup", "library.save_tip"];
+        let path = ["cmd.edit.image_remove_backup"];
+        let words: [(&str, [&str; 5]); 3] = [
+            ("es-ES", ["ancho", "alto", "restablecer", "copia de seguridad", "trazado de respaldo"]),
+            ("es-LA", ["ancho", "alto", "restablecer", "respaldo", "trazado de respaldo"]),
+            ("pt", ["largura", "altura", "restaurar", "backup", "caminho de backup"]),
+        ];
+        let mut bad = Vec::new();
+        for (code, word) in words {
+            let t = locale(code);
+            for (keys, w) in [(&width[..], word[0]), (&height[..], word[1]), (&reset[..], word[2]), (&backup[..], word[3]), (&path[..], word[4])] {
+                for key in keys {
+                    let text = &t[*key];
+                    // "alto" must not match inside "altura": compare whole words.
+                    let lower = text.to_lowercase();
+                    let found = lower.match_indices(w).any(|(i, _)| {
+                        let before = lower[..i].chars().next_back().is_none_or(|c| !c.is_alphabetic());
+                        let after = lower[i + w.len()..].chars().next().is_none_or(|c| !c.is_alphabetic());
+                        before && after
+                    });
+                    if !found {
+                        bad.push(format!("{code} {key}: {text:?} lacks {w:?}"));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
     #[test]
     fn translated_text_is_used_and_english_is_the_fallback() {
         // Each test thread has its own language (see `ACTIVE`), so switching it here does not

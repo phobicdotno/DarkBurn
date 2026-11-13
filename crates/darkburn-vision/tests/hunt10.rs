@@ -65,3 +65,14 @@ fn calibration_from_untilted_identical_views_is_refused() {
         Ok(res) => panic!("accepted: {:?} rms {}", res.model, res.rms_px),
     }
 }
+
+/// Print and cut, full affine: three marks measured on one line fit "exactly" with a map that squashes
+/// the whole design flat onto that line. That is a mis-measure and must be refused, not cut.
+#[test]
+fn print_and_cut_full_affine_with_measured_marks_on_one_line_is_refused() {
+    use darkburn_vision::printcut::{PnCError, PnCMode, fit_registration};
+    let design = [Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(0.0, 100.0)];
+    let measured = [Point::new(10.0, 10.0), Point::new(110.0, 10.0), Point::new(60.0, 10.0)];
+    let r = fit_registration(&design, &measured, PnCMode::FullAffine);
+    assert_eq!(r.err(), Some(PnCError::Degenerate));
+}

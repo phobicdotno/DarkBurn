@@ -154,7 +154,8 @@ call.
 - Writing files (`file.save`, `file.export`, `job.save_gcode`, ...) is allowed unless the user turned
   "Allow file writes" off. The file commands take a `path`; no dialog opens for an agent.
 - You cannot change these switches: `settings.set` refuses `mcp.*`, and preferences imported from a
-  file never carry them in.
+  file never carry them in. The same goes for the wireless pendant (`opts.pendant`): only the user
+  switches it on or off, in the Settings window.
 - Every call is in the audit log (`events`, kind `audit`) and in the Settings page.
 
 ## No window

@@ -115,7 +115,8 @@ pub struct Options {
     /// Serial ports DarkBurn never lists, one per entry.
     pub excluded_ports: Vec<String>,
     /// Use the wireless handheld pendant (XHC receiver, USB 10ce:eba0). Off until the person at
-    /// this computer turns it on; a settings file or shared defaults never turn it on.
+    /// this computer turns it on in the Settings window; a settings file, shared defaults, a
+    /// command (`setting.set`) or an agent (`settings.set`) never change it.
     pub pendant: bool,
     // Output (SET-36); the other import and export settings are in formats.rs
     pub output_tolerance: f64,

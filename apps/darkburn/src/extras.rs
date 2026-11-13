@@ -286,8 +286,15 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
     })
 }
 
+/// What a command gets that tries to switch the pendant: only the person at this computer does
+/// that, in the Settings window, because it opens a USB device and makes its keys live.
+pub const PENDANT_ONLY_BY_THE_USER: &str = "the pendant can only be switched on or off by the user in DarkBurn's Settings window";
+
 /// Set any field of the options by name (the `setting.set` command falls back to this).
 pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), String> {
+    if key == "pendant" {
+        return Err(PENDANT_ONLY_BY_THE_USER.into());
+    }
     let mut all = serde_json::to_value(&app.prefs.opts).map_err(|e| e.to_string())?;
     let field = all.get_mut(key).ok_or_else(|| format!("unknown setting {key}"))?;
     if std::mem::discriminant(field) != std::mem::discriminant(value) && !(field.is_number() && value.is_number()) {
@@ -296,6 +303,8 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
     *field = value.clone();
     let mut new: options::Options = serde_json::from_value(all).map_err(|e| format!("{key}: {e}"))?;
     new.sanitise();
+    // Whatever name it came under, no command changes the pendant switch.
+    new.pendant = app.prefs.opts.pendant;
     app.prefs.opts = new;
     if key == "show_rotary_toggles" {
         // The rotary and cylinder toggles are the Modes toolbar.

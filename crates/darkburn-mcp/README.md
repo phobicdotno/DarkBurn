@@ -40,7 +40,7 @@ is always denied there), `--version`.
 | `list_commands`, `describe_command` | The catalog (filter, prefix, panel, compact, limit) and one command's schemas |
 | `execute`, `batch` | Run any command / several in order, checked first, optionally all-or-nothing |
 | `inspect_design`, `inspect_ui` | Shapes (stable ids), layers (index or name), selection, cut settings; panels, dialogs |
-| `get_setting`, `set_setting`, `list_settings` | Settings |
+| `get_setting`, `set_setting`, `list_settings` | Settings. The AI-agent switches (`mcp.*`) and the pendant switch (`opts.pendant`) can be read but not set: only the user changes them, in the Settings window |
 | `new_design`, `open`, `save`, `import`, `export`, `undo`, `redo` | Shortcuts for `file.*` / `edit.*` commands |
 | `screenshot` | PNG of the window or a region |
 | `measure` | Bounding boxes, lengths, areas, estimated job time |

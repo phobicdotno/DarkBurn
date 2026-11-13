@@ -507,6 +507,36 @@ fn leds_follow_the_machine() {
     assert_eq!(sent[0][4], 0);
 }
 
+/// Only the person at the computer switches the pendant, in the Settings window: no command
+/// does, and no agent.
+#[test]
+fn no_command_and_no_agent_switches_the_pendant() {
+    let emu = EmulatorHandle::new();
+    let (mut a, made) = app_with(&emu);
+    let ctx = egui::Context::default();
+    // The command a script or a hotkey runs, by the option's name ...
+    let e = run(&mut a, "setting.set", json!({ "key": "pendant", "value": true })).unwrap_err();
+    assert!(e.contains("only be switched on or off by the user"), "{e}");
+    assert!(crate::extras::set_option(&mut a, "pendant", &json!(true)).is_err());
+    // ... and the agent's own, under both of its names.
+    for key in ["pendant", "opts.pendant"] {
+        let e = crate::mcp_inspect::set_setting(&mut a, key, &json!(true)).unwrap_err();
+        assert!(e.contains("only be switched on or off by the user"), "{key}: {e}");
+    }
+    assert!(!a.prefs.opts.pendant);
+    settle(&ctx, &mut a);
+    assert_eq!((made.load(Ordering::SeqCst), emu.connects()), (0, 0), "the receiver was opened without the user's switch");
+    // Other settings still go through, and they leave the switch as the user set it.
+    a.prefs.opts.pendant = true;
+    run(&mut a, "setting.set", json!({ "key": "sound_done", "value": true })).unwrap();
+    crate::mcp_inspect::set_setting(&mut a, "opts.snap_grid", &json!(false)).unwrap();
+    assert!(a.prefs.opts.pendant && a.prefs.opts.sound_done && !a.prefs.opts.snap_grid);
+    // Nor can an agent take the operator's Stop key away by switching it off.
+    assert!(crate::mcp_inspect::set_setting(&mut a, "opts.pendant", &json!(false)).is_err());
+    assert!(run(&mut a, "setting.set", json!({ "key": "pendant", "value": false })).is_err());
+    assert!(a.prefs.opts.pendant);
+}
+
 #[test]
 fn a_settings_file_never_turns_the_pendant_on() {
     let dir = std::env::temp_dir().join(format!("darkburn-pendant-prefs-{}", std::process::id()));

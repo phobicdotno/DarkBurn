@@ -132,3 +132,35 @@ fn an_offset_of_absurd_distance_gives_nothing_and_does_not_crash() {
     assert_eq!(r.outward.len(), 1);
     assert_eq!(offset_open(&open, 1e6, Join::Round, Cap::Round, 0.01).len(), 1);
 }
+
+/// A boolean against hundreds of cutting shapes stacked on one spot (Duplicate, then Align
+/// centres) worked through every crossing of every cutter at once: 400 cutters took about 12 s
+/// and 830 about two minutes in a test build (seed 7000 of the document monkey), with the app
+/// frozen. The cutters are merged first, two by two, so each step stays small.
+#[test]
+fn a_difference_with_hundreds_of_stacked_cutters_is_quick() {
+    use darkburn_geom::FillRule;
+    use darkburn_geom::boolean::{difference, union};
+    use darkburn_geom::kurbo::{BezPath, Point};
+    let polygon = |n: usize, r: f64, turn: f64| {
+        let mut p = BezPath::new();
+        for i in 0..n {
+            let a = turn + i as f64 * std::f64::consts::TAU / n as f64;
+            let q = Point::new(100.0 + r * a.cos(), 100.0 + r * a.sin());
+            if i == 0 { p.move_to(q) } else { p.line_to(q) }
+        }
+        p.close_path();
+        p
+    };
+    let subject = vec![polygon(4, 60.0, 0.3)];
+    let cutters: Vec<BezPath> = (0..400).map(|i| polygon(24, 20.0, i as f64 * 0.0137)).collect();
+    let t = std::time::Instant::now();
+    let r = difference(&subject, &cutters, FillRule::EvenOdd, 0.01);
+    let took = t.elapsed();
+    // The square with a round hole: one piece, its area the square's less the cutters' union.
+    let area = |ps: &[BezPath]| ps.iter().map(darkburn_geom::kurbo::Shape::area).sum::<f64>().abs();
+    let hole = area(&union(&cutters, FillRule::EvenOdd, 0.01));
+    let square = area(&subject);
+    assert!((area(&r) - (square - hole)).abs() < 1.0, "area {} expected {}", area(&r), square - hole);
+    assert!(took < std::time::Duration::from_secs(3), "400 stacked cutters took {took:?}");
+}

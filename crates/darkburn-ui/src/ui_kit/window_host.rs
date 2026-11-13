@@ -630,6 +630,51 @@ mod tests {
     }
 
     #[test]
+    fn a_click_inside_a_floating_window_over_a_panel_area_does_not_dock_it() {
+        use egui::{Event, Modifiers, PointerButton};
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        let button = std::cell::Cell::new(Rect::NOTHING);
+        let clicks = std::cell::Cell::new(0);
+        let draw = |events: Vec<Event>| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                // A panel area under the whole window, as when a card is opened over the side panel.
+                dock_target(ui.ctx(), "RightTop", ui.ctx().content_rect());
+                super::super::Window::new(Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
+                    let r = ui.button("Press");
+                    button.set(r.rect);
+                    if r.clicked() {
+                        clicks.set(clicks.get() + 1);
+                    }
+                });
+            });
+            out.textures_delta.clear();
+        };
+        let press = |pos: Pos2, pressed: bool| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        for _ in 0..3 {
+            draw(vec![]);
+        }
+        let at = button.get().center();
+        assert!(button.get().is_positive(), "the window is drawn");
+        draw(vec![Event::PointerMoved(at), press(at, true)]);
+        draw(vec![press(at, false)]);
+        draw(vec![]);
+        assert_eq!(clicks.get(), 1);
+        assert_eq!(place(&ctx, "w").placement, Placement::Floating, "a click is not a drop");
+        assert_eq!(place(&ctx, "w").pos, None, "nor a move");
+
+        // Dragged a little way and dropped over the same area: now it docks there.
+        draw(vec![Event::PointerMoved(at), press(at, true)]);
+        for step in 1..=4 {
+            draw(vec![Event::PointerMoved(at + vec2(25.0 * step as f32, 0.0))]);
+        }
+        draw(vec![press(at + vec2(100.0, 0.0), false)]);
+        assert_eq!(clicks.get(), 1, "a drag is not a click");
+        assert_eq!(place(&ctx, "w").area(), Some("RightTop"));
+    }
+
+    #[test]
     fn a_native_window_keeps_its_opening_size_while_open() {
         let ctx = Context::default();
         update(&ctx, "a", |p| {

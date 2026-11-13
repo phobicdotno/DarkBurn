@@ -1622,20 +1622,34 @@ fn resize_grips(ui: &mut Ui, id: egui::Id, key: &str, margin: egui::Vec2) {
 
 /// While the floating card is dragged over a panel area, show that it will dock there; dropped
 /// there, it becomes a tab.
+///
+/// egui drags the card on any press that no widget on it takes as a drag, a click on one of its
+/// buttons included. Only a press that has really moved the card counts: a click on Close over a
+/// panel area must not dock it.
 fn drop_on_dock(ctx: &egui::Context, id: egui::Id, key: &str, stored: bool, response: &egui::Response) {
     use super::window_host as host;
+    let moving_id = id.with("db_moving");
+    let click_dist = ctx.options(|o| o.input_options.max_click_dist);
+    if response.dragged() && ctx.input(|i| i.pointer.total_drag_delta()).is_some_and(|d| d.length() > click_dist) {
+        ctx.data_mut(|d| d.insert_temp(moving_id, true));
+    }
+    let moved = ctx.data(|d| d.get_temp::<bool>(moving_id)).unwrap_or(false);
+    if !response.dragged() {
+        ctx.data_mut(|d| d.remove::<bool>(moving_id));
+    }
+    let dropped = response.drag_stopped() && moved;
     // Where the card is now (dragged, or kept on screen by egui) is where it opens next time. A
     // card never moved keeps opening where it asks to: its first frames are still finding their size.
-    if (stored || response.drag_stopped())
+    if (stored || dropped)
         && let Some(state) = egui::AreaState::load(ctx, id)
     {
         host::moved(ctx, key, state.left_top_pos());
     }
-    if !(response.dragged() || response.drag_stopped()) {
+    if !(moved && (response.dragged() || dropped)) {
         return;
     }
     let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| host::target_at(ctx, p)) else { return };
-    if response.drag_stopped() {
+    if dropped {
         host::update(ctx, key, |p| p.dock(&area));
         return;
     }

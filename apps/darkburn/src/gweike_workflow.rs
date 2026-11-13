@@ -423,6 +423,17 @@ fn stream_plan_with(
     for n in 0..max_steps {
         hook(link, n);
         let st = link.poll_status().map_err(lerr)?;
+        // The gate stops the stream on an alarm; an empty, idle queue then is not a finished run.
+        if let Some(fault) = &link.gate.machine_fault {
+            let mut why = mcc::registers::alarm_labels(st.alarm1(), st.alarm2());
+            if why.is_empty() {
+                why.push(fault.clone());
+            }
+            return Err(format!("the simulated card stopped the run on an alarm: {}", why.join("; ")));
+        }
+        if link.gate.queue_held() {
+            return Err("the simulated card stopped the run before it finished (an alarm or a stop)".into());
+        }
         let r = feeder.fill(st.fifo_frame_id(), st.fifo_space_margin(), 50);
         for (id, frame) in r.frames {
             link.write(&command::fifo_packed_frame(id, &frame).map_err(|e| format!("{e:?}"))?).map_err(lerr)?;

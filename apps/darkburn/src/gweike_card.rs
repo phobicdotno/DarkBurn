@@ -37,9 +37,6 @@ pub const DISSECT: Cmd = a(
 pub const STOP: Cmd = a("mcc.stop", "Stop the Gweike card simulator", "");
 pub const EMERGENCY_STOP: Cmd = a("mcc.emergency_stop", "Emergency stop the Gweike card simulator", "");
 
-/// The `mcc.*` commands, in menu order.
-pub const COMMANDS: [Cmd; 6] = [CONNECT, DISCONNECT, STATUS, DISSECT, STOP, EMERGENCY_STOP];
-
 /// Every `mcc.*` command but the dissector acts on the (simulated) card.
 pub fn is_hardware(id: &str) -> bool {
     id.starts_with("mcc.") && id != "mcc.dissect"
@@ -72,7 +69,10 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value) -> Result<Value, String> {
             let steps = link.disconnect();
             Ok(json!({ "ok": true, "stop_steps": steps }))
         }
-        "mcc.status" => status(card.link.as_mut().ok_or(NOT_CONNECTED)?),
+        "mcc.status" => {
+            let has_follower = card.report.as_ref().is_some_and(|r| r.system.has_follower());
+            status(card.link.as_mut().ok_or(NOT_CONNECTED)?, has_follower)
+        }
         "mcc.stop" => {
             let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
             let steps = link.stop_sequence(false);
@@ -113,14 +113,14 @@ fn connect(card: &mut CardState, a: &Value) -> Result<Value, String> {
     Ok(out)
 }
 
-fn status(link: &mut SimLink) -> Result<Value, String> {
+fn status(link: &mut SimLink, has_follower: bool) -> Result<Value, String> {
     let lerr = |e: mcc::sim::LinkError| format!("could not read the card: {e}");
     let st = link.poll_status().map_err(lerr)?;
     let axis_ro = link.read_axis_ro().map_err(lerr)?;
     let (a1, a2) = (st.alarm1(), st.alarm2());
     let alarms = registers::alarm_labels(a1, a2);
     let codes: Vec<Value> =
-        registers::alarm_codes(a1, a2, Some(&axis_ro.words)).into_iter().map(|c| json!({ "code": c.code, "label": c.label })).collect();
+        registers::alarm_codes(a1, a2, Some(axis_ro.words.as_slice())).into_iter().map(|c| json!({ "code": c.code, "label": c.label })).collect();
     let axis_faults: Vec<Value> = (0..registers::AXIS_SLOTS)
         .filter_map(|slot| {
             let names = registers::axis::fault_names(axis_ro.status(slot));
@@ -128,9 +128,10 @@ fn status(link: &mut SimLink) -> Result<Value, String> {
         })
         .collect();
     let state = registers::derive_machine_state(&st, &axis_ro.words);
-    let follower = match link.read_system() {
-        Ok(sys) if sys.has_follower() => link.read_follower().ok().map(|z| json!({ "state": format!("{:?}", z.state()), "alarms": z.alarm_names() })),
-        _ => None,
+    let follower = if has_follower {
+        link.read_follower().ok().map(|z| json!({ "state": format!("{:?}", z.state()), "alarms": z.alarm_names() }))
+    } else {
+        None
     };
     let fault = link.gate.machine_fault.clone();
     let held = link.gate.queue_held();

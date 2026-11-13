@@ -61,58 +61,70 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let mut action = None;
     host.show_edge(ui, panel, frame, |ui| {
         let r = ui.max_rect();
+        // Dragging the strip moves the palette [TB-25].
+        crate::toolbar_dock::grip(ui, "palette", "strip", r, crate::toolbar_dock::Dock::Home);
         let gap = 3.0;
         let size = ((r.width() - 16.0 - gap * (LAYER_COUNT as f32 - 1.0)) / LAYER_COUNT as f32).clamp(14.0, 22.0);
         let mut x = r.left() + 8.0;
-        let current = app.editor.current_layer;
         let used = app.editor.doc.used_layers();
         for i in 0..LAYER_COUNT {
             let br = Rect::from_center_size(pos2(x + size / 2.0, r.center().y), vec2(size, size));
             x += size + gap;
-            let tool = is_tool_layer(i);
-            let label = layer_label(i);
-            let fill = if tool { t.control_fill } else { layer_colour(i) };
-            let resp = ui.interact(br, ui.scope_id().with(("layer", i)), Sense::click());
-            let p = ui.painter();
-            let on = i == current;
-            let border = if on {
-                Stroke::new(2.0, t.accent)
-            } else if resp.hovered() {
-                Stroke::new(1.5, t.text)
-            } else {
-                Stroke::new(1.0, t.border)
-            };
-            p.rect(br, t.radius_sm, fill, border, egui::StrokeKind::Inside);
-            if on {
-                // A notch under the current layer.
-                p.hline(br.x_range(), br.bottom() + 2.5, Stroke::new(2.0, t.accent));
-            }
-            if used.contains(&i) {
-                p.circle_filled(pos2(br.right() - 3.5, br.top() + 3.5), 1.8, ink_on(fill));
-            }
-            if tool || app.prefs.palette_labels {
-                let ink = if tool { t.text_dim } else { ink_on(fill) };
-                p.text(br.center(), Align2::CENTER_CENTER, label.clone(), FontId::proportional(t.font_micro), ink);
-            }
-            solidcraft_ui_registry::publish_target(&format!("palette:{label}"), br);
-            let name = &app.editor.doc.layer(i).name;
-            let tip =
-                format!("Layer {label} ({name}). Click: put the selection on this layer. Shift+click: select its shapes. Right-click: flash them.");
-            if resp.hovered() {
-                app.hint = Some(tip.clone());
-            }
-            let resp = resp.backing_on_hover_text(tip);
-            if resp.secondary_clicked() {
-                action = Some((i, PaletteClick::Flash));
-            } else if resp.clicked() {
-                let shift = ui.input(|inp| inp.modifiers.shift);
-                action = Some((i, if shift { PaletteClick::SelectShapes } else { PaletteClick::Assign }));
+            if let Some(click) = swatch(ui, app, i, br, &used) {
+                action = Some((i, click));
             }
         }
     });
     if let Some((layer, click)) = action {
         let now = ui.input(|i| i.time);
         apply(app, layer, click, now);
+    }
+}
+
+/// The button of layer `i` at `br` (`used`: the layers with shapes on them), and what a click on
+/// it asks for.
+pub fn swatch(ui: &mut Ui, app: &mut DarkBurn, i: usize, br: Rect, used: &[usize]) -> Option<PaletteClick> {
+    let t = Tokens::get();
+    let current = app.editor.current_layer;
+    let tool = is_tool_layer(i);
+    let label = layer_label(i);
+    let fill = if tool { t.control_fill } else { layer_colour(i) };
+    let resp = ui.interact(br, ui.scope_id().with(("layer", i)), Sense::click());
+    let p = ui.painter();
+    let on = i == current;
+    let border = if on {
+        Stroke::new(2.0, t.accent)
+    } else if resp.hovered() {
+        Stroke::new(1.5, t.text)
+    } else {
+        Stroke::new(1.0, t.border)
+    };
+    p.rect(br, t.radius_sm, fill, border, egui::StrokeKind::Inside);
+    if on {
+        // A notch under the current layer.
+        p.hline(br.x_range(), br.bottom() + 2.5, Stroke::new(2.0, t.accent));
+    }
+    if used.contains(&i) {
+        p.circle_filled(pos2(br.right() - 3.5, br.top() + 3.5), 1.8, ink_on(fill));
+    }
+    if tool || app.prefs.palette_labels {
+        let ink = if tool { t.text_dim } else { ink_on(fill) };
+        p.text(br.center(), Align2::CENTER_CENTER, label.clone(), FontId::proportional(t.font_micro), ink);
+    }
+    solidcraft_ui_registry::publish_target(&format!("palette:{label}"), br);
+    let name = &app.editor.doc.layer(i).name;
+    let tip = format!("Layer {label} ({name}). Click: put the selection on this layer. Shift+click: select its shapes. Right-click: flash them.");
+    if resp.hovered() {
+        app.hint = Some(tip.clone());
+    }
+    let resp = resp.backing_on_hover_text(tip);
+    if resp.secondary_clicked() {
+        Some(PaletteClick::Flash)
+    } else if resp.clicked() {
+        let shift = ui.input(|inp| inp.modifiers.shift);
+        Some(if shift { PaletteClick::SelectShapes } else { PaletteClick::Assign })
+    } else {
+        None
     }
 }
 

@@ -9,10 +9,15 @@ use egui::{Context, Id, Key, LayerId, Modifiers, Order};
 /// The status toast is drawn above the windows but is not one: it never takes the key.
 pub const TOAST: &str = "shape_status_toast";
 
+/// The layer with this id is drawn over the windows or among them but is not a window: the
+/// status toast, and a floating toolbar [TB-25]. It never takes the key.
+pub fn not_a_window(id: Id) -> bool {
+    id == Id::unique(TOAST) || crate::toolbar_dock::is_floating_toolbar(id)
+}
+
 fn window_layers(ctx: &Context) -> Vec<LayerId> {
-    let toast = Id::unique(TOAST);
     ctx.memory(|m| {
-        m.areas().visible_layer_ids().into_iter().filter(|l| matches!(l.order, Order::Middle | Order::Foreground) && l.id != toast).collect()
+        m.areas().visible_layer_ids().into_iter().filter(|l| matches!(l.order, Order::Middle | Order::Foreground) && !not_a_window(l.id)).collect()
     })
 }
 
@@ -21,11 +26,18 @@ pub fn window_open(ctx: &Context) -> bool {
     !window_layers(ctx).is_empty()
 }
 
+/// The window with this id is the only one open (no other dialog, menu or drop-down list is
+/// open above or beside it), so Escape is its own. For a `ui_kit::Window` without a footer,
+/// which closes on Escape itself when this is so (`escape_here`).
+pub fn only_window(ctx: &Context, window: Id) -> bool {
+    window_layers(ctx).iter().all(|l| l.id == window)
+}
+
 /// Escape was pressed and belongs to the window with this id: nothing else (another dialog, a
 /// menu, a drop-down list) is open above or beside it. The key is used up, so nothing later in
 /// the frame acts on it too.
 pub fn closes(ctx: &Context, window: Id) -> bool {
-    window_layers(ctx).iter().all(|l| l.id == window) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+    only_window(ctx, window) && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
 }
 
 #[cfg(test)]

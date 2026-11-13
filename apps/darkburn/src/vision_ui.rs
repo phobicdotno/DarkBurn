@@ -363,23 +363,28 @@ fn take_pick(ctx: &Context, app: &mut DarkBurn) {
     d.pick = None;
 }
 
+/// A setup window the user keeps open while working with the camera or the machine, so it can
+/// also be docked as a tab or put in a window of its own, and updates live wherever it is.
+/// Returns false when it was closed (its close button, Escape, or its tab).
 fn window(ctx: &Context, title: &str, width: f32, add: impl FnOnce(&mut Ui)) -> bool {
-    let mut open = true;
     let screen = ctx.content_rect();
     let id = Id::unique(("vision_window", title));
-    egui::Window::new(title)
-        .id(id)
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_pos(pos2((screen.right() - width - 330.0).max(60.0), 100.0))
-        .default_width(width)
-        .show(ctx, add);
-    // Escape closes the window, as it does for every other window in the app.
-    if crate::escape::closes(ctx, id) {
-        open = false;
-    }
-    open
+    let key = dock_key(title);
+    let (closed, _) = ui_kit::Window::new(id, "settings", title)
+        .dockable(&key)
+        .body_width(width)
+        .placed(egui::Align2::LEFT_TOP, pos2((screen.right() - width - 330.0).max(60.0), 100.0))
+        .actions("", "", None)
+        // Escape closes the window, as it does for every other window in the app.
+        .escape_here(crate::escape::only_window(ctx, id))
+        .show(ctx, true, add);
+    !closed
+}
+
+/// The stored-layout key of the camera or machine setup window titled `title`.
+pub fn dock_key(title: &str) -> String {
+    let slug: String = title.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+    format!("db_vision_{slug}")
 }
 
 fn close(app: &mut DarkBurn) {

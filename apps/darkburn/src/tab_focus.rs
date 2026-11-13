@@ -19,11 +19,10 @@ fn top_window(ctx: &Context) -> Option<(LayerId, Vec<LayerId>)> {
 }
 
 fn top_window_in(m: &egui::Memory) -> Option<(LayerId, Vec<LayerId>)> {
-    let toast = Id::unique(crate::escape::TOAST);
     let visible = m.areas().visible_layer_ids();
     // Back to front: the last one is on top.
     let layers: Vec<LayerId> = m.layer_ids().collect();
-    let at = layers.iter().rposition(|l| l.order == Order::Middle && l.id != toast && visible.contains(l))?;
+    let at = layers.iter().rposition(|l| l.order == Order::Middle && !crate::escape::not_a_window(l.id) && visible.contains(l))?;
     Some((layers[at], layers[..at].to_vec()))
 }
 

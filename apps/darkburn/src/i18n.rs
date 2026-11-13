@@ -160,6 +160,7 @@ mod tests {
         ("updates.rs", include_str!("updates.rs")),
         ("cuts_panel.rs", include_str!("cuts_panel.rs")),
         ("pendant_ui.rs", include_str!("pendant_ui.rs")),
+        ("toolbar_dock.rs", include_str!("toolbar_dock.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

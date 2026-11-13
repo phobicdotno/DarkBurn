@@ -60,6 +60,8 @@ pub struct Prefs {
     pub toolbars: BTreeMap<String, bool>,
     /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
     pub toolbar_order: Vec<String>,
+    /// Where each toolbar was moved to (an edge or floating); none: its usual place [TB-25].
+    pub toolbar_places: crate::toolbar_dock::ToolbarPlaces,
     pub ribbon_tab: String,
     pub status_bar: bool,
     pub view: View,
@@ -129,6 +131,7 @@ impl Default for Prefs {
             windows: Default::default(),
             toolbars,
             toolbar_order: Vec::new(),
+            toolbar_places: BTreeMap::new(),
             ribbon_tab: "home".into(),
             status_bar: true,
             view: View::default(),
@@ -261,6 +264,7 @@ impl Prefs {
         if !self.toolbar_order.is_empty() {
             self.toolbar_order = self.full_toolbar_order();
         }
+        crate::toolbar_dock::sanitise(&mut self.toolbar_places);
         if !(self.view.zoom.is_finite() && self.view.zoom > 0.0 && self.view.offset.is_finite()) {
             self.view = View::default();
         }
@@ -275,6 +279,7 @@ impl Prefs {
         self.windows = d.windows;
         self.toolbars = d.toolbars;
         self.toolbar_order = Vec::new();
+        self.toolbar_places = d.toolbar_places;
         self.ribbon_tab = d.ribbon_tab;
         self.status_bar = true;
     }

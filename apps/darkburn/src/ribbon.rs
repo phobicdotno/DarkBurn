@@ -128,7 +128,75 @@ pub fn command_ids() -> Vec<&'static str> {
 }
 
 fn tab_visible(prefs: &Prefs, groups: &[Group]) -> bool {
-    groups.iter().any(|g| prefs.toolbar(g.toolbar))
+    groups.iter().any(|g| in_ribbon(prefs, g.toolbar))
+}
+
+/// Toolbar `bar` is shown, in the ribbon (not moved to an edge or floating) [TB-25].
+fn in_ribbon(prefs: &Prefs, bar: &str) -> bool {
+    prefs.toolbar(bar) && crate::toolbar_dock::at_home(prefs, bar)
+}
+
+/// One thing of a ribbon toolbar shown away from the ribbon.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BarItem {
+    /// A command button.
+    Cmd(&'static str),
+    /// A wide live control, drawn by [`draw_wide`].
+    Wide(&'static str),
+}
+
+/// The height [`draw_wide`] draws a wide control at.
+pub const WIDE_HEIGHT: f32 = BUTTON_HEIGHT;
+
+/// The groups of toolbar `bar` in the ribbon, each as its buttons and live controls (the static
+/// forms that are not wired yet stay in the ribbon).
+pub fn bar_groups(bar: &str) -> Vec<Vec<BarItem>> {
+    TABS.iter()
+        .flat_map(|(_, _, groups)| groups.iter())
+        .filter(|g| g.toolbar == bar)
+        .map(|g| {
+            g.items
+                .iter()
+                .filter_map(|i| match i {
+                    Cmd(id) => Some(BarItem::Cmd(id)),
+                    Numeric => Some(BarItem::Wide("numeric")),
+                    Live(kind) => Some(BarItem::Wide(kind)),
+                    Fields(..) | Checks(_) | Choices(_) => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|g| !g.is_empty())
+        .collect()
+}
+
+/// How wide live control `kind` is, before it has been drawn once.
+pub fn wide_width(kind: &'static str) -> f32 {
+    match kind {
+        "numeric" => crate::numeric_edits::WIDTH,
+        "text_font" => 210.0,
+        "text_style" => 250.0,
+        "text_spacing" | "text_align" => 150.0,
+        "text_variable" => 190.0,
+        _ => item_width_static(Live(kind)),
+    }
+}
+
+fn item_width_static(item: Item) -> f32 {
+    match item {
+        Live("dock_checks") => 140.0,
+        Live("dock_padding") => 128.0,
+        _ => 124.0,
+    }
+}
+
+/// Draw live control `kind` with its top-left corner at `at`, as in the ribbon; returns its
+/// right edge.
+pub fn draw_wide(ui: &mut Ui, kind: &'static str, at: egui::Pos2, app: &mut crate::shell::DarkBurn) -> f32 {
+    match kind {
+        "numeric" => crate::numeric_edits::show(ui, at, BUTTON_HEIGHT, app),
+        k if k.starts_with("text_") => crate::text_ui::ribbon_item(ui, k, at, BUTTON_HEIGHT, app),
+        k => crate::shape_ui::ribbon_item(ui, k, at, BUTTON_HEIGHT, app),
+    }
 }
 
 /// The ribbon, docked at the top under the application bar.
@@ -147,6 +215,7 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
     let frame = host.edge_frame(t.toolbar);
     let shown = host.show_edge(ui, panel, frame, |ui| {
         let r = frame.outer_rect(ui.max_rect());
+        crate::toolbar_dock::note_ribbon(ui.ctx(), r);
         // Tab row.
         let mut x = r.left() + 8.0;
         for (id, tab_label, _) in &tabs {
@@ -175,7 +244,7 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
             return;
         };
         let row = Rect::from_min_max(pos2(r.left(), r.top() + TAB_ROW_HEIGHT), pos2(r.right(), r.top() + TAB_ROW_HEIGHT + GROUP_HEIGHT));
-        let mut shown_groups: Vec<&Group> = groups.iter().filter(|g| app.prefs.toolbar(g.toolbar)).collect();
+        let mut shown_groups: Vec<&Group> = groups.iter().filter(|g| in_ribbon(&app.prefs, g.toolbar)).collect();
         // The user's toolbar order (stable: groups of one toolbar keep their order).
         shown_groups.sort_by_key(|g| app.prefs.toolbar_rank(g.toolbar));
         let avail = row.width() - 8.0;
@@ -193,6 +262,9 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
         let mut gx = row.left() + 4.0;
         for group in shown_groups {
             let start = gx;
+            // The group's caption moves its toolbar out of the ribbon [TB-25].
+            let handle = Rect::from_min_max(pos2(start, row.bottom() - CAPTION_HEIGHT), pos2(start + group_width(ui, group, compact), row.bottom()));
+            crate::toolbar_dock::grip(ui, group.toolbar, group.caption, handle, crate::toolbar_dock::Dock::Home);
             gx += GROUP_PAD;
             for item in group.items {
                 gx = match item {
@@ -235,9 +307,7 @@ fn item_width(ui: &Ui, item: Item, compact: bool) -> f32 {
         }
         Choices(_) => 170.0,
         Numeric => crate::numeric_edits::WIDTH,
-        Live("dock_checks") => 140.0,
-        Live("dock_padding") => 128.0,
-        Live(_) => 124.0,
+        Live(_) => item_width_static(item),
     }
 }
 
@@ -264,6 +334,7 @@ fn overflow_menu(ui: &mut Ui, row: Rect, hidden: &[&Group], clicked: &mut Option
         },
         |ui| {
             ui.set_min_width(ui_kit::LIST_W);
+            let mut movers: Vec<&str> = Vec::new();
             for g in hidden {
                 Menu::heading(ui, &crate::i18n::tr(&format!("ribbon.group.{}", g.caption), g.caption));
                 for item in g.items {
@@ -277,6 +348,11 @@ fn overflow_menu(ui: &mut Ui, row: Rect, hidden: &[&Group], clicked: &mut Option
                             *clicked = Some(cid.to_string());
                         }
                     }
+                }
+                // The toolbar's own menu, as on its caption, which is out of sight here [TB-25].
+                if !movers.contains(&g.toolbar) {
+                    movers.push(g.toolbar);
+                    crate::toolbar_dock::move_submenu(ui, g.toolbar);
                 }
             }
         },

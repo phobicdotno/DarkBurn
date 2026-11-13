@@ -272,6 +272,9 @@ impl DarkBurn {
             "window.reset_layout" => {
                 self.prefs.reset_layout();
                 ctx.memory_mut(|m| m.reset_areas());
+                // The Preview floats again at its first place and size.
+                self.job.preview.layout = self.job.preview.layout.wrapping_add(1);
+                self.job.preview.maximised = false;
                 self.view_cmd = Some(ViewCmd::ZoomPage);
             }
             other => {
@@ -393,17 +396,23 @@ impl DarkBurn {
         crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
+        // Toolbars moved out of their usual places [TB-25].
+        use crate::toolbar_dock::{self as bars, Dock as BarDock};
+        bars::edge(ui, self, BarDock::Top, &mut clicked);
         if self.prefs.status_bar {
             self.status_bar(ui);
         }
-        if self.prefs.toolbar("palette") {
+        if self.prefs.toolbar("palette") && bars::at_home(&self.prefs, "palette") {
             crate::palette::show(ui, self);
         }
+        bars::edge(ui, self, BarDock::Bottom, &mut clicked);
         self.dock(ui, Area::Bottom);
-        if self.prefs.toolbar("tools") {
+        if self.prefs.toolbar("tools") && bars::at_home(&self.prefs, "tools") {
             tools_column(ui, self.pan_tool, self.tool, &mut self.hint, &mut clicked);
         }
+        bars::edge(ui, self, BarDock::Left, &mut clicked);
         self.dock(ui, Area::Left);
+        bars::edge(ui, self, BarDock::Right, &mut clicked);
         self.right_docks(ui);
         let cmd = self.view_cmd.take();
         let frame = egui::Frame::NONE.fill(Tokens::get().viewport_bottom);
@@ -412,6 +421,7 @@ impl DarkBurn {
             cursor = canvas::show(ui, self, cmd).cursor;
         });
         self.cursor = cursor;
+        bars::floating(ui, self, &mut clicked);
         self.dialogs(ui.ctx());
         crate::extras::dialogs(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
@@ -426,6 +436,7 @@ impl DarkBurn {
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }
+        bars::apply_requests(ui.ctx(), self);
         if let Some(id) = clicked {
             self.run(&ui.ctx().clone(), &id);
         }
@@ -1167,6 +1178,8 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
     let frame = host.edge_frame(t.toolbar);
     host.show_edge(ui, panel, frame, |ui| {
         let r = ui.max_rect();
+        // Dragging the column moves it [TB-25].
+        crate::toolbar_dock::grip(ui, "tools", "column", r, crate::toolbar_dock::Dock::Home);
         let mut y = r.top() + 6.0;
         for id in TOOLS {
             let Some(c) = commands::find(id) else {

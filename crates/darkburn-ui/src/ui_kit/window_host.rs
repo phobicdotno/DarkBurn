@@ -50,6 +50,9 @@ pub struct WindowPlace {
     pub native_pos: Option<[f32; 2]>,
     /// Inner size of the native window.
     pub native_size: Option<[f32; 2]>,
+    /// Where its tab is among the windows docked in the same area, in the order they were
+    /// docked there: lower first.
+    pub tab: Option<u32>,
 }
 
 /// Every window's place, by the window's key.
@@ -199,6 +202,9 @@ struct State {
     native_input: bool,
     /// The texts of the header menu and the drop hint, in the app's language.
     texts: Option<WindowTexts>,
+    /// A window being dragged by its title bar or card: where the press began, and whether the
+    /// pointer has since gone further from there than a click may.
+    presses: BTreeMap<String, (Pos2, bool)>,
 }
 
 /// The kit's own texts for moving windows, which the app gives in its language
@@ -244,7 +250,7 @@ fn now(ctx: &Context) -> u64 {
 
 /// Once a frame, before any window is drawn: the app's stored places and the kit's agree
 /// afterwards. A change made in the UI goes to `places`; otherwise `places` (just loaded, or
-/// changed by the app) is what the kit uses.
+/// changed by the app, such as a layout reset) is what the kit uses.
 pub fn sync(ctx: &Context, places: &mut WindowPlaces) {
     with(ctx, |s| {
         if s.dirty {
@@ -252,6 +258,9 @@ pub fn sync(ctx: &Context, places: &mut WindowPlaces) {
             s.dirty = false;
         } else if s.places != *places {
             s.places = places.clone();
+            // A native window no longer meant to be one opens afresh when it is one again.
+            let detached: BTreeSet<String> = s.places.iter().filter(|(_, p)| p.placement == Placement::Detached).map(|(k, _)| k.clone()).collect();
+            s.opened.retain(|k, _| detached.contains(k));
         }
     });
 }
@@ -271,6 +280,9 @@ pub fn update(ctx: &Context, key: &str, change: impl FnOnce(&mut WindowPlace)) {
         if after != before {
             if let Some(area) = after.area().filter(|a| before.area() != Some(*a)) {
                 s.activate.insert(area.to_string(), key.to_string());
+                // Its tab goes after those already there.
+                let last = s.places.iter().filter(|(k, p)| k.as_str() != key && p.area() == Some(area)).filter_map(|(_, p)| p.tab).max();
+                after.tab = Some(last.map_or(0, |t| t.saturating_add(1)));
             }
             if after.placement != Placement::Detached {
                 s.opened.remove(key);
@@ -324,16 +336,28 @@ pub fn target_rect(ctx: &Context, area: &str) -> Option<Rect> {
     with(ctx, |s| s.targets.get(area).filter(|t| t.frame + 1 >= frame).map(|t| t.rect))
 }
 
-/// The windows docked in `area` that are open (shown this frame or the last), in key order.
+/// The windows docked in `area` that are open (shown this frame or the last), in the order
+/// they were docked there (the stored order, so it is the same after a restart).
 pub fn docked_tabs(ctx: &Context, area: &str) -> Vec<DockedTab> {
     let frame = now(ctx);
     with(ctx, |s| {
-        s.shown
+        let mut tabs: Vec<(u32, DockedTab)> = s
+            .shown
             .iter()
             .filter(|(k, shown)| shown.frame + 1 >= frame && s.places.get(*k).and_then(WindowPlace::area) == Some(area))
-            .map(|(k, shown)| DockedTab { key: k.clone(), title: shown.title.clone() })
-            .collect()
+            .map(|(k, shown)| (s.places.get(k).and_then(|p| p.tab).unwrap_or(0), DockedTab { key: k.clone(), title: shown.title.clone() }))
+            .collect();
+        // Stable: windows with the same place (stored before tabs had one) keep key order.
+        tabs.sort_by_key(|(tab, _)| *tab);
+        tabs.into_iter().map(|(_, t)| t).collect()
     })
+}
+
+/// Every window drawn through the kit as a dockable window this frame or the last, wherever it
+/// is: (key, title), in key order.
+pub fn open_windows(ctx: &Context) -> Vec<(String, String)> {
+    let frame = now(ctx);
+    with(ctx, |s| s.shown.iter().filter(|(_, shown)| shown.frame + 1 >= frame).map(|(k, shown)| (k.clone(), shown.title.clone())).collect())
 }
 
 /// The tab group of `area` has window `key` in front (none: a panel), with this body rectangle
@@ -452,12 +476,38 @@ pub(crate) fn area_on_screen(ctx: &Context, area: &str) -> bool {
 
 /// The size and position a native window opens with: what was stored when it opened (no size
 /// stored yet: `first_size`), kept the same while it is open so the system's own moves are not
-/// fought.
+/// fought. A stored position that is no longer on a screen near the main window (a monitor since
+/// unplugged) is left to the system, which opens the window where it can be seen; a stored size
+/// is kept to the monitor's.
 pub(crate) fn native_opening(ctx: &Context, key: &str, first_size: Vec2) -> ([f32; 2], Option<[f32; 2]>) {
+    let (main, monitor) = ctx.input(|i| (i.viewport().outer_rect, i.viewport().monitor_size));
     with(ctx, |s| {
         let stored = s.places.get(key).map(|p| (p.native_size, p.native_pos)).unwrap_or_default();
-        *s.opened.entry(key.to_string()).or_insert((stored.0.unwrap_or([first_size.x, first_size.y]), stored.1))
+        let size = stored.0.map(|v| match monitor.filter(|m| m.x > 0.0 && m.y > 0.0) {
+            Some(m) => clamp_size([v[0].min(m.x), v[1].min(m.y)]),
+            None => v,
+        });
+        let pos = stored.1.filter(|p| native_pos_reachable(main, monitor, *p));
+        *s.opened.entry(key.to_string()).or_insert((size.unwrap_or([first_size.x, first_size.y]), pos))
     })
+}
+
+/// Whether a native window's stored outer position `pos` is still where it can be seen: on the
+/// main window's monitor or on one beside it. The system does not say where its other monitors
+/// are, so "beside" is one monitor's width or height away from the main window. With the main
+/// window or its monitor unknown, the position is trusted.
+pub fn native_pos_reachable(main: Option<Rect>, monitor: Option<Vec2>, pos: [f32; 2]) -> bool {
+    if !finite(pos) {
+        return false;
+    }
+    match (main, monitor) {
+        (Some(main), Some(m)) if main.is_finite() && m.x > 0.0 && m.y > 0.0 => {
+            // The title bar must be reachable: the corner at least a little inside that room.
+            let room = Rect::from_min_max(main.min - m, main.max + m).shrink2(vec2(MIN_SIZE.x * 0.25, 8.0));
+            room.contains(Pos2::new(pos[0] + MIN_SIZE.x * 0.25, pos[1]))
+        }
+        _ => true,
+    }
 }
 
 /// The native window of `key` is now `size` (inner) at `pos` (outer, if known).
@@ -564,8 +614,6 @@ pub fn paint_drop_hint(ctx: &Context, rect: Rect) {
 /// The header button that moves the window: back into the main window, into a window of its
 /// own, or into a panel area as a tab.
 pub(crate) fn place_button(ui: &mut egui::Ui, rect: Rect, key: &str) {
-    let place = place(ui.ctx(), key);
-    let areas = areas(ui.ctx());
     let texts = texts(ui.ctx());
     let mut pick: Option<Placement> = None;
     super::Menu::button_with(
@@ -575,37 +623,105 @@ pub(crate) fn place_button(ui: &mut egui::Ui, rect: Rect, key: &str) {
             solidcraft_ui_registry::publish_target("dialog:place", response.rect);
             response
         },
-        |ui| {
-            ui.set_min_width(super::LIST_W);
-            if place.placement != Placement::Floating && super::MenuItem::new("window.float", &texts.float, "").show(ui).clicked() {
-                pick = Some(Placement::Floating);
-            }
-            if place.placement != Placement::Detached && super::MenuItem::new("window.detach", &texts.detach, "").show(ui).clicked() {
-                pick = Some(Placement::Detached);
-            }
-            if !areas.is_empty() {
-                super::Menu::separator(ui);
-                super::Menu::heading(ui, &texts.dock_as_tab);
-            }
-            for (area, label) in &areas {
-                if place.area() == Some(area.as_str()) {
-                    continue;
-                }
-                let id = format!("window.dock.{area}");
-                if super::MenuItem::new(&id, label, "").show(ui).clicked() {
-                    pick = Some(Placement::Docked(area.clone()));
-                }
-            }
-        },
+        |ui| pick = place_items(ui, key),
     );
+    apply_pick(ui.ctx(), key, pick);
+}
+
+/// The same choices as the header's place button, for a window with a title bar of its own
+/// (the caller shows them as the title bar's context menu).
+pub fn place_menu(ui: &mut egui::Ui, key: &str) {
+    let pick = place_items(ui, key);
+    apply_pick(ui.ctx(), key, pick);
+}
+
+fn place_items(ui: &mut egui::Ui, key: &str) -> Option<Placement> {
+    let place = place(ui.ctx(), key);
+    let areas = areas(ui.ctx());
+    let texts = texts(ui.ctx());
+    let mut pick: Option<Placement> = None;
+    ui.set_min_width(super::LIST_W);
+    if place.placement != Placement::Floating && super::MenuItem::new("window.float", &texts.float, "").show(ui).clicked() {
+        pick = Some(Placement::Floating);
+    }
+    if place.placement != Placement::Detached && super::MenuItem::new("window.detach", &texts.detach, "").show(ui).clicked() {
+        pick = Some(Placement::Detached);
+    }
+    if !areas.is_empty() {
+        super::Menu::separator(ui);
+        super::Menu::heading(ui, &texts.dock_as_tab);
+    }
+    for (area, label) in &areas {
+        if place.area() == Some(area.as_str()) {
+            continue;
+        }
+        let id = format!("window.dock.{area}");
+        if super::MenuItem::new(&id, label, "").show(ui).clicked() {
+            pick = Some(Placement::Docked(area.clone()));
+        }
+    }
+    pick
+}
+
+fn apply_pick(ctx: &Context, key: &str, pick: Option<Placement>) {
     if let Some(to) = pick {
-        update(ui.ctx(), key, |p| match to {
+        update(ctx, key, |p| match to {
             Placement::Floating => p.float(None),
             Placement::Detached => p.detach(),
             Placement::Docked(area) => p.dock(&area),
         });
-        egui::Popup::close_all(ui.ctx());
+        egui::Popup::close_all(ctx);
     }
+}
+
+/// A window with a title bar of its own is being dragged (`response` is its move response):
+/// over a panel area, show that it will dock there; dropped there, it becomes a tab.
+pub fn dock_on_drop(ctx: &Context, key: &str, response: &egui::Response) {
+    if !moved_since_press(ctx, key, response) {
+        return;
+    }
+    let Some(area) = ctx.input(|i| i.pointer.latest_pos()).and_then(|p| target_at(ctx, p)) else { return };
+    if response.drag_stopped() {
+        update(ctx, key, |p| p.dock(&area));
+        return;
+    }
+    if let Some(rect) = target_rect(ctx, &area) {
+        paint_drop_hint(ctx, rect);
+    }
+}
+
+/// The window is being dragged and the pointer has gone further than a click's wobble from where
+/// its button went down: a press and release on a button in a window (its Cancel, say) is not a
+/// drop, however long the button was held. (egui counts a press held still for long as a drag,
+/// and forgets where it began on the frame the button is let go, so the start is kept here.)
+fn moved_since_press(ctx: &Context, key: &str, response: &egui::Response) -> bool {
+    let dragging = response.dragged() || response.drag_stopped();
+    let (origin, latest) = ctx.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+    let wobble = ctx.options(|o| o.input_options.max_click_dist);
+    with(ctx, |s| {
+        if !dragging {
+            s.presses.remove(key);
+            return false;
+        }
+        // A new press starts afresh, also when the end of the last one was not seen.
+        let stale = s.presses.get(key).is_none_or(|(from, _)| origin.is_some_and(|o| o != *from));
+        if (response.drag_started() || stale)
+            && let Some(from) = origin.or(latest)
+        {
+            s.presses.insert(key.to_string(), (from, false));
+        }
+        let moved = match s.presses.get_mut(key) {
+            Some((from, moved)) => {
+                *moved |= latest.is_some_and(|p| p.distance(*from) > wobble);
+                *moved
+            }
+            None => false,
+        };
+        if response.drag_stopped() {
+            s.presses.remove(key);
+        }
+        moved
+    })
 }
 
 #[cfg(test)]
@@ -1123,5 +1239,98 @@ mod tests {
         });
         out.textures_delta.clear();
         assert!(take_window_keys(&ctx).is_empty(), "the main window has these keys already");
+    }
+
+    /// One frame at time `t` (seconds) with these events, a dock area at the right and a
+    /// window `a` (a movable card) over it, as the app has them. Gives the card's response.
+    fn drop_frame(ctx: &Context, t: f64, events: Vec<egui::Event>) -> egui::Response {
+        let mut card = None;
+        let input =
+            egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), time: Some(t), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            dock_target(ui.ctx(), "Right", Rect::from_min_max(Pos2::new(400.0, 0.0), Pos2::new(1200.0, 800.0)));
+            let shown = egui::Area::new(Id::unique("card")).default_pos(Pos2::new(450.0, 100.0)).show(ui.ctx(), |ui| {
+                // The card's body: pressed and held there, as on a window's empty space.
+                ui.allocate_space(vec2(200.0, 100.0));
+            });
+            dock_on_drop(ui.ctx(), "a", &shown.response);
+            card = Some(shown.response);
+        });
+        out.textures_delta.clear();
+        card.expect("drawn")
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn a_long_press_on_a_window_over_a_dock_area_is_not_a_drop() {
+        let ctx = Context::default();
+        drop_frame(&ctx, 0.0, vec![]);
+        let card = drop_frame(&ctx, 0.05, vec![]).rect;
+        let on = card.center();
+        assert!(target_at(&ctx, on).is_some(), "the card sits over the dock area");
+        drop_frame(&ctx, 0.08, vec![egui::Event::PointerMoved(on)]);
+        assert!(drop_frame(&ctx, 0.1, vec![button(on, true)]).dragged(), "the press is on the card");
+        // Held still for well over egui's longest click, which then counts it a drag.
+        for i in 1..=8 {
+            assert!(drop_frame(&ctx, 0.1 + f64::from(i) * 0.25, vec![]).dragged());
+        }
+        assert!(ctx.input(|i| i.pointer.is_decidedly_dragging()), "egui calls a press held this long a drag");
+        drop_frame(&ctx, 2.5, vec![button(on, false)]);
+        drop_frame(&ctx, 2.6, vec![]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Floating, "a press held still is not a drop");
+
+        // A real drag by the same card is one: docked where it is let go.
+        drop_frame(&ctx, 3.0, vec![button(on, true)]);
+        for (i, dx) in [10.0, 40.0, 80.0].into_iter().enumerate() {
+            drop_frame(&ctx, 3.1 + i as f64 * 0.1, vec![egui::Event::PointerMoved(on + vec2(dx, 20.0))]);
+        }
+        drop_frame(&ctx, 3.5, vec![button(on + vec2(80.0, 20.0), false)]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Docked("Right".into()));
+
+        // A wobble smaller than a click's, held long, is not one either. (The card moved with the
+        // drag: pressed where it is now.)
+        update(&ctx, "a", |p| p.float(None));
+        let on = drop_frame(&ctx, 4.0, vec![]).rect.center();
+        drop_frame(&ctx, 4.05, vec![egui::Event::PointerMoved(on)]);
+        assert!(drop_frame(&ctx, 4.1, vec![button(on, true)]).dragged());
+        drop_frame(&ctx, 4.4, vec![egui::Event::PointerMoved(on + vec2(3.0, 2.0))]);
+        drop_frame(&ctx, 5.5, vec![]);
+        drop_frame(&ctx, 5.6, vec![button(on + vec2(3.0, 2.0), false)]);
+        assert_eq!(place(&ctx, "a").placement, Placement::Floating, "a click's wobble is not a drop");
+    }
+
+    #[test]
+    fn a_native_window_opens_on_the_screens_there_are_now() {
+        let ctx = Context::default();
+        // Stored on a monitor far to the right that is gone now, bigger than this one.
+        update(&ctx, "far", |p| {
+            p.detach();
+            p.native_pos = Some([9000.0, 9000.0]);
+            p.native_size = Some([4000.0, 3000.0]);
+        });
+        update(&ctx, "near", |p| {
+            p.detach();
+            p.native_pos = Some([200.0, 150.0]);
+            p.native_size = Some([640.0, 480.0]);
+        });
+        let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), ..Default::default() };
+        input.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo {
+                outer_rect: Some(Rect::from_min_size(Pos2::new(100.0, 50.0), vec2(1200.0, 800.0))),
+                monitor_size: Some(vec2(1920.0, 1080.0)),
+                ..Default::default()
+            },
+        );
+        let mut seen = None;
+        let first = vec2(400.0, 300.0);
+        let mut out = ctx.run_ui(input, |ui| seen = Some((native_opening(ui.ctx(), "far", first), native_opening(ui.ctx(), "near", first))));
+        out.textures_delta.clear();
+        let (far, near) = seen.expect("drawn");
+        assert_eq!(far, ([1920.0, 1080.0], None), "the system places it, no bigger than the monitor");
+        assert_eq!(near, ([640.0, 480.0], Some([200.0, 150.0])), "a place on this monitor is kept");
     }
 }

@@ -682,8 +682,8 @@ fn a_settings_window_docks_floats_resizes_and_detaches() {
     let before = g.rect_of("dialog:window").expect("floating again");
     assert!(g.rect_of("panel:tab:window:settings").is_none());
 
-    // Drag the right edge: the window grows and remembers its size. (Its bottom corner sits on
-    // the app window's own resize border here, which is on top, so the edge is the grip to use.)
+    // Drag the right edge: the window grows and remembers its size. (The bottom corner, kept
+    // clear of the main window's resize border, is tried in `ui_dock_tests`.)
     assert!(g.rect_of("dialog:resize:corner").is_some(), "a resize corner");
     let edge = g.rect_of("dialog:resize:right").expect("a resize edge");
     g.drag(edge.center(), edge.center() + egui::vec2(80.0, 0.0));

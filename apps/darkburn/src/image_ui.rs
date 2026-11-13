@@ -36,6 +36,8 @@ pub struct ImageUi {
     pub convert: Option<ConvertDialog>,
     /// Trace Image Files [IMG-21].
     pub multi: Option<crate::multi_trace::MultiTraceDialog>,
+    /// Import 3D Model [IMG-25].
+    pub depth: crate::model_import::DepthUi,
     pub offsets_open: bool,
     presets: Option<PresetLibrary>,
     /// Said under the open window (or in the status bar when none is open).
@@ -140,6 +142,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Result<Value, Stri
         "image.trace_capture" => trace_capture(app, args),
         "tools.trace_files" => crate::multi_trace::open(app, TraceArgs::default()).map(|()| json!({ "opened": "trace_files" })),
         "image.trace_files" => crate::multi_trace::execute(app, args),
+        "image.depth_map" => crate::model_import::execute(app, args),
         "image.convert_bitmap" => {
             let a: ConvertArgs = parse(args)?;
             let ids: Vec<ShapeId> = app.editor.selected().into_iter().filter(|i| app.editor.doc.get(*i).is_some_and(|s| !s.is_image())).collect();
@@ -1023,6 +1026,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         }
     }
     crate::multi_trace::dialog(ctx, app);
+    crate::model_import::dialog(ctx, app);
     if let Some(mut d) = app.images.convert.take() {
         let mut edited = false;
         let (closed, action) = ui_kit::Window::new(Id::unique("db_convert_bitmap"), "db_app", "Convert to Bitmap")

@@ -360,6 +360,11 @@ pub const COMMANDS: &[Cmd] = &[
         r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"},"description":"picture files, traced with the same settings"},"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"sketch":{"type":"boolean"},"layer":{"type":"integer"},"gap":{"type":"number","description":"mm between the files"},"columns":{"type":"integer","description":"files per row; 0 picks"}},"required":["paths"]}"#,
     ),
     a(
+        "image.depth_map",
+        "Import a 3D Model as a Height Picture",
+        r#"{"type":"object","properties":{"path":{"type":"string","description":"STL or OBJ file"},"view":{"enum":["top","front","side"]},"flip":{"type":"boolean","description":"look from the opposite side"},"width":{"type":"number","description":"mm; the height follows the model"},"dpi":{"type":"number"},"near_white":{"type":"boolean","description":"near surfaces white (default) or black"},"depth_from":{"type":"number","description":"mm below the nearest point that gets the near tone"},"depth_to":{"type":"number","description":"mm below the nearest point that gets the far tone"},"layer":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"required":["path"]}"#,
+    ),
+    a(
         "image.trace_capture",
         "Trace a Captured Picture",
         r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"dpi":{"type":"number"},"threshold":{"type":"integer"},"sketch":{"type":"boolean"},"layer":{"type":"integer"}},"required":["path"]}"#,
@@ -723,6 +728,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
         "image.trace_capture" => &["IMG-20"],
         "tools.trace_files" | "image.trace_files" => &["IMG-21"],
+        "image.depth_map" => &["IMG-25"],
         "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],
         "edit.image_replace" | "image.replace" => &["EDIT-22"],
         "edit.image_replace_fit" => &["EDIT-23"],

@@ -480,6 +480,26 @@ fn gweike_dxf_has_a_layer_per_material_and_nc_names_them() {
 }
 
 #[test]
+fn gweike_gcode_is_written_under_every_extension_the_vendor_software_reads() {
+    // MCC-03: the Gweike software imports G-code from .nc, .cnc, .g and .txt files.
+    assert_eq!(ExportFormat::GweikeNc.extensions(), ["nc", "cnc", "g", "txt"]);
+    let dir = TempDir::new("gweike_ext");
+    let mut a = design();
+    for ext in ["nc", "cnc", "g"] {
+        let file = dir.file(&format!("job.{ext}"));
+        run(&mut a, "project.export", json!({ "path": path_arg(&file) })).unwrap();
+        let code = std::fs::read_to_string(&file).unwrap();
+        assert!(code.starts_with("(DarkBurn contour export") && code.contains("G21\nG90") && code.trim_end().ends_with("M30"), "{ext}: {code}");
+    }
+    // A .txt file is written when the format is named; the start and end codes can be changed.
+    let txt = dir.file("job.txt");
+    run(&mut a, "project.export", json!({ "path": path_arg(&txt), "format": "gweike_nc", "nc_on": "M03", "nc_off": "M05" })).unwrap();
+    let code = std::fs::read_to_string(&txt).unwrap();
+    assert!(code.lines().any(|l| l == "M03") && code.lines().any(|l| l == "M05"), "{code}");
+    assert!(!code.lines().any(|l| l == "M07" || l == "M08"), "{code}");
+}
+
+#[test]
 fn printing_makes_a_pdf_in_black_or_in_colour() {
     let dir = TempDir::new("print");
     let mut a = design();

@@ -24,3 +24,49 @@ fn hunt10b_a_negative_dwell_does_not_turn_time_back() {
         }
     }
 }
+
+/// An acceleration of zero, below zero or NaN falls back to the default one, so the job time is a real number.
+#[test]
+fn hunt10b_a_bad_acceleration_uses_the_default() {
+    let ops = vec![Op::Cut { to: Point::new(100.0, 0.0), speed: 10.0, power: 50.0 }, Op::Cut { to: Point::new(100.0, 50.0), speed: 10.0, power: 50.0 }];
+    let good = simulate(&tp(ops.clone()), &MotionSettings::default()).total_time;
+    assert!(good.is_finite() && good > 0.0);
+    for a in [0.0, -500.0, f64::NAN, f64::INFINITY] {
+        let m = MotionSettings { accel: a, engrave_accel: a, ..Default::default() };
+        let s = simulate(&tp(ops.clone()), &m);
+        assert!((s.total_time - good).abs() < 1e-9, "accel {a}: {} s, with the default accel {good} s", s.total_time);
+        for seg in &s.segments {
+            assert!(seg.duration.is_finite() && seg.duration >= 0.0, "accel {a}: {seg:?}");
+        }
+        let end = s.state_at(s.total_time).unwrap().pos;
+        assert!(end.distance(Point::new(100.0, 50.0)) < 1e-6, "accel {a}: ends at {end:?}");
+    }
+}
+
+/// A NaN cut speed is simulated like a speed of 0, not at the machine's top speed.
+#[test]
+fn hunt10b_a_nan_speed_is_not_the_top_speed() {
+    let m = MotionSettings::default();
+    let line = |speed| simulate(&tp(vec![Op::Cut { to: Point::new(10.0, 0.0), speed, power: 50.0 }]), &m).total_time;
+    let arc = |speed| simulate(&tp(vec![Op::Arc { to: Point::new(10.0, 0.0), center: Point::new(5.0, 0.0), clockwise: true, speed, power: 50.0 }]), &m).total_time;
+    for (name, f) in [("line", &line as &dyn Fn(f64) -> f64), ("arc", &arc)] {
+        let zero = f(0.0);
+        let nan = f(f64::NAN);
+        assert_eq!(nan, zero, "{name}: NaN speed takes {nan} s, speed 0 takes {zero} s");
+        assert!(nan > f(m.max_speed), "{name}: NaN speed is as fast as the top speed");
+    }
+}
+
+/// A very slow job does not make a timeline with hundreds of millions of states.
+#[test]
+fn hunt10b_a_slow_job_timeline_stays_small() {
+    let s = simulate(&tp(vec![Op::Cut { to: Point::new(10.0, 0.0), speed: 0.0, power: 50.0 }]), &MotionSettings::default());
+    assert!(s.total_time > 1e6, "speed 0 should be very slow, took {} s", s.total_time);
+    let started = std::time::Instant::now();
+    let tl = s.timeline(0.05);
+    assert!(tl.len() <= 100_001, "{} states", tl.len());
+    assert!(tl.len() >= 2);
+    assert!((tl.last().unwrap().t - s.total_time).abs() < 1e-6);
+    assert!(tl.windows(2).all(|w| w[1].t >= w[0].t));
+    assert!(started.elapsed().as_secs() < 5, "took {:?}", started.elapsed());
+}

@@ -218,6 +218,9 @@ fn turkish_headings_keep_the_dotted_capital_i() {
     let wrong: Vec<String> =
         g.visible_texts().into_iter().filter(|t| t.contains("BIRIMLER") || t.contains(" IŞ ") || t.contains("OTOMATIK")).collect();
     assert!(wrong.is_empty(), "headings without the dotted İ: {wrong:?}");
+    // A caption not translated yet is English, and keeps English capitals.
+    let english: Vec<String> = g.visible_texts().into_iter().filter(|t| t.contains("SETTİNGS") || t.contains("CONNECTİON")).collect();
+    assert!(english.is_empty(), "English captions with a Turkish İ: {english:?}");
     g.close_dialogs();
     crate::i18n::set_language("en");
 }
@@ -233,6 +236,7 @@ fn turkish_hotkey_filter_finds_words_with_a_dotless_i() {
         g.app().extras.hotkeys.filter = typed.into();
         g.run_command("file.hotkeys");
         g.settle();
+        g.screenshot("lang-tr-hotkeys");
         assert!(g.has_text("Izgara dizisi"), "{typed:?} does not find Izgara dizisi: {:?}", g.visible_texts());
         assert!(!g.has_text("Dairesel dizi"), "{typed:?} also shows Dairesel dizi");
         g.close_dialogs();

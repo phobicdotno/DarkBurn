@@ -191,9 +191,9 @@ fn a_dropped_handshake_gets_nothing_and_its_place_is_free() {
     std::thread::sleep(Duration::from_millis(200));
     // The first one is closed: a hello sent now gets no login.
     let _ = write_frame(&mut first, &json!({"hello": {"token": TOKEN, "version": 1}}));
-    match read_frame(&mut first, 1 << 20) {
-        Ok(Some(v)) => assert_ne!(v["ok"], true, "a dropped connection logged in: {v}"),
-        Ok(None) | Err(_) => {}
+    // Nothing back (closed) is the expected answer; a reply must not be a login.
+    if let Ok(Some(v)) = read_frame(&mut first, 1 << 20) {
+        assert_ne!(v["ok"], true, "a dropped connection logged in: {v}");
     }
     agent_gets_in(app.addr).expect("the agent got in");
 }

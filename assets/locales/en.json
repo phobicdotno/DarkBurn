@@ -433,7 +433,7 @@
   "nest.height": "Height",
   "nest.holes": "Put small parts inside holes",
   "nest.keep_clear": "Keep clear of other shapes",
-  "nest.margin": "Margin at the sheet edge",
+  "nest.margin": "Edge margin",
   "nest.progress": "Placing {done} of {total}",
   "nest.rot_none": "No rotation",
   "nest.rot_quarter": "Quarter turns",

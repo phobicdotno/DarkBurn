@@ -146,7 +146,7 @@ fn form_ui(ui: &mut Ui, f: &mut NestForm, quick: bool, page: (f64, f64)) {
         );
     }
     numeric::row(ui, &tr("nest.gap", "Gap between parts"), &mut f.gap, &size());
-    numeric::row(ui, &tr("nest.margin", "Margin at the sheet edge"), &mut f.margin, &size());
+    numeric::row(ui, &tr("nest.margin", "Edge margin"), &mut f.margin, &size());
     let options = [tr("nest.rot_none", "No rotation"), tr("nest.rot_quarter", "Quarter turns"), tr("nest.rot_step", "Rotation step")];
     let options: Vec<&str> = options.iter().map(String::as_str).collect();
     ui_kit::row(ui, &tr("nest.rotation", "Rotation"), |ui| ui_kit::dropdown(ui, "nest_rotation", &mut f.rotation, &options));

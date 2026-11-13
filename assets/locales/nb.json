@@ -433,7 +433,7 @@
   "nest.height": "Høyde",
   "nest.holes": "Legg små deler inni hull",
   "nest.keep_clear": "Hold avstand til andre former",
-  "nest.margin": "Marg ved platekanten",
+  "nest.margin": "Kantmarg",
   "nest.progress": "Plasserer {done} av {total}",
   "nest.rot_none": "Ingen rotasjon",
   "nest.rot_quarter": "Kvarte omdreininger",

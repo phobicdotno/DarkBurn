@@ -76,6 +76,11 @@ fn path_ops(path: &BezPath, s: &mut String) {
     }
 }
 
+/// A PDF real; PDF has no spelling for NaN or the infinities.
+fn real(v: f64) -> Object {
+    Object::Real(if v.is_nan() { 0.0 } else { v.clamp(f64::from(f32::MIN), f64::from(f32::MAX)) as f32 })
+}
+
 fn rgb_op(c: Rgb, op: &str) -> String {
     format!("{} {} {} {op}\n", n(f64::from(c.0) / 255.0), n(f64::from(c.1) / 255.0), n(f64::from(c.2) / 255.0))
 }
@@ -251,7 +256,7 @@ pub fn export(items: &[Item], opts: &AiExportOptions) -> PdfExport {
     let mut page = Dictionary::new();
     page.set("Type", Object::Name(b"Page".to_vec()));
     page.set("Parent", Object::Reference(pages_id));
-    page.set("MediaBox", Object::Array(vec![0.into(), 0.into(), Object::Real(w as f32), Object::Real(h as f32)]));
+    page.set("MediaBox", Object::Array(vec![0.into(), 0.into(), real(w), real(h)]));
     page.set("Contents", Object::Reference(content_id));
     page.set("Resources", Object::Dictionary(resources));
     let page_id = doc.add_object(page);

@@ -935,6 +935,49 @@ mod tests {
         assert_eq!(tw["settings.save_job_origin"], "在專案中儲存工作原點與\u{300c}僅切割選取的圖形\u{300d}");
     }
 
+    /// Review corrections in Chinese [review of I18N-04]: the Library panel's tab, the label
+    /// inside it, its help text and the cut library commands name one library (切割库 /
+    /// 切割庫); every Remove command says 移除 and every Delete command the Delete word, so the
+    /// two never read alike; and the getting-started help quotes the Settings button and the
+    /// Edit Hotkeys command by their names instead of running them into one phrase.
+    #[test]
+    fn chinese_keeps_the_review_wording() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        let commands = |word: &str| -> Vec<String> {
+            en.iter().filter(|(k, v)| k.starts_with("cmd.") && v.split(' ').next() == Some(word)).map(|(k, _)| k.clone()).collect()
+        };
+        let (removes, deletes) = (commands("Remove"), commands("Delete"));
+        assert!(removes.len() >= 5 && deletes.len() >= 3, "{removes:?} {deletes:?}");
+        let mut bad = Vec::new();
+        for (code, library, delete, open, close) in
+            [("zh-CN", "切割库", "删除", "\u{201c}", "\u{201d}"), ("zh-TW", "切割庫", "刪除", "\u{300c}", "\u{300d}")]
+        {
+            let t = locale(code);
+            for key in ["panel.library", "library.name", "cmd.library.new", "help.library.p1", "help.library.p2"] {
+                if !t[key].contains(library) {
+                    bad.push(format!("{code} {key}: {:?} lacks {library}", t[key]));
+                }
+            }
+            for key in &removes {
+                if !t[key].contains("移除") || t[key].contains(delete) {
+                    bad.push(format!("{code} {key}: {:?} is not 移除", t[key]));
+                }
+            }
+            for key in &deletes {
+                if !t[key].contains(delete) {
+                    bad.push(format!("{code} {key}: {:?} lacks {delete}", t[key]));
+                }
+            }
+            let help = &t["help.general.p2"];
+            for name in ["cmd.edit.settings", "cmd.file.hotkeys"] {
+                if !help.contains(&format!("{open}{}{close}", t[name])) {
+                    bad.push(format!("{code} help.general.p2: {help:?} does not quote {:?}", t[name]));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
     /// The stem check finds a term in any of its forms, and only at the start of words.
     #[test]
     fn the_stem_check_matches_the_start_of_each_word() {

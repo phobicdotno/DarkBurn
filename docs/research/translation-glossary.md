@@ -885,7 +885,7 @@ their own. Brackets, commas and colons are full-width （），：; ellipses sta
 - Air assist: 吹气. Frame: 走边框. Frame Selection (the view): 缩放到选区.
 - Jog: 点动. Home (the machine): 回原点; ribbon tab Home: 开始 (as in mainland office programs).
   Origin: 原点. Start point: 起点.
-- Tab: 微连. Focus test: 焦距测试. Material: 材料 (材料测试, 材料库). Rotary: 旋转轴.
+- Tab: 微连. Focus test: 焦距测试. Material: 材料 (材料测试). Rotary: 旋转轴.
   Galvo: 振镜. Print and cut: 打印并切割; its targets: 定位点. Wizard: 向导.
 - Device / Machine / Controller: 设备 / 机器 / 控制器. Console: 控制台. Preview: 预览.
   Nudge: 微移. Camera: 摄像头. Capture: 采集.
@@ -910,6 +910,9 @@ their own. Brackets, commas and colons are full-width （），：; ellipses sta
 - Status bar count: 个 (one word for object and objects).
 - Width / Height: 宽度 / 高度. Reset: 重置. Backup (a saved copy of a file): 备份.
   Backup path (the outline an image keeps after a crop): 备用路径.
+- Library (the Library panel tab, the label inside it, its help text and the cut library
+  commands): 切割库, one word for all of them. Only the help title "Material library" says 材料库.
+- Remove: 移除 (移除微连, 移除备用路径). Delete: 删除. The two never share a word.
 - Debug log: 调试日志. Laser: 激光. File menu: 文件. Help: 帮助. Window: 窗口.
 - Start (the laser panel button, not translated yet): “Start” in help, Start in the setting.
 - Cut selected graphics (the job option): 默认仅切割所选图形; the setting that saves it with
@@ -934,7 +937,7 @@ Simplified Chinese rules above.
 - Air assist: 吹氣. Frame: 走邊框. Frame Selection (the view): 縮放至選取範圍.
 - Jog: 寸動. Home (the machine): 回原點; ribbon tab Home: 常用 (as in Taiwan office programs).
   Origin: 原點. Start point: 起點.
-- Tab: 微連. Focus test: 焦距測試. Material: 材質 (材質測試, 材質庫). Rotary: 旋轉軸.
+- Tab: 微連. Focus test: 焦距測試. Material: 材質 (材質測試). Rotary: 旋轉軸.
   Galvo: 振鏡. Print and cut: 列印並切割; its targets: 定位點. Wizard: 精靈.
 - Device / Machine / Controller: 裝置 / 機器 / 控制器. Console: 主控台. Preview: 預覽.
   Nudge: 微移. Camera: 攝影機. Capture: 擷取.
@@ -960,6 +963,9 @@ Simplified Chinese rules above.
 - Status bar count: 個 (one word for object and objects).
 - Width / Height: 寬度 / 高度. Reset: 重設. Backup (a saved copy of a file): 備份.
   Backup path (the outline an image keeps after a crop): 備用路徑.
+- Library (the Library panel tab, the label inside it, its help text and the cut library
+  commands): 切割庫, one word for all of them. Only the help title "Material library" says 材質庫.
+- Remove: 移除 (移除微連, 移除備用路徑). Delete: 刪除. The two never share a word.
 - Debug log: 偵錯記錄. Laser: 雷射. File menu: 檔案. Help: 說明. Window: 視窗.
 - Units: Millimetres / Inches: 公釐 / 英吋.
 - Start (the laser panel button, not translated yet): 「Start」 in help, Start in the setting.

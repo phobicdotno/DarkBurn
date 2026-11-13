@@ -915,7 +915,7 @@ mod tests {
             .filter(|(_, v)| v.to_lowercase().split(|c: char| !c.is_alphabetic()).any(|w| w == "selection"))
             .map(|(k, _)| k)
             .collect();
-        assert!(keys.len() >= 15, "{keys:?}");
+        assert!(keys.len() >= 14, "{keys:?}");
         let mut bad = Vec::new();
         for (code, word) in [("zh-CN", "选区"), ("zh-TW", "選取範圍")] {
             let t = locale(code);

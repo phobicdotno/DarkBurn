@@ -219,6 +219,27 @@ fn a_real_machine_needs_the_users_confirmation_and_is_refused_to_agents() {
     assert!(run(&mut a, "job.start", Value::Null).is_err());
 }
 
+/// The Connect question names the device that was active when it was asked. Another device
+/// picked or that device removed while it waits (in a window of its own, say) withdraws it, so
+/// Connect never opens one device's link while another is the active one.
+#[test]
+fn a_waiting_connect_question_goes_when_the_device_changes() {
+    let mut a = app();
+    let real = |name: &str| Device { name: name.into(), connection: ConnectionKind::Tcp, host: "192.0.2.10".into(), ..Device::new(DeviceType::Grbl) };
+    let first = a.machine.devices.add(real("A"));
+    let second = a.machine.devices.add(real("B"));
+    assert!(a.machine.select_device(first));
+    a.machine.request_connect().unwrap();
+    assert!(a.machine.dlg.confirm_connect.is_some(), "Connect asks first");
+    assert!(a.machine.select_device(second));
+    assert!(a.machine.dlg.confirm_connect.is_none(), "picking B withdrew the question about A");
+    a.machine.request_connect().unwrap();
+    assert!(a.machine.dlg.confirm_connect.is_some());
+    assert!(a.machine.remove_device(second));
+    assert!(a.machine.dlg.confirm_connect.is_none(), "removing B withdrew the question about B");
+    assert!(!a.machine.handle.is_connected() && !a.machine.handle.is_real_machine());
+}
+
 #[test]
 fn design_only_devices_have_nothing_to_connect() {
     let mut a = app();

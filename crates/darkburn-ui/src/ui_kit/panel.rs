@@ -1457,6 +1457,9 @@ impl Window<'_> {
             builder = builder.with_position(egui::Pos2::from(pos));
         }
         let viewport = egui::ViewportId::from_hash_of(("db_window", key));
+        // A question in the main window waits for its answer. Its modal cannot reach a window of
+        // its own, so that window waits too: nothing in it changes what the question is about.
+        let question = super::Container::modal_input_blocked(ctx);
         let mut parts = Some((body, left));
         let mut closed_by_system = false;
         let shown = ctx.show_viewport_immediate(viewport, builder, |ui, class| {
@@ -1464,6 +1467,9 @@ impl Window<'_> {
                 return (false, super::Action::None);
             };
             let native = class != egui::ViewportClass::EmbeddedWindow;
+            if native && question {
+                ui.disable();
+            }
             // Shown inside the main window instead (no native windows here): its own size, kept
             // clear of the screen edges so the footer stays in reach.
             let screen = dimension(ui.ctx().content_rect().height()) - Tokens::get().space_24 * 3.0;

@@ -526,8 +526,13 @@ impl MachineUi {
     /// The device list changed (a device was added and made the active one, or the active one was
     /// removed): when the active device is no longer `was`, an open connection belongs to another
     /// device than the one the panels and the job builder now work for, so it is ended.
+    /// A Connect question still waiting named the device that was active then, so it goes too.
     pub fn end_link_if_device_changed(&mut self, was: Option<u64>) {
-        if self.devices.active != was && (self.handle.is_connected() || self.handle.is_real_machine()) {
+        if self.devices.active == was {
+            return;
+        }
+        self.dlg.confirm_connect = None;
+        if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }
     }
@@ -540,11 +545,13 @@ impl MachineUi {
         removed
     }
 
-    /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
+    /// Switch device: remember the old one's state, adopt the new one's [DEV-07]. A Connect
+    /// question still waiting was about the device active before, so it goes.
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
             return false;
         }
+        self.dlg.confirm_connect = None;
         if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }

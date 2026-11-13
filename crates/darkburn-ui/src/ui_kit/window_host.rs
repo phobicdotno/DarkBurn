@@ -710,6 +710,33 @@ mod tests {
     }
 
     #[test]
+    fn a_native_window_waits_while_the_main_window_asks_a_question() {
+        let keys = Keys::default();
+        native_windows(&keys);
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        update(&ctx, "w", |p| p.detach());
+        let enabled = std::cell::Cell::new(None);
+        let draw = |question: bool| {
+            frame(&ctx, |ui| {
+                if question {
+                    egui::Modal::new(Id::unique("question")).show(ui.ctx(), |ui| ui.label("Sure?"));
+                }
+                super::super::Window::new(Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| enabled.set(Some(ui.is_enabled())));
+            });
+        };
+        draw(false);
+        assert_eq!(enabled.get(), Some(true));
+        draw(true);
+        draw(true);
+        assert_eq!(enabled.get(), Some(false), "the window of its own waits for the answer");
+        draw(false);
+        draw(false);
+        assert_eq!(enabled.get(), Some(true), "answered: it works again");
+    }
+
+    #[test]
     fn a_window_shown_inside_the_main_one_passes_no_keys() {
         let ctx = Context::default();
         crate::fonts::setup_bundled_fonts(&ctx);

@@ -37,11 +37,17 @@ fn app_with(emu: &EmulatorHandle) -> (DarkBurn, Arc<AtomicUsize>) {
     (a, made)
 }
 
+/// One drawn frame, as far as the pendant goes: the app's logic, then the window's part.
+fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
+    pendant_ui::logic(ctx, app);
+    crate::machine_ui::frame(ctx, app);
+    pendant_ui::frame(app);
+}
+
 fn pump(ctx: &egui::Context, app: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
     let end = Instant::now() + T;
     loop {
-        crate::machine_ui::frame(ctx, app);
-        pendant_ui::frame(ctx, app);
+        frame(ctx, app);
         if f(app) {
             return;
         }
@@ -54,8 +60,7 @@ fn pump(ctx: &egui::Context, app: &mut DarkBurn, what: &str, mut f: impl FnMut(&
 fn settle(ctx: &egui::Context, app: &mut DarkBurn) {
     let end = Instant::now() + Duration::from_millis(300);
     while Instant::now() < end {
-        crate::machine_ui::frame(ctx, app);
-        pendant_ui::frame(ctx, app);
+        frame(ctx, app);
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -129,7 +134,7 @@ fn turning_it_on_and_off_opens_and_closes_the_receiver() {
     pump(&ctx, &mut a, "the receiver", connected);
     assert_eq!(pendant_ui::status(), a.pendant.status);
     a.prefs.opts.pendant = false;
-    pendant_ui::frame(&ctx, &mut a);
+    pendant_ui::logic(&ctx, &mut a);
     assert!(!a.pendant.running());
     assert_eq!(a.pendant.status, PendantStatus::Off);
 }
@@ -262,6 +267,50 @@ fn stop_and_pause_work_with_fn_held() {
     emu.hold(&[Key::Fn, Key::Stop]);
     pump(&ctx, &mut a, "the job stopped with Fn held", stopped);
     emu.release();
+}
+
+/// A minimised or covered window is not drawn: eframe then runs the app's logic and nothing
+/// else. This test runs exactly that, with no UI pass at all, and Stop and Pause must work.
+#[test]
+fn stop_and_pause_work_while_the_window_is_not_drawn() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    // From here on the window is hidden: only the app's logic runs, the way eframe runs it.
+    let app = std::rc::Rc::new(std::cell::RefCell::new(a));
+    let mcp = crate::mcp_ui::Host::new(app.clone());
+    let mut shell = crate::App { app: app.clone(), writer: crate::PrefsWriter::default(), frames: 2, mcp };
+    let mut eframe_frame = eframe::Frame::_new_kittest();
+    let mut hidden = |what: &str, done: &dyn Fn(&DarkBurn) -> bool| {
+        let end = Instant::now() + T;
+        loop {
+            let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| eframe::App::logic(&mut shell, ctx, &mut eframe_frame));
+            let mut a = app.borrow_mut();
+            // The machine's own thread does the work; this only reads where it got to.
+            a.machine.tick();
+            if done(&a) {
+                return;
+            }
+            assert!(Instant::now() < end, "timed out waiting for {what}; pendant {:?}, laser {:?}", a.pendant.status, state(&a));
+            drop(a);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    tap(&emu, Key::Pause);
+    hidden("the job paused with the window hidden", &|a: &DarkBurn| state(a) == LaserState::Paused);
+    tap(&emu, Key::Stop);
+    hidden("the job stopped with the window hidden", &stopped);
+    // The keys that move or start something wait for a drawn frame, so they did nothing.
+    tap(&emu, Key::Up);
+    tap(&emu, Key::Start);
+    let before = pos(&app.borrow());
+    hidden("the keys taken", &|a: &DarkBurn| a.pendant.waiting_len() == 2);
+    assert_eq!(pos(&app.borrow()), before);
+    assert!(app.borrow().job.pending.is_none(), "Start was carried out with the window hidden");
 }
 
 #[test]

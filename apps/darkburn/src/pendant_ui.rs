@@ -22,8 +22,14 @@
 //!
 //! Jogging is step only. A held, continuous jog from a wireless key could keep moving if the
 //! release report were lost, so the pendant never starts one.
+//!
+//! Stop and Pause are carried out in [`logic`], which runs on every frame of the app, also
+//! while the window is minimised or covered and nothing is drawn. Every other key waits for
+//! [`frame`], which runs only when the window is drawn: with the window out of sight the
+//! pendant stops and pauses, and does nothing else.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 use darkburn_pendant::{Connector, Key, KeySet, Leds, Pendant, PendantError, PendantEvent, PollOptions};
 use serde_json::json;
@@ -58,12 +64,24 @@ impl PendantStatus {
     }
 }
 
+/// A key press that waits for the next drawn frame.
+struct Waiting {
+    key: Key,
+    /// Whether FastStep was held when the key went down.
+    fast: bool,
+}
+
+/// The most key presses that wait for a drawn frame; the oldest is dropped beyond that.
+const MAX_WAITING: usize = 16;
+
 #[derive(Default)]
 pub struct PendantUi {
     pendant: Option<Pendant>,
     pub status: PendantStatus,
     /// The keys held right now, to know whether FastStep is down when an arrow goes down.
     held: KeySet,
+    /// The key presses [`logic`] took and [`frame`] carries out: everything but Stop and Pause.
+    waiting: VecDeque<Waiting>,
     /// None: the real receiver (`darkburn_pendant::system_connector`); in tests, no receiver.
     pub make_connector: Option<MakeConnector>,
 }
@@ -72,6 +90,11 @@ pub struct PendantUi {
 impl PendantUi {
     pub fn running(&self) -> bool {
         self.pendant.is_some()
+    }
+
+    /// How many key presses wait for a drawn frame.
+    pub fn waiting_len(&self) -> usize {
+        self.waiting.len()
     }
 }
 
@@ -92,8 +115,13 @@ pub fn permission_message() -> String {
     )
 }
 
-/// Once per frame: start or stop the poll thread with the setting, run the keys, set the LEDs.
-pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
+/// Once per frame of the app, drawn or not: start or stop the poll thread with the setting, take
+/// the keys, carry out Stop and Pause, set the LEDs.
+///
+/// A window that is minimised or covered is not drawn: only the app's logic runs then, and the
+/// poll thread's wake-up reaches nothing else. So this is called from the app's logic, and Stop
+/// and Pause are carried out here. The other keys wait for [`frame`].
+pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
     let want = app.prefs.opts.pendant && !app.safe_mode;
     if want && app.pendant.pendant.is_none() {
         let connector = match &app.pendant.make_connector {
@@ -109,6 +137,7 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
         p.stop();
         app.pendant.status = PendantStatus::Off;
         app.pendant.held = KeySet::EMPTY;
+        app.pendant.waiting.clear();
     }
     let events = app.pendant.pendant.as_ref().map(Pendant::poll).unwrap_or_default();
     for ev in events {
@@ -118,6 +147,13 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
         p.set_leds(leds(app));
     }
     STATUS.with(|s| *s.borrow_mut() = app.pendant.status.clone());
+}
+
+/// Once per drawn frame, after [`logic`]: carry out the key presses that waited for the window.
+pub fn frame(app: &mut DarkBurn) {
+    while let Some(w) = app.pendant.waiting.pop_front() {
+        key_down(app, w.key, w.fast);
+    }
 }
 
 fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
@@ -130,6 +166,7 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
             log::info!("pendant gone: {name}");
             app.pendant.status = PendantStatus::Looking;
             app.pendant.held = KeySet::EMPTY;
+            app.pendant.waiting.clear();
         }
         PendantEvent::Unavailable(e) => {
             log::info!("pendant: {e}");
@@ -140,7 +177,17 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
         }
         PendantEvent::KeyDown(k) => {
             app.pendant.held.insert(k);
-            key_down(app, k);
+            if matches!(k, Key::Stop | Key::Pause) {
+                // Nothing pressed before a Stop or a Pause is carried out after it.
+                app.pendant.waiting.clear();
+                key_down(app, k, false);
+            } else {
+                if app.pendant.waiting.len() >= MAX_WAITING {
+                    app.pendant.waiting.pop_front();
+                }
+                let fast = app.pendant.held.contains(Key::FastStep);
+                app.pendant.waiting.push_back(Waiting { key: k, fast });
+            }
         }
         PendantEvent::Chord(k) => {
             app.pendant.held.insert(k);
@@ -154,8 +201,9 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
     }
 }
 
-/// One key went down on its own. Everything goes through the buttons' command path and gates.
-pub fn key_down(app: &mut DarkBurn, key: Key) {
+/// One key went down on its own; `fast` is whether FastStep was held then. Everything goes
+/// through the buttons' command path and gates.
+fn key_down(app: &mut DarkBurn, key: Key, fast: bool) {
     match key {
         Key::Start => {
             if start_allowed(app) {
@@ -179,12 +227,12 @@ pub fn key_down(app: &mut DarkBurn, key: Key) {
                 run_with(app, "job.go_origin", &json!({}));
             }
         }
-        Key::Left => jog(app, -1, 0),
-        Key::Right => jog(app, 1, 0),
-        Key::Up => jog(app, 0, 1),
-        Key::Down => jog(app, 0, -1),
-        Key::ZPlusW => jog_z(app, 1.0),
-        Key::ZMinusW => jog_z(app, -1.0),
+        Key::Left => jog(app, -1, 0, fast),
+        Key::Right => jog(app, 1, 0, fast),
+        Key::Up => jog(app, 0, 1, fast),
+        Key::Down => jog(app, 0, -1, fast),
+        Key::ZPlusW => jog_z(app, 1.0, fast),
+        Key::ZMinusW => jog_z(app, -1.0, fast),
         // Manual fire: never from the pendant.
         Key::Laser => {}
         // FastStep is read as held by the arrows; Fn only makes chords.
@@ -195,30 +243,26 @@ pub fn key_down(app: &mut DarkBurn, key: Key) {
     }
 }
 
-fn multiplier(app: &DarkBurn) -> f64 {
-    machine_ui::jog_multiplier(app.pendant.held.contains(Key::FastStep), false)
-}
-
 /// One step, as the Move panel's arrow (step mode) and the keyboard arrows do.
-fn jog(app: &mut DarkBurn, dx: i8, dy: i8) {
+fn jog(app: &mut DarkBurn, dx: i8, dy: i8, fast: bool) {
     if !jog_free(app) {
         return;
     }
     let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
-    let d = app.machine.jog.distance * multiplier(app);
+    let d = app.machine.jog.distance * machine_ui::jog_multiplier(fast, false);
     let feed = app.machine.jog.speed * 60.0;
     run_with(app, "machine.jog", &json!({ "dx": f64::from(ax) * d, "dy": f64::from(ay) * d, "feed": feed }));
 }
 
 /// One Z step, only where the Move panel shows its Z buttons.
-fn jog_z(app: &mut DarkBurn, dir: f64) {
+fn jog_z(app: &mut DarkBurn, dir: f64, fast: bool) {
     let dev = app.machine.active();
     let z_shown = dev.settings.z_enabled || machine_ui::family_of(&app.machine) == Family::Ruida;
     if !z_shown || !jog_free(app) {
         return;
     }
     let rev = if dev.settings.z_reverse { -1.0 } else { 1.0 };
-    let dz = dir * rev * app.machine.jog.distance * multiplier(app);
+    let dz = dir * rev * app.machine.jog.distance * machine_ui::jog_multiplier(fast, false);
     let feed = app.machine.jog.z_speed * 60.0;
     run_with(app, "machine.jog", &json!({ "dz": dz, "feed": feed }));
 }

@@ -307,6 +307,9 @@ impl eframe::App for App {
         self.mcp.frame(ctx);
         let mut app = self.app.borrow_mut();
         let app = &mut *app;
+        // The pendant's Stop and Pause keys work whether or not the window is drawn: a
+        // minimised or covered window runs this and no `ui`.
+        pendant_ui::logic(ctx, app);
         if self.frames < 2 {
             self.frames += 1;
             #[cfg(target_os = "windows")]

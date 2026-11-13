@@ -346,7 +346,7 @@ impl DarkBurn {
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
         crate::machine_ui::frame(ui.ctx(), self);
-        crate::pendant_ui::frame(ui.ctx(), self);
+        crate::pendant_ui::frame(self);
         crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);

@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Pasta do log de trabalhos",
   "settings.job_log_dir_hint": "Pasta de configurações do DarkBurn",
   "settings.job_log_show": "Mostrar o log de trabalhos",
-  "settings.job_log_text": "Uma linha por trabalho em job_log.csv: início, duração, arquivo, dispositivo, resultado.",
+  "settings.job_log_text": "Em job_log.csv: início, duração, arquivo, dispositivo, resultado.",
   "settings.jobs": "Trabalhos",
   "settings.length_units": "Comprimentos",
   "settings.node_size": "Tamanho dos nós",

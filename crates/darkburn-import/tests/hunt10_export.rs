@@ -74,3 +74,36 @@ fn dxf_text_with_windows_line_breaks_writes_no_carriage_return() {
         .collect();
     assert_eq!(texts, vec!["a b c".to_string()]);
 }
+
+#[test]
+fn dxf_spline_with_an_infinite_knot_is_read_without_nan() {
+    // "1e999" reads as infinity. The knot check only asked for a rising vector, so the
+    // span 0..inf was blossomed into NaN control points.
+    let mut e = String::from("0\nSPLINE\n8\n0\n70\n8\n71\n3\n72\n8\n73\n4\n74\n0\n");
+    for k in ["0", "0", "0", "0", "1e999", "1e999", "1e999", "1e999"] {
+        e.push_str(&format!("40\n{k}\n"));
+    }
+    for (x, y) in [(0, 0), (10, 10), (20, 10), (30, 0)] {
+        e.push_str(&format!("10\n{x}\n20\n{y}\n30\n0\n"));
+    }
+    let text = format!("0\nSECTION\n2\nENTITIES\n{e}0\nENDSEC\n0\nEOF\n");
+    let doc = dxf_import::import(text.as_bytes(), &DxfOptions::default()).unwrap();
+    let b: Vec<kurbo::Rect> = doc.items.iter().filter_map(|i| i.bounds()).collect();
+    assert_eq!(b.len(), 1, "{b:?}");
+    let r = b[0];
+    assert!(r.x0.is_finite() && r.y0.is_finite() && r.x1.is_finite() && r.y1.is_finite(), "{r:?}");
+    assert!((r.x0 - 0.0).abs() < 1e-9 && (r.x1 - 30.0).abs() < 1e-9, "{r:?}");
+}
+
+#[test]
+fn dxf_text_with_nan_size_writes_no_nan() {
+    let mut t = text_item("x");
+    if let ItemKind::Text(tt) = &mut t.kind {
+        tt.height = f64::NAN;
+        tt.transform = kurbo::Affine::new([f64::NAN, 0.0, 0.0, 1.0, f64::INFINITY, 0.0]);
+    }
+    let out = dxf_export::export(&[t], &DxfExportOptions::default());
+    let s = String::from_utf8_lossy(&out.bytes);
+    let bad: Vec<&str> = s.lines().map(str::trim).filter(|l| ["nan", "inf", "-inf"].contains(&l.to_lowercase().as_str())).collect();
+    assert!(bad.is_empty(), "{bad:?}");
+}

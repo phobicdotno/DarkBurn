@@ -89,6 +89,8 @@ pub fn sanitize_layer_name(name: &str) -> String {
 }
 
 fn round(v: f64, decimals: Option<u32>) -> f64 {
+    // DXF has no spelling for NaN or the infinities.
+    let v = if v.is_finite() { v } else { 0.0 };
     match decimals {
         Some(d) => {
             let f = 10f64.powi(d.min(12) as i32);
@@ -131,8 +133,8 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
                     let x = t.transform * Point::new(1.0, 0.0) - origin;
                     let y = t.transform * Point::new(0.0, 1.0) - origin;
                     let mut text = Text { location: r(origin), value: t.text.replace("\r\n", " ").replace(['\r', '\n'], " "), ..Default::default() };
-                    text.text_height = t.height * y.hypot();
-                    text.rotation = x.atan2().to_degrees();
+                    text.text_height = round(t.height * y.hypot(), None);
+                    text.rotation = round(x.atan2().to_degrees(), None);
                     let mut e = Entity::new(EntityType::Text(text));
                     set_common(&mut e, &layer, layer_colour, colour, opts.version);
                     entities.push(e);

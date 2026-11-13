@@ -856,7 +856,11 @@ fn spline_path(s: &dxf::entities::Spline) -> (BezPath, bool) {
     let n = cps.len();
     let p = degree.min(n - 1);
     let knots: Vec<f64> =
-        if s.knot_values.len() == n + p + 1 && s.knot_values.windows(2).all(|w| w[1] >= w[0]) { s.knot_values.clone() } else { clamped_knots(n, p) };
+        if s.knot_values.len() == n + p + 1 && s.knot_values.iter().all(|k| k.is_finite()) && s.knot_values.windows(2).all(|w| w[1] >= w[0]) {
+            s.knot_values.clone()
+        } else {
+            clamped_knots(n, p)
+        };
     let hom: Vec<[f64; 3]> = cps.iter().zip(&weights).map(|(c, w)| [c.0 * w, c.1 * w, *w]).collect();
     let mut path = BezPath::new();
     let mut approx = false;

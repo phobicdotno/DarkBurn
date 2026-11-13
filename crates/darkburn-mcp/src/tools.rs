@@ -345,6 +345,18 @@ impl Tools for DarkburnTools {
     }
 
     fn call(&mut self, name: &str, args: &Value) -> Value {
+        // The server checked only the top-level types: check the whole schema (bounds, nested
+        // objects, closed step and region objects). A wait past the longest is shortened, not
+        // refused.
+        if let Some(def) = tool_definitions().into_iter().find(|d| d["name"] == name) {
+            let mut checked = args.clone();
+            if checked.get("wait_ms").and_then(Value::as_u64).is_some_and(|w| w > MAX_WAIT_MS) {
+                checked["wait_ms"] = json!(MAX_WAIT_MS);
+            }
+            if let Err(e) = crate::util::validate_instance(&def["inputSchema"], &checked) {
+                return text_result(format!("[invalid_params] {name}: {e}"), true);
+            }
+        }
         self.call_inner(name, args)
     }
 

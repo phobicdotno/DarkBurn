@@ -1,5 +1,0 @@
-- Fix: The pendant's Pause key only pauses now, and its Start key goes on with a paused job
-- Fix: The pendant's help text in Settings shows in full
-- Fix: The pendant's Pause pressed right after going on with a job pauses it again
-- New: Closing a settings window with changes you haven't applied asks whether to apply them, throw them away or keep it open
-- Fix: Adjust Image and Optimization close when you open another project, so nothing carries over into it

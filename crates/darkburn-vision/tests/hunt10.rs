@@ -41,3 +41,27 @@ fn three_target_alignment_still_accepts_a_good_fit() {
     let p = a.bed_to_image(Point::new(25.0, 75.0)).unwrap();
     assert!((p - Point::new(50.0, 50.0)).hypot() < 1e-9, "{p:?}");
 }
+
+fn grid(cols: usize, rows: usize, spacing: f64) -> Vec<Point> {
+    let mut v = Vec::new();
+    for r in 0..rows {
+        for c in 0..cols {
+            v.push(Point::new(c as f64 * spacing, r as f64 * spacing));
+        }
+    }
+    v
+}
+
+/// Three captures of a flat target square-on and never moved say nothing about the focal length
+/// (near and small looks the same as far and big). The calibration must be refused, not guessed.
+#[test]
+fn calibration_from_untilted_identical_views_is_refused() {
+    use darkburn_vision::calibrate::{CalibError, CalibOptions, calibrate};
+    let plane = grid(7, 5, 25.0);
+    let view: Vec<Point> = plane.iter().map(|p| Point::new(200.0 + 4.0 * p.x, 150.0 + 4.0 * p.y)).collect();
+    let r = calibrate(&plane, &[view.clone(), view.clone(), view], (1280, 720), CalibOptions::default());
+    match r {
+        Err(e) => assert_eq!(e, CalibError::Degenerate),
+        Ok(res) => panic!("accepted: {:?} rms {}", res.model, res.rms_px),
+    }
+}

@@ -313,6 +313,14 @@ pub fn calibrate(plane: &[Point], views: &[Vec<Point>], image_size: (u32, u32), 
         return Err(CalibError::Degenerate);
     }
     let poses: Vec<Pose> = (0..views.len()).map(|v| pose_of(&res.params, v)).collect();
+    // Views that all face the camera the same way (never tilted) cannot tell a near small target from
+    // a far big one, so the focal length would be a guess: refuse instead.
+    let normals: Vec<[f64; 3]> = poses.iter().map(|p| rodrigues(p.rvec)).map(|r| [r[0][2], r[1][2], r[2][2]]).collect();
+    let min_cos = 2f64.to_radians().cos();
+    let tilted = normals.iter().enumerate().any(|(i, a)| normals[i + 1..].iter().any(|b| (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).abs() < min_cos));
+    if !tilted {
+        return Err(CalibError::Degenerate);
+    }
     let mut view_rms = Vec::new();
     let mut total = 0.0;
     for (v, obs) in views.iter().enumerate() {

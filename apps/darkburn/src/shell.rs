@@ -286,19 +286,7 @@ impl DarkBurn {
             if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
             }
-            // egui matches a plain L when Alt+L is pressed; the keys must match exactly (a Shift
-            // that only types the symbol, like the one in "+", is allowed).
-            let m = shortcut.modifiers;
-            let exact = ctx.input(|i| {
-                i.events.iter().any(|e| {
-                    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
-                        if *key == shortcut.logical_key
-                            && modifiers.alt == m.alt
-                            && modifiers.command == m.command
-                            && (modifiers.shift == m.shift || *key == egui::Key::Plus))
-                })
-            });
-            if !exact {
+            if !ctx.input(|i| i.events.iter().any(|e| pressed_exactly(e, &shortcut))) {
                 continue;
             }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
@@ -306,6 +294,33 @@ impl DarkBurn {
             }
         }
         None
+    }
+
+    /// The commands whose shortcuts were pressed while a window of its own (a detached window)
+    /// had the keyboard, in the order pressed. The system gives the keys to that window, not to
+    /// this one. They count as pressed over a window: a plain key was meant for the window.
+    pub fn window_shortcut_commands(&self, ctx: &egui::Context) -> Vec<&'static str> {
+        let keys = window_host::take_window_keys(ctx);
+        if keys.is_empty() || self.extras.capturing() {
+            return Vec::new();
+        }
+        let table = crate::keymap::table(&self.prefs.hotkeys);
+        let nodes = self.tool == Tool::Nodes;
+        keys.iter()
+            .filter_map(|key| {
+                table.iter().find_map(|(shortcut, id)| {
+                    let mine = !plain_key(shortcut) && !(nodes && crate::node_tool::owns_shortcut(shortcut));
+                    (mine && pressed_exactly(key, shortcut) && commands::works(id)).then_some(*id)
+                })
+            })
+            .collect()
+    }
+
+    /// Run the shortcuts pressed in the app's windows of their own.
+    pub fn window_shortcuts(&mut self, ctx: &egui::Context) {
+        for id in self.window_shortcut_commands(ctx) {
+            self.run(ctx, id);
+        }
     }
 
     /// Keyboard shortcuts of the commands that work (from the keys their menu items show).
@@ -1000,6 +1015,17 @@ impl DarkBurn {
             }
         }
     }
+}
+
+/// Key press `e` is `shortcut`. egui matches a plain L when Alt+L is pressed; here the keys must
+/// match exactly (a Shift that only types the symbol, like the one in "+", is allowed).
+fn pressed_exactly(e: &egui::Event, shortcut: &egui::KeyboardShortcut) -> bool {
+    let m = shortcut.modifiers;
+    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
+        if *key == shortcut.logical_key
+            && modifiers.alt == m.alt
+            && modifiers.command == m.command
+            && (modifiers.shift == m.shift || *key == egui::Key::Plus))
 }
 
 /// A shortcut without Ctrl or Alt that is not a function key or Pause: a key a dialog may want

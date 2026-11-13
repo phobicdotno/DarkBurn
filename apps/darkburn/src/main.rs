@@ -326,6 +326,8 @@ impl eframe::App for App {
         }
         app.apply_theme(ctx);
         app.shortcuts(ctx);
+        // Keys pressed while a window of its own had the focus (they never reach this one).
+        app.window_shortcuts(ctx);
         text_ui::tick(app, ctx);
         if app.safe_mode {
             return;

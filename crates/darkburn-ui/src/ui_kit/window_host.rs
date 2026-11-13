@@ -21,6 +21,8 @@ pub const MAX_SIZE: Vec2 = vec2(8192.0, 8192.0);
 pub const MAX_WINDOWS: usize = 256;
 /// A tab id in the app's active-tab memory that stands for a docked window.
 pub const TAB_PREFIX: &str = "window:";
+/// How many key presses from native windows are kept until the app takes them.
+const MAX_KEYS: usize = 32;
 
 /// Where a window is shown.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +188,8 @@ struct State {
     activate: BTreeMap<String, String>,
     /// A native window's size and position as it was opened, kept while it stays open.
     opened: BTreeMap<String, (Option<[f32; 2]>, Option<[f32; 2]>)>,
+    /// Key presses made in native windows that nothing in them used, oldest first.
+    keys: Vec<egui::Event>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -368,6 +372,34 @@ pub(crate) fn native_moved(ctx: &Context, key: &str, size: Option<Vec2>, pos: Op
             s.dirty = true;
         }
     });
+}
+
+/// At the end of a native window's pass: the key presses nothing in the window used are kept for
+/// the app ([`take_window_keys`]). None while a control there has the keyboard: a field takes the
+/// letters typed into it without using them up.
+pub(crate) fn pass_on_keys(ctx: &Context) {
+    if ctx.memory(|m| m.focused().is_some()) {
+        return;
+    }
+    let keys: Vec<egui::Event> =
+        ctx.input(|i| i.events.iter().filter(|e| matches!(e, egui::Event::Key { pressed: true, repeat: false, .. })).cloned().collect());
+    if keys.is_empty() {
+        return;
+    }
+    with(ctx, |s| {
+        s.keys.extend(keys);
+        let over = s.keys.len().saturating_sub(MAX_KEYS);
+        s.keys.drain(..over);
+    });
+    ctx.request_repaint_of(egui::ViewportId::ROOT);
+}
+
+/// The key presses made in the app's native windows since the last call that nothing in them
+/// used, oldest first. The system gives the keyboard to the window that has the focus, so the
+/// main window never sees these: the app runs its shortcuts on them too, or Pause and Stop
+/// would be dead while a window of its own has the focus. A held key counts once.
+pub fn take_window_keys(ctx: &Context) -> Vec<egui::Event> {
+    with(ctx, |s| std::mem::take(&mut s.keys))
 }
 
 /// The floating card of `key` was dragged to `pos` (top-left).
@@ -614,5 +646,78 @@ mod tests {
         frame(&ctx, |_| {});
         frame(&ctx, |ui| shown(ui.ctx(), "a", "A"));
         assert_eq!(native_opening(&ctx, "a"), (Some([700.0, 500.0]), Some([10.0, 20.0])));
+    }
+
+    type Keys = std::rc::Rc<std::cell::RefCell<Vec<egui::Event>>>;
+
+    /// Native windows run the way a desktop backend runs them: each in a pass of its own, with
+    /// input of its own, which here is what `keys` holds when the window is drawn.
+    fn native_windows(keys: &Keys) {
+        let keys = keys.clone();
+        Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let events = std::mem::take(&mut *keys.borrow_mut());
+            let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 500.0)));
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let viewports = std::iter::once((viewport.ids.this, info)).collect();
+            let input = egui::RawInput { viewport_id: viewport.ids.this, viewports, screen_rect, events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+            out.textures_delta.clear();
+        });
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers, repeat: bool) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat, modifiers }
+    }
+
+    /// Detached window "w", with a text field that holds the keyboard when `field` is set.
+    fn detached_window(ctx: &Context, field: bool) {
+        frame(ctx, |ui| {
+            super::super::Window::new(Id::new("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
+                if field {
+                    let mut text = String::new();
+                    ui.text_edit_singleline(&mut text).request_focus();
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn keys_nothing_in_a_native_window_used_go_to_the_app() {
+        use egui::{Key, Modifiers};
+        let keys = Keys::default();
+        native_windows(&keys);
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        update(&ctx, "w", |p| p.detach());
+        detached_window(&ctx, false);
+        assert!(take_window_keys(&ctx).is_empty());
+        let stop = key(Key::Pause, Modifiers::COMMAND, false);
+        let pause = key(Key::Pause, Modifiers::NONE, false);
+        *keys.borrow_mut() = vec![stop.clone(), pause.clone()];
+        detached_window(&ctx, false);
+        assert_eq!(take_window_keys(&ctx), vec![stop, pause], "the window's own keys reach the app");
+        assert!(take_window_keys(&ctx).is_empty(), "once");
+        *keys.borrow_mut() = vec![key(Key::Pause, Modifiers::NONE, true)];
+        detached_window(&ctx, false);
+        assert!(take_window_keys(&ctx).is_empty(), "a held key counts once");
+        detached_window(&ctx, true);
+        *keys.borrow_mut() = vec![key(Key::S, Modifiers::COMMAND, false)];
+        detached_window(&ctx, true);
+        assert!(take_window_keys(&ctx).is_empty(), "keys typed into a field are the field's");
+    }
+
+    #[test]
+    fn a_window_shown_inside_the_main_one_passes_no_keys() {
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        update(&ctx, "w", |p| p.detach());
+        let events = vec![key(egui::Key::Pause, egui::Modifiers::NONE, false)];
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            super::super::Window::new(Id::new("w"), "", "W").dockable("w").show(ui.ctx(), true, |_| {});
+        });
+        out.textures_delta.clear();
+        assert!(take_window_keys(&ctx).is_empty(), "the main window has these keys already");
     }
 }

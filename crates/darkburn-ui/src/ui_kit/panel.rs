@@ -1477,7 +1477,13 @@ impl Window<'_> {
                 height = Some(rect.height() - self.chrome_height(true));
             }
             let chrome = Chrome { header: true, keys: true, body_height: height, place: Some(key) };
-            self.content_in(ui, valid, body, left, chrome)
+            let shown = self.content_in(ui, valid, body, left, chrome);
+            if native {
+                // The keys go to this window while it has the focus; the app's shortcuts get
+                // the ones nothing here used (embedded, the main window has them already).
+                host::pass_on_keys(ui.ctx());
+            }
+            shown
         });
         (shown.0 || closed_by_system, shown.1)
     }

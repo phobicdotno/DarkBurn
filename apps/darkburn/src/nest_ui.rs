@@ -212,6 +212,7 @@ pub fn show(ctx: &Context, app: &mut DarkBurn) {
     let page = (app.prefs.page_width as f64, app.prefs.page_height as f64);
     let can = !app.editor.selected().is_empty();
     let running = app.nest_ui.job.as_ref().map(NestJob::progress);
+    let stopping = app.nest_ui.job.as_ref().is_some_and(NestJob::cancelled);
     let mut f = app.nest_ui.form.clone();
     let (mut go, mut stop, mut close) = (false, false, false);
     let mut open = true;
@@ -238,9 +239,13 @@ pub fn show(ctx: &Context, app: &mut DarkBurn) {
                 let text =
                     tr("nest.progress", "Placing {done} of {total}").replace("{done}", &done.to_string()).replace("{total}", &total.to_string());
                 ui.add(egui::ProgressBar::new(frac).text(text));
-                ui.label(tr("nest.cancel_keeps", "Cancel stops the run and uses the best layout found so far."));
-                if ui.button(tr("nest.cancel", "Cancel")).clicked() {
-                    stop = true;
+                if stopping {
+                    ui.label(tr("nest.stopping", "Stopping..."));
+                } else {
+                    ui.label(tr("nest.cancel_keeps", "Cancel stops the run and uses the best layout found so far."));
+                    if ui.button(tr("nest.cancel", "Cancel")).clicked() {
+                        stop = true;
+                    }
                 }
             } else {
                 ui.horizontal(|ui| {

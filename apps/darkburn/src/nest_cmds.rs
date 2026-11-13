@@ -222,13 +222,13 @@ pub fn collect(doc: &Document, selected: &[ShapeId], settings: Settings, revisio
     };
     let mut members: Vec<Vec<ShapeId>> = Vec::new();
     let mut slot: Vec<Option<usize>> = vec![None; items.len()];
-    for i in 0..items.len() {
+    for (i, item) in items.iter().enumerate() {
         let r = root(i);
         let k = *slot[r].get_or_insert_with(|| {
             members.push(Vec::new());
             members.len() - 1
         });
-        members[k].push(items[i].0);
+        members[k].push(item.0);
     }
     // Members in draw order (items already are, but a holder can come after what it holds).
     let order: Vec<ShapeId> = doc.iter().map(|s| s.id).collect();

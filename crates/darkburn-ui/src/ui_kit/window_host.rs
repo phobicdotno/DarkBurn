@@ -185,6 +185,9 @@ struct State {
     /// The app's panel areas, key and label, in its order.
     areas: Vec<(String, String)>,
     close: BTreeSet<String>,
+    /// Windows with edits not applied that the user closed: they ask whether to apply the edits,
+    /// discard them or stay open, and wait for the answer.
+    asking: BTreeSet<String>,
     activate: BTreeMap<String, String>,
     /// A native window's size and position as it was opened, kept while it stays open.
     opened: BTreeMap<String, ([f32; 2], Option<[f32; 2]>)>,
@@ -213,6 +216,14 @@ pub struct WindowTexts {
     pub detach: String,
     /// The menu heading over the panel areas, and the hint on the area a window will dock in.
     pub dock_as_tab: String,
+    /// The question a window with edits not applied asks when it is closed.
+    pub close_question: String,
+    /// Its answer that applies the edits and closes the window.
+    pub close_apply: String,
+    /// Its answer that throws the edits away and closes the window.
+    pub close_discard: String,
+    /// Its answer that keeps the window open with its edits.
+    pub close_keep_open: String,
 }
 
 impl Default for WindowTexts {
@@ -222,6 +233,10 @@ impl Default for WindowTexts {
             float: "Float in the main window".into(),
             detach: "Open in its own window".into(),
             dock_as_tab: "Dock as tab".into(),
+            close_question: "This window has changes you have not applied. Apply them before it closes?".into(),
+            close_apply: "Apply".into(),
+            close_discard: "Discard".into(),
+            close_keep_open: "Keep open".into(),
         }
     }
 }
@@ -425,6 +440,7 @@ pub(crate) fn shown(ctx: &Context, key: &str, title: &str) {
         let was_open = s.shown.get(key).is_some_and(|x| x.frame + 1 >= frame);
         if !was_open {
             s.close.remove(key);
+            s.asking.remove(key);
             s.opened.remove(key);
             if let Some(area) = s.places.get(key).and_then(WindowPlace::area) {
                 s.activate.insert(area.to_string(), key.to_string());
@@ -436,6 +452,23 @@ pub(crate) fn shown(ctx: &Context, key: &str, title: &str) {
 
 pub(crate) fn take_close(ctx: &Context, key: &str) -> bool {
     with(ctx, |s| s.close.remove(key))
+}
+
+/// Whether window `key` was closed with edits not applied and is asking what to do with them.
+pub fn asking(ctx: &Context, key: &str) -> bool {
+    with(ctx, |s| s.asking.contains(key))
+}
+
+/// Start or end window `key`'s question about its edits ([`asking`]).
+pub(crate) fn set_asking(ctx: &Context, key: &str, asking: bool) {
+    with(ctx, |s| {
+        if asking {
+            s.asking.insert(key.to_string());
+        } else {
+            s.asking.remove(key);
+        }
+    });
+    ctx.request_repaint();
 }
 
 /// The body a docked window draws into: this frame's or the last's.
@@ -730,8 +763,13 @@ mod tests {
         let ctx = Context::default();
         assert_eq!(texts(&ctx), WindowTexts::default(), "English until the app gives its texts");
         assert_eq!(texts(&ctx).dock_as_tab, "Dock as tab");
-        let given =
-            WindowTexts { move_window: "Flytt".into(), float: "Flyt".into(), detach: "Eget vindu".into(), dock_as_tab: "Fest som fane".into() };
+        let given = WindowTexts {
+            move_window: "Flytt".into(),
+            float: "Flyt".into(),
+            detach: "Eget vindu".into(),
+            dock_as_tab: "Fest som fane".into(),
+            ..WindowTexts::default()
+        };
         set_texts(&ctx, given.clone());
         assert_eq!(texts(&ctx), given);
         let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), ..Default::default() };

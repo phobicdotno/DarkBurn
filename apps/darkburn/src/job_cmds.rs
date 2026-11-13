@@ -272,6 +272,8 @@ pub struct JobState {
     pub message: Option<Message>,
     pub optimization_open: bool,
     pub optimization_draft: Option<PlannerSettings>,
+    /// The project the draft was made from ([`darkburn_core::Editor::project`]).
+    pub optimization_project: u64,
     pub gcode_open: bool,
     pub gcode_draft: Option<(DeviceGcodeSettings, AdditionalSettings)>,
     pub material_open: bool,

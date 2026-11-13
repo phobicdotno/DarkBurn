@@ -294,8 +294,47 @@ fn jobs_hunt10_thirty_layers_in_a_mixed_order_burn_in_the_preview_order() {
         styled(&mut d, layer, 20.0 + layer as f64, 10.0 + 2.0 * layer as f64);
         sq(&mut d, layer, 5.0 + (k % 6) as f64 * 30.0, 5.0 + (k / 6) as f64 * 30.0, 10.0);
     }
+    // The Cuts list put in a mixed order of its own: every seventh layer, backwards.
+    let mut order: Vec<usize> = (0..30).map(|k| (k * 7) % 30).rev().collect();
+    order.extend(d.layer_order.iter().copied().filter(|l| *l >= 30));
+    d.layer_order = order;
+    let want: Vec<f64> = d.used_layers().iter().map(|l| 10.0 + 2.0 * *l as f64).collect();
+    assert_eq!(want.len(), 30);
     let r = run_doc(d, |_| {});
     compare(&r, "30 layers");
+    let mut got: Vec<f64> = Vec::new();
+    for b in burns(&r.lines) {
+        let p = (b.s / r.s_max * 1000.0).round() / 10.0;
+        if got.last() != Some(&p) {
+            got.push(p);
+        }
+    }
+    assert_eq!(got, want, "the machine burns the layers in another order than the Cuts list");
+}
+
+#[test]
+fn jobs_hunt10_passes_and_image_powers_keep_to_the_layer() {
+    let mut d = line_doc(20.0);
+    d.layer_mut(0).main_mut().passes = 3;
+    let r = run_doc(d, |_| {});
+    compare(&r, "3 passes");
+    let burned: f64 = burns(&r.lines).iter().map(|b| len(b.a, b.b)).sum();
+    assert!((burned - 240.0).abs() < 1e-6, "3 passes of an 80 mm square: {burned}");
+    let grey: Vec<u8> = (0..16).map(|i| (i * 16) as u8).collect();
+    for (what, min, max) in [("image min above max", 80.0, 30.0), ("image power 150", 20.0, 150.0), ("image power 0", 0.0, 0.0)] {
+        let d = image_doc(
+            |s| {
+                s.image_mode = darkburn_core::layer::ImageMode::Grayscale;
+                s.min_power = min;
+                s.max_power = max;
+            },
+            grey.clone(),
+        );
+        let r = run_doc(d, |_| {});
+        compare(&r, what);
+        let top = burns(&r.lines).iter().map(|b| b.s).fold(0.0, f64::max);
+        assert!(top <= r.s_max * f64::min(max, 100.0) / 100.0 + 1e-6, "{what}: S{top} is more than the layer's max power allows");
+    }
 }
 
 #[test]

@@ -22,7 +22,6 @@ fn shifted_odd_text() {
     }
 }
 
-
 /// A field shown with a unit takes its value typed with that unit after it, as its doc says,
 /// also when the host has not installed a parser for sums and other units.
 #[test]

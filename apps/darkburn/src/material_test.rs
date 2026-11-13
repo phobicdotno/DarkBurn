@@ -385,6 +385,7 @@ fn frame_points_and_return(app: &crate::shell::DarkBurn) -> Result<(Vec<Point>, 
     input.settings.cut_selected = false;
     generate(&mut input.doc, &app.job.material)?;
     let tp = crate::job_build::build_frame(&input, crate::job_build::FrameKind::Rectangle, 100.0, None).map_err(|e| e.to_string())?;
+    crate::machine_job::need_position(app, &tp)?;
     Ok((crate::machine_job::work_points(app, &tp), crate::machine_job::frame_return(app, &tp)))
 }
 

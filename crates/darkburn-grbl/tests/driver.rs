@@ -103,8 +103,9 @@ fn handshake_detects_grbl_and_reads_settings() {
     assert_eq!(s30.label(), "Maximum S value");
     let snap = m.snapshot();
     assert_eq!(snap.rx_capacity, 127);
-    assert_eq!(snap.laser_status(), LaserStatus::Ready);
-    wait_snap(&m, "first status", |s| s.status.state == MachineState::Idle);
+    // Ready once the first status report has said what state the controller is in.
+    wait_snap(&m, "first status", |s| s.status.state == MachineState::Idle && s.status.updated.is_some());
+    assert_eq!(m.snapshot().laser_status(), LaserStatus::Ready);
 }
 
 #[test]

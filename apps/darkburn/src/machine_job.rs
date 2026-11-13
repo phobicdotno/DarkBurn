@@ -95,6 +95,22 @@ pub fn work_points(app: &DarkBurn, tp: &Toolpath) -> Vec<Point> {
     tp.ops.iter().filter_map(Op::target).map(|p| p + shift).collect()
 }
 
+/// `Err` while the controller has not said where its head is and `tp` needs it: a GRBL frame
+/// always does (its work offset comes with the position), a Ruida one when it starts from the
+/// current position.
+pub fn need_position(app: &DarkBurn, tp: &Toolpath) -> Result<(), String> {
+    let s = app.machine.handle.snapshot();
+    let needs = match s.family {
+        Family::Grbl => true,
+        Family::Ruida => tp.space == CoordSpace::RelativeToStart,
+        _ => false,
+    };
+    if needs && s.connected() && !s.has_position {
+        return Err("The controller has not reported where the head is yet. Use Get position, then try again.".into());
+    }
+    Ok(())
+}
+
 /// Where a frame of `tp` must take the head back to when it is done: where the head is now for
 /// a job from the current position (the job starts there, so the frame must leave it there),
 /// nowhere for a job with a fixed place.
@@ -398,6 +414,11 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             if send_only {
                 return Err("A G-code machine runs a job as it streams it. Use Start (or Save G-code).".into());
             }
+            // The controller is ready once it has said hello; where its head is, and with it the
+            // work offset, comes with its first status report. Until then a job has no place.
+            if !app.machine.handle.snapshot().has_position {
+                return Err("The controller has not reported where the head is yet. Use Get position, then start again.".into());
+            }
             // An absolute job is in machine coordinates, but the controller reads its moves in
             // work coordinates: they differ by the work offset once an origin is set. The frame
             // is sent the same way (`work_points`).
@@ -566,6 +587,7 @@ pub fn frame(app: &mut DarkBurn, kind: FrameKind) -> Result<Value, String> {
     if check_bounds {
         job_build::check_frame_bounds(&input, &tp)?;
     }
+    need_position(app, &tp)?;
     let points = work_points(app, &tp);
     if points.len() < 2 {
         return Err("There is nothing to frame.".into());

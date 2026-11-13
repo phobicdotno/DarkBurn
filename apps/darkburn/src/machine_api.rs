@@ -697,6 +697,11 @@ impl MachineHandle {
     pub fn snapshot(&self) -> &Snapshot {
         &self.snapshot
     }
+    /// For tests: a state between two reports of the driver (it is overwritten at the next tick).
+    #[cfg(test)]
+    pub(crate) fn snapshot_mut(&mut self) -> &mut Snapshot {
+        &mut self.snapshot
+    }
     pub fn console(&self) -> &VecDeque<ConsoleEntry> {
         &self.console
     }

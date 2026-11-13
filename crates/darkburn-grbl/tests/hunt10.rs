@@ -200,3 +200,14 @@ fn a_setting_that_is_not_a_number_is_not_sent() {
     std::thread::sleep(Duration::from_millis(50));
     emu.with(|e| assert!(!e.stats().lines.iter().any(|l| l.starts_with("$30=")), "{:?}", e.stats().lines));
 }
+
+/// A GRBL controller is not ready before its first status report: until then its state (a hold,
+/// the door, an alarm it reports only in the status) and the place of its head are unknown, and a
+/// job placed then used a work offset of zero.
+#[test]
+fn a_controller_is_not_ready_before_its_first_status_report() {
+    let mut s = darkburn_grbl::machine::Snapshot { connection: darkburn_grbl::machine::ConnectionState::Connected, ..Default::default() };
+    assert_ne!(s.laser_status(), darkburn_grbl::machine::LaserStatus::Ready, "ready without a status report");
+    s.status.updated = Some(std::time::Instant::now());
+    assert_eq!(s.laser_status(), darkburn_grbl::machine::LaserStatus::Ready);
+}

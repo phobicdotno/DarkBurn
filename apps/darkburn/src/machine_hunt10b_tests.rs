@@ -284,3 +284,37 @@ fn the_air_button_sends_the_devices_own_air_command() {
     assert!(sent.iter().any(|l| l.trim() == "M7"), "air on is the device's M7: {sent:?}");
     assert!(!sent.iter().any(|l| l.trim() == "M8"), "M8 is another output on this device: {sent:?}");
 }
+
+/// A GRBL controller counts as ready as soon as it has said hello; where its head is, and so its
+/// work offset, comes with the first status report. A job or frame started in between was placed
+/// with an offset of zero, so a job with an origin set ran somewhere else on the bed.
+#[test]
+fn a_grbl_job_waits_for_the_first_status_report() {
+    use crate::machine_api::{ConnectConfig, Link};
+    let mut a = DarkBurn::new(Prefs::default());
+    let grbl = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": grbl })).unwrap();
+    let (adapter, _emu) = crate::connections::grbl_simulator(&ConnectConfig::default());
+    a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorGrbl);
+    wait_ready(&mut a);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    let job = crate::job_cmds::build_now(&a).unwrap();
+    let end = Instant::now() + T;
+    while !a.machine.handle.snapshot().has_position {
+        a.machine.tick();
+        assert!(Instant::now() < end, "no status report ever came");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(crate::machine_job::request_for(&a, &job, None, false).is_ok(), "a job once the position is known");
+    // Between hello and the first status report.
+    {
+        let s = a.machine.handle.snapshot_mut();
+        s.has_position = false;
+        s.machine_pos = [0.0; 4];
+        s.work_pos = [0.0; 4];
+    }
+    let r = crate::machine_job::request_for(&a, &job, None, false);
+    assert!(r.is_err(), "a GRBL job was placed before the controller said where the head is");
+    let r = crate::machine_job::frame(&mut a, crate::job_build::FrameKind::Rectangle);
+    assert!(r.is_err(), "a GRBL frame was placed before the controller said where the head is");
+}

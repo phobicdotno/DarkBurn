@@ -323,6 +323,9 @@ impl Snapshot {
             Activity::Framing | Activity::Job if held => LaserStatus::Paused,
             Activity::Framing => LaserStatus::Framing,
             Activity::Job | Activity::Stopping => LaserStatus::Busy,
+            // Until the first status report the controller's state and the head's place are not
+            // known (it may be in a hold, at the door, or have an origin set): not ready yet.
+            Activity::Idle if self.status.updated.is_none() => LaserStatus::Connecting,
             Activity::Idle => match self.status.state {
                 MachineState::Hold(_) | MachineState::Door(_) => LaserStatus::Paused,
                 MachineState::Run(_) | MachineState::Jog | MachineState::Home => LaserStatus::Busy,

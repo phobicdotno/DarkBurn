@@ -1,6 +1,32 @@
 # Changelog
 
-## v0.0.650 (build 6)
+## v0.0.676 (build 6)
+- New: "Break at Tabs" in the Edit menu splits a part with tabs into the exact pieces the laser will cut, ready to tweak one by one
+- Fix: A paused red-light frame no longer looks like it's still running after a job start is turned down
+- Fix: Ruida: Stop now really stops: no more moves or a held fire button sneaking through, and nothing starts on top of a running job
+- Fix: A layer whose min power is set above its max no longer burns harder than its max
+- Fix: Designs grouped many times over no longer go missing when you save or copy them
+- Fix: The Measure tool's selection size now updates every time you pick different shapes
+- Fix: Switching tools while typing a text now finishes the text properly instead of leaving an empty one behind
+- Fix: Switching lasers no longer keeps files ticked from the old controller's file list, so Start and Delete can't hit the wrong file
+- Fix: A job with every layer set to 0% power now gets a 'nothing to burn' message instead of running the head round with the laser off
+- Fix: Time estimates no longer go wrong when a job has a pause with a strange length
+- Fix: Dimension text from DXF files no longer loses its second line
+- Fix: Text with several lines now keeps its line breaks when you export to SVG
+- Fix: Huge plotter files full of rectangles can no longer eat all your memory
+- Fix: Weird acceleration settings (zero, negative or blank) no longer break the job time estimate
+- Fix: A broken speed value no longer makes the preview think the cut runs at full speed
+- Fix: The preview no longer runs out of memory on extremely slow jobs
+- Fix: Empty shapes no longer crash the job planner
+- Fix: Wrapping a design onto a cylinder no longer freezes on a crazy-long line
+- Fix: Rotary test spins refuse a garbage turn count instead of sending wild moves
+- Fix: One broken number no longer wipes all your saved camera settings
+- Fix: Scroll strips and panels stop crashing when a window hasn't finished laying out
+- Fix: Switching between dual-tube lasers no longer carries the second tube's power settings over to the other machine
+- Fix: Reading speeds from the laser now waits until you're actually connected, so a dropped connection can't mix up another machine's settings
+- Fix: Galvo settings and EZCad imports now catch broken numbers instead of quietly accepting them
+- Fix: Image engraving can no longer get thrown off by a bad or half-edited scanning offset table
+- Fix: Undoing an AI agent's changes closes the windows that still held the old shapes
 - New: You can now connect to the Gweike card simulator to try things out. It only reads
 - New: Check the Gweike card's status, with any alarms spelled out in plain words
 - New: Select Similar Shapes: pick one shape and grab all the others of the same kind and size in one go

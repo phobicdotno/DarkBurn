@@ -223,3 +223,35 @@ fn scan_offsets_never_give_nan() {
     let mid = raw.offset_at(75.0);
     assert!((mid - 0.15).abs() < 1e-9, "75 mm/s is between 0.1 and 0.2: {mid}");
 }
+
+/// A machine command given an argument of the wrong type is refused, not run with the default in
+/// its place: `machine.fire {"percent":"x"}` fired at the default power, `machine.move_to
+/// {"y":"20"}` moved in X only, `machine.connect {"device":"3"}` connected the active device.
+#[test]
+fn machine_commands_refuse_arguments_of_the_wrong_type() {
+    use crate::machine_api::{ConnectConfig, Link};
+    let mut a = DarkBurn::new(Prefs::default());
+    let grbl = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": grbl })).unwrap();
+    a.machine.devices.devices.iter_mut().find(|d| d.id == grbl).unwrap().settings.gcode.fire_button = true;
+    let (adapter, _emu) = crate::connections::grbl_simulator(&ConnectConfig::default());
+    a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorGrbl);
+    wait_ready(&mut a);
+    for (id, args) in [
+        ("machine.fire", json!({ "percent": "x" })),
+        ("machine.fire", json!({ "secs": [1] })),
+        ("machine.move_to", json!({ "x": 10, "y": "20" })),
+        ("machine.jog", json!({ "dx": "x" })),
+        ("machine.jog", json!({ "dx": 1, "feed": "fast" })),
+        ("machine.jog_start", json!({ "x": "right" })),
+        ("machine.frame", json!({ "x": 0, "y": 0, "width": 10, "height": 10, "laser_percent": "50" })),
+    ] {
+        let r = run(&mut a, id, args.clone());
+        assert!(r.as_ref().is_err_and(|e| e.contains("must be")), "{id} {args} was taken: {r:?}");
+    }
+    // The same commands with arguments of the right type still run.
+    run(&mut a, "machine.jog", json!({ "dx": 1 })).unwrap();
+    run(&mut a, "machine.disconnect", Value::Null).unwrap();
+    let r = run(&mut a, "machine.connect", json!({ "device": "3" }));
+    assert!(r.as_ref().is_err_and(|e| e.contains("must be")), "machine.connect with a device id that is text was taken: {r:?}");
+}

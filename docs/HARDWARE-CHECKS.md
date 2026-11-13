@@ -33,6 +33,7 @@ Each line needs a check on real hardware before the matching checklist item is t
 
 ## Gweike M3 Ultra
 - [ ] Read-only capture on the real card to close the gaps in `docs/research/mlaser-rea-findings.md`
+- [ ] CO2 water input (`docs/hardware-checks-mcc.md` C22): IN11 read 0 with the chiller off and 1 with it on (owner, 2026-11-12). Still to see: the level during a real water alarm with the chiller running
 - [ ] Exported DXF and G-code files open and run in Gweike's own software
 
 ## Ruida corrections from public sources (applied to darkburn-ruida and its emulator; verify on a controller)

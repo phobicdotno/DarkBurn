@@ -400,6 +400,16 @@ fn run_plan_on(link: &mut mcc::SimLink, plan: &mcc::DryRunPlan, max_steps: usize
 }
 
 fn stream_plan_on(link: &mut mcc::SimLink, plan: &mcc::DryRunPlan, max_steps: usize) -> Result<CardReport, String> {
+    stream_plan_with(link, plan, max_steps, &mut |_, _| {})
+}
+
+/// [`stream_plan_on`] with `hook` called before every poll (tests use it to change the card).
+fn stream_plan_with(
+    link: &mut mcc::SimLink,
+    plan: &mcc::DryRunPlan,
+    max_steps: usize,
+    hook: &mut dyn FnMut(&mut mcc::SimLink, usize),
+) -> Result<CardReport, String> {
     use mcc::command;
     link.gate.arming.arm_motion().map_err(|e| format!("{e:?}"))?;
     let lerr = |e: mcc::sim::LinkError| format!("{e:?}");
@@ -410,7 +420,8 @@ fn stream_plan_on(link: &mut mcc::SimLink, plan: &mcc::DryRunPlan, max_steps: us
     let mut elapsed = Duration::ZERO;
     let step = Duration::from_millis(250);
     let mut finished = false;
-    for _ in 0..max_steps {
+    for n in 0..max_steps {
+        hook(link, n);
         let st = link.poll_status().map_err(lerr)?;
         let r = feeder.fill(st.fifo_frame_id(), st.fifo_space_margin(), 50);
         for (id, frame) in r.frames {
@@ -463,6 +474,30 @@ mod hunt8_tests {
         assert!(done.ticks_consumed > 0 && done.sim_seconds < 10.0, "{done:?}");
         assert!(!link.sim.fifo_running());
         assert_eq!(link.sim.outputs(), 0);
+    }
+
+    #[test]
+    fn a_gweike_simulated_run_stopped_by_an_alarm_is_not_reported_as_finished() {
+        // The drained stream raises the starvation alarm on this card; the gate stops the queue,
+        // so "nothing pending and not running" no longer means the plan ran to the end.
+        let plan = mcc::dry_run(&[mcc::PathSegment::cut(20.0, 0.0, 50.0)], &mcc::PlanConfig::default()).unwrap();
+        let mut link = mcc::SimLink::new(mcc::CardSimulator::new(mcc::SimConfig::default()));
+        let r = run_plan_on(&mut link, &plan, 200_000);
+        let e = r.expect_err("a run the gate stopped on an alarm was reported as finished");
+        assert!(e.contains("alarm"), "{e}");
+        assert!(!link.sim.fifo_running(), "the stream was left running");
+        // An alarm in the middle of a longer run stops it the same way.
+        let plan = mcc::dry_run(&[mcc::PathSegment::cut(200.0, 0.0, 50.0)], &mcc::PlanConfig::default()).unwrap();
+        let mut link = sim_link();
+        let mut hook = |l: &mut mcc::SimLink, step: usize| {
+            if step == 4 {
+                l.sim.inject_alarm(None, Some(1 << 3));
+            }
+        };
+        let r = stream_plan_with(&mut link, &plan, 200_000, &mut hook);
+        link.stop_sequence(false);
+        assert!(r.is_err(), "a run stopped by an alarm half way was reported as finished: {r:?}");
+        assert!(!link.sim.fifo_running());
     }
 
     #[test]

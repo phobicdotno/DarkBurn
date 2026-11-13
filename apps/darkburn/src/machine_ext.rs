@@ -114,6 +114,13 @@ pub const COMMANDS: &[Cmd] = &[
     a("gweike.export_chf", "Export the Gweike Craft File (.chf)", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("gweike.plan", "Gweike Planner Dry Run", ""),
     a("gweike.simulate", "Run the Plan on the Gweike Card Simulator", ""),
+    // Gweike card commands on the in-memory card simulator (gweike_card.rs)
+    crate::gweike_card::CONNECT,
+    crate::gweike_card::DISCONNECT,
+    crate::gweike_card::STATUS,
+    crate::gweike_card::DISSECT,
+    crate::gweike_card::STOP,
+    crate::gweike_card::EMERGENCY_STOP,
 ];
 
 /// Whether `id` is handled here.
@@ -123,7 +130,7 @@ pub fn handles(id: &str) -> bool {
 
 /// Commands here that act on a machine.
 pub fn is_hardware(id: &str) -> bool {
-    id.starts_with("machine.")
+    id.starts_with("machine.") || crate::gweike_card::is_hardware(id)
 }
 
 /// Commands here that only edit documents, files or the device list, though their id starts
@@ -136,7 +143,7 @@ pub fn not_hardware(id: &str) -> bool {
 
 /// The command touches Gweike machine concepts (the MCP side reads this).
 pub fn gweike(id: &str) -> bool {
-    id.starts_with("gweike.") || matches!(id, "file.export_gweike_dxf" | "file.export_gweike_nc")
+    id.starts_with("gweike.") || id.starts_with("mcc.") || matches!(id, "file.export_gweike_dxf" | "file.export_gweike_nc")
 }
 
 /// The command writes a file.
@@ -167,6 +174,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "gweike.open" | "gweike.layer_map" | "gweike.set_craft" | "gweike.crafts" => &["MCC-04"],
         "gweike.export_chf" => &["MCC-02"],
         "gweike.plan" | "gweike.simulate" => &["MCC-05"],
+        id if id.starts_with("mcc.") => &["MCC-05"],
         _ => &[],
     }
 }
@@ -194,6 +202,8 @@ pub struct ExtUi {
     pub galvo_estimate: Option<String>,
     /// The galvo Device Settings dialog's last EZCad import message.
     pub galvo_message: Option<String>,
+    /// The Gweike card simulator the `mcc.*` commands work on.
+    pub mcc: crate::gweike_card::CardState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -327,6 +337,7 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
         "gweike.export_chf" => gweike_export(app, a),
         "gweike.plan" => gweike_plan(app, false),
         "gweike.simulate" => gweike_plan(app, true),
+        id if id.starts_with("mcc.") => crate::gweike_card::run(app, id, a),
         other => Err(format!("{other} is not a machine command")),
     })
 }

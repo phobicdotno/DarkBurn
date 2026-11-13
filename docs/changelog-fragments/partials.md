@@ -12,3 +12,7 @@
 - New: Capture system, picture size and black and white view in Settings now work
 - New: Trace from the camera takes a fresh picture, and Cancel leaves nothing behind
 - New: Head camera reads where the laser head is for marks and captures
+- Fix: Trace from a head camera uses the stitched picture
+- Fix: Pressing Trace twice no longer leaves an extra picture behind
+- Fix: Cancelling a camera trace keeps what you could redo
+- Fix: Capture again keeps the old picture when no new one can be taken

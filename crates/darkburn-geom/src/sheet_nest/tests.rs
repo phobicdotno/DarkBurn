@@ -102,8 +102,16 @@ fn check_layout(parts: &[NestPart], obstacles: &[NestPart], sheet: Rect, o: &She
         );
         placed.push((k, w));
     }
+    let around = sheet.inset(-o.margin);
     for ob in obstacles {
-        let w = world(ob, Affine::IDENTITY);
+        let mut w = world(ob, Affine::IDENTITY);
+        // A contour around the whole sheet counts by its line.
+        for c in &mut w {
+            let b = bounds(std::slice::from_ref(c));
+            if b.x0 <= around.x0 && b.y0 <= around.y0 && b.x1 >= around.x1 && b.y1 >= around.y1 {
+                c.1 = false;
+            }
+        }
         if !w.is_empty() {
             placed.push((usize::MAX, w));
         }

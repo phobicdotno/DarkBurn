@@ -1162,4 +1162,121 @@ mod tests {
         out.textures_delta.clear();
         assert!(take_window_keys(&ctx).is_empty(), "the main window has these keys already");
     }
+
+    /// Window "w", holding edits or not, drawn in one pass of the main window with `events`:
+    /// what it reported.
+    fn edited_window(ctx: &Context, unsaved: bool, events: Vec<egui::Event>) -> (bool, crate::ui_kit::Action) {
+        let mut shown = (false, crate::ui_kit::Action::None);
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| {
+            shown = super::super::Window::new(Id::unique("w"), "", "W").dockable("w").unsaved(unsaved).show(ui.ctx(), true, |_| {});
+        });
+        out.textures_delta.clear();
+        shown
+    }
+
+    fn press(k: egui::Key) -> Vec<egui::Event> {
+        vec![key(k, egui::Modifiers::NONE, true)]
+    }
+
+    #[test]
+    fn a_window_with_edits_closed_from_its_tab_asks_first() {
+        use crate::ui_kit::Action;
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        edited_window(&ctx, false, vec![]);
+        request_close(&ctx, "w");
+        assert_eq!(edited_window(&ctx, false, vec![]), (true, Action::None), "no edits: it closes at once");
+        assert!(!asking(&ctx, "w"));
+
+        for _ in 0..3 {
+            edited_window(&ctx, true, vec![]);
+        }
+        request_close(&ctx, "w");
+        assert_eq!(edited_window(&ctx, true, vec![]), (false, Action::None), "edits: it stays open");
+        assert!(asking(&ctx, "w"), "and asks");
+        assert_eq!(edited_window(&ctx, true, vec![]), (false, Action::None), "until it is answered");
+        // Esc answers Keep open: the window stays, with its edits, and asks no more.
+        assert_eq!(edited_window(&ctx, true, press(egui::Key::Escape)), (false, Action::None));
+        assert!(!asking(&ctx, "w"), "Esc keeps it open");
+        assert_eq!(edited_window(&ctx, true, vec![]), (false, Action::None), "still open");
+        // Enter answers Apply: the window reports OK.
+        request_close(&ctx, "w");
+        edited_window(&ctx, true, vec![]);
+        assert_eq!(edited_window(&ctx, true, press(egui::Key::Enter)), (false, Action::Ok), "Apply is OK");
+        assert!(!asking(&ctx, "w"));
+        // The edits went away while it asked (undone, say): nothing to ask about, it closes.
+        request_close(&ctx, "w");
+        edited_window(&ctx, true, vec![]);
+        assert_eq!(edited_window(&ctx, false, vec![]), (true, Action::None));
+        assert!(!asking(&ctx, "w"));
+    }
+
+    #[test]
+    fn a_question_is_forgotten_when_the_window_opens_again() {
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        edited_window(&ctx, true, vec![]);
+        request_close(&ctx, "w");
+        edited_window(&ctx, true, vec![]);
+        assert!(asking(&ctx, "w"));
+        // Closed by the app (not drawn for two frames), then opened again.
+        frame(&ctx, |_| {});
+        frame(&ctx, |_| {});
+        edited_window(&ctx, true, vec![]);
+        assert!(!asking(&ctx, "w"), "a window opened again does not go on asking");
+    }
+
+    #[test]
+    fn a_window_of_its_own_closed_by_the_system_with_edits_asks_in_that_window() {
+        use crate::ui_kit::Action;
+        use egui::{ViewportCommand, ViewportEvent, ViewportId};
+        let keys = Keys::default();
+        let info = Info::default();
+        native_windows_with(&keys, &info, &Opened::default());
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        update(&ctx, "w", |p| p.detach());
+        let native = ViewportId::from_hash_of(("db_window", "w"));
+        // One pass of the main window: what the window reported and the commands to its own window.
+        let draw = |unsaved: bool| {
+            let mut shown = (false, Action::None);
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                shown = super::super::Window::new(Id::unique("w"), "", "W").dockable("w").unsaved(unsaved).show(ui.ctx(), true, |_| {});
+            });
+            out.textures_delta.clear();
+            (shown, out.viewport_output.get(&native).map(|o| o.commands.clone()).unwrap_or_default())
+        };
+        let close_now = || info.borrow_mut().events = vec![ViewportEvent::Close];
+        let quiet = || info.borrow_mut().events.clear();
+
+        draw(false);
+        close_now();
+        let ((closed, _), commands) = draw(false);
+        quiet();
+        assert!(closed, "no edits: the system closes it");
+        assert!(!commands.contains(&ViewportCommand::CancelClose), "{commands:?}");
+
+        draw(true);
+        close_now();
+        let (shown, commands) = draw(true);
+        quiet();
+        assert_eq!(shown, (false, Action::None), "edits: it stays open");
+        assert!(commands.contains(&ViewportCommand::CancelClose), "the system leaves it open: {commands:?}");
+        assert!(asking(&ctx, "w"));
+        draw(true);
+        assert!(asking(&ctx, "w"), "until it is answered");
+        // The question is in the window that was closed: its keys answer it.
+        *keys.borrow_mut() = press(egui::Key::Escape);
+        assert_eq!(draw(true).0, (false, Action::None));
+        assert!(!asking(&ctx, "w"), "Esc in that window keeps it open");
+        close_now();
+        draw(true);
+        quiet();
+        draw(true);
+        *keys.borrow_mut() = press(egui::Key::Enter);
+        assert_eq!(draw(true).0, (false, Action::Ok), "Enter there applies the edits");
+    }
 }

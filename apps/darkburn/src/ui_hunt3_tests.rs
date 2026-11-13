@@ -516,10 +516,17 @@ fn every_preference_survives_a_restart_and_is_in_force() {
     // So does the pendant switch.
     assert!(!imported.opts.pendant, "import switched the pendant on");
     imported.opts.pendant = p.opts.pendant;
+    // And where a window of its own sits on this computer's screens: a place from another
+    // computer can be off every screen here.
+    for (key, place) in &mut imported.windows {
+        assert_eq!((place.native_pos, place.native_size), (None, None), "import brought where {key} sits in a window of its own");
+        let theirs = &p.windows[key];
+        (place.native_pos, place.native_size) = (theirs.native_pos, theirs.native_size);
+    }
     assert_eq!(
         Prefs { recent: p.recent.clone(), mcp: p.mcp.clone(), ..imported },
         p,
-        "import does not bring every setting (the recent projects, the AI agent access and the pendant aside)"
+        "import does not bring every setting (the recent projects, the AI agent access, the pendant and the places of windows of their own aside)"
     );
 
     // A restart with them.

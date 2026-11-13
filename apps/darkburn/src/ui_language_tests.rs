@@ -252,3 +252,19 @@ fn turkish_hotkey_filter_finds_words_with_a_dotless_i() {
         crate::i18n::set_language("en");
     }
 }
+
+#[test]
+fn zz_hotkey_filter_probe() {
+    for (typed, want) in
+        [("new", "New Window"), ("save", "Save As"), ("grid", "Grid Array"), ("arrange.grid", "Grid Array"), ("circ", "Circular Array")]
+    {
+        let mut g = Gui::standard();
+        g.app().extras.hotkeys.filter = typed.into();
+        g.run_command("file.hotkeys");
+        g.settle();
+        let n = crate::keymap::bindable().into_iter().filter(|(id, l, _)| id.contains(typed) || l.to_lowercase().contains(typed)).count();
+        let ids: Vec<_> = crate::keymap::bindable().into_iter().filter(|(id, _, _)| id.contains("array")).map(|(id, _, _)| id).collect();
+        eprintln!("PROBE {typed:?}: shows {want:?} = {}, matching bindable = {n}, array ids {ids:?}", g.has_text(want));
+        g.close_dialogs();
+    }
+}

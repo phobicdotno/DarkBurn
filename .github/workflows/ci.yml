@@ -113,13 +113,14 @@ jobs:
       # libclang: the camera crate makes its Linux bindings with it while building.
       # mesa-vulkan-drivers: a GPU in software (lavapipe). The UI tests draw the real app
       # offscreen and need a GPU; a runner has none. No display is needed.
-      # Fonts: a few tests read the system's fonts.
+      # Fonts: a few tests read the system's fonts. fonts-noto-cjk: Japanese, Korean and Chinese
+      # are drawn with system fonts; a test checks every character of their locale files has one.
       - name: Install what the Linux build and tests need
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libclang-dev libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-liberation
+            libclang-dev libvulkan1 mesa-vulkan-drivers fonts-dejavu-core fonts-liberation fonts-noto-cjk
 
       # "irm ... | iex" on a fresh Windows runs install.ps1 under Windows PowerShell 5.1, which
       # does not know the newer syntax. Parsed only, never run.

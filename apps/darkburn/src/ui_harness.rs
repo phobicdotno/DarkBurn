@@ -68,8 +68,25 @@ pub struct Painted {
     pub full: Rect,
     /// A word was broken across rows (a label squeezed into too narrow a space).
     pub broken_word: bool,
-    /// The text was cut short with an ellipsis.
+    /// The text was cut short with an ellipsis to fit its room.
     pub elided: bool,
+}
+
+/// Whether a row that ends with `last` and a row that starts with `first` split a word. Japanese
+/// and Chinese write no spaces between words, and a line may break between any two of their
+/// characters (egui breaks them so), so a break next to one splits nothing. Korean puts spaces
+/// between words like English does.
+pub fn splits_a_word(last: char, first: char) -> bool {
+    let breaks_anywhere = |c: char| {
+        matches!(c as u32,
+            0x3040..=0x30FF // hiragana and katakana
+            | 0x31F0..=0x31FF // katakana extensions
+            | 0x3400..=0x4DBF // CJK ideographs, extension A
+            | 0x4E00..=0x9FFF // CJK ideographs
+            | 0xF900..=0xFAFF // CJK compatibility ideographs
+            | 0xFF66..=0xFF9F) // half-width katakana
+    };
+    last.is_alphanumeric() && first.is_alphanumeric() && !breaks_anywhere(last) && !breaks_anywhere(first)
 }
 
 /// One lock for everything that makes the software rasteriser work: making a GPU device,
@@ -287,9 +304,7 @@ impl Gui {
                     let rows = &t.galley.rows;
                     let broken_word = rows.windows(2).any(|w| {
                         let (a, b) = (&w[0], &w[1]);
-                        !a.ends_with_newline
-                            && a.glyphs.last().is_some_and(|g| g.chr.is_alphanumeric())
-                            && b.glyphs.first().is_some_and(|g| g.chr.is_alphanumeric())
+                        !a.ends_with_newline && a.glyphs.last().zip(b.glyphs.first()).is_some_and(|(last, first)| splits_a_word(last.chr, first.chr))
                     });
                     if !text.trim().is_empty() && rect.is_positive() {
                         out.push(Painted { text, rect, full, broken_word, elided: t.galley.elided });

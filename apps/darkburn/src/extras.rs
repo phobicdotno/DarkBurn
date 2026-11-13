@@ -64,6 +64,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     options::publish(&app.prefs.opts);
     keymap::publish(&app.prefs.hotkeys);
     i18n::set_language(&app.prefs.language);
+    crate::language_fonts::frame(ctx, &i18n::language());
     let o = &app.prefs.opts;
     let zoom = o.ui_scale / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
@@ -475,7 +476,8 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     }
-    let filter = app.extras.hotkeys.filter.to_lowercase();
+    // Folded, so a Turkish "ızgara" finds "Izgara dizisi" (and "izgara" does too).
+    let filter = darkburn_ui::casing::fold(&app.extras.hotkeys.filter);
     ui.horizontal(|ui| {
         let head = |ui: &mut Ui, w: f32, text: String| {
             left_cell(ui, w, 18.0, egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).truncate());
@@ -491,7 +493,7 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
         for (id, label, default) in keymap::bindable() {
             let cmd = crate::commands::find(id);
             let shown = cmd.map(i18n::cmd_label).unwrap_or_else(|| label.to_string());
-            if !filter.is_empty() && !shown.to_lowercase().contains(&filter) && !id.contains(&filter) {
+            if !filter.is_empty() && !darkburn_ui::casing::fold(&shown).contains(&filter) && !id.contains(&filter) {
                 continue;
             }
             let second = keymap::second_of(id);

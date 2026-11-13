@@ -632,12 +632,13 @@ impl DarkBurn {
                     }
                 }
                 Entry::Dynamic("languages") => {
-                    for (code, name) in commands::LANGUAGES {
-                        let id = format!("lang.{code}");
-                        let mut item = MenuItem::new(&id, name, "");
-                        item.checked = Some(self.prefs.language == *code);
-                        item.enabled = crate::i18n::available(code);
-                        if item.show(ui).clicked() && item.enabled {
+                    // Only languages with text; their names may need system fonts [I18N-04].
+                    crate::language_fonts::want_language_names(ui.ctx());
+                    for l in crate::languages::offered() {
+                        let id = format!("lang.{}", l.code);
+                        let mut item = MenuItem::new(&id, l.name, "");
+                        item.checked = Some(self.prefs.language == l.code);
+                        if item.show(ui).clicked() {
                             *clicked = Some(id.clone());
                         }
                     }

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.585 (build 7)
+## v0.0.598 (build 7)
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
@@ -58,6 +58,19 @@
 - Fix: The pendant's Pause pressed right after going on with a job pauses it again
 - New: Closing a settings window with changes you haven't applied asks whether to apply them, throw them away or keep it open
 - Fix: Adjust Image and Optimization close when you open another project, so nothing carries over into it
+- New: the Language menu is ready for 22 more languages and shows each one as soon as its translation is there; a text not yet translated shows in English
+- New: Japanese, Korean and Chinese will be drawn with the fonts already on your computer
+- Fix: the Language menu no longer lists languages that cannot be picked yet
+- New: German, French and Italian (machine-translated; corrections are welcome)
+- New: Spanish (Spain), Spanish (Latin America) and Portuguese (machine-translated; corrections are welcome)
+- New: Dutch, Danish and Swedish (machine-translated; corrections are welcome)
+- New: Finnish, Polish and Czech (machine-translated; corrections are welcome)
+- New: Hungarian, Slovenian and Turkish (machine-translated; corrections are welcome)
+- Fix: Turkish headings in capitals keep the dot on the İ, and the hotkey search finds Turkish words typed with or without ı
+- New: Greek and Russian (machine-translated; corrections are welcome)
+- Fix: Greek headings in capitals drop the accents, and the hotkey search finds Greek words typed with or without them
+- New: Japanese and Korean (machine-translated; corrections are welcome)
+- New: Simplified and Traditional Chinese (machine-translated; corrections are welcome)
 
 ## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another

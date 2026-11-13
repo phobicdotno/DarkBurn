@@ -76,6 +76,8 @@ mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
+mod language_fonts;
+mod languages;
 mod laser_panel;
 mod laser_position;
 mod layer_defaults;
@@ -185,6 +187,8 @@ mod ui_hunt2_tests;
 mod ui_hunt3_tests;
 #[cfg(test)]
 mod ui_hunt_tests;
+#[cfg(test)]
+mod ui_language_tests;
 #[cfg(test)]
 mod ui_smoke_tests;
 mod updates;

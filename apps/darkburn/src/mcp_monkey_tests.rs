@@ -225,7 +225,9 @@ impl McpMonkey {
         let handle = PolicyHandle::new(policy);
         let trip = Tripwire { inner: McpBackend::new(app.clone(), egui::Context::default(), true), seen: seen.clone(), dir: dir.clone() };
         let tools = DarkburnTools::new(Box::new(Gate::new(trip, handle.clone()))).with_poll(Duration::from_millis(1));
-        let all = commands::list();
+        // `lang.*` commands are always held back (see `excluded`) and there is one per locale file:
+        // drawing them would only make a new translation change what every seed does.
+        let all: Vec<commands::Info> = commands::list().into_iter().filter(|i| !i.id.starts_with("lang.")).collect();
         let machine = all.iter().filter(|i| machine_command(&i.id)).cloned().collect();
         let prefs_mcp = format!("{:?}", app.borrow().prefs.mcp);
         McpMonkey {

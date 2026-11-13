@@ -137,12 +137,10 @@ fn leaves(entries: &[Entry], prefix: &[String], out: &mut Vec<(Vec<String>, Stri
                 }
             }
             Entry::Dynamic("languages") => {
-                for (code, name) in commands::LANGUAGES {
-                    if crate::i18n::available(code) {
-                        let mut p = prefix.to_vec();
-                        p.push(name.to_string());
-                        out.push((p, format!("lang.{code}")));
-                    }
+                for l in crate::languages::offered() {
+                    let mut p = prefix.to_vec();
+                    p.push(l.name.to_string());
+                    out.push((p, format!("lang.{}", l.code)));
                 }
             }
             Entry::Dynamic(_) | Entry::Sep => {}
@@ -966,4 +964,30 @@ fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
     assert!(area.contains_rect(close), "Close {close:?} lies in the tab {area:?}");
     g.click_id("dialog:cancel");
     assert!(!g.app().extras.hotkeys.open, "and it closes the window");
+}
+
+/// The Language menu lists the languages that have text and no others, and picking one switches
+/// the interface and back [I18N-04].
+#[test]
+fn the_language_menu_lists_only_languages_with_text_and_switches_between_them() {
+    let mut g = Gui::standard();
+    g.open_menu_only("Language");
+    g.frames(2);
+    for l in crate::languages::LANGUAGES {
+        let shown = !g.find_texts(l.name).is_empty();
+        assert_eq!(shown, crate::languages::is_offered(l.code), "{} ({}) in the menu", l.name, l.code);
+    }
+    g.screenshot("language-menu");
+    g.click_label("Norsk bokm\u{e5}l");
+    g.frames(3);
+    assert_eq!(g.app().prefs.language, "nb");
+    assert_eq!(crate::i18n::language(), "nb");
+    assert!(!g.find_texts("Fil").is_empty(), "the File menu is now Fil: {:?}", g.visible_texts());
+    g.open_menu_only("Language");
+    g.frames(2);
+    g.screenshot("language-menu-nb");
+    g.click_label("English");
+    g.frames(3);
+    assert_eq!(g.app().prefs.language, "en");
+    assert!(!g.find_texts("File").is_empty());
 }

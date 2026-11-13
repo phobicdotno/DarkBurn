@@ -110,7 +110,7 @@ impl StageBar {
 
     pub fn caption(ui: &mut Ui, label: &str) {
         let t = Tokens::get();
-        let label = label.to_uppercase();
+        let label = crate::casing::upper(label);
         let font = crate::fonts::semibold(t.font_small);
         let width = ui.painter().layout_no_wrap(label.clone(), font.clone(), t.text_dim).size().x
             + t.font_small * t.font_section_tracking * label.chars().count() as f32

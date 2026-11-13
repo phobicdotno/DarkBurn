@@ -232,8 +232,24 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let width = (ui.available_width() - 14.0).max(200.0);
     // Narrow panels shrink the fixed columns before the name column runs out.
     // The fixed columns keep their width; the panel is at least 300 points wide, so the name
-    // column always has room. The three switches are narrow (their headers are short).
-    let fixed = [20.0f32, 0.0, 62.0, 54.0, 24.0, 24.0, 24.0];
+    // column always has room. The three switches are narrow (their headers are short); a
+    // column whose translated header is longer grows to fit it, so headers never overlap.
+    let headers = [
+        "#".to_string(),
+        crate::i18n::tr("cuts.col.layer", "Layer"),
+        crate::i18n::tr("cuts.col.mode", "Mode"),
+        crate::i18n::tr("cuts.col.speed_power", "Spd/Pwr"),
+        crate::i18n::tr("cuts.col.out", "Out"),
+        crate::i18n::tr("cuts.col.show", "Vis"),
+        crate::i18n::tr("cuts.col.air", "Air"),
+    ];
+    let mut fixed = [20.0f32, 0.0, 62.0, 54.0, 24.0, 24.0, 24.0];
+    for (i, (w, h)) in fixed.iter_mut().zip(&headers).enumerate() {
+        if i != 1 {
+            let text_w = ui.painter().layout_no_wrap(h.clone(), FontId::proportional(t.font_small), t.text_dim).size().x;
+            *w = w.max((text_w + 8.0).ceil());
+        }
+    }
     let name_w = (width - fixed.iter().sum::<f32>()).max(40.0);
     let mut widths = fixed;
     widths[1] = name_w;
@@ -251,15 +267,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     let (header, header_resp) = ui.allocate_exact_size(vec2(width, 22.0), Sense::click());
     let p = ui.painter();
     p.rect_filled(header, t.radius_sm, t.panel_header);
-    for (c, label) in cols(header).iter().zip([
-        "#".to_string(),
-        crate::i18n::tr("cuts.col.layer", "Layer"),
-        crate::i18n::tr("cuts.col.mode", "Mode"),
-        crate::i18n::tr("cuts.col.speed_power", "Spd/Pwr"),
-        crate::i18n::tr("cuts.col.out", "Out"),
-        crate::i18n::tr("cuts.col.show", "Vis"),
-        crate::i18n::tr("cuts.col.air", "Air"),
-    ]) {
+    for (c, label) in cols(header).iter().zip(headers) {
         p.text(pos2(c.left() + 4.0, c.center().y), Align2::LEFT_CENTER, label, FontId::proportional(t.font_small), t.text_dim);
     }
     let header_resp = header_resp.backing_on_hover_text("Right-click for show, output and air for every layer");

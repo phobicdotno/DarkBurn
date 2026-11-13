@@ -307,6 +307,21 @@ mod tests {
         set_language("en");
     }
 
+    /// Dutch, Danish and Swedish translate the English texts, and the Language menu offers
+    /// them [I18N-04].
+    #[test]
+    fn dutch_danish_and_swedish_are_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("nl", "Bestand"), ("da", "Filer"), ("sv", "Arkiv")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
     /// The two Spanish files are not copies of each other: each uses the words of its own
     /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
     /// in Latin America, and "ordenador" against "computadora".
@@ -336,7 +351,7 @@ mod tests {
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt"] {
+        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv"] {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -373,6 +388,9 @@ mod tests {
             ("es-ES", "Apagado"),
             ("es-LA", "Apagado"),
             ("pt", "Desligado"),
+            ("nl", "Uit"),
+            ("da", "Fra"),
+            ("sv", "Av"),
             ("en", "Off"),
         ];
         for (code, word) in off {
@@ -441,16 +459,31 @@ mod tests {
     /// an image keeps, is a sense of its own.
     #[test]
     fn spanish_and_portuguese_use_one_word_per_term() {
+        assert_one_word_per_term(&[
+            ("es-ES", ["ancho", "alto", "restablecer", "copia de seguridad", "trazado de respaldo"]),
+            ("es-LA", ["ancho", "alto", "restablecer", "respaldo", "trazado de respaldo"]),
+            ("pt", ["largura", "altura", "restaurar", "backup", "caminho de backup"]),
+        ]);
+    }
+
+    /// Dutch, Danish and Swedish keep one word per term the same way (see the glossary).
+    #[test]
+    fn dutch_danish_and_swedish_use_one_word_per_term() {
+        assert_one_word_per_term(&[
+            ("nl", ["breedte", "hoogte", "herstellen", "back-up", "reservepad"]),
+            ("da", ["bredde", "højde", "nulstil", "sikkerhedskopi", "reservesti"]),
+            ("sv", ["bredd", "höjd", "återställ", "säkerhetskopia", "reservbana"]),
+        ]);
+    }
+
+    /// Each language's words for Width, Height, Reset, a backup copy and a backup path appear,
+    /// as whole words, in every text that names that term.
+    fn assert_one_word_per_term(words: &[(&str, [&str; 5])]) {
         let width = ["settings.width", "settings.capture_width", "cmd.arrange.same_width"];
         let height = ["settings.height", "settings.capture_height", "settings.font_height", "cmd.arrange.same_height"];
         let reset = ["cmd.laser.pnc_reset", "cmd.window.reset_layout", "hotkeys.reset_all", "settings.reset_all"];
         let backup = ["cmd.file.prefs_backup", "library.save_tip"];
         let path = ["cmd.edit.image_remove_backup"];
-        let words: [(&str, [&str; 5]); 3] = [
-            ("es-ES", ["ancho", "alto", "restablecer", "copia de seguridad", "trazado de respaldo"]),
-            ("es-LA", ["ancho", "alto", "restablecer", "respaldo", "trazado de respaldo"]),
-            ("pt", ["largura", "altura", "restaurar", "backup", "caminho de backup"]),
-        ];
         let mut bad = Vec::new();
         for (code, word) in words {
             let t = locale(code);

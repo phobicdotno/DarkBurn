@@ -347,3 +347,94 @@ infinitive. Key names stay as in English. Quotes “like this”.
 - Width / Height: Largura / Altura. Reset: Restaurar. Backup: backup, also in the image's
   "caminho de backup".
 - Start (the laser panel button, not translated yet): “Start”.
+
+## Dutch (nl)
+
+Informal "je" with the imperative in help texts ("Klik", "Druk op"); commands use the
+infinitive ("Opslaan", "Openen"). Key names stay as in English. Panel labels that are not
+translated yet are quoted “like this”.
+
+- Job: taak. Cut (laser): snijden, as in Snij-instellingen, Snijbibliotheek, snijrichting, Snijpalet.
+  Cut (clipboard): Knippen. Cut shapes: Vormen splitsen.
+- Layer: laag. Line / Fill / Image: Lijn / Vullen / Afbeelding. Engrave: graveren.
+- Power: vermogen. Speed: snelheid. Pass: doorgang. Interval: interval. Thickness: dikte.
+- Air assist: luchtondersteuning. Frame: de omtrek aflopen.
+- Home: thuispositie. Origin: nulpunt. Start point: beginpunt.
+- Tab: brug, bruggen. Rotary: rotatie-as. Camera: camera. Print and cut: Printen en snijden.
+- Device / Machine: apparaat / machine. Command: opdracht. Preview: Voorbeeld. Nudge: stap (met pijltoetsen).
+- Shape / Object: vorm / object. Path: pad. Node: knooppunt. Weld: samensmelten.
+- Boolean union / difference / intersection: Booleaanse vereniging / Booleaans verschil / Booleaanse doorsnede.
+- Offset: Offset, "Vormen offsetten". Trace: overtrekken. Bitmap: bitmap.
+- Group / Ungroup: Groeperen / Groepering opheffen. Array: reeks (Rasterreeks, Cirkelreeks, Virtuele reeks).
+- Align / Distribute / Dock: Uitlijnen / Verdelen / Aanschuiven. Flip and Mirror: spiegelen.
+- Snap: kleven. Grid: raster. Lock: vergrendelen. Crop: bijsnijden. Pan: pannen.
+- Selection: selectie. Page: pagina. Canvas: tekenvlak. Bed: werkbed. Work area: werkgebied.
+- Toolbar: werkbalk. Ribbon tab Home: Start. Hotkeys: sneltoetsen. Settings: Instellingen.
+  Preferences (the settings file): voorkeuren.
+- Edit (menu, clipboard and undo): Bewerken. Modify (ribbon tab): Wijzigen. Arrange: Schikken.
+- Art library: Beeldbank. Library entry and art item: item. Move (panel): Verplaatsen.
+- Feeder: invoer. Camera control: Camerabediening. Frame Selection (view): Zoomen naar selectie.
+- Cut table columns: Laag, Modus, Snelh/Verm, Uitv., Zicht, Lucht ("Uit" would read as Off).
+- Width / Height: Breedte / Hoogte. Reset: herstellen. Backup (a saved copy of a file): back-up.
+  Backup path (the outline an image keeps after a crop): reservepad.
+- Start (the laser panel button, not translated yet): “Start”.
+
+## Danish (da)
+
+"Du" with the imperative in help texts and in commands ("Gem", "Åbn", "Klip", "Sæt ind").
+Key names stay as in English. Panel labels that are not translated yet are quoted »like this«.
+
+- Job: job. Cut (laser): skæring, skære-, as in Skæreindstillinger, Skærebibliotek, skæreretning,
+  Skærepalet. Cut (clipboard): Klip. Cut shapes: Opdel figurer.
+- Layer: lag. Line / Fill / Image: Linje / Udfyldning / Billede.
+- Power: effekt. Speed: hastighed. Pass: gennemløb. Thickness: tykkelse.
+- Air assist: luftassistance. Frame: køre omridset.
+- Home: hjem. Origin: nulpunkt. Start point: startpunkt.
+- Tab: tap, tappe. Rotary: rotationsakse. Print and cut: Print og skær.
+- Device / Machine: enhed / maskine. Command: kommando. Preview: Eksempel. Nudge: flyt med piletaster.
+- Shape / Object: figur / objekt. Selection: markering. Path: sti. Node: knudepunkt. Weld: svejse.
+- Boolean union / difference / intersection: Boolesk forening / forskel / fællesmængde.
+- Offset: forskyde, Forskydning. Trace: vektorisere. Bitmap: bitmap.
+- Group / Ungroup: Gruppér / Opløs gruppe. Array: mønster.
+- Align / Distribute / Dock: Juster / Fordel / Skub. Flip: spejlvende. Mirror: spejle.
+- Snap: fastgøre, Fastgøring. Grid: gitter. Lock: låse. Crop: beskæring. Pan: panorere.
+- Page: side. Canvas: lærred. Bed: arbejdsbord. Work area: arbejdsområde.
+- Toolbar: værktøjslinje. Ribbon tab Home: Start. Hotkeys: genvejstaster. Settings: Indstillinger.
+  Preferences (the settings file): præferencer.
+- Edit: Rediger. Modify (ribbon tab): Ændr. Arrange: Arranger. File menu: Filer.
+- Mode: tilstand, also in the cut table. Art library: Grafikbibliotek. Library entry: post. Art item: element.
+- Feeder: fremføring. Camera control: Kamerastyring.
+- Cut table columns: Lag, Tilstand, Hast/Eff, Ud, Vis, Luft.
+- Width / Height: Bredde / Højde. Reset: Nulstil. Backup (a saved copy of a file): sikkerhedskopi.
+  Backup path (the outline an image keeps after a crop): reservesti.
+- Start (the laser panel button, not translated yet): »Start«.
+
+## Swedish (sv)
+
+"Du" with the imperative in help texts and in commands ("Spara", "Öppna", "Klipp ut").
+Key names stay as in English. Panel labels that are not translated yet are quoted ”like this”.
+
+- Job: jobb. Cut (laser): skärning, skär-, as in Skärinställningar, Skärbibliotek, skärriktning,
+  Skärpalett. Cut (clipboard): Klipp ut. Cut shapes: Dela former.
+- Layer: lager. Line / Fill / Image: Linje / Fyllning / Bild.
+- Power: effekt. Speed: hastighet. Pass: pass. Thickness: tjocklek.
+- Air assist: luftassistans. Frame: köra konturen.
+- Home: hemläge. Origin: nollpunkt. Start point: startpunkt.
+- Tab: brygga, bryggor. Rotary: rotationsaxel. Print and cut: Utskrift och skärning.
+- Device / Machine / Controller: enhet / maskin / styrenhet. Command: kommando. Preview: Förhandsvisning.
+- Shape / Object: form / objekt. Selection: markering. Path: bana. Node: nod. Weld: svetsa.
+- Boolean union / difference / intersection: Boolesk union / differens / Booleskt snitt.
+- Offset: förskjuta, Förskjutning. Trace: vektorisera. Bitmap: bitmapp. Output: utmatning.
+- Group / Ungroup: Gruppera / Dela upp grupp. Array: mönster.
+- Align / Distribute / Dock: Justera / Fördela / Docka. Flip: vända. Mirror: spegla.
+- Snap: fästa, Fästning. Grid: rutnät. Lock: låsa. Crop: beskärning. Pan: panorera.
+- Page: sida. Canvas: arbetsyta. Bed: arbetsbädd. Work area: arbetsområde.
+- Toolbar: verktygsfält. Ribbon tab Home: Start. Hotkeys: kortkommandon. Settings: Inställningar.
+  Preferences (the settings file): preferenser.
+- Edit: Redigera. Modify (ribbon tab): Ändra. Arrange: Ordna. File menu: Arkiv.
+- Mode: läge. Art library: Bildbibliotek. Library entry: post. Art item: objekt.
+- Feeder: matning. Camera control: Kamerastyrning.
+- Cut table columns: Lager, Läge, Hast/Eff, Ut, Syn, Luft.
+- Width / Height: Bredd / Höjd. Reset: Återställ. Backup (a saved copy of a file): säkerhetskopia.
+  Backup path (the outline an image keeps after a crop): reservbana.
+- Start (the laser panel button, not translated yet): ”Start”.

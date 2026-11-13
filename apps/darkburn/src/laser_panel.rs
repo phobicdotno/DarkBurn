@@ -601,10 +601,14 @@ fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
 fn laser2_controls(ui: &mut Ui, app: &mut DarkBurn) {
     ui_kit::section_heading(ui, "Laser 2");
     let cached = app.machine.handle.snapshot().ruida.laser2;
+    let connected = app.machine.handle.is_connected();
+    // Nothing connected, or nothing read from this controller: no draft Write could send.
+    if !connected || cached.is_none() {
+        app.machine.dlg.laser2 = None;
+    }
     if app.machine.dlg.laser2.is_none() {
         app.machine.dlg.laser2 = cached;
     }
-    let connected = app.machine.handle.is_connected();
     if let Some(l2) = app.machine.dlg.laser2.as_mut() {
         let (mut lo, mut hi) = (f64::from(l2.min_power) / 10.0, f64::from(l2.max_power) / 10.0);
         ui_kit::row(ui, "Min power", |ui| {

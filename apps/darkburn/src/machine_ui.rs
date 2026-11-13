@@ -550,6 +550,9 @@ impl MachineUi {
         if !self.devices.select(id) {
             return false;
         }
+        // Laser 2 and U axis drafts belong to the controller they were read from.
+        self.dlg.laser2 = None;
+        self.dlg.u_axis = None;
         if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }
@@ -1026,6 +1029,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "device.read_motion" => {
             let snap = m.handle.snapshot().clone();
             let base = m.active().settings.additional;
+            if !snap.connected() {
+                return Err("No controller is connected. Connect and read the machine settings first.".into());
+            }
             let new = crate::motion_read::from_snapshot(&snap, base)
                 .ok_or("The controller has not reported its settings yet. Connect and read the machine settings first.")?;
             if let Some(dev) = m.devices.active_mut() {

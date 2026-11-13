@@ -498,12 +498,18 @@ fn galvo_import(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let path = text(a, "path")?;
     let bytes = std::fs::read(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let imp = darkburn_galvo::ezcad::import(&bytes).map_err(|e| e.to_string())?;
+    // Checked as a whole before anything is applied: a refused import changes nothing.
+    let mut s = dev.settings.galvo.clone();
+    s.apply_library(&imp.settings);
+    if let Some(c) = &imp.cor_file {
+        s.cor_path = c.clone();
+    }
+    if let Some(e) = s.validate().first() {
+        return Err(format!("The EZCad settings were not imported: {e}"));
+    }
     let id = dev.id;
     if let Some(d) = app.machine.devices.get_mut(id) {
-        d.settings.galvo.apply_library(&imp.settings);
-        if let Some(c) = &imp.cor_file {
-            d.settings.galvo.cor_path = c.clone();
-        }
+        d.settings.galvo = s;
     }
     Ok(json!({ "ok": true, "applied": imp.applied, "ignored": imp.ignored, "warnings": imp.warnings, "cor_file": imp.cor_file }))
 }

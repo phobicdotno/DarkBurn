@@ -82,9 +82,17 @@ impl ScanOffsetTable {
 
     /// The offset at `speed`: linear between the neighbouring rows, the end rows' value beyond
     /// them, zero for an empty table.
+    /// Rows not in order, at the same speed or not numbers (the window may hold them while they
+    /// are edited) are read as [`Self::normalise`] would leave them; a speed that is not a number
+    /// gives zero.
     pub fn offset_at(&self, speed: f64) -> f64 {
-        let e = &self.entries;
-        match e.len() {
+        if !speed.is_finite() {
+            return 0.0;
+        }
+        let mut t = self.clone();
+        t.normalise();
+        let e = &t.entries;
+        let v = match e.len() {
             0 => 0.0,
             1 => e[0].offset,
             _ => {
@@ -99,7 +107,8 @@ impl ScanOffsetTable {
                 let t = (speed - a.speed) / (b.speed - a.speed);
                 a.offset + (b.offset - a.offset) * t
             }
-        }
+        };
+        if v.is_finite() { v } else { 0.0 }
     }
 
     /// The table as the text of a `.dbso` file.
@@ -222,7 +231,7 @@ pub fn set(t: ScanTuning) {
 /// offset, reverse lines forward by half. Does nothing for unidirectional plans or a zero offset.
 pub fn shift_plans(plans: &mut [ScanPlan], speed: f64, table: &ScanOffsetTable) {
     let half = table.offset_at(speed) / 2.0;
-    if half == 0.0 {
+    if half == 0.0 || !half.is_finite() {
         return;
     }
     for plan in plans {

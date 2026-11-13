@@ -78,8 +78,13 @@ pub fn from_ruida(s: &MachineSettings, base: AdditionalSettings) -> Option<Addit
     found.then_some(out)
 }
 
-/// What the connected controller says, folded into `base`; `None` before its settings are read.
+/// What the connected controller says, folded into `base`; `None` before its settings are read
+/// and when no controller is connected (a lost link leaves the old controller's settings in the
+/// snapshot).
 pub fn from_snapshot(snap: &Snapshot, base: AdditionalSettings) -> Option<AdditionalSettings> {
+    if !snap.connected() {
+        return None;
+    }
     match snap.family {
         Family::Grbl => from_grbl(&snap.grbl_settings, base),
         Family::Ruida => snap.ruida.settings.as_ref().and_then(|s| from_ruida(s, base)),

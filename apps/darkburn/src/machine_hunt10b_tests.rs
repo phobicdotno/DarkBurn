@@ -63,3 +63,163 @@ fn the_file_list_forgets_ticks_from_another_controller() {
         a.machine.file_sel
     );
 }
+
+/// A Laser 2 power draft read from one dual-tube controller stays in the Laser panel after the
+/// user switches to another dual-tube controller: Write is enabled there and sends the first
+/// controller's minimum and maximum power to the second.
+#[test]
+fn the_laser2_draft_does_not_follow_to_another_controller() {
+    let mut a = DarkBurn::new(Prefs::default());
+    let first = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
+    a.machine.devices.get_mut(first).unwrap().settings.dsp.dual_tube = true;
+    run(&mut a, "device.select", json!({ "id": first })).unwrap();
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait_ready(&mut a);
+    run(&mut a, "machine.dsp_read", json!({ "what": "laser2" })).unwrap();
+    let end = Instant::now() + T;
+    while a.machine.handle.snapshot().ruida.laser2.is_none() {
+        a.machine.tick();
+        assert!(Instant::now() < end, "laser 2 never read");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    draw_panel(&mut a, "move");
+    assert!(a.machine.dlg.laser2.is_some(), "the panel shows the first controller's laser 2");
+    // The user types other limits for the first controller.
+    if let Some(l) = a.machine.dlg.laser2.as_mut() {
+        l.min_power = 123;
+        l.max_power = 456;
+    }
+    let second = run(&mut a, "device.duplicate", json!({ "id": first })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "device.select", json!({ "id": second })).unwrap();
+    assert!(a.machine.dlg.laser2.is_none(), "switching controllers keeps the old controller's laser 2 draft");
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait_ready(&mut a);
+    assert!(a.machine.handle.snapshot().ruida.laser2.is_none(), "the new controller's laser 2 is not read yet");
+    // A draft left behind by anything else must not survive a frame either.
+    a.machine.dlg.laser2 = Some(ruida_laser2(123, 456));
+    draw_panel(&mut a, "move");
+    assert!(a.machine.dlg.laser2.is_none(), "Write would send laser 2 values the new controller never reported");
+    // Nothing connected: no draft.
+    a.machine.handle.disconnect();
+    a.machine.dlg.laser2 = Some(ruida_laser2(123, 456));
+    draw_panel(&mut a, "move");
+    assert!(a.machine.dlg.laser2.is_none(), "a laser 2 draft with nothing connected");
+}
+
+fn ruida_laser2(min: u32, max: u32) -> darkburn_ruida::settings::Laser2Settings {
+    darkburn_ruida::settings::Laser2Settings { min_power: min, max_power: max, ..Default::default() }
+}
+
+/// After the link to a GRBL controller drops, its settings stay in the snapshot; "Read speeds
+/// and acceleration from the controller" then writes the lost controller's numbers into
+/// whichever device is selected next.
+#[test]
+fn motion_is_not_read_from_a_lost_link() {
+    use crate::machine_api::{ConnectConfig, Link};
+    let mut a = DarkBurn::new(Prefs::default());
+    let grbl = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": grbl })).unwrap();
+    let (adapter, emu) = crate::connections::grbl_simulator(&ConnectConfig::default());
+    a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorGrbl);
+    wait_ready(&mut a);
+    run(&mut a, "machine.read_settings", Value::Null).unwrap();
+    let end = Instant::now() + T;
+    while a.machine.handle.snapshot().grbl_settings.is_empty() {
+        a.machine.tick();
+        assert!(Instant::now() < end, "settings never read");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    emu.with(|e| e.unplug());
+    let end = Instant::now() + T;
+    while a.machine.handle.snapshot().connected() {
+        a.machine.tick();
+        assert!(Instant::now() < end, "the drop was never noticed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..5 {
+        a.machine.tick();
+    }
+    let snap = a.machine.handle.snapshot().clone();
+    assert!(crate::motion_read::from_snapshot(&snap, Default::default()).is_none(), "settings of a link that is gone");
+    let other = run(&mut a, "device.duplicate", json!({ "id": grbl })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "device.select", json!({ "id": other })).unwrap();
+    let before = a.machine.active().settings.additional;
+    assert!(run(&mut a, "device.read_motion", Value::Null).is_err(), "read the lost controller's speeds into another device");
+    let after = a.machine.active().settings.additional;
+    assert_eq!((before.max_speed, before.accel, before.rapid_speed), (after.max_speed, after.accel, after.rapid_speed));
+}
+
+/// Galvo settings that are not numbers pass the checks, and the EZCad import is not checked.
+#[test]
+fn galvo_settings_refuse_values_that_are_not_numbers() {
+    use crate::galvo_settings::GalvoDeviceSettings;
+    let good = GalvoDeviceSettings::default();
+    assert!(good.validate().is_empty(), "{:?}", good.validate());
+    let bad: Vec<(&str, Box<dyn Fn(&mut GalvoDeviceSettings)>)> = vec![
+        ("jump speed", Box::new(|s| s.timings.jump_speed_mm_s = f64::NAN)),
+        ("jump distance limit", Box::new(|s| s.timings.jump_distance_limit_mm = f64::NAN)),
+        ("frequency", Box::new(|s| s.default_frequency_khz = f64::NAN)),
+        ("frequency inf", Box::new(|s| s.default_frequency_khz = f64::INFINITY)),
+        ("light speed", Box::new(|s| s.light_speed_mm_s = f64::NAN)),
+        ("light speed zero", Box::new(|s| s.light_speed_mm_s = 0.0)),
+        ("offset x", Box::new(|s| s.offset_x_mm = f64::NAN)),
+        ("offset y", Box::new(|s| s.offset_y_mm = f64::INFINITY)),
+        ("skew", Box::new(|s| s.cal1.skew = f64::NAN)),
+        ("bulge", Box::new(|s| s.cal2.bulge = f64::NAN)),
+        ("trapezoid", Box::new(|s| s.cal1.trapezoid = f64::NAN)),
+        ("q pulse", Box::new(|s| s.default_q_pulse_ns = f64::NAN)),
+    ];
+    for (what, f) in bad {
+        let mut s = GalvoDeviceSettings::default();
+        f(&mut s);
+        assert!(!s.validate().is_empty(), "{what}: accepted");
+    }
+}
+
+#[test]
+fn the_ezcad_import_is_checked() {
+    let mut a = DarkBurn::new(Prefs::default());
+    let id = run(&mut a, "device.add", json!({ "type": "SimulatorGalvo" })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "device.select", json!({ "id": id })).unwrap();
+    let before = a.machine.active().settings.galvo.clone();
+    let dir = std::env::temp_dir().join(format!("darkburn_hunt10b_ezcad_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let cfg = dir.join("markcfg.ini");
+    std::fs::write(&cfg, "[Lens]\nField Size = 2\nJumpSpeed = 3500\n").unwrap();
+    let r = run(&mut a, "galvo.import_ezcad", json!({ "path": cfg.display().to_string() }));
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(r.is_err(), "a 2 mm field was imported: {r:?}");
+    assert_eq!(a.machine.active().settings.galvo, before, "a refused import changed the settings");
+}
+
+/// A NaN speed, or rows not in order (the Scanning Offset window open) or at the same speed,
+/// gave a NaN offset, and the image job shifted every scan line by NaN.
+#[test]
+fn scan_offsets_never_give_nan() {
+    use crate::scan_offsets::{OffsetEntry, ScanOffsetTable};
+    let mut t = ScanOffsetTable::default();
+    t.set(50.0, 0.1);
+    t.set(100.0, 0.2);
+    assert_eq!(t.offset_at(f64::NAN), 0.0, "a NaN speed");
+    // Rows as the window holds them while being edited: unsorted, duplicated, not numbers.
+    let raw = ScanOffsetTable {
+        entries: vec![
+            OffsetEntry { speed: 100.0, offset: 0.2 },
+            OffsetEntry { speed: 50.0, offset: 0.1 },
+            OffsetEntry { speed: 50.0, offset: 0.1 },
+            OffsetEntry { speed: 75.0, offset: f64::NAN },
+            OffsetEntry { speed: f64::NAN, offset: 0.4 },
+        ],
+    };
+    for speed in [10.0, 50.0, 60.0, 75.0, 99.0, 100.0, 500.0, f64::NAN, f64::INFINITY] {
+        assert!(raw.offset_at(speed).is_finite(), "speed {speed}: {}", raw.offset_at(speed));
+    }
+    let dup = ScanOffsetTable {
+        entries: vec![OffsetEntry { speed: 50.0, offset: 0.1 }, OffsetEntry { speed: 50.0, offset: 0.3 }, OffsetEntry { speed: 50.0, offset: 0.3 }],
+    };
+    for speed in [10.0, 50.0, 60.0] {
+        assert!(dup.offset_at(speed).is_finite(), "speed {speed}: {}", dup.offset_at(speed));
+    }
+    let mid = raw.offset_at(75.0);
+    assert!((mid - 0.15).abs() < 1e-9, "75 mm/s is between 0.1 and 0.2: {mid}");
+}

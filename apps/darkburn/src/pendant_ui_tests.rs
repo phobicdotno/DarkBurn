@@ -834,6 +834,12 @@ fn the_settings_page_says_pause_only_pauses() {
         g.frames(2);
     }
     assert!(g.has_text(text), "{:?}", g.visible_texts());
+    // Wrapped over several lines, not cut short at the window's edge.
+    let help = g.find_text(text).unwrap();
+    let line = g.find_text("Use wireless pendant").expect("the pendant switch");
+    assert!(help.height() > 1.5 * line.height(), "the help text is one line, cut short: {help:?}");
+    let win = g.rect_of("dialog:window").unwrap();
+    assert!(win.contains(help.left_top()) && win.contains(help.right_bottom()), "{help:?} in {win:?}");
     g.screenshot("pendant-settings");
     g.close_dialogs();
 }

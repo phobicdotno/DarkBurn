@@ -384,8 +384,8 @@ fn the_head_camera_window_reads_the_head_position_from_the_laser() {
     wait(&mut g.app(), "idle", |a| a.machine.handle.snapshot().state == LaserState::Ready);
     g.exec("machine.get_position", json!({}));
     wait(&mut g.app(), "position known", |a| a.machine.handle.snapshot().has_position);
-    show_camera_panel(&mut g);
-    g.click_label("Head camera...");
+    // The Camera Control panel's "Head camera..." button (below the fold of the docked panel).
+    crate::vision_ui::open_dialog(&mut g.app(), crate::vision_ui::Dlg::Head);
     g.frames(3);
     g.click_label("Read head");
     g.frames(2);

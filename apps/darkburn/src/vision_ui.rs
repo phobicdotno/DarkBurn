@@ -229,7 +229,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
     true
 }
 
-fn open_dialog(app: &mut DarkBurn, d: Dlg) {
+pub(crate) fn open_dialog(app: &mut DarkBurn, d: Dlg) {
     let s = &app.vision.state;
     let u = &mut app.vision.ui;
     match d {

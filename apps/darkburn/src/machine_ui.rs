@@ -622,6 +622,16 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     // Keep the state fresh before acting on it.
     app.machine.tick();
     crate::machine_job::update_head(app);
+    // A Stop also ends a start that has not reached the machine yet: without this the job
+    // being planned would start a moment after Stop was pressed.
+    let start_dropped = STOPS_A_PENDING_START.contains(&id) && crate::machine_job::cancel_pending_start(app);
+    if start_dropped {
+        app.machine.say("Stopped: the job that was being prepared was not started.");
+        if !app.machine.handle.is_connected() {
+            // The link went while the job was planned: there is no machine to send a Stop to.
+            return Some(Ok(json!({ "ok": true, "start_cancelled": true })));
+        }
+    }
     if src == Source::Api && app.machine.handle.is_real_machine() {
         if AGENT_STOPS.contains(&id) {
             return Some(agent_stop(app, id));
@@ -643,6 +653,10 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     }
     Some(run_command(app, id, a, src))
 }
+
+/// The commands that mean Stop. Each of them also drops a start that is still on its way to the
+/// machine (`machine_job::cancel_pending_start`).
+const STOPS_A_PENDING_START: &[&str] = &["job.stop", "machine.stop", "machine.emergency_stop"];
 
 /// What an agent may do on a real machine too: stop it, switch the laser off and end a jog.
 /// Nothing here ever starts, moves, fires or resumes anything.

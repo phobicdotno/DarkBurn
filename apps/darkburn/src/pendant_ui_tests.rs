@@ -96,6 +96,24 @@ fn start_slow_job(ctx: &egui::Context, a: &mut DarkBurn) {
     pump(ctx, a, "the slow job running", |a| state(a) == LaserState::Busy);
 }
 
+/// The window's part after Start: wait for the planned job and hand it on, as a frame does.
+fn finish_planning(a: &mut DarkBurn) {
+    let result = loop {
+        if let Some((task, _)) = a.job.pending.as_mut()
+            && let Some(r) = task.poll()
+        {
+            break r.clone();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let (_, then) = a.job.pending.take().unwrap();
+    crate::job_cmds::finish(a, result.unwrap(), then);
+}
+
+fn job_started(a: &DarkBurn) -> bool {
+    a.machine.job_log.iter().any(|l| l.starts_with("Job started"))
+}
+
 fn stopped(a: &DarkBurn) -> bool {
     matches!(state(a), LaserState::Ready | LaserState::Alarm)
 }
@@ -237,21 +255,81 @@ fn start_and_stop_run_the_job_like_the_buttons() {
     tap(&emu, Key::Start);
     // Start takes the button's path: the job is planned off the UI thread first.
     pump(&ctx, &mut a, "the job being planned", |a| a.job.pending.is_some());
-    let result = loop {
-        if let Some((task, _)) = a.job.pending.as_mut()
-            && let Some(r) = task.poll()
-        {
-            break r.clone();
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let (_, then) = a.job.pending.take().unwrap();
-    crate::job_cmds::finish(&mut a, result.unwrap(), then);
+    finish_planning(&mut a);
     pump(&ctx, &mut a, "the job running", |a| {
         a.machine.handle.snapshot().state.is_working() || a.machine.job_log.iter().any(|l| l.starts_with("Job"))
     });
     tap(&emu, Key::Stop);
     pump(&ctx, &mut a, "the job stopped", |a| !a.machine.handle.snapshot().state.is_working());
+}
+
+/// Start by mistake, Stop at once: the job is still being planned, and it must not start when
+/// the planning ends.
+#[test]
+fn stop_while_the_job_is_being_planned_cancels_the_start() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 200, "height": 200, "layer": 0 })).unwrap();
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    tap(&emu, Key::Start);
+    pump(&ctx, &mut a, "the job being planned", |a| a.job.pending.is_some());
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the planned start dropped", |a| a.job.pending.is_none());
+    settle(&ctx, &mut a);
+    assert!(!state(&a).is_working(), "{:?}", state(&a));
+    assert!(!job_started(&a), "{:?}", a.machine.job_log);
+}
+
+/// The same through the commands of the Stop button and of an agent, without a pendant.
+#[test]
+fn the_stop_commands_cancel_a_start_that_is_being_planned() {
+    let mut a = DarkBurn::new(Prefs::default());
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 200, "height": 200, "layer": 0 })).unwrap();
+    for stop in ["job.stop", "machine.stop", "machine.emergency_stop"] {
+        assert!(crate::machine_ui::run_with(&mut a, "job.start", &json!({})));
+        assert!(a.job.pending.is_some(), "{stop}: {:?}", a.machine.message.as_ref().map(|m| &m.text));
+        if stop == "job.stop" {
+            // The button.
+            assert!(crate::machine_ui::run_with(&mut a, stop, &json!({})));
+        } else {
+            // An agent or a script.
+            let _ = run(&mut a, stop, json!({}));
+        }
+        assert!(a.job.pending.is_none(), "{stop} left the planned start waiting");
+    }
+    settle(&ctx, &mut a);
+    assert!(!job_started(&a), "{:?}", a.machine.job_log);
+}
+
+/// A start that waits for the out-of-bounds answer or for the checklist is dropped by Stop too.
+#[test]
+fn stop_drops_a_start_that_waits_for_an_answer() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    // A shape far outside the work area: the planned job asks before it runs.
+    run(&mut a, "shape.add_rect", json!({ "x": 100000, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    tap(&emu, Key::Start);
+    pump(&ctx, &mut a, "the job being planned", |a| a.job.pending.is_some());
+    finish_planning(&mut a);
+    assert!(a.job.bounds_prompt.is_some(), "the job leaves the work area, so the question is up");
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the question dropped", |a| a.job.bounds_prompt.is_none());
+    // The checklist of a device that has one.
+    a.machine.dlg.checklist = Some((Box::new(crate::machine_api::JobRequest::gcode(vec!["G21".into()])), vec![false]));
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the checklist dropped", |a| a.machine.dlg.checklist.is_none());
+    assert!(a.machine.finish_checklist().is_err(), "nothing is left to confirm");
+    settle(&ctx, &mut a);
+    assert!(!job_started(&a), "{:?}", a.machine.job_log);
 }
 
 /// A thumb resting on Fn must not take Stop or Pause away.

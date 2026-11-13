@@ -502,6 +502,28 @@ fn start_switch_ok(app: &DarkBurn, action: &Action) -> Result<(), String> {
     Ok(())
 }
 
+/// Stop was asked for: a start or a send that is still on its way is dropped, so nothing
+/// starts after a Stop. On its way means the job is still being planned, or it waits for the
+/// answer to the out-of-bounds question or for the checklist. True when there was one.
+pub fn cancel_pending_start(app: &mut DarkBurn) -> bool {
+    let mut any = false;
+    if matches!(app.job.pending, Some((_, After::Machine(_)))) {
+        if let Some((task, _)) = app.job.pending.take() {
+            task.cancel();
+        }
+        app.job.pending_started = None;
+        any = true;
+    }
+    if app.job.bounds_prompt.as_ref().is_some_and(|p| matches!(p.then, After::Machine(_))) {
+        app.job.bounds_prompt = None;
+        any = true;
+    }
+    if app.machine.dlg.checklist.take().is_some() {
+        any = true;
+    }
+    any
+}
+
 /// Window flow: build in the background, then act (progress and cancel come with the build).
 pub fn start_later(app: &mut DarkBurn, action: Action) -> Result<Value, String> {
     if !app.machine.handle.is_connected() {

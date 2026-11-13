@@ -276,7 +276,11 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
     let null = json!({});
     let a = if a.is_null() { &null } else { a };
     Some(match id {
-        "machine.air" => flag(a, "on").and_then(|on| mach(app.machine.handle.command(MachineCommand::Air(on)))),
+        "machine.air" => flag(a, "on").and_then(|on| {
+            // The device's own air command, the one its jobs use.
+            let mist = app.machine.active().settings.gcode.air == darkburn_job::gcode::AirCommand::M7;
+            mach(app.machine.handle.command(MachineCommand::Air { on, mist }))
+        }),
         "machine.emergency_stop" => mach(app.machine.handle.command(MachineCommand::EmergencyStop)),
         "machine.persist_settings" => mach(app.machine.handle.command(MachineCommand::PersistSettings)),
         "machine.write_gcode_setting" => (|| {

@@ -188,7 +188,7 @@ fn gcode_simulators_read_and_write_settings() {
     m.read_settings().unwrap();
     assert!(m.wait_for(T, |s, _| !s.gcode_settings.is_empty()), "Marlin M503 settings arrive");
     assert!(m.command(MachineCommand::PersistSettings).is_ok());
-    assert!(m.command(MachineCommand::Air(true)).is_ok());
+    assert!(m.command(MachineCommand::Air { on: true, mist: false }).is_ok());
     assert!(m.command(MachineCommand::EmergencyStop).is_ok());
 }
 

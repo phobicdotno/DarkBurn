@@ -713,7 +713,7 @@ impl DriverAdapter for GcodeAdapter {
             C::GetPosition => m.request_status().map_err(map_err),
             C::Fire { percent, secs } => m.fire(percent, crate::machine_api::fire_time(secs)?).map_err(map_err),
             C::FireOff => m.fire_off().map_err(map_err),
-            C::Air(on) => m.set_air(on).map_err(map_err),
+            C::Air { on, .. } => m.set_air(on).map_err(map_err),
             C::SetOverrides { feed, power, rapid } => {
                 if rapid.is_some() {
                     return unsupported("The rapid override");

@@ -255,3 +255,32 @@ fn machine_commands_refuse_arguments_of_the_wrong_type() {
     let r = run(&mut a, "machine.connect", json!({ "device": "3" }));
     assert!(r.as_ref().is_err_and(|e| e.contains("must be")), "machine.connect with a device id that is text was taken: {r:?}");
 }
+
+/// The air assist button sends the device's own air command: a GRBL device set to "M7 on, M9 off"
+/// got M8 from the button while its jobs used M7, so the button switched another output.
+#[test]
+fn the_air_button_sends_the_devices_own_air_command() {
+    use crate::machine_api::{ConnectConfig, Link};
+    let mut a = DarkBurn::new(Prefs::default());
+    let grbl = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorGrbl).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": grbl })).unwrap();
+    a.machine.devices.devices.iter_mut().find(|d| d.id == grbl).unwrap().settings.gcode.air = darkburn_job::gcode::AirCommand::M7;
+    let (adapter, emu) = crate::connections::grbl_simulator(&ConnectConfig::default());
+    a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorGrbl);
+    wait_ready(&mut a);
+    let before = emu.with(|e| e.stats().lines.len());
+    run(&mut a, "machine.air", json!({ "on": true })).unwrap();
+    run(&mut a, "machine.air", json!({ "on": false })).unwrap();
+    let end = Instant::now() + T;
+    let sent = loop {
+        a.machine.tick();
+        let l = emu.with(|e| e.stats().lines[before..].to_vec());
+        if l.iter().any(|l| l.trim() == "M9") {
+            break l;
+        }
+        assert!(Instant::now() < end, "the air commands never arrived: {l:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(sent.iter().any(|l| l.trim() == "M7"), "air on is the device's M7: {sent:?}");
+    assert!(!sent.iter().any(|l| l.trim() == "M8"), "M8 is another output on this device: {sent:?}");
+}

@@ -581,7 +581,12 @@ pub enum MachineCommand {
     // G-code controllers of darkburn-gcodebots
     /// The controller's own emergency stop (M112 / soft reset). Always allowed while connected.
     EmergencyStop,
-    Air(bool),
+    /// Air assist on or off. `mist`: the device switches it with M7 (mist) instead of M8 (flood),
+    /// as its jobs do; only a GRBL controller reads it.
+    Air {
+        on: bool,
+        mist: bool,
+    },
     /// Store the settings in the controller's memory (Marlin M500).
     PersistSettings,
     /// A setting by its name (config key, `M92.X`).
@@ -1340,7 +1345,11 @@ impl DriverAdapter for GrblAdapter {
             C::ReadUAxis | C::WriteUAxis(_) => unsupported("U axis settings"),
             C::EmergencyStop => Ok(m.stop()?),
             // Not a macro: a macro switches the fire button off before it runs.
-            C::Air(on) => Ok(m.run_accessory(if on { "M8" } else { "M9" })?),
+            C::Air { on, mist } => Ok(m.run_accessory(match (on, mist) {
+                (false, _) => "M9",
+                (true, true) => "M7",
+                (true, false) => "M8",
+            })?),
             C::PersistSettings | C::WriteGcodeSetting { .. } => Err(MachineError::Unsupported("GRBL settings are written with $N=value".into())),
             C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {
                 Err(MachineError::Unsupported("that is a galvo command; this is a GRBL machine".into()))
@@ -1963,7 +1972,7 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
-            C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
+            C::Air { .. } | C::PersistSettings | C::WriteGcodeSetting { .. } => {
                 Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
             }
             C::GalvoArm(_) | C::GalvoFrame { .. } | C::GalvoLight(_) | C::GalvoLens(_) | C::GalvoAxis { .. } => {

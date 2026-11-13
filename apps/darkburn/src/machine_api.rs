@@ -1935,11 +1935,13 @@ impl DriverAdapter for RuidaAdapter {
             C::ListFiles => self.req(R::ListFiles, Op::Other("list")),
             C::RunFile(i) => {
                 busy(working)?;
-                // The controller does not answer a number it has no file for: with the list
-                // read, such a start is refused here instead of shown as a job that ran.
-                if let Some(files) = &self.snap.ruida.files
-                    && !files.iter().any(|f| f.index == i)
-                {
+                // The controller does not answer a number it has no file for, so a start is
+                // checked against the list it gave. Without that list the number is nobody's
+                // (it may be from another controller): read the list first.
+                let Some(files) = &self.snap.ruida.files else {
+                    return Err(MachineError::Invalid("Read the controller's file list first.".into()));
+                };
+                if !files.iter().any(|f| f.index == i) {
                     return Err(MachineError::Invalid(format!("There is no file number {i} on the controller.")));
                 }
                 self.release_fire();

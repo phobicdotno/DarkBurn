@@ -318,3 +318,18 @@ fn a_grbl_job_waits_for_the_first_status_report() {
     let r = crate::machine_job::frame(&mut a, crate::job_build::FrameKind::Rectangle);
     assert!(r.is_err(), "a GRBL frame was placed before the controller said where the head is");
 }
+
+/// Running a stored Ruida file before the file list was ever read announced a job for a number
+/// nobody had seen on this controller (the number may be from another one). It waits for the list.
+#[test]
+fn a_controller_file_is_not_run_before_the_list_was_read() {
+    let mut a = DarkBurn::new(Prefs::default());
+    let ruida = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
+    run(&mut a, "device.select", json!({ "id": ruida })).unwrap();
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait_ready(&mut a);
+    assert!(a.machine.handle.snapshot().ruida.files.is_none(), "the list is not read yet");
+    let r = run(&mut a, "machine.file_run", json!({ "index": 1 }));
+    assert!(r.is_err(), "a file was run before the controller's list was read: {r:?}");
+    assert!(!a.machine.job_log.iter().any(|l| format!("{l:?}").contains("Job started")), "a job was announced");
+}

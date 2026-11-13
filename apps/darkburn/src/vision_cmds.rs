@@ -301,12 +301,6 @@ pub fn trace_overlay(app: &mut DarkBurn, args: &Value) -> Result<Value, String> 
     Ok(json!({ "created": r.shapes.iter().map(|s| s.0).collect::<Vec<_>>(), "nodes": r.nodes }))
 }
 
-/// Put the overlay in the document as a picture (selected), ready for the Trace Image window.
-pub fn overlay_as_image(app: &mut DarkBurn) -> Result<ShapeId, String> {
-    let p = overlay_picture(app)?;
-    Ok(add_overlay_picture(app, p))
-}
-
 /// The overlay, encoded and placed, ready to go into the document.
 pub struct OverlayPicture {
     png: Vec<u8>,
@@ -2128,7 +2122,8 @@ mod tests {
     fn overlay_becomes_a_selected_picture_for_the_trace_window() {
         let mut app = app();
         set_frame(&mut app, frame()).unwrap();
-        let id = overlay_as_image(&mut app).unwrap();
+        let p = overlay_picture(&app).unwrap();
+        let id = add_overlay_picture(&mut app, p);
         assert!(matches!(app.editor.doc.get(id).unwrap().kind, ShapeKind::Image(_)));
         assert_eq!(app.editor.selected(), vec![id]);
         assert!(crate::image_ui::TraceDialog::new(&app, vec![id]).is_ok());

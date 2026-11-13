@@ -1,5 +1,5 @@
-//! The XHC wireless handheld pendant sold with Mlaser machines (orange "MLASER" pendant, model
-//! PHB02, receiver USB `10ce:eba0`).
+//! The XHC wireless handheld pendant (the orange "MLASER" pendant, PHB02) with its USB receiver
+//! `10ce:eba0`, the one receiver checked on a real device.
 //!
 //! * [`protocol`]: the key report and the LED report, decoded and encoded without any I/O.
 //! * [`events`]: held-key sets turned into presses, releases and Fn chords.
@@ -60,5 +60,50 @@ mod tests {
         let file = include_str!("../../../packaging/linux/70-darkburn-pendant.rules");
         assert!(file.lines().any(|l| l.trim() == super::LINUX_UDEV_RULE), "packaging/linux/70-darkburn-pendant.rules and LINUX_UDEV_RULE differ");
         assert!(super::linux_install_command().contains("udevadm control --reload && sudo udevadm trigger"));
+    }
+
+    /// The receiver ids a text names: four hex digits starting with `eb` after `0x` (the form of
+    /// the checked id), or any four hex digits after `10ce:` or `idProduct}=="`.
+    fn product_ids_named(text: &str) -> Vec<u16> {
+        let lower = text.to_ascii_lowercase();
+        let mut ids = Vec::new();
+        for (prefix, skip) in [("0xeb", 2), ("10ce:", 5), ("idproduct}==\"", 13)] {
+            for (at, _) in lower.match_indices(prefix) {
+                let hex = &lower[at + skip..];
+                let digits: String = hex.chars().take_while(char::is_ascii_hexdigit).take(5).collect();
+                if digits.len() == 4 {
+                    ids.push(u16::from_str_radix(&digits, 16).unwrap());
+                }
+            }
+        }
+        ids
+    }
+
+    /// The public texts about the pendant name only receivers checked on a real device: no
+    /// other product ids and no ranges of them.
+    #[test]
+    fn texts_name_only_the_checked_receiver() {
+        let texts = [
+            ("docs/research/xhc-pendant.md", include_str!("../../../docs/research/xhc-pendant.md")),
+            ("crates/darkburn-pendant/Cargo.toml", include_str!("../Cargo.toml")),
+            ("crates/darkburn-pendant/src/lib.rs", include_str!("lib.rs")),
+            ("crates/darkburn-pendant/src/protocol.rs", include_str!("protocol.rs")),
+            ("crates/darkburn-pendant/src/events.rs", include_str!("events.rs")),
+            ("crates/darkburn-pendant/src/poll.rs", include_str!("poll.rs")),
+            ("crates/darkburn-pendant/src/transport.rs", include_str!("transport.rs")),
+            ("crates/darkburn-pendant/src/hid.rs", include_str!("hid.rs")),
+            ("packaging/linux/70-darkburn-pendant.rules", include_str!("../../../packaging/linux/70-darkburn-pendant.rules")),
+            ("packaging/linux/install-pendant-rule.sh", include_str!("../../../packaging/linux/install-pendant-rule.sh")),
+            ("apps/darkburn/src/pendant_ui.rs", include_str!("../../../apps/darkburn/src/pendant_ui.rs")),
+        ];
+        for (name, text) in texts {
+            for id in product_ids_named(text) {
+                assert!(super::PRODUCT_IDS.contains(&id), "{name} names receiver {id:04x}, which is not checked on a real device");
+            }
+        }
+        assert_eq!(product_ids_named("vendor 0x10ce, product 0xeba0, 10ce:eba0"), vec![0xeba0, 0xeba0]);
+        // Built at run time, so this file does not name the ids it tests with.
+        let range = format!("ids 0x{}..=0x{}", "EB61", "eba1"); // 60257 and 60321
+        assert_eq!(product_ids_named(&range), vec![60257, 60321], "a range names both its ends");
     }
 }

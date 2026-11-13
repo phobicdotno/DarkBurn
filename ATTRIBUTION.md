@@ -359,6 +359,9 @@ cargo about generate --locked --workspace --config packaging/about.toml packagin
 - The list leaves out libraries that are used only to build or to test.
 - `packaging/about.toml` also lists the licences a library may have; packaging stops at any
   other.
+- For hidapi, `packaging/about.toml` adds the BSD text of the HIDAPI C library that it builds
+  into the macOS program (see the wireless pendant row below). The list carries it on every
+  target.
 
 The licence texts for the fonts inside egui are kept in `licenses/` (see "Fonts and data inside
 the libraries").
@@ -385,7 +388,7 @@ the libraries").
 | Variable text | chrono (MIT OR Apache-2.0), csv (Unlicense OR MIT) | As named |
 | Serial ports | serialport | MPL-2.0 |
 | USB | nusb | Apache-2.0 OR MIT |
-| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) and nix (MIT) on Linux. On macOS hidapi compiles the HIDAPI C library 0.15.0 (libusb/hidapi, `mac/hid.c`) into the program; that library is offered under GPL v3, a BSD-style licence or the original HIDAPI licence, and DarkBurn has not yet stated which of the last two it uses (never GPL v3) | As named |
+| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) and nix (MIT) on Linux. On macOS hidapi compiles the HIDAPI C library 0.15.0 (libusb/hidapi, `mac/hid.c`) into the program; that library is offered under GPL v3, a BSD-style licence or the original HIDAPI licence, at the user's choice, and DarkBurn uses it under the BSD-style licence (BSD-3-Clause; never GPL v3). `packaging/about.toml` puts that BSD text (`etc/hidapi/LICENSE-bsd.txt` in the hidapi crate) in `THIRD-PARTY-LICENSES.txt` | As named |
 | Camera | nokhwa | Apache-2.0 |
 | File dialogs | rfd | MIT |
 | Clipboard | arboard | MIT OR Apache-2.0 |

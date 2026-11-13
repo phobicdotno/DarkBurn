@@ -8,8 +8,8 @@ wires it into the app.
 ## Receiver
 
 - USB vendor 0x10ce, product 0xeba0, a HID device with a vendor usage page (0xff00).
-- Other XHC receivers seem to use products in the range 0xeb61..0xeba1. Only 0xeba0 has been
-  seen, so only it is in `PRODUCT_IDS`.
+- 0xeba0 is the one receiver checked on a real device, so it is the only one in `PRODUCT_IDS`.
+  Another receiver is added only after it is checked on a real device.
 - On Linux it is a `/dev/hidraw*` node that only root can open. `packaging/linux/70-darkburn-pendant.rules`
   (installed by `packaging/linux/install-pendant-rule.sh`, which the Linux download also holds, or
   by the command the app shows) gives the logged-in user access. It does so through the `uaccess`
@@ -22,7 +22,7 @@ Six bytes: `04 10 k1 k2 k3 chk`.
 - `k1..k3` are the codes of the keys held right now, zero for none. Each report is the full set
   of held keys, so presses and releases come from comparing one report with the last.
 - Byte 1 (always 0x10 so far) and `chk` are not checked.
-- With nothing held, an all-zero report arrives about once a second.
+- An all-zero report means nothing is held.
 
 | Code | Key | Code | Key |
 |---|---|---|---|
@@ -53,8 +53,8 @@ Eight bytes: `06 fe fd SEQ LEDS 00 00 00`. `SEQ` counts up by one per message.
 | 0x20 | Shutter |
 | 0x40 | Red light |
 
-The receiver queues LED messages and the pendant picks them up one at a time when it wakes, so
-a burst of messages plays out slowly. DarkBurn sends one only when the wanted state changes, at
+The receiver queues LED messages and the pendant picks them up one at a time when it wakes (a
+key press wakes it), so a burst of messages plays out slowly. DarkBurn sends one only when the wanted state changes, at
 most one per 250 ms.
 
 ## In DarkBurn

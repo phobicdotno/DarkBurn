@@ -40,6 +40,12 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::nest_cmds::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::tangent_tool::execute(app, id, args) {
+        return result;
+    }
+    if let Some(result) = crate::taper_warp::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }

@@ -95,6 +95,12 @@ pub const COMMANDS: &[Cmd] = &[
     c("text.edit_dialog", "Edit Text Shapes", "", ""),
     c("tools.position_laser", "Position Laser", "Alt+L", "db_position_laser"),
     c("tools.measure", "Measure", "Alt+M", "measure"),
+    c("tools.tangent_circle", "Tangent Circle", "", ""),
+    a(
+        "shape.tangent_circle",
+        "Add Tangent Circles",
+        r#"{"type":"object","properties":{"points":{"type":"array","items":{"type":"array","items":{"type":"number"}},"description":"two or three [x, y] points in mm; each picks the nearest line, arc or circle (among the selection, or every shape when nothing is selected). Without points the selection must hold two or three"},"radius":{"type":"number","description":"mm; needed for two objects"},"pick":{"type":["integer","string"],"description":"index of the circle to add (0, nearest the points, is the default) or \"all\""},"on_edges":{"type":"boolean","description":"only circles touching the segments and arcs themselves (default true)"},"preview":{"type":"boolean","description":"list the circles without adding any"},"layer":{"type":"integer"}}}"#,
+    ),
     c("tools.qr", "Create QR Code", "", "db_qr"),
     c("tools.offset", "Offset Shapes", "Alt+O", "offset"),
     c("tools.weld", "Weld Shapes", "Ctrl+W", "db_weld"),
@@ -111,6 +117,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.select_smaller", "Select Shapes Smaller than Selected", "", ""),
     c("tools.warp", "Warp Selection (4 points)", "", ""),
     c("tools.deform", "Deform Selection (16 points)", "", ""),
+    c("tools.taper_warp", "Taper Warp", "", ""),
     c("tools.start_points", "Start Points", "", "db_start_points"),
     c("tools.round_corners", "Round Corners", "", "db_round_corners"),
     // Arrange
@@ -587,6 +594,8 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("support.")
         || id.starts_with("help.topic")
         || crate::laser_position::handles(id)
+        || crate::tangent_tool::handles(id)
+        || crate::taper_warp::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
@@ -774,6 +783,8 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.front" => &["ARR-37"],
         "arrange.back" => &["ARR-38"],
         "tools.position_laser" => &["TOOLS-09", "DRAW-20"],
+        "tools.tangent_circle" | "shape.tangent_circle" => &["DRAW-22"],
+        "tools.taper_warp" => &["OTHER-10"],
         "arrange.to_laser" => &["ARR-28"],
         id if id.starts_with("arrange.laser_") => &["ARR-29"],
         "arrange.lock" => &["ARR-39", "SHAPE-30"],
@@ -852,7 +863,9 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
-                && let Some(args) = crate::shape_ops::args_schema(c.id).or_else(|| crate::nest_cmds::args_schema(c.id))
+                && let Some(args) = crate::shape_ops::args_schema(c.id)
+                    .or_else(|| crate::nest_cmds::args_schema(c.id))
+                    .or_else(|| crate::taper_warp::args_schema(c.id))
             {
                 c.args = args;
             }
@@ -1075,6 +1088,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("text.edit_dialog"),
             C("tools.position_laser"),
             C("tools.measure"),
+            C("tools.tangent_circle"),
             C("tools.qr"),
             S,
             C("tools.offset"),
@@ -1094,6 +1108,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.select_smaller"),
             C("tools.warp"),
             C("tools.deform"),
+            C("tools.taper_warp"),
             C("tools.start_points"),
             C("tools.round_corners"),
         ],

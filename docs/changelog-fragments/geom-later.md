@@ -1,0 +1,2 @@
+- New: Tangent circles: pick two or three lines, arcs or circles and get the circles that touch them
+- New: Taper warp: squeeze or unroll artwork so it fits tapered cups and cones

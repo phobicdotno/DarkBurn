@@ -162,6 +162,8 @@ mod tests {
         ("pendant_ui.rs", include_str!("pendant_ui.rs")),
         ("toolbar_dock.rs", include_str!("toolbar_dock.rs")),
         ("nest_ui.rs", include_str!("nest_ui.rs")),
+        ("tangent_tool.rs", include_str!("tangent_tool.rs")),
+        ("taper_warp.rs", include_str!("taper_warp.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

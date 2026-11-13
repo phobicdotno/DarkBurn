@@ -154,6 +154,7 @@ pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, 
             Tool::Line => line_tool(ui, app, &mut st, response, xf, m, raw, tol),
             Tool::Rect | Tool::Ellipse | Tool::Polygon => shape_tool(ui, app, &mut st, response, xf, m, raw),
             Tool::Text => crate::text_ui::interact(ui, app, response, xf, raw),
+            Tool::TangentCircle => crate::tangent_tool::interact(ui, app, response, xf, raw),
             _ => crate::node_tool::interact(ui, app, response, xf, m, raw),
         }
     }

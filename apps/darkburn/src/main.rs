@@ -153,6 +153,12 @@ mod startup;
 #[cfg(test)]
 mod store_hunt6_tests;
 mod tab_focus;
+mod tangent_tool;
+#[cfg(test)]
+mod tangent_tool_tests;
+mod taper_warp;
+#[cfg(test)]
+mod taper_warp_tests;
 mod text_cmds;
 mod text_render;
 #[cfg(test)]

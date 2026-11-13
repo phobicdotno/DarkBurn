@@ -246,6 +246,8 @@ impl DarkBurn {
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
             || crate::laser_position::run(self, ctx, id)
+            || crate::tangent_tool::run(self, ctx, id)
+            || crate::taper_warp::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
             || crate::misc_cmds::run(self, ctx, id)
@@ -432,6 +434,8 @@ impl DarkBurn {
         bars::floating(ui, self, &mut clicked);
         self.dialogs(ui.ctx());
         crate::extras::dialogs(ui.ctx(), self);
+        crate::tangent_tool::window(ui.ctx(), self);
+        crate::taper_warp::window(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
         crate::devices_ui::dialogs(ui.ctx(), self);

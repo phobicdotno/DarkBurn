@@ -415,6 +415,39 @@ mod tests {
         assert!(fi["help.cuts.p2"].contains(&format!("({})", fi["cuts.col.out"])), "fi help.cuts.p2: {:?}", fi["help.cuts.p2"]);
     }
 
+    /// Review corrections for Hungarian, Slovenian and Turkish: the hotkey conflict lines make
+    /// the key the subject ("Ctrl+S je že dodeljena ukazu ...", "Ctrl+S már foglalt, ez a
+    /// parancs használja ..."), not the command or an order to the user; the Slovenian size and
+    /// quality choices agree with "Ikone" and "kakovost"; Turkish Flatten Array is not the
+    /// Distribute verb "dağıt", and the art library tip says "birden fazlası".
+    #[test]
+    fn hungarian_slovenian_and_turkish_keep_the_review_wording() {
+        let hu = locale("hu");
+        let sl = locale("sl");
+        let tr = locale("tr");
+        assert_eq!(sl["hotkeys.taken_by"], "je že dodeljena ukazu");
+        assert_eq!(sl["hotkeys.clash"], "dodeljena več ukazom");
+        assert_eq!(hu["hotkeys.taken_by"], "már foglalt, ez a parancs használja");
+        for (key, want) in [
+            ("choice.Small", "Majhne"),
+            ("choice.Medium", "Srednje"),
+            ("choice.Large", "Velike"),
+            ("choice.Coarse", "Groba"),
+            ("choice.Normal", "Običajna"),
+            ("choice.Fine", "Fina"),
+        ] {
+            assert_eq!(sl[key], want, "sl {key}");
+        }
+        assert_eq!(tr["cmd.arrange.array_flatten"], "Diziyi düzleştir");
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (key, text) in &tr {
+            if text.to_lowercase().contains("dağıt") {
+                assert!(en[key].to_lowercase().contains("distribut"), "tr {key} uses the Distribute word: {text:?}");
+            }
+        }
+        assert!(!tr["art.load_tip"].contains("birden çoğu"), "tr art.load_tip: {:?}", tr["art.load_tip"]);
+    }
+
     /// The two Spanish files are not copies of each other: each uses the words of its own
     /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
     /// in Latin America, and "ordenador" against "computadora".

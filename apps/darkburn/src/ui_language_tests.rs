@@ -197,3 +197,45 @@ fn cut_table_headers_fit_their_columns_in_every_language() {
         .collect();
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+/// Turkish capitals keep the dot on the i: the settings headings read "BİRİMLER" and
+/// "SESLER VE İŞ GÜNLÜĞÜ", never "BIRIMLER" or "IŞ", while English keeps "UNITS".
+#[test]
+fn turkish_headings_keep_the_dotted_capital_i() {
+    let mut g = Gui::standard();
+    g.run_command("edit.settings");
+    g.settle();
+    assert!(g.has_text("UNITS"), "no UNITS heading in {:?}", g.visible_texts());
+    g.close_dialogs();
+
+    g.run_command("lang.tr");
+    g.settle();
+    g.run_command("edit.settings");
+    g.settle();
+    for heading in ["BİRİMLER", "SESLER VE İŞ GÜNLÜĞÜ", "OTOMATİK KAYDET"] {
+        assert!(g.has_text(heading), "no {heading:?} in {:?}", g.visible_texts());
+    }
+    let wrong: Vec<String> =
+        g.visible_texts().into_iter().filter(|t| t.contains("BIRIMLER") || t.contains(" IŞ ") || t.contains("OTOMATIK")).collect();
+    assert!(wrong.is_empty(), "headings without the dotted İ: {wrong:?}");
+    g.close_dialogs();
+    crate::i18n::set_language("en");
+}
+
+/// The Edit Hotkeys filter in Turkish finds "Izgara dizisi" when "ızgara" is typed with the
+/// Turkish dotless ı, and also when it is typed with a plain i.
+#[test]
+fn turkish_hotkey_filter_finds_words_with_a_dotless_i() {
+    for typed in ["ızgara", "izgara", "IZGARA"] {
+        let mut g = Gui::standard();
+        g.run_command("lang.tr");
+        g.settle();
+        g.app().extras.hotkeys.filter = typed.into();
+        g.run_command("file.hotkeys");
+        g.settle();
+        assert!(g.has_text("Izgara dizisi"), "{typed:?} does not find Izgara dizisi: {:?}", g.visible_texts());
+        assert!(!g.has_text("Dairesel dizi"), "{typed:?} also shows Dairesel dizi");
+        g.close_dialogs();
+        crate::i18n::set_language("en");
+    }
+}

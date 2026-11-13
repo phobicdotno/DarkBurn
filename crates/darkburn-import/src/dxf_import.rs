@@ -789,7 +789,8 @@ pub fn strip_mtext(s: &str) -> String {
             '\\' if i + 1 < chars.len() => {
                 let n = chars[i + 1];
                 match n {
-                    'P' | 'n' => {
+                    // \X splits dimension text above and below the line; it takes no argument.
+                    'P' | 'n' | 'X' => {
                         out.push('\n');
                         i += 2;
                     }

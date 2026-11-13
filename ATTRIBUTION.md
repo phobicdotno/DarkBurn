@@ -385,7 +385,7 @@ the libraries").
 | Variable text | chrono (MIT OR Apache-2.0), csv (Unlicense OR MIT) | As named |
 | Serial ports | serialport | MPL-2.0 |
 | USB | nusb | Apache-2.0 OR MIT |
-| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) on Linux | As named |
+| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) and nix (MIT) on Linux. On macOS hidapi compiles the HIDAPI C library 0.15.0 (libusb/hidapi, `mac/hid.c`) into the program; that library is offered under GPL v3, a BSD-style licence or the original HIDAPI licence, and DarkBurn has not yet stated which of the last two it uses (never GPL v3) | As named |
 | Camera | nokhwa | Apache-2.0 |
 | File dialogs | rfd | MIT |
 | Clipboard | arboard | MIT OR Apache-2.0 |

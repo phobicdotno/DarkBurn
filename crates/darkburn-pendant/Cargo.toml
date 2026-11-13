@@ -12,8 +12,9 @@ workspace = true
 [features]
 default = []
 # The real USB receiver through hidapi. Off by default and never opened in tests (hardware safety
-# rule). `hidapi` is MIT and builds without system libraries on Linux (hidraw found through the
-# pure-Rust `basic-udev`) and on Windows (the native backend); macOS uses its own IOKit.
+# rule). `hidapi` is MIT and builds without system libraries or C code on Linux (hidraw found
+# through the pure-Rust `basic-udev`) and on Windows (the native backend). On macOS it compiles
+# its bundled HIDAPI C library (`mac/hid.c`, on IOKit) into the program: see ATTRIBUTION.md.
 hid = ["dep:hidapi"]
 
 [dependencies]

@@ -96,6 +96,8 @@ mod machine_ext_tests;
 mod machine_ext_ui_tests;
 #[cfg(test)]
 mod machine_hunt10_tests;
+#[cfg(test)]
+mod machine_hunt10b_tests;
 mod machine_job;
 mod machine_ui;
 #[cfg(test)]

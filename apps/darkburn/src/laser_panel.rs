@@ -736,6 +736,10 @@ fn file_list(ui: &mut Ui, app: &mut DarkBurn) {
         ui.label(RichText::new("Connect to the controller to see its files.").size(t.font_small).color(t.text_dim));
     }
     let free = ok && snap.state == LaserState::Ready;
+    // A tick is a file of the list shown: none carries over to a list not read yet (another
+    // controller, a new connection) or one that no longer has that file.
+    let listed = snap.ruida.files.as_deref().unwrap_or_default();
+    app.machine.file_sel.retain(|i| listed.iter().any(|f| f.index == *i));
     ui.horizontal_wrapped(|ui| {
         if btn(ui, "Refresh", "Read the file list", ok) {
             go(app, "machine.file_list", json!({}));

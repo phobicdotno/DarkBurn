@@ -316,7 +316,7 @@ impl State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("db_tangent_tool")
+    egui::Id::unique("db_tangent_tool")
 }
 
 /// The tool's state (the default when it has none yet).

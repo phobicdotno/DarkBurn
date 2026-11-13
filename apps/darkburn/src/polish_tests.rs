@@ -475,6 +475,35 @@ fn a_dsp_machine_runs_and_stores_a_job_from_a_point_part_way() {
     assert!(run(&mut a, "job.preview_run_from_here", json!({})).is_err(), "the point is required");
 }
 
+/// PREV-09: Save from here on a DSP machine writes an RD file that starts part way.
+#[test]
+fn a_dsp_machine_saves_an_rd_file_from_a_point_part_way() {
+    let mut a = DarkBurn::new(Prefs::default());
+    let id = run(&mut a, "device.add", json!({ "type": "Ruida" })).unwrap()["id"].as_u64().unwrap();
+    run(&mut a, "device.select", json!({ "id": id })).unwrap();
+    for x in [10, 40, 70, 100] {
+        run(&mut a, "shape.add_rect", json!({ "x": x, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    }
+    let dir = std::env::temp_dir().join(format!("darkburn_rd_from_here_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (full, part) = (dir.join("full.rd"), dir.join("part.rd"));
+    let r = run(&mut a, "job.save_gcode", json!({ "path": full.to_string_lossy() })).unwrap();
+    assert_eq!(r["format"], "rd", "{r}");
+    let job = a.job.last_job.clone().expect("the job that was saved");
+    let mid = job.toolpath.ops.len() / 2;
+    let r = run(&mut a, "job.preview_save_from_here", json!({ "path": part.to_string_lossy(), "op_index": mid })).unwrap();
+    assert_eq!(r["format"], "rd", "{r}");
+    assert_eq!(r["from_op"], mid, "{r}");
+    let read = |p: &std::path::Path| darkburn_ruida::RdJob::from_rd_file(&std::fs::read(p).unwrap(), None).expect("a readable RD file");
+    let moves = |j: &darkburn_ruida::RdJob| j.layers.iter().map(|l| l.ops.len()).sum::<usize>();
+    let (f, p) = (read(&full), read(&part));
+    assert!(moves(&p) > 0, "the part file has the rest of the job");
+    assert!(moves(&p) < moves(&f), "the part file leaves the first part out: {} vs {}", moves(&p), moves(&f));
+    assert!(std::fs::metadata(&part).unwrap().len() < std::fs::metadata(&full).unwrap().len());
+    assert!(run(&mut a, "job.preview_save_from_here", json!({ "path": part.to_string_lossy(), "op_index": 99999 })).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_galvo_job_cannot_start_part_way_and_says_so() {
     let mut a = DarkBurn::new(Prefs::default());

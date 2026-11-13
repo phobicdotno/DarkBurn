@@ -1021,6 +1021,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("edit.convert_bitmap"),
             C("edit.close_path"),
             C("shape.open_gap"),
+            C("shape.break_at_tabs"),
             C("edit.close_tolerance"),
             C("edit.auto_join"),
             C("edit.optimize"),

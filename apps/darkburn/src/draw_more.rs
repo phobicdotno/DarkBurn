@@ -40,6 +40,7 @@ pub const COMMANDS: &[Cmd] = &[
         "Leave a Gap",
         r#"{"type":"object","properties":{"length":{"type":"number","exclusiveMinimum":0,"description":"how much of each closed outline is left uncut just before its start point, mm"}},"required":["length"]}"#,
     ),
+    cmd("shape.break_at_tabs", "Break at Tabs", r#"{"type":"object","properties":{}}"#),
 ];
 
 /// The commands of this file (all of them run in this build).
@@ -68,6 +69,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
         "shape.add_circle_3pt" => add_circle(app, a),
         "shape.add_arc_3pt" => add_arc(app, a),
         "shape.open_gap" => open_gap(app, a),
+        "shape.break_at_tabs" => break_at_tabs(app),
         _ => return None,
     })
 }
@@ -367,6 +369,105 @@ fn open_gap(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let mut v = json!({ "changed": changed.len(), "ids": changed.iter().map(|i| i.0).collect::<Vec<_>>(), "skipped": skipped.iter().map(|i| i.0).collect::<Vec<_>>() });
     if !skipped.is_empty() {
         v["note"] = json!(format!("{} open shape(s) left as they were", skipped.len()));
+    }
+    Ok(v)
+}
+
+/// Distance along `c` from its start to `at`.
+fn distance_to(c: &Contour, at: gpath::SegParam) -> f64 {
+    use darkburn_core::kurbo::{ParamCurve as _, ParamCurveArclen as _};
+    let before: f64 = darkburn_geom::tabs::seg_lengths(c).iter().take(at.seg).sum();
+    let seg = c.segs.get(at.seg).map_or(0.0, |s| if at.t <= 0.0 { 0.0 } else { s.subsegment(0.0..at.t.min(1.0)).arclen(gpath::DEFAULT_ACCURACY) });
+    before + seg
+}
+
+/// The pieces the laser cuts of top-level shape `s` whose tabs are `size` mm wide: every
+/// sub-path with tabs on it, minus a gap centred on each tab; sub-paths without tabs as they
+/// are. Each tab belongs to the sub-path nearest to it, and the tabs of one sub-path never take
+/// more than half of it, as when the job is made. The pieces run the way the shape is cut.
+fn tab_pieces(s: &Shape, size: f64) -> Vec<Contour> {
+    let cs = as_cut(s, &s.outline());
+    let mut centres: Vec<Vec<f64>> = vec![Vec::new(); cs.len()];
+    for t in &s.tabs {
+        let q = s.transform * Point::new(t[0], t[1]);
+        let best =
+            cs.iter().enumerate().filter_map(|(i, c)| gpath::nearest_on_contour(c, q).map(|(at, d)| (i, at, d))).min_by(|a, b| a.2.total_cmp(&b.2));
+        if let Some((i, at, _)) = best {
+            centres[i].push(distance_to(&cs[i], at));
+        }
+    }
+    let mut out = Vec::new();
+    for (c, mid) in cs.into_iter().zip(centres) {
+        let total = c.length();
+        if mid.is_empty() || !total.is_finite() || total <= 1e-9 {
+            out.push(c);
+            continue;
+        }
+        let size = size.min(total / (2.0 * mid.len() as f64));
+        let one = gpath::from_contours([&c]);
+        out.extend(gpath::contours(&darkburn_geom::tabs::place_tabs_at(&one, &mid, size).cut));
+    }
+    out
+}
+
+fn break_at_tabs(app: &mut DarkBurn) -> Result<Value, String> {
+    let ids = crate::shape_ops::in_draw_order(&app.editor.doc, &app.editor.selected());
+    if ids.is_empty() {
+        return Err("nothing is selected".into());
+    }
+    let doc = &app.editor.doc;
+    let mut plan: Vec<(ShapeId, Vec<Shape>)> = Vec::new();
+    let mut tabs_off: Vec<ShapeId> = Vec::new();
+    for id in &ids {
+        let Some(s) = doc.get(*id) else { continue };
+        if s.tabs.is_empty() || s.is_group() || s.is_image() {
+            continue;
+        }
+        let tabs = doc.layer(s.layer).main().tabs;
+        if !tabs.enabled || !(tabs.size > 0.0) {
+            tabs_off.push(s.id);
+            continue;
+        }
+        let pieces: Vec<Shape> = tab_pieces(s, tabs.size)
+            .iter()
+            .filter(|c| !c.segs.is_empty())
+            .map(|c| {
+                let mut p = s.clone();
+                p.kind = ShapeKind::Path { path: gpath::from_contours([c]) };
+                p.transform = darkburn_core::kurbo::Affine::IDENTITY;
+                p.tabs = Vec::new();
+                p.set_start_points(&[]);
+                p.direction = CutDirection::Auto;
+                p.array = None;
+                p
+            })
+            .collect();
+        plan.push((s.id, pieces));
+    }
+    if plan.is_empty() {
+        return Err(if tabs_off.is_empty() {
+            "none of the selected shapes has tabs".into()
+        } else {
+            "tabs are turned off on the layer of the selected shapes: nothing was broken".into()
+        });
+    }
+    let mut new_ids: Vec<ShapeId> = Vec::new();
+    let mut broken: Vec<u64> = Vec::new();
+    app.editor.edit("Break at tabs", |d, sel| {
+        for (id, pieces) in plan.iter().rev() {
+            let Some(at) = d.index_of(*id) else { continue };
+            d.remove(&[*id]);
+            let made: Vec<ShapeId> = pieces.iter().enumerate().map(|(k, p)| d.insert(at + k, p.clone())).collect();
+            new_ids.splice(0..0, made);
+            broken.push(id.0);
+        }
+        sel.set(new_ids.iter().copied());
+        true
+    });
+    broken.reverse();
+    let mut v = json!({ "broken": broken, "ids": new_ids.iter().map(|i| i.0).collect::<Vec<_>>(), "pieces": new_ids.len() });
+    if !tabs_off.is_empty() {
+        v["note"] = json!(format!("{} shape(s) left as they were: tabs are off on their layer", tabs_off.len()));
     }
     Ok(v)
 }
@@ -788,6 +889,139 @@ mod tests {
         assert_eq!(a.editor.doc, both);
     }
 
+    // ------------------------------------------------------------ break at tabs
+
+    /// An app whose layer 0 cuts lines with manual tabs of 2 mm.
+    fn tab_app() -> DarkBurn {
+        let mut a = app();
+        let s = a.editor.doc.layer_mut(0).main_mut();
+        s.mode = darkburn_core::layer::Mode::Line;
+        s.tabs.enabled = true;
+        s.tabs.auto_spacing = false;
+        s.tabs.size = 2.0;
+        a
+    }
+
+    /// The laser-on moves of the job made from the document.
+    fn burns(a: &DarkBurn) -> Vec<(Point, Point)> {
+        let built = crate::job_build::build_job_simple(&crate::job_field_tests::input(a.editor.doc.clone())).unwrap();
+        crate::job_field_tests::segs(&built.toolpath).iter().filter(|s| s.kind == 'C' && s.power > 0.0).map(|s| (s.from, s.to)).collect()
+    }
+
+    /// How far `p` is from the nearest of `cs`.
+    fn off(cs: &[Contour], p: Point) -> f64 {
+        cs.iter().filter_map(|c| gpath::nearest_on_contour(c, p)).map(|(_, d2)| d2.sqrt()).fold(f64::INFINITY, f64::min)
+    }
+
+    fn tab(a: &mut DarkBurn, id: ShapeId, x: f64, y: f64) {
+        run(a, "tabs.add", json!({ "shape": id.0, "x": x, "y": y })).unwrap();
+    }
+
+    #[test]
+    fn breaking_at_tabs_leaves_exactly_the_pieces_the_job_cuts() {
+        let mut a = tab_app();
+        let r = id_of(&run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 40, "height": 40, "layer": 0 })).unwrap());
+        tab(&mut a, r, 30.0, 10.3);
+        tab(&mut a, r, 50.0, 20.0);
+        let job = burns(&a);
+        let job_len: f64 = job.iter().map(|(p, q)| p.distance(*q)).sum();
+        assert!((job_len - 156.0).abs() < 1e-6, "{job_len}");
+        run(&mut a, "selection.set", json!({ "ids": [r.0] })).unwrap();
+        let before = a.editor.doc.clone();
+        let rev = a.editor.revision();
+        let v = run(&mut a, "shape.break_at_tabs", Value::Null).unwrap();
+        assert_eq!(v["broken"], json!([r.0]));
+        assert_eq!(v["pieces"], 2, "{v}");
+        assert!(a.editor.doc.get(r).is_none(), "the shape is gone");
+        let pieces: Vec<Shape> = a.editor.doc.iter().cloned().collect();
+        assert_eq!(pieces.len(), 2);
+        assert_eq!(a.editor.selected(), pieces.iter().map(|s| s.id).collect::<Vec<_>>());
+        let mut cs: Vec<Contour> = Vec::new();
+        for s in &pieces {
+            assert!(s.tabs.is_empty() && !s.is_closed() && s.layer == 0, "{s:?}");
+            assert!(matches!(s.kind, ShapeKind::Path { .. }));
+            cs.extend(gpath::contours(&s.outline()));
+        }
+        // The pieces are the job's cut: the same length, every cut move on a piece, and every
+        // piece on the cut moves.
+        let len: f64 = cs.iter().map(Contour::length).sum();
+        assert!((len - job_len).abs() < 1e-6, "{len} {job_len}");
+        for (p, q) in &job {
+            for k in 0..=4 {
+                let at = p.lerp(*q, k as f64 / 4.0);
+                assert!(off(&cs, at) < 1e-6, "{at:?} is not on a piece");
+            }
+        }
+        let moves: Vec<Contour> = job
+            .iter()
+            .map(|(p, q)| Contour::new(vec![darkburn_core::kurbo::PathSeg::Line(darkburn_core::kurbo::Line::new(*p, *q))], false))
+            .collect();
+        for c in &cs {
+            for seg in &c.segs {
+                for k in 0..=4 {
+                    let at = seg.eval(k as f64 / 4.0);
+                    assert!(off(&moves, at) < 1e-6, "{at:?} is not cut by the job");
+                }
+            }
+        }
+        // And the job of the pieces cuts the same, with no gaps left in it.
+        let after = burns(&a);
+        let after_len: f64 = after.iter().map(|(p, q)| p.distance(*q)).sum();
+        assert!((after_len - job_len).abs() < 1e-6, "{after_len}");
+        assert_eq!(a.editor.revision(), rev + 1, "one step");
+        run(&mut a, "edit.undo", Value::Null).unwrap();
+        assert_eq!(a.editor.doc, before, "one undo brings the shape and its tabs back");
+        assert_eq!(a.editor.doc.get(r).unwrap().tabs.len(), 2);
+    }
+
+    #[test]
+    fn breaking_at_tabs_follows_a_forced_start_and_skips_shapes_without_tabs() {
+        let mut a = tab_app();
+        let mut sh = Shape::path(square_path(), 0);
+        sh.start_point = Some([10.0, 5.0]);
+        sh.direction = CutDirection::Clockwise;
+        let sq = add(&mut a, "square", sh).unwrap();
+        tab(&mut a, sq, 5.0, 10.0);
+        let plain = id_of(&run(&mut a, "shape.add_rect", json!({ "x": 30, "y": 0, "width": 5, "height": 5, "layer": 0 })).unwrap());
+        run(&mut a, "selection.set", json!({ "ids": [sq.0, plain.0] })).unwrap();
+        let v = run(&mut a, "shape.break_at_tabs", json!({})).unwrap();
+        assert_eq!(v["broken"], json!([sq.0]));
+        assert!(a.editor.doc.get(plain).is_some(), "the shape without tabs stays");
+        let ids: Vec<ShapeId> = v["ids"].as_array().unwrap().iter().map(|i| ShapeId(i.as_u64().unwrap())).collect();
+        assert_eq!(ids.len(), 1, "one tab: one piece");
+        let c = only_contour(&a, ids[0]);
+        // Clockwise, which runs left to right along the top: from the gap's end (6, 10) round
+        // to its start (4, 10), through the forced start point.
+        assert!(close(c.start().unwrap(), Point::new(6.0, 10.0)), "{:?}", c.nodes());
+        assert!(close(c.node(1).unwrap(), Point::new(10.0, 10.0)), "{:?}", c.nodes());
+        assert!(c.nodes().iter().any(|p| close(*p, Point::new(10.0, 5.0))), "{:?}", c.nodes());
+        assert!(close(c.end().unwrap(), Point::new(4.0, 10.0)), "{:?}", c.nodes());
+        assert_eq!(gpath::contour_direction(&Contour { closed: true, ..c.clone() }), Direction::Clockwise);
+        assert!((c.length() - 38.0).abs() < 1e-6);
+        let s = a.editor.doc.get(ids[0]).unwrap();
+        assert!(s.start_point.is_none() && s.direction == CutDirection::Auto && s.tabs.is_empty());
+    }
+
+    #[test]
+    fn breaking_at_tabs_refuses_when_nothing_selected_has_tabs() {
+        let mut a = tab_app();
+        let sq = square(&mut a);
+        a.editor.selection.clear();
+        assert!(run(&mut a, "shape.break_at_tabs", Value::Null).unwrap_err().contains("nothing is selected"));
+        run(&mut a, "selection.set", json!({ "ids": [sq.0] })).unwrap();
+        let before = a.editor.doc.clone();
+        let err = run(&mut a, "shape.break_at_tabs", Value::Null).unwrap_err();
+        assert!(err.contains("tabs"), "{err}");
+        assert_eq!(a.editor.doc, before);
+        // Tabs that the job leaves out (off on the layer) give nothing to break either.
+        tab(&mut a, sq, 5.0, 0.0);
+        a.editor.doc.layer_mut(0).main_mut().tabs.enabled = false;
+        let before = a.editor.doc.clone();
+        let err = run(&mut a, "shape.break_at_tabs", Value::Null).unwrap_err();
+        assert!(err.contains("off"), "{err}");
+        assert_eq!(a.editor.doc, before);
+    }
+
     #[test]
     fn the_menus_list_the_new_entries_beside_their_kin() {
         use crate::commands::{Entry, MENUS};
@@ -795,6 +1029,7 @@ mod tests {
         let ids: Vec<&str> = edit.iter().filter_map(|e| if let Entry::Cmd(id) = e { Some(*id) } else { None }).collect();
         let at = |id: &str| ids.iter().position(|i| *i == id).unwrap_or_else(|| panic!("{id} is not in the Edit menu"));
         assert_eq!(at("shape.open_gap"), at("edit.close_path") + 1);
+        assert_eq!(at("shape.break_at_tabs"), at("shape.open_gap") + 1);
         assert_eq!(at("edit.select_similar") + 1, at("edit.select_open"));
     }
 }

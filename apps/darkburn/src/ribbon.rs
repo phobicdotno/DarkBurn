@@ -262,9 +262,9 @@ pub fn show(ui: &mut Ui, app: &mut crate::shell::DarkBurn, clicked: &mut Option<
         let mut gx = row.left() + 4.0;
         for group in shown_groups {
             let start = gx;
-            // The group's background moves its toolbar out of the ribbon [TB-25].
-            let whole = Rect::from_min_max(pos2(start, row.top()), pos2(start + group_width(ui, group, compact), row.bottom()));
-            crate::toolbar_dock::grip(ui, group.toolbar, group.caption, whole, crate::toolbar_dock::Dock::Home);
+            // The group's caption moves its toolbar out of the ribbon [TB-25].
+            let handle = Rect::from_min_max(pos2(start, row.bottom() - CAPTION_HEIGHT), pos2(start + group_width(ui, group, compact), row.bottom()));
+            crate::toolbar_dock::grip(ui, group.toolbar, group.caption, handle, crate::toolbar_dock::Dock::Home);
             gx += GROUP_PAD;
             for item in group.items {
                 gx = match item {

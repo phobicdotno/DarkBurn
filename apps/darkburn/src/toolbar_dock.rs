@@ -1,7 +1,7 @@
 //! Toolbars that move [TB-25]. Each toolbar has its usual place (its groups in the ribbon, the
 //! tools column at the left, the cut palette at the bottom) and can instead sit at any edge of
-//! the main window or float over it. It moves when its background (or, away from its usual
-//! place, its grip) is dragged, or from its right-click menu. Where each one is goes into the
+//! the main window or float over it. It moves when its background (a ribbon group: its caption;
+//! away from its usual place: also its grip) is dragged, or from its right-click menu. Where each one is goes into the
 //! preferences with the rest of the layout, and into each device's layout.
 //!
 //! The ribbon itself stays at the top: it is the row of tabs that holds the toolbars, so the

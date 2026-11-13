@@ -549,7 +549,8 @@ impl SafetyGate {
     fn note_what_may_be_queued(&mut self, w: &SafeWrite) {
         match w.register() {
             REG_FIFO_DATA => {
-                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser() || i.is_laser_for(&self.config.safety))) {
+                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser() || i.is_laser_for(&self.config.safety)))
+                {
                     self.card_fifo_has_laser = true;
                 }
                 if self.turns_co2_on(w) {

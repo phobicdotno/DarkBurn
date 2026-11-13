@@ -626,13 +626,24 @@ fn optimization_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     if !app.job.optimization_open {
         return;
     }
-    let mut draft = app.job.optimization_draft.take().unwrap_or_else(|| job_cmds::current_settings(app).planner);
+    let project = app.editor.project();
+    if app.job.optimization_draft.is_some() && app.job.optimization_project != project {
+        // Another project was opened, or a new one made: the draft holds the settings of the one
+        // that is gone, and OK would write them into this one. The window closes.
+        app.job.optimization_draft = None;
+        app.job.optimization_open = false;
+        return;
+    }
+    app.job.optimization_project = project;
+    let saved = job_cmds::current_settings(app).planner;
+    let mut draft = app.job.optimization_draft.take().unwrap_or_else(|| saved.clone());
     let mut set_default = false;
     let mut reset = false;
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_optimization"), "settings", "Optimization Settings")
         .dockable("db_job_optimization")
         .fields()
         .actions("OK", "Cancel", None)
+        .unsaved(draft != saved)
         .show(ctx, true, |ui| {
             planner_editor(ui, &mut draft);
             ui.add_space(Tokens::get().space_6);
@@ -740,6 +751,7 @@ fn gcode_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         .fields()
         .cards(3.2)
         .actions("OK", "Cancel", None)
+        .unsaved(g != app.job.gcode || a != app.job.additional)
         .show(ctx, true, |ui| {
             ui_kit::status_line(ui, "G-code device settings", ui_kit::StatusTone::Dim);
             gcode_settings_editor(ui, &mut g);

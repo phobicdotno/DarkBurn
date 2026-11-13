@@ -1234,6 +1234,10 @@ fn window_texts() -> window_host::WindowTexts {
         float: tr("ui.window_float", "Float in the main window"),
         detach: tr("ui.window_detach", "Open in its own window"),
         dock_as_tab: tr("ui.window_dock", "Dock as tab"),
+        close_question: tr("ui.window_close_question", "This window has changes you have not applied. Apply them before it closes?"),
+        close_apply: tr("ui.window_close_apply", "Apply"),
+        close_discard: tr("ui.window_close_discard", "Discard"),
+        close_keep_open: tr("ui.window_close_keep_open", "Keep open"),
     }
 }
 

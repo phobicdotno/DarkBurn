@@ -748,12 +748,18 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
             None => Err("argument op_index must be a whole number".into()),
         },
         "job.pause" => {
-            if app.machine.handle.snapshot().state == LaserState::Paused {
+            let only_pause = a.get("only_pause").and_then(Value::as_bool).unwrap_or(false);
+            // `only_pause` just after a resume, before the machine shows the job going again:
+            // the job runs, so pause it.
+            let resumed = only_pause && app.machine.handle.resume_pending();
+            if app.machine.handle.snapshot().state == LaserState::Paused && !resumed {
                 // The button in the window toggles. For an agent, pause only ever pauses: it is
                 // one of the commands that are always allowed, and going on is machine.resume.
+                // `only_pause` asks the same in the window: the pendant's Pause key never
+                // sets a paused job going, since a press can arrive twice or late.
                 match src {
-                    Source::Ui => mach(app.machine.handle.resume()),
-                    Source::Api => Ok(json!({ "ok": true, "paused": true })),
+                    Source::Ui if !only_pause => mach(app.machine.handle.resume()),
+                    _ => Ok(json!({ "ok": true, "paused": true })),
                 }
             } else {
                 mach(app.machine.handle.pause())

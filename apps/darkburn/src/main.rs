@@ -17,6 +17,8 @@ mod canvas_input;
 #[cfg(test)]
 mod canvas_tests;
 mod capture_trace;
+#[cfg(test)]
+mod close_ask_tests;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;

@@ -384,11 +384,13 @@ const PAGES: [&str; 5] = ["Basic", "GCode", "DSP", "Additional", "Galvo"];
 fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     let Some((mut d, mut page)) = app.machine.dlg.settings.take() else { return };
     let errs = d.validate();
+    let unsaved = app.machine.devices.get(d.id).is_some_and(|stored| *stored != d);
     let (closed, action) = ui_kit::Window::new(Id::unique("db_device_settings"), "settings", &format!("Device Settings: {}", d.name))
         .dockable("db_device_settings")
         .cards(4.0)
         .fields()
         .actions("OK", "Cancel", None)
+        .unsaved(unsaved)
         .show(ctx, errs.is_empty(), |ui| {
             ui.horizontal(|ui| {
                 for (i, p) in PAGES.iter().enumerate() {

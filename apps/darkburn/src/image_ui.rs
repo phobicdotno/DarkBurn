@@ -363,6 +363,8 @@ pub struct AdjustDialog {
     touched: bool,
     /// The project was saved while live edits were in it.
     saved_since: bool,
+    /// The project the window was opened in ([`darkburn_core::Editor::project`]).
+    project: u64,
 }
 
 impl AdjustDialog {
@@ -395,6 +397,7 @@ impl AdjustDialog {
             clean_at_open: (!app.editor.is_modified()).then(|| app.editor.history.len()),
             touched: false,
             saved_since: false,
+            project: app.editor.project(),
         })
     }
 
@@ -429,6 +432,21 @@ impl AdjustDialog {
                 _ => None,
             })
             .next()
+    }
+
+    /// Whether the document is not as it was when the window opened, or the window holds edits
+    /// it has not written yet: OK would make an undo step of them, Cancel would put it back.
+    pub fn edited(&self, app: &DarkBurn) -> bool {
+        if self.args != self.applied {
+            return true;
+        }
+        if !self.touched {
+            return false;
+        }
+        let doc = &app.editor.doc;
+        let image_changed =
+            self.original.0.iter().any(|(id, adjust)| doc.get(*id).is_some_and(|s| matches!(&s.kind, ShapeKind::Image(i) if i.adjust != *adjust)));
+        image_changed || self.original.1.iter().any(|(l, c)| doc.layer(*l).main() != c)
     }
 
     /// Puts the document back as it was when the window opened. A project without unsaved
@@ -989,7 +1007,10 @@ fn convert_body(ui: &mut Ui, d: &mut ConvertDialog) -> bool {
 
 /// Draws the open image windows; called once a frame.
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
-    if let Some(mut d) = app.images.adjust.take() {
+    // Another project was opened, or a new one made, while the window was open: what it would put
+    // back (Cancel) or keep (OK) belongs to the project that is gone. It closes and leaves this
+    // one as it came.
+    if let Some(mut d) = app.images.adjust.take().filter(|d| d.project == app.editor.project()) {
         d.sync(app);
         d.refresh_preview(ctx, app);
         let (closed, action) = ui_kit::Window::new(Id::unique("db_adjust_image"), "settings", "Adjust Image")
@@ -1000,6 +1021,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
             // that is given no place, a tall one reaches over the bar in a small main window.
             .placed(Align2::CENTER_CENTER, crate::shell::room_under_the_bar(ctx).center())
             .actions("OK", "Cancel", Some("Apply"))
+            .unsaved(d.edited(app))
             .show(ctx, true, |ui| under_the_bar(ui, |ui| adjust_body(ui, app, &mut d)));
         d.sync(app);
         match (closed, action) {

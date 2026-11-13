@@ -103,6 +103,8 @@ pub const COMMANDS: &[Cmd] = &[
     ),
     // Machine commands: registered now, connected by the machine side.
     cmd("job.start", "Start", "Alt+S", ""),
+    // Takes `only_pause` (the pendant's Pause key) but lists no arguments: a command that lists
+    // some gets no hotkey, and Pause is on the keyboard's Pause key.
     cmd("job.pause", "Pause", "", ""),
     cmd("job.stop", "Stop", "", ""),
     cmd("job.frame", "Frame", "Alt+R", ""),
@@ -274,6 +276,8 @@ pub struct JobState {
     pub message: Option<Message>,
     pub optimization_open: bool,
     pub optimization_draft: Option<PlannerSettings>,
+    /// The project the draft was made from ([`darkburn_core::Editor::project`]).
+    pub optimization_project: u64,
     pub gcode_open: bool,
     pub gcode_draft: Option<(DeviceGcodeSettings, AdditionalSettings)>,
     pub material_open: bool,

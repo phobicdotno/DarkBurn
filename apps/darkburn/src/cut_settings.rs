@@ -212,12 +212,15 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     // window that is given no place, two and a half rows above the middle of the main window,
     // the top of this tall one lay over the bar and its menus in most main windows.
     let middle = crate::shell::room_under_the_bar(ctx).center();
+    // Closed from its tab or its window with layers changed, it asks whether to keep them.
+    let unsaved = app.editor.doc.layers != s.original;
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
         .dockable(WINDOW_KEY)
         .cards(2.7)
         .fields()
         .placed(Align2::CENTER_CENTER, middle)
         .actions("OK", "Cancel", None)
+        .unsaved(unsaved)
         .show(ctx, true, |ui| body(ui, app, &mut s));
     s.edited |= app.editor.doc.layers != s.original;
     match (closed, action) {

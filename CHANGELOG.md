@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.580 (build 7)
+## v0.0.585 (build 7)
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
@@ -53,6 +53,11 @@
 - New: Taper warp: squeeze or unroll artwork so it fits tapered cups and cones
 - New: Trace Image Files traces a whole batch of pictures with the same settings and lays them out side by side
 - New: Import STL and OBJ 3D models as a grey height picture for 3D engraving
+- Fix: The pendant's Pause key only pauses now, and its Start key goes on with a paused job
+- Fix: The pendant's help text in Settings shows in full
+- Fix: The pendant's Pause pressed right after going on with a job pauses it again
+- New: Closing a settings window with changes you haven't applied asks whether to apply them, throw them away or keep it open
+- Fix: Adjust Image and Optimization close when you open another project, so nothing carries over into it
 
 ## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another

@@ -459,13 +459,17 @@ fn pendant(ui: &mut Ui, prefs: &mut Prefs) {
     let t = Tokens::get();
     ui_kit::section_heading(ui, &tr("settings.pendant", "Pendant"));
     ui_kit::checkbox(ui, &tr("settings.pendant_on", "Use wireless pendant"), &mut prefs.opts.pendant);
-    ui.label(
-        egui::RichText::new(tr(
-            "settings.pendant_text",
-            "The XHC wireless handheld pendant. Its keys do what the matching buttons do, and only when those buttons are enabled. The Laser key does nothing.",
-        ))
-        .size(t.font_small)
-        .color(t.text_dim),
+    // Wrapped, not cut short as the form's rows are: every sentence says what a key does.
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(tr(
+                "settings.pendant_text",
+                "The XHC wireless handheld pendant. Its keys do what the matching buttons do, and only when those buttons are enabled. Pause only pauses; Start goes on with a paused job. The Laser key does nothing.",
+            ))
+            .size(t.font_small)
+            .color(t.text_dim),
+        )
+        .wrap(),
     );
     if !darkburn_pendant::HID_SUPPORTED {
         ui.label(egui::RichText::new(tr("settings.pendant_unsupported", "This build has no pendant support.")).size(t.font_small).color(t.text_dim));

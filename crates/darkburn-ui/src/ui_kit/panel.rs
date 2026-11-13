@@ -1016,6 +1016,7 @@ pub struct Window<'a> {
     /// Esc may close a footerless window floating in the main window this frame.
     escape_here: bool,
     answer_keys: super::AnswerKeys,
+    unsaved: bool,
 }
 
 /// How [`Window::content`] lays itself out for where the window is shown.
@@ -1031,10 +1032,13 @@ struct Chrome<'k> {
     place: Option<&'k str>,
     /// Esc closes a window without a footer (one that has a footer closes by its Cancel).
     escape: bool,
+    /// The window was closed with edits not applied and waits for the answer to its question:
+    /// nothing in it can be used, and the keys go to the question.
+    waiting: bool,
 }
 
 impl Chrome<'_> {
-    const CARD: Chrome<'static> = Chrome { header: true, keys: true, body_height: None, place: None, escape: false };
+    const CARD: Chrome<'static> = Chrome { header: true, keys: true, body_height: None, place: None, escape: false, waiting: false };
 }
 
 impl<'a> Window<'a> {
@@ -1063,6 +1067,7 @@ impl<'a> Window<'a> {
             dock_key: None,
             escape_here: true,
             answer_keys: super::AnswerKeys::Off,
+            unsaved: false,
         }
     }
 
@@ -1101,6 +1106,15 @@ impl<'a> Window<'a> {
         if !key.is_empty() {
             self.dock_key = Some(key);
         }
+        self
+    }
+
+    /// Whether the window holds edits that OK would apply and Cancel would throw away. A
+    /// dockable window that does and is closed from its tab, its header or its native window
+    /// asks first: Apply (as OK), Discard (as Cancel) or Keep open. Without edits it closes at
+    /// once. Esc and the footer's buttons keep their meaning.
+    pub fn unsaved(mut self, edited: bool) -> Self {
+        self.unsaved = edited;
         self
     }
 
@@ -1271,6 +1285,9 @@ impl<'a> Window<'a> {
     ) -> (bool, super::Action) {
         super::scope(ui, |ui| {
             let t = Tokens::get();
+            if chrome.waiting {
+                ui.disable();
+            }
             ui.spacing_mut().item_spacing.y = 0.0;
             let mut close = false;
             if !self.page_header_in_titlebar && chrome.header {
@@ -1320,14 +1337,15 @@ impl<'a> Window<'a> {
                     body(ui);
                 }
             });
-            if !chrome.keys {
+            if !chrome.keys || chrome.waiting {
                 // A tab: Enter and Esc belong to the main window, not to this window's footer.
+                // Waiting: they answer the question.
             } else if !self.enter_submits && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
                 // The key is kept from OK (Enter ends the typing in a field), but a footer
                 // button that holds the keyboard is still pressed by it.
                 super::actions::note_enter_kept_from_ok(ui.ctx());
             }
-            if chrome.keys && !self.escape_closes {
+            if chrome.keys && !chrome.waiting && !self.escape_closes {
                 ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             }
             // A window without a footer closes on Esc itself, as its close button does, unless a
@@ -1500,26 +1518,80 @@ impl Window<'_> {
     fn hosted(&self, ctx: &egui::Context, key: &str, valid: bool, body: impl FnOnce(&mut Ui), left: impl FnOnce(&mut Ui)) -> (bool, super::Action) {
         use super::window_host as host;
         host::shown(ctx, key, self.title);
-        if host::take_close(ctx, key) {
+        let mut asking = host::asking(ctx, key);
+        if asking && !self.unsaved {
+            // Nothing left to ask about.
+            host::set_asking(ctx, key, false);
             return (true, super::Action::None);
+        }
+        if host::take_close(ctx, key) {
+            if !self.unsaved {
+                return (true, super::Action::None);
+            }
+            host::set_asking(ctx, key, true);
+            asking = true;
         }
         let place = host::place(ctx, key);
         // Asked to come into view (its tab is brought to the front by `raise` itself).
         let raise = host::take_raise(ctx, key);
-        match &place.placement {
+        // The answer, when a window of its own asked the question itself.
+        let answered = std::cell::Cell::new(None);
+        let (closed, action) = match &place.placement {
             host::Placement::Docked(area) if host::area_on_screen(ctx, area) => {
                 if raise {
                     host::focus_main_window(ctx);
                 }
-                self.docked(ctx, key, valid, body, left)
+                self.docked(ctx, key, asking, valid, body, left)
             }
-            host::Placement::Detached => self.detached(ctx, key, raise, valid, body, left),
-            _ => self.floating(ctx, key, &place, raise, valid, body, left),
+            host::Placement::Detached => self.detached(ctx, key, raise, (asking, &answered), valid, body, left),
+            _ => self.floating(ctx, key, &place, raise, asking, valid, body, left),
+        };
+        if asking {
+            let answer = answered.take().unwrap_or_else(|| self.ask_before_closing(ctx, key, valid));
+            return answer.map_or((false, super::Action::None), |a| (false, a));
         }
+        if closed && self.unsaved {
+            // Closed with edits not applied: ask first, from the next frame on.
+            host::set_asking(ctx, key, true);
+            return (false, super::Action::None);
+        }
+        (closed, action)
+    }
+
+    /// The question a window with edits not applied asks when it is closed. `Some(Ok)` applies
+    /// them (Apply), `Some(Cancel)` throws them away (Discard); either closes the window. Keep
+    /// open, Esc and the question's own close button end the question and leave all as it is.
+    fn ask_before_closing(&self, ctx: &egui::Context, key: &str, valid: bool) -> Option<super::Action> {
+        use super::window_host as host;
+        let texts = host::texts(ctx);
+        let (closed, action) = super::Confirm::new(egui::Id::unique(("db_close_question", key)), self.icon, self.title)
+            .tone(super::Tone::Warning)
+            .actions(&texts.close_apply, &texts.close_keep_open, Some(&texts.close_discard))
+            .secondary_left()
+            .show(ctx, valid, |ui| {
+                ui.add(egui::Label::new(texts.close_question.as_str()).wrap());
+            });
+        let answer = match action {
+            super::Action::Ok => Some(super::Action::Ok),
+            super::Action::Apply => Some(super::Action::Cancel),
+            super::Action::Cancel => None,
+            super::Action::None if closed => None,
+            super::Action::None => return None,
+        };
+        host::set_asking(ctx, key, false);
+        answer
     }
 
     /// A tab in a panel area: the contents fill the body its tab group gave it, under the tabs.
-    fn docked(&self, ctx: &egui::Context, key: &str, valid: bool, body: impl FnOnce(&mut Ui), left: impl FnOnce(&mut Ui)) -> (bool, super::Action) {
+    fn docked(
+        &self,
+        ctx: &egui::Context,
+        key: &str,
+        waiting: bool,
+        valid: bool,
+        body: impl FnOnce(&mut Ui),
+        left: impl FnOnce(&mut Ui),
+    ) -> (bool, super::Action) {
         super::Container::record_host_window(ctx, self.id, None);
         let Some((rect, layer)) = super::window_host::slot(ctx, key) else {
             // Behind another tab, or its tab group is drawn next frame.
@@ -1527,7 +1599,7 @@ impl Window<'_> {
         };
         let mut ui = Ui::new(ctx.clone(), self.id.with("docked"), egui::UiBuilder::new().layer_id(layer).max_rect(rect));
         ui.set_clip_rect(rect);
-        let chrome = Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None, escape: false };
+        let chrome = Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None, escape: false, waiting };
         let shown = self.content_in(&mut ui, valid, body, left, chrome);
         solidcraft_ui_registry::publish_rect("dialog:window", rect);
         shown
@@ -1540,6 +1612,7 @@ impl Window<'_> {
         ctx: &egui::Context,
         key: &str,
         raise: bool,
+        (waiting, answered): (bool, &std::cell::Cell<Option<Option<super::Action>>>),
         valid: bool,
         body: impl FnOnce(&mut Ui),
         left: impl FnOnce(&mut Ui),
@@ -1587,12 +1660,20 @@ impl Window<'_> {
                     }
                 }
                 closed_by_system = close;
+                if close && self.unsaved {
+                    // It asks first; the system leaves it open meanwhile.
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                }
                 let rect = ui.max_rect();
                 ui.painter().rect_filled(rect, 0.0, Tokens::get().dialog_body);
                 height = Some(rect.height() - self.chrome_height(true));
             }
-            let chrome = Chrome { header: true, keys: true, body_height: height, place: Some(key), escape: true };
+            let chrome = Chrome { header: true, keys: true, body_height: height, place: Some(key), escape: true, waiting };
             let shown = self.content_in(ui, valid, body, left, chrome);
+            if native && waiting {
+                // In the window that was closed, where the user is looking.
+                answered.set(Some(self.ask_before_closing(ui.ctx(), key, valid)));
+            }
             if native {
                 // The keys go to this window while it has the focus; the app's shortcuts get
                 // the ones nothing here used (embedded, the main window has them already).
@@ -1628,6 +1709,7 @@ impl Window<'_> {
         key: &str,
         place: &super::window_host::WindowPlace,
         raise: bool,
+        waiting: bool,
         valid: bool,
         body: impl FnOnce(&mut Ui),
         left: impl FnOnce(&mut Ui),
@@ -1678,7 +1760,7 @@ impl Window<'_> {
         };
         let resize_id = self.id.with("db_resize");
         let shown = super::container::FeatureWindow::new(window, self.id, frame).show(ctx, |ui| {
-            let chrome = Chrome { header: true, keys: true, body_height, place: Some(key), escape: self.escape_here };
+            let chrome = Chrome { header: true, keys: true, body_height, place: Some(key), escape: self.escape_here, waiting };
             let result = self.content_in(ui, valid, body, left, chrome);
             super::Container::finish_content(ui, frame);
             resize_grips(ui, resize_id, key, margin);

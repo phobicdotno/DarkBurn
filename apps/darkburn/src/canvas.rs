@@ -173,6 +173,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn, cmd: Option<ViewCmd>) -> Output {
     }
     crate::job_ui::paint_overlay(&painter, &xf, app, ct.accent);
     crate::text_ui::paint_overlay(app, &xf, &painter, ct.accent, now);
+    crate::tangent_tool::paint_overlay(ui.ctx(), app, &xf, &painter, ct.accent);
     paint_rulers(ui, &app.prefs, &view, full, canvas);
     out.cursor = hover.map(|p| app.prefs.origin.to_machine(view.to_page(canvas, p), page));
     out

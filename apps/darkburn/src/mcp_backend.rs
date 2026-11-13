@@ -517,6 +517,8 @@ impl Backend for McpBackend {
         }
         app.editor = editor;
         app.project_path = path;
+        // Another editor stands in place: what the windows hold of the replaced one goes.
+        crate::files::leave_project(&mut app);
         Ok(())
     }
 

@@ -182,7 +182,7 @@ fn last_dir(prefs: &Prefs) -> Option<PathBuf> {
 
 /// Another project has taken the place of the open one: the windows that worked on the old one
 /// close, and what they remember of it is not written into the new one.
-fn leave_project(app: &mut DarkBurn) {
+pub(crate) fn leave_project(app: &mut DarkBurn) {
     app.files.project_serial += 1;
     app.images.adjust = None;
     app.images.trace = None;

@@ -57,12 +57,12 @@ mod galvo_machine;
 mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
-mod gweike_recipes;
-#[cfg(test)]
-mod gweike_recipes_tests;
 mod gweike_card;
 #[cfg(test)]
 mod gweike_card_ui_tests;
+mod gweike_recipes;
+#[cfg(test)]
+mod gweike_recipes_tests;
 mod gweike_ui;
 mod gweike_workflow;
 mod help;
@@ -90,10 +90,10 @@ mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
-mod language_fonts;
-mod languages;
 #[cfg(test)]
 mod known_hunt10_tests;
+mod language_fonts;
+mod languages;
 mod laser_panel;
 mod laser_position;
 mod layer_defaults;

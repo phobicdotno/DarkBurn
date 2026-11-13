@@ -697,7 +697,10 @@ impl Command {
             Stop => v.extend_from_slice(&[0xD8, 0x01]),
             Pause => v.extend_from_slice(&[0xD8, 0x02]),
             Resume => v.extend_from_slice(&[0xD8, 0x03]),
-            RefPointMode(m) => v.extend_from_slice(&[0xD8, param(*m)?]),
+            // Only 0x10..=0x12 are reference-point modes: `D8 00` is Start, `D8 01..03` stop,
+            // pause and resume.
+            RefPointMode(m @ 0x10..=0x12) => v.extend_from_slice(&[0xD8, *m]),
+            RefPointMode(m) => return Result::Err(RuidaError::Encode(format!("reference point mode 0x{m:02X} is not 0x10, 0x11 or 0x12"))),
             HomeXY => v.extend_from_slice(&[0xD8, 0x2A]),
             HomeZ => v.extend_from_slice(&[0xD8, 0x2C]),
             HomeU => v.extend_from_slice(&[0xD8, 0x2D]),

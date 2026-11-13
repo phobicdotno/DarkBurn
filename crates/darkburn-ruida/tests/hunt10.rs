@@ -415,3 +415,16 @@ fn a_jog_longer_than_the_position_range_is_refused_not_cut_short() {
     m.jog_step(Axis::Z, 2.5).unwrap();
     assert_eq!(lock(&emu).position()[2], before[2] + 2_500);
 }
+
+/// `RefPointMode` takes 0x10, 0x11 or 0x12. Any other mode was written as `D8 <m>`, and `D8 00`
+/// is Start (`D8 01` stop, `D8 02` pause, `D8 03` resume): a raw mode could start a job.
+#[test]
+fn a_reference_point_mode_outside_its_three_values_is_refused() {
+    for m in [0x10, 0x11, 0x12] {
+        assert_eq!(Command::RefPointMode(m).encode().unwrap(), vec![0xD8, m]);
+    }
+    for m in [0x00, 0x01, 0x02, 0x03, 0x2A, 0x13, 0x7F] {
+        let r = Command::RefPointMode(m).encode();
+        assert!(r.is_err(), "RefPointMode({m:#04x}) was written as {r:?}");
+    }
+}

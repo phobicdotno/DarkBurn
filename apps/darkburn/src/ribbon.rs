@@ -158,9 +158,9 @@ pub fn bar_groups(bar: &str) -> Vec<Vec<BarItem>> {
             g.items
                 .iter()
                 .filter_map(|i| match i {
-                    Cmd(id) => Some(BarItem::Cmd(*id)),
+                    Cmd(id) => Some(BarItem::Cmd(id)),
                     Numeric => Some(BarItem::Wide("numeric")),
-                    Live(kind) => Some(BarItem::Wide(*kind)),
+                    Live(kind) => Some(BarItem::Wide(kind)),
                     Fields(..) | Checks(_) | Choices(_) => None,
                 })
                 .collect::<Vec<_>>()

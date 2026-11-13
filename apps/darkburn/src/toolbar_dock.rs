@@ -198,11 +198,11 @@ enum Move {
 }
 
 fn moves_id() -> Id {
-    Id::new("db_toolbar_moves")
+    Id::unique("db_toolbar_moves")
 }
 
 fn ribbon_id() -> Id {
-    Id::new("db_toolbar_ribbon_rect")
+    Id::unique("db_toolbar_ribbon_rect")
 }
 
 fn request(ctx: &egui::Context, bar: &str, m: Move) {
@@ -283,7 +283,7 @@ fn zone(ctx: &egui::Context, bar: &str, to: Dock, pos: Pos2) -> Rect {
 
 fn paint_hint(ctx: &egui::Context, rect: Rect) {
     let t = Tokens::get();
-    let p = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("db_toolbar_hint")));
+    let p = ctx.layer_painter(LayerId::unique(Order::Foreground, Id::unique("db_toolbar_hint")));
     p.rect(rect, t.radius_sm, t.accent.gamma_multiply(0.18), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     solidcraft_ui_registry::publish_target("bar:hint", rect);
 }
@@ -294,7 +294,7 @@ fn paint_hint(ctx: &egui::Context, rect: Rect) {
 /// It draws nothing.
 pub fn grip(ui: &mut Ui, bar: &'static str, salt: &str, rect: Rect, now: Dock) {
     let ctx = ui.ctx().clone();
-    let id = Id::new(("db_toolbar_grip", bar, salt));
+    let id = Id::unique(("db_toolbar_grip", bar, salt));
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     let origin_id = id.with("origin");
     if resp.is_pointer_button_down_on()
@@ -391,7 +391,7 @@ fn pieces(bar: &str) -> Vec<Piece> {
 }
 
 fn wide_width_id(kind: &str) -> Id {
-    Id::new(("db_toolbar_wide", kind))
+    Id::unique(("db_toolbar_wide", kind))
 }
 
 /// The size of `piece` (a separator has no thickness across the toolbar: it spans its line).
@@ -497,7 +497,7 @@ pub fn floating(ui: &mut Ui, app: &mut DarkBurn, clicked: &mut Option<String>) {
             pos.x.clamp(screen.left(), (screen.right() - 3.0 * GRIP).max(screen.left())),
             pos.y.clamp(screen.top(), (screen.bottom() - size.y).max(screen.top())),
         );
-        egui::Area::new(Id::new(("db_bar_float", bar))).order(Order::Middle).fixed_pos(pos).constrain(false).show(&ctx, |ui| {
+        egui::Area::new(Id::unique(("db_bar_float", bar))).order(Order::Middle).fixed_pos(pos).constrain(false).show(&ctx, |ui| {
             let (r, _) = ui.allocate_exact_size(size, Sense::hover());
             ui.painter().rect(r, t.radius_md, t.toolbar, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             draw(ui, app, bar, Dock::Floating, r, &pieces, &rects, clicked);
@@ -584,7 +584,7 @@ fn button(ui: &mut Ui, app: &mut DarkBurn, bar: &str, id: &'static str, rect: Re
     let t = Tokens::get();
     let Some(c) = commands::find(id) else { return };
     let enabled = commands::works(id);
-    let resp = ui.interact(rect, Id::new(("db_bar_button", bar, id)), if enabled { Sense::click() } else { Sense::hover() });
+    let resp = ui.interact(rect, Id::unique(("db_bar_button", bar, id)), if enabled { Sense::click() } else { Sense::hover() });
     let active = (id == "view.pan" && app.pan_tool) || (bar == "tools" && id == app.tool.command() && !app.pan_tool);
     if active || (enabled && resp.is_pointer_button_down_on()) {
         ui.painter().rect(rect, t.radius_sm, t.accent_soft, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);

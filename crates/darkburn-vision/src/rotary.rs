@@ -58,6 +58,7 @@ pub enum RotaryError {
     InvalidObjectSize,
     InvalidRollerDiameter,
     InvalidSliceSize,
+    InvalidRevolutions,
 }
 
 impl std::fmt::Display for RotaryError {
@@ -68,6 +69,7 @@ impl std::fmt::Display for RotaryError {
             Self::InvalidObjectSize => "object diameter or circumference must be above zero",
             Self::InvalidRollerDiameter => "roller diameter must be above zero",
             Self::InvalidSliceSize => "slice size must be above zero",
+            Self::InvalidRevolutions => "revolutions must be a number",
         })
     }
 }
@@ -213,6 +215,9 @@ pub struct TestRotationPlan {
 
 pub fn test_rotation_plan(params: &RotaryParams, revolutions: f64) -> Result<TestRotationPlan, RotaryError> {
     params.validate()?;
+    if !revolutions.is_finite() {
+        return Err(RotaryError::InvalidRevolutions);
+    }
     let dist = revolutions * params.axis_units_per_rotation() * if params.mirror { -1.0 } else { 1.0 };
     Ok(TestRotationPlan {
         revolutions,

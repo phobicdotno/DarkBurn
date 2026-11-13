@@ -165,6 +165,12 @@ fn one() -> f64 {
 }
 
 /// A zoom saved as `null` (JSON has no NaN) loads as the default instead of failing the whole file.
+/// Read a settings field, falling back to its default when the saved value is bad (for example a NaN saved as null),
+/// so one bad number does not lose the whole settings file.
+fn default_if_bad<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    Ok(T::deserialize(serde_json::Value::deserialize(d)?).unwrap_or_default())
+}
+
 fn one_if_null<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     Ok(Option::<f64>::deserialize(d)?.filter(|v| v.is_finite()).unwrap_or(1.0))
 }
@@ -490,29 +496,29 @@ pub fn suggest_exposure(current: f64, measured_mean: f64, target: f64, range: (f
 pub struct CaptureSettings {
     pub version: u32,
     pub camera_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub kind: CameraKind,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub device_index: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub resolution: Option<(u32, u32)>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub exposure: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub brightness: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub lens: Option<LensModel>,
     #[serde(default = "one", deserialize_with = "one_if_null")]
     pub focal_scale: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub alignment: Option<CameraAlignment>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub head: Option<HeadCameraCalibration>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub overlay: OverlayAdjust,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub state: OverlayState,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub crop_to_page: bool,
 }
 

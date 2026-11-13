@@ -86,7 +86,11 @@ pub fn settings(id: &str, a: &Value, page: Rect) -> Result<Settings, String> {
     let sheet = match (a.get("width"), a.get("height")) {
         (Some(_), Some(_)) => {
             let (x, y) = (num(a, "x", page.x0), num(a, "y", page.y0));
-            Rect::new(x, y, x + num(a, "width", page.width()), y + num(a, "height", page.height()))
+            let (w, h) = (num(a, "width", page.width()), num(a, "height", page.height()));
+            if !(w > 0.0 && h > 0.0) {
+                return Err("the sheet's width and height must be more than 0".into());
+            }
+            Rect::new(x, y, x + w, y + h)
         }
         _ => page,
     };

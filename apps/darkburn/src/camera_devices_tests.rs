@@ -299,7 +299,11 @@ fn the_camera_panel_traces_a_fresh_picture() {
     g.click_label("OK");
     g.frames(3);
     assert!(g.app().images.trace.is_none(), "{:?}", g.app().images.trace.as_ref().and_then(|d| d.notice.clone()));
-    assert_eq!((images(&g.app()), paths(&g.app())), (0, 1));
+    let counts = {
+        let a = g.app();
+        (images(&a), paths(&a))
+    };
+    assert_eq!(counts, (0, 1));
     assert_eq!(g.app().editor.history.undo_label(), Some("Trace camera picture"));
     g.screenshot("camera_trace_done");
 }

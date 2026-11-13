@@ -368,7 +368,9 @@ impl SafetyGate {
         }
         self.last_alarm = alarm;
         let water_was_ok = self.co2_water_ok;
-        self.co2_water_ok = self.config.safety.co2_water_input.is_some_and(|p| status.di_level(p) == self.config.safety.co2_water_ok_level);
+        // An input number the card does not have is like no input at all: never OK. (It would
+        // read low for ever, which must not pass for "OK" on a machine where low means OK.)
+        self.co2_water_ok = self.config.safety.co2_water_input.and_then(|p| status.di_level_of(p)) == Some(self.config.safety.co2_water_ok_level);
         if !self.co2_water_ok {
             let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
             let co2_queued = self.card_fifo_has_co2 && self.fifo_running;
@@ -882,6 +884,28 @@ mod tests {
         laser_armed(&mut g);
         g.observe_status(0, &status_io(0, 0, 0, 0, 0xFFF, 0));
         assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // An input number the card does not have is no better, whichever level counts as OK.
+        for (port, ok_level) in [(0, false), (29, false), (111, false), (0, true), (29, true)] {
+            let mut cfg = GateConfig::default();
+            cfg.safety.co2_water_input = Some(port);
+            cfg.safety.co2_water_ok_level = ok_level;
+            let mut g = SafetyGate::new(cfg);
+            laser_armed(&mut g);
+            for di in [0, 0xFFF] {
+                g.observe_status(0, &status_io(0, 0, 0, 0, di, 0));
+                assert!(!g.co2_water_ok, "input {port}, OK level {ok_level}, inputs {di:#x}");
+                assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm), "input {port}, OK level {ok_level}");
+            }
+        }
+        // A real input whose OK level is low works as configured.
+        let mut cfg = GateConfig::default();
+        cfg.safety.co2_water_ok_level = false;
+        let mut g = SafetyGate::new(cfg);
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert!(g.co2_water_ok);
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(!g.co2_water_ok);
     }
 
     #[test]

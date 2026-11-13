@@ -96,8 +96,9 @@ pub struct SafetyConfig {
     /// DO ports that fire or enable the CO2 tube. Switching one on needs the CO2 water cooling
     /// to report OK (see [`co2_water_input`](Self::co2_water_input)).
     pub co2_do_ports: Vec<u32>,
-    /// Digital input wired to the CO2 chiller's water alarm. `None` means it cannot be watched,
-    /// which blocks the CO2 laser outright: an unwatched chiller never passes for a running one.
+    /// Digital input wired to the CO2 chiller's water alarm (1..=28). `None`, or a number the
+    /// card does not have, means it cannot be watched, which blocks the CO2 laser outright: an
+    /// unwatched chiller never passes for a running one.
     pub co2_water_input: Option<u32>,
     /// Level of [`co2_water_input`](Self::co2_water_input) that means "water OK".
     pub co2_water_ok_level: bool,

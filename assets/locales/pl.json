@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Folder dziennika zadań",
   "settings.job_log_dir_hint": "folder ustawień DarkBurn",
   "settings.job_log_show": "Pokaż dziennik zadań",
-  "settings.job_log_text": "Wiersz na zadanie w job_log.csv: start, czas trwania, plik, urządzenie, wynik.",
+  "settings.job_log_text": "Wiersz na zadanie w job_log.csv: start, czas, plik, urządzenie, wynik.",
   "settings.jobs": "Zadania",
   "settings.length_units": "Długości",
   "settings.node_size": "Rozmiar węzła",

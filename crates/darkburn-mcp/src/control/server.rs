@@ -318,7 +318,6 @@ impl std::io::Read for UntilDeadline<'_> {
         if left.is_zero() {
             return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the hello did not arrive in time"));
         }
-        use std::io::Read;
         self.stream.set_read_timeout(Some(left))?;
         let mut s = self.stream;
         s.read(buf)

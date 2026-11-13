@@ -213,8 +213,9 @@ pub enum GateRefusal {
     LaserFramesQueued,
     /// The read is not allowed.
     ReadNotAllowed(String),
-    /// HARD block: the write would fire or enable the CO2 laser (or start a FIFO holding CO2
-    /// output) while the CO2 water cooling is not reported OK. No arming level lifts this.
+    /// HARD block, while the CO2 water cooling is not reported OK: the write would switch a CO2
+    /// port on or start a FIFO holding CO2 output, or it is a laser write or a stream start
+    /// while a CO2 port is on (or no status has shown it to be off). No arming level lifts this.
     Co2WaterAlarm,
 }
 
@@ -290,6 +291,8 @@ pub struct SafetyGate {
     pub co2_water_ok: bool,
     /// Frames that switch a CO2 port on went into the FIFO and it was not cleared since.
     pub card_fifo_has_co2: bool,
+    /// Whether a CO2 port was on in the last status. `None` until a status was read.
+    pub co2_output_on: Option<bool>,
     last_alarm: (u32, u32),
     leases: BTreeMap<u32, u64>,
 }
@@ -315,6 +318,7 @@ impl SafetyGate {
             machine_fault: None,
             co2_water_ok: false,
             card_fifo_has_co2: false,
+            co2_output_on: None,
             last_alarm: (0, 0),
             leases: BTreeMap::new(),
         }
@@ -370,12 +374,13 @@ impl SafetyGate {
         // An input number the card does not have is like no input at all: never OK. (It would
         // read low for ever, which must not pass for "OK" on a machine where low means OK.)
         self.co2_water_ok = self.config.safety.co2_water_input.and_then(|p| status.di_level_of(p)) == Some(self.config.safety.co2_water_ok_level);
+        let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
+        self.co2_output_on = Some(co2_on);
         if !self.co2_water_ok {
             // The alarm stops what uses the CO2 tube: a CO2 port that is on, or a running stream
             // with CO2 output in it. It does not stop a job that has no CO2 output anywhere (a
             // fibre cut with the CO2 chiller switched off). Whatever would bring the CO2 tube on
             // after this is refused by `check_write`.
-            let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
             let co2_queued = self.card_fifo_has_co2 && self.fifo_running;
             if (co2_on || co2_queued) && !actions.iter().any(|a| matches!(a, GateAction::Estop)) {
                 self.arming.disarm("Water Cooling System alarm");
@@ -416,13 +421,22 @@ impl SafetyGate {
     pub fn check_write(&mut self, w: &SafeWrite, now_ms: u64) -> Result<(), GateRefusal> {
         // HARD block first, ahead of every arming and fault check: the CO2 tube never fires
         // without its cooling water. Nothing (arming, operator confirmation) overrides this.
+        let policy = w.policy();
         if !self.co2_water_ok {
-            let starts_co2_queue = w.register() == REG_FIFO_CONTROL && w.words() == [crate::command::FIFO_START] && self.card_fifo_has_co2;
-            if starts_co2_queue || self.turns_co2_on(w) {
+            let fifo_start = w.register() == REG_FIFO_CONTROL && w.words() == [crate::command::FIFO_START];
+            // Switching a CO2 port on, directly or from the queue.
+            if self.turns_co2_on(w) || (fifo_start && self.card_fifo_has_co2) {
+                return Err(GateRefusal::Co2WaterAlarm);
+            }
+            // A CO2 port that is already on (its off write was lost, or nobody sent one), or
+            // that no status has shown to be off: then every laser write (power, duty, laser
+            // records) and every stream start could fire the tube, so none goes out. With the
+            // CO2 ports seen off, the other laser sources work as before.
+            let co2_may_be_on = self.co2_output_on != Some(false);
+            if co2_may_be_on && (policy == Policy::Laser || fifo_start) {
                 return Err(GateRefusal::Co2WaterAlarm);
             }
         }
-        let policy = w.policy();
         if !self.arming.allows(policy) {
             return Err(GateRefusal::NeedsArming { policy, state: self.arming.state(), estop_latched: self.arming.estop_latched() });
         }
@@ -792,6 +806,12 @@ mod tests {
         g.arming.arm_laser(true, Some(&t)).unwrap();
     }
 
+    /// [`laser_armed`] for a gate that may be armed and in a job already.
+    fn laser_armed_again(g: &mut SafetyGate) {
+        g.arming.disarm("test");
+        laser_armed(g);
+    }
+
     #[test]
     fn co2_is_hard_blocked_without_cooling_water() {
         let mut g = SafetyGate::default();
@@ -837,6 +857,52 @@ mod tests {
         // a later poll with DO9 still on asks for the stop again until it is off
         assert_eq!(g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0x100)).len(), 1);
         assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+    }
+
+    /// The alarm is up and DO9 is still on (the write that switches it off was lost, or the
+    /// caller did not act on the stop): nothing that could fire the tube goes out, however the
+    /// gate is armed again.
+    #[test]
+    fn nothing_fires_while_a_co2_port_is_on_and_the_water_is_not_ok() {
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        let duty_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0, (5000 << 16) | 4], &SafetyConfig::default(), None).unwrap();
+        assert_eq!((pwm.policy(), duty_frame.policy()), (Policy::Laser, Policy::Laser));
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0x100));
+        assert!(g.check_write(&pwm, 0).is_ok(), "water fine and laser armed: the power may be set");
+        // the alarm comes up: the gate disarms and asks for the stop
+        assert_eq!(g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0x100)).len(), 1);
+        // the caller arms again while DO9 is still on
+        laser_armed(&mut g);
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
+        assert_eq!(g.check_write(&pwm, 1), Err(GateRefusal::Co2WaterAlarm));
+        // a stream of duty records, queued after DO9 was switched on directly: neither the
+        // records nor the start go out
+        assert_eq!(g.check_write(&duty_frame, 1), Err(GateRefusal::Co2WaterAlarm));
+        assert!(!g.card_fifo_has_co2);
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // stopping and switching off always pass
+        assert!(g.check_write(&command::do_off(9).unwrap(), 1).is_ok());
+        assert!(g.check_write(&command::fifo_stop().unwrap(), 1).is_ok());
+        assert!(g.check_write(&command::pwm_off(1234, command::MISC_PWM).unwrap(), 1).is_ok());
+        // once a status shows DO9 off the other laser sources work again; the CO2 port stays off
+        laser_armed_again(&mut g);
+        g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0));
+        assert!(g.check_write(&pwm, 2).is_ok());
+        assert!(g.check_write(&command::fifo_start().unwrap(), 2).is_ok());
+        assert_eq!(g.check_write(&co2_on(), 2), Err(GateRefusal::Co2WaterAlarm));
+    }
+
+    /// Before any status was read the gate does not know whether a CO2 port is on.
+    #[test]
+    fn with_no_status_and_no_water_no_laser_write_goes_out() {
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert_eq!(g.co2_output_on, None);
+        assert_eq!(g.check_write(&pwm, 0), Err(GateRefusal::Co2WaterAlarm));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 0), Err(GateRefusal::Co2WaterAlarm));
     }
 
     /// The CO2 chiller is switched off in the middle of a fibre cut: laser armed, the fibre gate

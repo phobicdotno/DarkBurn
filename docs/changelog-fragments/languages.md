@@ -4,3 +4,4 @@
 - New: German, French and Italian (machine-translated; corrections are welcome)
 - New: Spanish (Spain), Spanish (Latin America) and Portuguese (machine-translated; corrections are welcome)
 - New: Dutch, Danish and Swedish (machine-translated; corrections are welcome)
+- New: Finnish, Polish and Czech (machine-translated; corrections are welcome)

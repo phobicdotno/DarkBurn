@@ -322,6 +322,21 @@ mod tests {
         set_language("en");
     }
 
+    /// Finnish, Polish and Czech translate the English texts, and the Language menu offers
+    /// them [I18N-04].
+    #[test]
+    fn finnish_polish_and_czech_are_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("fi", "Tiedosto"), ("pl", "Plik"), ("cs", "Soubor")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
     /// Review corrections: Danish aligns "nederst"/"øverst"/"midt" (not the plurals "bunde",
     /// "toppe", "midter"), the library button puts settings *on* a layer ("til lag", not
     /// "assign a layer"), and the Move help says "kør hjem".
@@ -375,7 +390,7 @@ mod tests {
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv"] {
+        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs"] {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -415,6 +430,9 @@ mod tests {
             ("nl", "Uit"),
             ("da", "Fra"),
             ("sv", "Av"),
+            ("fi", "Pois"),
+            ("pl", "Wył"),
+            ("cs", "Vyp"),
             ("en", "Off"),
         ];
         for (code, word) in off {
@@ -500,9 +518,54 @@ mod tests {
         ]);
     }
 
+    /// Finnish keeps one word per term like the languages above. Polish and Czech change the
+    /// ending of a word with its place in the sentence ("kopia zapasowa", "kopię zapasową"), so
+    /// their terms are given as stems: each word of the term starts a word of the text.
+    #[test]
+    fn finnish_polish_and_czech_use_one_word_per_term() {
+        assert_one_word_per_term(&[("fi", ["leveys", "korkeus", "nollaa", "varmuuskopio", "varapolku"])]);
+        assert_one_stem_per_term(&[
+            ("pl", ["szerokość", "wysokość", "resetuj", "kopi zapasow", "ścieżk zapasow"]),
+            ("cs", ["šířka", "výška", "resetovat", "záloh", "záložní cest"]),
+        ]);
+    }
+
+    /// The stem check finds a term in any of its forms, and only at the start of words.
+    #[test]
+    fn the_stem_check_matches_the_start_of_each_word() {
+        assert!(starts_words("wczytaj kopię zapasową preferencji", "kopi zapasow"));
+        assert!(starts_words("stary plik zostaje jako kopia zapasowa", "kopi zapasow"));
+        assert!(!starts_words("kopiuj plik zapasowy", "kopi zapasow"));
+        assert!(!starts_words("skopiuj zapasową", "kopi zapasow"));
+        assert!(!starts_words("anything", ""));
+    }
+
     /// Each language's words for Width, Height, Reset, a backup copy and a backup path appear,
     /// as whole words, in every text that names that term.
     fn assert_one_word_per_term(words: &[(&str, [&str; 5])]) {
+        assert_terms(words, |lower, w| {
+            // "alto" must not match inside "altura": compare whole words.
+            lower.match_indices(w).any(|(i, _)| {
+                let before = lower[..i].chars().next_back().is_none_or(|c| !c.is_alphabetic());
+                let after = lower[i + w.len()..].chars().next().is_none_or(|c| !c.is_alphabetic());
+                before && after
+            })
+        });
+    }
+
+    /// As [`assert_one_word_per_term`], for languages whose words change their endings.
+    fn assert_one_stem_per_term(stems: &[(&str, [&str; 5])]) {
+        assert_terms(stems, starts_words);
+    }
+
+    /// True when the words of `stem` start consecutive words of `lower`.
+    fn starts_words(lower: &str, stem: &str) -> bool {
+        let words: Vec<&str> = lower.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).collect();
+        let stems: Vec<&str> = stem.split_whitespace().collect();
+        !stems.is_empty() && words.windows(stems.len()).any(|run| run.iter().zip(&stems).all(|(w, s)| w.starts_with(s)))
+    }
+
+    fn assert_terms(words: &[(&str, [&str; 5])], found: impl Fn(&str, &str) -> bool) {
         let width = ["settings.width", "settings.capture_width", "cmd.arrange.same_width"];
         let height = ["settings.height", "settings.capture_height", "settings.font_height", "cmd.arrange.same_height"];
         let reset = ["cmd.laser.pnc_reset", "cmd.window.reset_layout", "hotkeys.reset_all", "settings.reset_all"];
@@ -514,14 +577,7 @@ mod tests {
             for (keys, w) in [(&width[..], word[0]), (&height[..], word[1]), (&reset[..], word[2]), (&backup[..], word[3]), (&path[..], word[4])] {
                 for key in keys {
                     let text = &t[*key];
-                    // "alto" must not match inside "altura": compare whole words.
-                    let lower = text.to_lowercase();
-                    let found = lower.match_indices(w).any(|(i, _)| {
-                        let before = lower[..i].chars().next_back().is_none_or(|c| !c.is_alphabetic());
-                        let after = lower[i + w.len()..].chars().next().is_none_or(|c| !c.is_alphabetic());
-                        before && after
-                    });
-                    if !found {
+                    if !found(&text.to_lowercase(), w) {
                         bad.push(format!("{code} {key}: {text:?} lacks {w:?}"));
                     }
                 }

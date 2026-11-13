@@ -439,3 +439,101 @@ Key names stay as in English. Panel labels that are not translated yet are quote
 - Width / Height: Bredd / Höjd. Reset: Återställ. Backup (a saved copy of a file): säkerhetskopia.
   Backup path (the outline an image keeps after a crop): reservbana.
 - Start (the laser panel button, not translated yet): ”Start”.
+
+## Finnish (fi)
+
+Imperative in commands and help texts ("Tallenna", "Avaa", "Napsauta").
+Key names stay as in English. Panel labels that are not translated yet are quoted ”like this”.
+
+- Job: työ. Cut (laser): leikkaus, as in Leikkausasetukset, leikkauskirjasto, leikkaussuunta,
+  Leikkauspaletti. Cut (clipboard): Leikkaa. Cut shapes: Jaa muodot.
+- Layer: taso. Line / Fill / Image: Viiva / Täyttö / Kuva.
+- Power: teho. Speed: nopeus. Pass: kierros. Interval: riviväli. Thickness: paksuus.
+- Air assist: ilmapuhallus. Frame: ajaa ääriviiva.
+- Home: kotiajo. Origin: nollapiste. Start point: aloituspiste.
+- Tab: silta, sillat. Rotary: pyöröakseli. Print and cut: Tulosta ja leikkaa.
+- Device / Machine / Controller: laite / kone / ohjain. Command: komento. Preview: Esikatselu.
+- Shape / Object: muoto / objekti. Selection: valinta. Path: polku. Node: solmu. Weld: hitsata.
+- Boolean union / difference / intersection: Boolen yhdiste / erotus / leikkaus.
+- Offset: siirtymä. Trace: vektoroida. Bitmap: bittikartta.
+- Group / Ungroup: Ryhmitä / Pura ryhmitys. Array: sarja (Ruudukkosarja, Ympyräsarja, Virtuaalisarja).
+- Align / Distribute / Dock: Tasaa / Levitä / Telakoi. Flip: kääntää. Mirror: peilata.
+- Snap: kiinnitys. Grid: ruudukko. Lock: lukita. Crop: rajaus. Pan: panoroida.
+- Page: sivu. Canvas: piirtoalue. Work area: työalue.
+- Toolbar: työkalurivi. Ribbon tab Home: Aloitus. Hotkeys: pikanäppäimet. Settings and
+  preferences: asetukset.
+- Edit: Muokkaa. Modify (ribbon tab): Muunna. Arrange: Järjestä. File menu: Tiedosto.
+- Mode: tila. Art library: Kuvakirjasto. Library entry: merkintä. Art item: kohde.
+- Feeder: syötin. Camera control: Kameran ohjaus.
+- Cut table columns: Taso, Tila, Nop/Teho, Ulos, Näk, Ilma.
+- Width / Height: Leveys / Korkeus. Reset: Nollaa. Backup (a saved copy of a file): varmuuskopio.
+  Backup path (the outline an image keeps after a crop): varapolku.
+- Start (the laser panel button, not translated yet): ”Start”.
+
+## Polish (pl)
+
+Imperative in commands and help texts ("Zapisz", "Otwórz", "Kliknij"), the informal "ty" in
+help texts. Key names stay as in English. Panel labels that are not translated yet are
+quoted „like this”. Polish words change their endings, so the one-word check compares stems
+("kopi zapasow" finds "kopia zapasowa" and "kopię zapasową").
+
+- Job: zadanie. Cut (laser): cięcie, as in Ustawienia cięcia, biblioteka cięcia, kierunek cięcia,
+  Paleta cięcia. Cut (clipboard): Wytnij. Cut shapes: Podziel kształty.
+- Layer: warstwa. Line / Fill / Image: Linia / Wypełnienie / Obraz.
+- Power: moc. Speed: prędkość. Pass: przejście. Interval: odstęp linii. Thickness: grubość.
+- Air assist: nadmuch. Frame: obrysować.
+- Home: bazowanie. Origin: punkt zerowy. Start point: punkt początkowy.
+- Tab: mostek, mostki. Rotary: oś obrotowa. Print and cut: Drukuj i tnij.
+- Device / Machine / Controller: urządzenie / maszyna / kontroler. Command: polecenie. Preview: Podgląd.
+- Shape / Object: kształt / obiekt. Selection: zaznaczenie (Zaznacz). Path: ścieżka. Node: węzeł.
+  Weld: spawać.
+- Boolean union / difference / intersection: Suma logiczna / Różnica logiczna / Część wspólna.
+- Offset: odsunięcie. Trace: wektoryzować. Bitmap: mapa bitowa.
+- Group / Ungroup: Grupuj / Rozgrupuj. Array: szyk (prostokątny, kołowy, wirtualny).
+- Align / Distribute / Dock: Wyrównaj / Rozłóż / Dosuń. Flip: przerzucić. Mirror: odbić lustrzanie.
+- Snap: przyciąganie. Grid: siatka. Lock: zablokować. Crop: przycięcie. Pan: przesunąć widok.
+- Page: strona. Canvas: płótno. Work area: obszar roboczy.
+- Toolbar: pasek narzędzi. Ribbon tab Home: Start. Hotkeys: skróty klawiszowe.
+  Settings: Ustawienia. Preferences (the settings file): preferencje.
+- Edit: Edycja. Modify (ribbon tab): Modyfikuj. Arrange: Rozmieść. File menu: Plik.
+- Mode: tryb. Art library: Biblioteka grafik. Library entry: wpis. Art item: element.
+- Feeder: podajnik. Camera control: Sterowanie kamerą.
+- Cut table columns: Warstwa, Tryb, Pręd/Moc, Wyj, Wid, Nadm.
+- Status bar count: szt. (one word for object and objects).
+- Width / Height: Szerokość / Wysokość. Reset: Resetuj. Backup (a saved copy of a file):
+  kopia zapasowa. Backup path (the outline an image keeps after a crop): ścieżka zapasowa.
+- Start (the laser panel button, not translated yet): „Start”.
+
+## Czech (cs)
+
+Infinitive in commands ("Uložit", "Otevřít", "Vložit"), the formal imperative in help texts
+("Klepněte", "Stiskněte"). Key names stay as in English. Panel labels that are not translated
+yet are quoted „like this“. Czech words change their endings, so the one-word check compares
+stems ("záloh" finds "záloha" and "zálohu").
+
+- Job: úloha. Cut (laser): řez, řezání, as in Nastavení řezu, knihovna řezání, směr řezu,
+  Paleta řezů. Cut (clipboard): Vyjmout. Cut shapes: Rozdělit tvary.
+- Layer: vrstva. Line / Fill / Image: Čára / Výplň / Obrázek.
+- Power: výkon. Speed: rychlost. Pass: průchod. Interval: rozteč řádků. Thickness: tloušťka.
+- Air assist: ofuk. Frame: objet obrys.
+- Home: výchozí poloha. Origin: počátek. Start point: počáteční bod.
+- Tab: můstek, můstky. Rotary: rotační osa. Print and cut: Tisk a řez.
+- Device / Machine / Controller: zařízení / stroj / řadič. Command: příkaz. Preview: Náhled.
+- Shape / Object: tvar / objekt. Selection: výběr (Vybrat). Path: cesta. Node: uzel. Weld: svařit.
+- Boolean union / difference / intersection: Booleovské sjednocení / Booleovský rozdíl / Booleovský průnik.
+- Offset: odsazení. Trace: vektorizovat. Bitmap: bitmapa. Break apart: Rozložit.
+- Group / Ungroup: Seskupit / Zrušit seskupení. Array: pole (pravoúhlé, kruhové, virtuální).
+- Align / Distribute / Dock: Zarovnat / Rozmístit / Přisunout. Flip: překlopit. Mirror: zrcadlit.
+- Snap: přichytávání. Grid: mřížka. Lock: zamknout. Crop: oříznutí. Pan: posunout zobrazení.
+- Page: stránka. Canvas: plátno. Work area: pracovní plocha.
+- Toolbar: panel nástrojů. Ribbon tab Home: Domů. Ribbon group Setup: Příprava.
+  Hotkeys: klávesové zkratky. Settings: Nastavení. Preferences (the settings file): předvolby.
+  Presets: přednastavení.
+- Edit: Úpravy. Modify (ribbon tab): Upravit. Arrange: Uspořádat. File menu: Soubor.
+- Mode: režim. Art library: Knihovna grafiky. Library entry and art item: položka.
+- Feeder: podavač. Camera control: Ovládání kamery.
+- Cut table columns: Vrstva, Režim, Rych/Výk, Výst, Zobr, Ofuk.
+- Status bar count: ks (one word for object and objects).
+- Width / Height: Šířka / Výška. Reset: Resetovat. Backup (a saved copy of a file): záloha.
+  Backup path (the outline an image keeps after a crop): záložní cesta.
+- Start (the laser panel button, not translated yet): „Start“.

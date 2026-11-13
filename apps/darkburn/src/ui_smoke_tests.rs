@@ -773,6 +773,97 @@ fn opening_a_docked_window_that_is_open_brings_its_tab_to_the_front() {
 
 /// Closing a docked window brings back the tab it covered, not the area's first one: with the
 /// panels moved, that can be the Laser panel with its Stop button.
+// Every window a command opens, docked in each panel area in turn (the left and bottom areas hold
+// no panel by default) and then in a window of its own (the harness shows that inside): it shows
+// with no widget id clash (the harness fails on one), its footer and buttons inside the area, and
+// the close button of its tab closes it.
+#[test]
+fn every_dockable_window_docks_in_each_area_detaches_and_closes() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    // Adjust Image needs a picture selected.
+    let file = g.temp("ramp.png");
+    image::GrayImage::from_fn(90, 60, |x, y| image::Luma([((x * 2 + y * 3) % 256) as u8])).save(&file).expect("write the picture");
+    let r = g.exec("project.import", serde_json::json!({ "paths": [file.to_string_lossy()], "x": 100, "y": 100 }));
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
+    let mut footers = 0;
+    for (cmd, key) in crate::shell::WINDOW_COMMANDS {
+        let tab = format!("panel:tab:{}", tab_id(key));
+        for area in Area::ALL {
+            let what = format!("{key} docked {area:?}");
+            let mut place = WindowPlace::default();
+            place.dock(&format!("{area:?}"));
+            g.app().prefs.windows.insert(key.to_string(), place);
+            g.run_command(cmd);
+            let dock = g.rect_of(&format!("panel:area:{area:?}")).unwrap_or_else(|| panic!("{what}: the area shows: {:?}", g.rects("panel:area:")));
+            assert!(g.rect_of(&tab).is_some(), "{what}: its tab: {:?}", g.rects("panel:tab:"));
+            let window = g.rect_of("dialog:window").unwrap_or_else(|| panic!("{what}: it shows"));
+            let inside = dock.expand(1.5);
+            assert!(inside.contains_rect(window), "{what}: {window:?} in {dock:?}");
+            for (name, r) in g
+                .rects("dialog:footer")
+                .into_iter()
+                .chain(["dialog:ok", "dialog:cancel"].into_iter().filter_map(|n| g.rect_of(n).map(|r| (n.to_string(), r))))
+            {
+                assert!(inside.contains_rect(r), "{what}: {name} {r:?} outside {dock:?}");
+                footers += 1;
+            }
+            g.click_a11y(Some("Button"), "Close this window");
+            g.frames(3);
+            assert!(g.rect_of(&tab).is_none(), "{what}: the tab's close button closed it");
+            assert!(g.rect_of("dialog:window").is_none(), "{what}: closed");
+        }
+        let mut place = WindowPlace::default();
+        place.detach();
+        g.app().prefs.windows.insert(key.to_string(), place);
+        g.run_command(cmd);
+        assert!(g.rect_of("dialog:window").is_some(), "{key} in a window of its own");
+        assert!(g.rect_of(&tab).is_none(), "{key}: no tab while in a window of its own");
+        g.close_dialogs();
+        assert!(g.rect_of("dialog:window").is_none(), "{key}: closed");
+    }
+    assert!(footers > 0, "no window showed a footer");
+}
+
+// Two windows docked in one area are two tabs, and closing one leaves the other. A window stored
+// as docked in an area this version does not have opens floating instead.
+#[test]
+fn two_windows_share_an_area_and_an_unknown_area_floats() {
+    use darkburn_ui::ui_kit::window_host::{Placement, WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    for key in ["settings", "db_hotkeys"] {
+        let mut place = WindowPlace::default();
+        place.dock("Bottom");
+        g.app().prefs.windows.insert(key.into(), place);
+    }
+    g.run_command("edit.settings");
+    g.run_command("file.hotkeys");
+    let tabs = |g: &Gui| g.rects("panel:tab:window:").into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    let both = tabs(&g);
+    assert!(both.contains(&format!("panel:tab:{}", tab_id("settings"))) && both.contains(&format!("panel:tab:{}", tab_id("db_hotkeys"))), "{both:?}");
+    let area = g.rect_of("panel:area:Bottom").expect("the bottom area, for its two windows");
+    for (name, r) in g.rects("panel:tab:window:") {
+        assert!(area.expand(1.5).contains_rect(r), "{name} {r:?} in {area:?}");
+    }
+    // Edit Hotkeys came last, so it is in front: its tab's close button closes it alone.
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(3);
+    assert!(!g.app().extras.hotkeys.open, "Edit Hotkeys closed");
+    assert!(g.app().settings_open, "Settings stays open");
+    assert_eq!(tabs(&g), vec![format!("panel:tab:{}", tab_id("settings"))]);
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(3);
+    assert!(!g.app().settings_open);
+
+    let place: WindowPlace = serde_json::from_value(serde_json::json!({ "placement": { "docked": "Middle" } })).expect("a stored place");
+    assert_eq!(place.placement, Placement::Docked("Middle".into()));
+    g.app().prefs.windows.insert("settings".into(), place);
+    g.run_command("edit.settings");
+    assert!(tabs(&g).is_empty(), "{:?}", tabs(&g));
+    assert!(g.window_titles().iter().any(|t| t == "Settings"), "floating: {:?}", g.window_titles());
+}
+
 // In Norwegian the window header menu, the panel areas in it and the close button of a docked
 // window's tab are in Norwegian too.
 #[test]

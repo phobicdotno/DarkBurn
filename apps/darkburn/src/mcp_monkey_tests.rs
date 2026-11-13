@@ -550,7 +550,9 @@ fn mcp_monkey_with_machine_control_off() {
     for seed in [1, 3] {
         let m = mcp_monkey(seed, MCP_LINES, policy_for(seed, false));
         let seen = m.seen.borrow();
-        assert!(seen.ran > 20, "seed {seed}: only {} commands ran", seen.ran);
+        // The count moves with every command added to the registry (the calls are drawn from it):
+        // 18 to 35 for the first dozen seeds, so the floor leaves room below the lowest of them.
+        assert!(seen.ran >= 15, "seed {seed}: only {} commands ran", seen.ran);
         assert!(seen.reached.iter().all(|r| r.1 == Some(HardwareClass::Stop)), "{:?}", seen.reached);
     }
 }

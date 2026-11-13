@@ -17,6 +17,8 @@
 //! * 0x66 FIFO frames (duplicate frame ids are acknowledged, not queued) and 0x67 clear / start / stop.
 //!   Ticks are consumed at one per tick period while the program runs. Register 1016 reports bytes
 //!   free (60000 when empty).
+//! * The fast block at 60001 mirrors the axis block at 2000 and the first 14 words of every axis
+//!   slot of block 50200. The 32 hardware-parameter blocks and block 1050 read as zeros.
 //! * Faults injected by tests: dropped requests, dropped replies, delayed replies, stale replies,
 //!   an arbitrary reply override, a reboot (silent, then not-ready), alarms and input changes.
 //! * Refusals: a request for a forbidden register or vector is answered with exception 2 and
@@ -30,7 +32,9 @@ use crate::fifo::{FifoItem, OP_MISC, parse_fifo_words};
 use crate::frame::{DecodeError, Reply, Request, RequestError, decode_request};
 use crate::gate::{GateAction, GateRefusal, SafetyGate};
 use crate::registers::{
-    AXIS_RO_WORDS, AXIS_SLOTS, FIFO_MARGIN_EMPTY, Forbidden, REG_COMMAND, REG_FIFO_CONTROL, REG_FIFO_DATA, Status, StatusBlock, alarm2,
+    AXIS_RO_WORDS, AXIS_RW_WORDS_KEPT, AXIS_RW_WORDS_ON_WIRE, AXIS_SLOTS, AxisRoBlock, AxisRwBlock, FIFO_MARGIN_EMPTY, FastBlock, Forbidden,
+    HARD_PARAM_BASE, HARD_PARAM_BLOCK_WORDS, HARD_PARAM_STRIDE, MIN_PROGRAM_VERSION, REG_COMMAND, REG_FIFO_CONTROL, REG_FIFO_DATA, Status,
+    StatusBlock, SystemBlock, VersionInfo, ZfStatus, alarm2, hard_param_block_addr,
 };
 use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
@@ -83,7 +87,11 @@ impl Default for SimConfig {
             program_id: 100,
             program_version: 20152,
             motion_time_ms: 300,
-            blocks: vec![(1000, 36), (2000, 50), (5000, 9), (10000, 18), (11000, 39), (50000, 26), (50200, 100), (60001, 120)],
+            blocks: {
+                let mut b = vec![(1000, 36), (1050, 3), (2000, 50), (5000, 9), (10000, 18), (11000, 39), (50000, 26), (50200, 100), (60001, 120)];
+                b.extend((0..32).map(|i| (HARD_PARAM_BASE + HARD_PARAM_STRIDE * i, HARD_PARAM_BLOCK_WORDS)));
+                b
+            },
             k: 1000,
             zf_type: 1,
             stop_while_idle_exception: false,
@@ -144,6 +152,7 @@ pub struct CardSimulator {
     regs: BTreeMap<u32, u32>,
     axis_pos: [i64; AXIS_SLOTS],
     homed: [bool; AXIS_SLOTS],
+    axis_faults: [u32; AXIS_SLOTS],
     axis_motion: BTreeMap<usize, (u64, u32, i64)>,
     moving_until_us: u64,
     fifo: VecDeque<FifoItem>,
@@ -183,6 +192,7 @@ impl CardSimulator {
             regs: BTreeMap::new(),
             axis_pos: [0; AXIS_SLOTS],
             homed: [false; AXIS_SLOTS],
+            axis_faults: [0; AXIS_SLOTS],
             axis_motion: BTreeMap::new(),
             moving_until_us: 0,
             fifo: VecDeque::new(),
@@ -231,6 +241,7 @@ impl CardSimulator {
         self.regs.insert(10003, 105);
         self.axis_pos = [0; AXIS_SLOTS];
         self.homed = [false; AXIS_SLOTS];
+        self.axis_faults = [0; AXIS_SLOTS];
         self.axis_motion.clear();
         self.moving_until_us = 0;
         self.fifo.clear();
@@ -369,6 +380,26 @@ impl CardSimulator {
     /// Set the parameter-status word (register 1031).
     pub fn set_param_status(&mut self, v: u32) {
         self.regs.insert(Status::ParamStatus.addr(), v);
+    }
+
+    /// Set the fault bits (limits, servo, dual drive: the low six bits) in the status word of an
+    /// axis slot. They stay until set again.
+    pub fn inject_axis_fault(&mut self, slot: usize, bits: u32) {
+        if let Some(f) = self.axis_faults.get_mut(slot) {
+            *f = bits & crate::registers::axis::FAULT_MASK;
+        }
+        self.update_status();
+    }
+
+    /// Set a word the card itself would report (a configuration or follower word of a mapped
+    /// block), as a stimulus for a test. Returns false, and changes nothing, for an address
+    /// outside the mapped blocks and for the forbidden registers.
+    pub fn set_card_word(&mut self, addr: u32, value: u32) -> bool {
+        if !self.regs.contains_key(&addr) || crate::registers::check_read(addr, 1).is_err() {
+            return false;
+        }
+        self.regs.insert(addr, value);
+        true
     }
 
     // ---- observation ----------------------------------------------------------------------
@@ -569,7 +600,7 @@ impl CardSimulator {
                 if !self.readable(r.addr(), r.count() as u32) {
                     return Err(EXC_NOT_READY);
                 }
-                let words = (r.addr()..r.addr() + r.count() as u32).map(|a| self.reg(a)).collect();
+                let words = (r.addr()..r.addr() + r.count() as u32).map(|a| self.reg_as_read(a)).collect();
                 Ok(Reply::Read { addr: r.addr(), words })
             }
             Request::Write(w) => {
@@ -587,6 +618,21 @@ impl CardSimulator {
                 self.update_status();
                 if code == 0 { Ok(Reply::Write { func: crate::frame::FUNC_WRITE, addr: reg, count: words.len() as u16 }) } else { Err(code) }
             }
+        }
+    }
+
+    /// A register as a read sees it: the fast block is a view of the two axis blocks.
+    fn reg_as_read(&self, addr: u32) -> u32 {
+        const FAST: u32 = 60001;
+        let ro_words = (AXIS_SLOTS * AXIS_RO_WORDS) as u32;
+        let rw_words = (AXIS_SLOTS * AXIS_RW_WORDS_KEPT) as u32;
+        match addr.checked_sub(FAST) {
+            Some(off) if off < ro_words => self.reg(2000 + off),
+            Some(off) if off < ro_words + rw_words => {
+                let (slot, word) = ((off - ro_words) / AXIS_RW_WORDS_KEPT as u32, (off - ro_words) % AXIS_RW_WORDS_KEPT as u32);
+                self.reg(50200 + slot * AXIS_RW_WORDS_ON_WIRE as u32 + word)
+            }
+            _ => self.reg(addr),
         }
     }
 
@@ -735,7 +781,7 @@ impl CardSimulator {
         self.regs.insert(Status::ProcessingStatus.addr(), u32::from(self.fifo_running));
         if self.readable(2000, 50) {
             for slot in 0..AXIS_SLOTS {
-                let mut word = if self.homed[slot] { crate::registers::axis::HOMED } else { 0 };
+                let mut word = self.axis_faults[slot] | if self.homed[slot] { crate::registers::axis::HOMED } else { 0 };
                 if let Some(&(_, ty, _)) = self.axis_motion.get(&slot) {
                     word |= (1 << 16) | (ty << 24);
                 }
@@ -771,6 +817,13 @@ pub enum LinkError {
     },
     /// The reply had the wrong shape for the request.
     Unexpected,
+    /// The card's program is older than the connect asked for.
+    Version {
+        /// Register 1001.
+        found: u32,
+        /// The minimum asked for.
+        needed: u32,
+    },
 }
 
 impl std::fmt::Display for LinkError {
@@ -784,11 +837,50 @@ impl std::fmt::Display for LinkError {
                 write!(f, "card exception {code} for func {func:#04x} (ErrCode {})", crate::frame::exception_errcode(*code))
             }
             LinkError::Unexpected => write!(f, "unexpected reply"),
+            LinkError::Version { found, needed } => write!(f, "card program version {found} is older than {needed}"),
         }
     }
 }
 
 impl std::error::Error for LinkError {}
+
+/// Attempts every step of a stop sequence gets at least, whatever [`SimLink::attempts`] says.
+pub const STOP_ATTEMPTS: u32 = 3;
+
+/// How [`SimLink::connect`] behaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectOptions {
+    /// Lowest card program version to accept.
+    pub min_version: u32,
+    /// Also send the connect prologue `0x65 <- [9999, 5, 0, 0]`. The vendor always sends it and
+    /// nobody knows what it does, so the default is a connect that only reads.
+    pub send_prologue: bool,
+}
+
+impl Default for ConnectOptions {
+    fn default() -> ConnectOptions {
+        ConnectOptions { min_version: MIN_PROGRAM_VERSION, send_prologue: false }
+    }
+}
+
+/// What a connect read from the card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConnectReport {
+    /// Program id and version.
+    pub version: VersionInfo,
+    /// Status block.
+    pub status: StatusBlock,
+    /// System block: bus cycle, follower type, K.
+    pub system: SystemBlock,
+    /// Axis read-only block.
+    pub axis_ro: AxisRoBlock,
+    /// Axis read/write block.
+    pub axis_rw: AxisRwBlock,
+    /// Follower status, read only when the card reports a follower.
+    pub follower: Option<ZfStatus>,
+    /// True when the prologue was sent.
+    pub prologue_sent: bool,
+}
 
 /// A loopback link: every call goes through the gate, the frame codec and the simulator.
 #[derive(Debug)]
@@ -800,26 +892,42 @@ pub struct SimLink {
     /// Attempts per request; a retry re-sends the same sequence number, like the vendor driver.
     pub attempts: u32,
     seq: u16,
+    unanswered: bool,
 }
 
 impl SimLink {
     /// New link with a default gate and a single attempt per request.
     pub fn new(sim: CardSimulator) -> SimLink {
-        SimLink { sim, gate: SafetyGate::default(), attempts: 1, seq: 0 }
+        SimLink { sim, gate: SafetyGate::default(), attempts: 1, seq: 0, unanswered: false }
     }
 
     fn exchange(&mut self, req: &Request) -> Result<Reply, LinkError> {
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
         let frame = req.encode(seq).map_err(LinkError::Decode)?;
+        self.unanswered = false;
         for _ in 0..self.attempts.max(1) {
-            if let Ok(bytes) = self.sim.exchange(&frame) {
-                let rep = Reply::decode(&bytes, Some(seq)).map_err(LinkError::Decode)?;
+            self.sim.send(&frame);
+            // An answer to an earlier request that arrives late carries that request's sequence
+            // number. It is dropped here; taking it would put every later request one answer
+            // out of step.
+            let mine = std::iter::from_fn(|| self.sim.recv()).find(|bytes| crate::frame::RawFrame::parse(bytes).seq == Some(seq));
+            if let Some(bytes) = mine {
+                let rep = match Reply::decode(&bytes, Some(seq)) {
+                    Ok(rep) => rep,
+                    Err(e) => {
+                        // An answer that cannot be read says nothing about what the card did.
+                        self.unanswered = true;
+                        return Err(LinkError::Decode(e));
+                    }
+                };
                 return match rep {
                     Reply::Exception { func, code } => Err(LinkError::Card { func, code }),
                     other => Ok(other),
                 };
             }
+            // No answer to this attempt: the card may still have acted on it.
+            self.unanswered = true;
         }
         Err(LinkError::Timeout)
     }
@@ -838,13 +946,113 @@ impl SimLink {
     pub fn write(&mut self, w: &crate::command::SafeWrite) -> Result<(), LinkError> {
         let now = self.sim.now_ms();
         self.gate.check_write(w, now).map_err(LinkError::Refused)?;
-        match self.exchange(&Request::write(w.clone()))? {
-            Reply::Write { .. } => {
+        match self.exchange(&Request::write(w.clone())) {
+            Ok(Reply::Write { .. }) => {
                 self.gate.after_send(w, now);
                 Ok(())
             }
-            _ => Err(LinkError::Unexpected),
+            other => {
+                // The card refused it, or did not answer every attempt. A write that may have
+                // reached the card without an answer is tracked as if it had taken effect.
+                if self.unanswered || other.is_ok() {
+                    self.gate.after_unconfirmed(w, now);
+                }
+                other.and(Err(LinkError::Unexpected))
+            }
         }
+    }
+
+    /// Connect the way the vendor software does, minus everything that is not understood: read
+    /// the version and refuse an old card, optionally send the prologue, then read the status,
+    /// system and axis blocks, and the follower status if the card reports a follower. Nothing
+    /// else is written: not register 100, not the licence area, not the hardware parameters. The
+    /// gate stays disarmed.
+    pub fn connect(&mut self, options: ConnectOptions) -> Result<ConnectReport, LinkError> {
+        let version = self.read_version()?;
+        if !version.meets(options.min_version) {
+            return Err(LinkError::Version { found: version.program_version, needed: options.min_version });
+        }
+        if options.send_prologue {
+            self.write(&crate::command::connect_prologue().map_err(LinkError::Forbidden)?)?;
+        }
+        let status = self.poll_status()?;
+        let system = self.read_system()?;
+        let axis_ro = self.read_axis_ro()?;
+        let axis_rw = self.read_axis_rw()?;
+        let follower = if system.has_follower() { Some(self.read_follower()?) } else { None };
+        Ok(ConnectReport { version, status, system, axis_ro, axis_rw, follower, prologue_sent: options.send_prologue })
+    }
+
+    /// Leave the card: send the stop sequence, disarm, and forget what was read. Returns the
+    /// number of stop steps that reached the card. Nothing that needs a fresh status passes the
+    /// gate afterwards until the next poll.
+    pub fn disconnect(&mut self) -> usize {
+        let steps = self.stop_sequence(false);
+        self.gate.arming.disarm("disconnect");
+        self.gate.forget_card_state();
+        steps
+    }
+
+    /// `READ 1000/2`: program id and version.
+    pub fn read_version(&mut self) -> Result<VersionInfo, LinkError> {
+        VersionInfo::from_words(&self.read(1000, 2)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 50000/26`: the system block.
+    pub fn read_system(&mut self) -> Result<SystemBlock, LinkError> {
+        SystemBlock::from_words(&self.read(50000, 26)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 2000/50`: the axis read-only block.
+    pub fn read_axis_ro(&mut self) -> Result<AxisRoBlock, LinkError> {
+        AxisRoBlock::from_words(&self.read(2000, 50)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 50200/100`: the axis read/write block.
+    pub fn read_axis_rw(&mut self) -> Result<AxisRwBlock, LinkError> {
+        AxisRwBlock::from_words(&self.read(50200, 100)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 60001/120`: both axis blocks in one read.
+    pub fn read_fast(&mut self) -> Result<FastBlock, LinkError> {
+        FastBlock::from_words(&self.read(60001, 120)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 10000/18`: the follower status block.
+    pub fn read_follower(&mut self) -> Result<ZfStatus, LinkError> {
+        ZfStatus::from_words(&self.read(10000, 18)?).ok_or(LinkError::Unexpected)
+    }
+
+    /// `READ 11000/39`: the follower properties, as raw words. They can be read and never written.
+    pub fn read_follower_properties(&mut self) -> Result<Vec<u32>, LinkError> {
+        self.read(11000, 39)
+    }
+
+    /// Read hardware-parameter block `index` (0..=31, 52 words), as raw words, to compare it with
+    /// a copy on the PC. These blocks are never written.
+    pub fn read_hard_params(&mut self, index: u32) -> Result<Vec<u32>, LinkError> {
+        let addr = hard_param_block_addr(index).ok_or(LinkError::Forbidden(Forbidden::ReadNotAllowed(HARD_PARAM_BASE, 0)))?;
+        self.read(addr, HARD_PARAM_BLOCK_WORDS as u16)
+    }
+
+    /// Operator emergency stop: latch the gate, then send the stop sequence with the laser-gate
+    /// output (if the machine has one, else 0) switched off right after the motion stop. Returns
+    /// the number of steps that reached the card.
+    pub fn emergency_stop(&mut self, laser_gate_port: u32) -> usize {
+        self.gate.arming.estop();
+        self.gate.note_stop();
+        let params = crate::command::MachineParams::default();
+        let do_word = self.gate.last_do_word.unwrap_or(0);
+        let laser_ports = self.gate.config.safety.laser_do_ports.clone();
+        let seq = crate::command::estop_sequence(&params, self.gate.fifo_running, 0, do_word, &laser_ports, laser_gate_port);
+        self.send_stop_steps(&seq)
+    }
+
+    /// Pause. It is the stop sequence: the vendor's pause and stop are the same, and how a paused
+    /// job goes on is not known, so there is no resume and a start is refused until the queue is
+    /// cleared.
+    pub fn pause(&mut self) -> usize {
+        self.stop_sequence(false)
     }
 
     /// Read block 1000/36, feed the gate, and send the stop sequence if the gate asks for it.
@@ -868,10 +1076,23 @@ impl SimLink {
         } else {
             self.gate.arming.on_stop();
         }
+        self.gate.note_stop();
         let params = crate::command::MachineParams::default();
         let do_word = self.gate.last_do_word.unwrap_or(0);
-        let seq = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &[5, 6, 9]);
-        seq.iter().filter(|w| self.write(w).is_ok()).count()
+        // The laser ports are the ones this gate is set up with, not a fixed list.
+        let laser_ports = self.gate.config.safety.laser_do_ports.clone();
+        let seq = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &laser_ports);
+        self.send_stop_steps(&seq)
+    }
+
+    /// Send the steps of a stop, each one tried at least [`STOP_ATTEMPTS`] times: a stop whose
+    /// datagram got lost must not leave the machine running. Returns how many reached the card.
+    fn send_stop_steps(&mut self, seq: &[crate::command::SafeWrite]) -> usize {
+        let attempts = self.attempts;
+        self.attempts = attempts.max(STOP_ATTEMPTS);
+        let sent = seq.iter().filter(|w| self.write(w).is_ok()).count();
+        self.attempts = attempts;
+        sent
     }
 
     /// Move the virtual clock.
@@ -879,7 +1100,7 @@ impl SimLink {
         self.sim.advance(dt);
         for idx in self.gate.service(self.sim.now_ms()) {
             if let Ok(w) = crate::command::jog_release_stop(&[idx], 200_000, &crate::command::MachineParams::default()) {
-                let _ = self.write(&w);
+                self.send_stop_steps(&[w]);
             }
         }
     }
@@ -1363,5 +1584,100 @@ mod tests {
         assert_eq!(sim.ticks_consumed(), 1);
         assert_eq!(sim.outputs(), 4);
         assert_eq!(sim.items_consumed(), 2);
+    }
+
+    #[test]
+    fn a_stop_switches_off_the_laser_ports_this_gate_is_set_up_with() {
+        let mut safety = SafetyConfig::default();
+        safety.motion_do_ports.push(8); // the simulated card accepts port 8
+        let mut l = SimLink::new(CardSimulator::new(SimConfig { safety: safety.clone(), ..SimConfig::default() }));
+        l.gate.config.safety.laser_do_ports = vec![5, 6, 8, 9];
+        let on = command::SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x80, 0x80], &safety, None).unwrap();
+        l.sim.exchange(&Request::write(on).encode(77).unwrap()).unwrap();
+        assert_eq!(l.sim.outputs() & 0x80, 0x80);
+        l.poll_status().unwrap();
+        l.stop_sequence(false);
+        assert_eq!(l.sim.outputs() & 0x80, 0, "port 8 is a laser port on this machine and stayed on");
+    }
+
+    #[test]
+    fn a_held_jog_whose_answer_was_lost_still_gets_its_release_stop() {
+        let mut l = armed();
+        l.sim.drop_replies(1);
+        assert_eq!(l.write(&command::jog_continuous(0, true, &p(), None).unwrap()), Err(LinkError::Timeout));
+        assert_eq!(l.sim.commands().len(), 1, "the card did start the jog");
+        l.advance(ms(250));
+        assert!(l.sim.commands().iter().any(|c| c[0] == 1 && c[1] & 1 == 1), "no release stop went out: {:?}", l.sim.commands());
+    }
+
+    #[test]
+    fn a_stop_right_after_a_start_whose_answer_was_lost_stops_the_stream() {
+        let mut l = armed();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
+        let mut f = stream_plan(&mut l, 250);
+        pump(&mut l, &mut f);
+        l.sim.drop_replies(1);
+        assert_eq!(l.write(&command::fifo_start().unwrap()), Err(LinkError::Timeout));
+        assert!(l.sim.fifo_running(), "the card did start");
+        l.stop_sequence(false);
+        assert!(!l.sim.fifo_running(), "the stream was left running");
+    }
+
+    #[test]
+    fn a_job_stopped_by_an_alarm_is_not_run_on_by_a_bare_start() {
+        let mut l = SimLink::new(CardSimulator::new(SimConfig { fifo_starvation_alarm: false, ..SimConfig::default() }));
+        l.gate.arming.arm_motion().unwrap();
+        l.poll_status().unwrap();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
+        let mut f = stream_plan(&mut l, 250);
+        pump(&mut l, &mut f);
+        l.write(&command::fifo_start().unwrap()).unwrap();
+        l.advance(Duration::from_micros(250 * 100));
+        // an alarm that only the status block shows
+        l.sim.inject_alarm(None, Some(1 << 3));
+        l.poll_status().unwrap();
+        assert!(!l.sim.fifo_running());
+        assert_eq!(l.sim.fifo_depth(), 150, "the card still holds the rest of the job");
+        // the alarm goes away and the operator arms again
+        l.sim.inject_alarm(None, Some(0));
+        l.poll_status().unwrap();
+        l.gate.arming.arm_motion().unwrap();
+        let before = l.sim.ticks_consumed();
+        assert!(l.write(&command::fifo_start().unwrap()).is_err(), "a bare start ran the rest of a stopped job");
+        l.advance(ms(50));
+        assert_eq!(l.sim.ticks_consumed(), before);
+        // clearing the queue makes room for a new job
+        l.poll_status().unwrap();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
+        let mut f = stream_plan(&mut l, 10);
+        pump(&mut l, &mut f);
+        l.write(&command::fifo_start().unwrap()).unwrap();
+        l.advance(ms(10));
+        assert_eq!(l.sim.ticks_consumed(), before + 10);
+    }
+
+    #[test]
+    fn one_late_answer_does_not_put_every_later_request_out_of_step() {
+        let mut l = armed();
+        l.sim.delay_replies(ms(5), Some(1));
+        assert_eq!(l.read(1000, 2), Err(LinkError::Timeout));
+        l.advance(ms(10)); // the late answer is waiting now
+        assert_eq!(l.read(1000, 2).unwrap(), vec![100, 20152], "the late answer was taken for this request's");
+        assert!(l.poll_status().is_ok());
+        assert!(l.write(&command::jog_step(0, 1.0, &p()).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn a_stop_whose_first_datagram_is_lost_still_stops_the_stream() {
+        let mut l = armed();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
+        let mut f = stream_plan(&mut l, 250);
+        pump(&mut l, &mut f);
+        l.write(&command::fifo_start().unwrap()).unwrap();
+        l.advance(Duration::from_micros(250 * 10));
+        l.sim.drop_requests(1);
+        l.stop_sequence(false);
+        assert!(!l.sim.fifo_running(), "the stream was left running");
+        assert_eq!(l.attempts, 1, "the retry is the stop's own, not a changed setting");
     }
 }

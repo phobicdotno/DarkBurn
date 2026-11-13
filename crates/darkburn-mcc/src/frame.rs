@@ -200,6 +200,45 @@ impl RawFrame {
     pub fn exception_code(&self) -> Option<u8> {
         if self.is_exception() { self.payload.first().copied() } else { None }
     }
+
+    /// The vendor-log vector of a PC request: `[func, addr, count, words...]` for a read or a
+    /// write, `[func, addr, byte_count]` for a byte block, `[func, byte_count]` for a stream.
+    ///
+    /// Decode only, and for every function code, so that a capture can be read: the result may
+    /// name a request this crate refuses to build. `None` when the payload is too short for its
+    /// function, has a count that does not match its data, or the function is unknown.
+    pub fn request_vector(&self) -> Option<Vec<u32>> {
+        let func = self.func?;
+        let p = &self.payload;
+        let head = |p: &[u8]| -> Option<(u32, u32)> {
+            (p.len() >= 6).then(|| (u32::from_le_bytes([p[0], p[1], p[2], p[3]]), u16::from_le_bytes([p[4], p[5]]) as u32))
+        };
+        match func {
+            FUNC_READ => {
+                let (addr, count) = head(p).filter(|_| p.len() == 6)?;
+                Some(vec![func as u32, addr, count])
+            }
+            FUNC_WRITE => {
+                let (addr, count) = head(p)?;
+                let rest = &p[6..];
+                if rest.len() != 4 * count as usize {
+                    return None;
+                }
+                let mut v = vec![func as u32, addr, count];
+                v.extend(le_words(rest));
+                Some(v)
+            }
+            FUNC_BYTE_BLOCK => {
+                let (addr, count) = head(p)?;
+                (p.len() - 6 == count as usize).then(|| vec![func as u32, addr, count])
+            }
+            FUNC_STREAM | FUNC_STREAM_ALT => {
+                let count = (p.len() >= 2).then(|| u16::from_le_bytes([p[0], p[1]]) as u32)?;
+                (p.len() - 2 == count as usize).then(|| vec![func as u32, count])
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A validated read request.
@@ -678,5 +717,36 @@ mod tests {
             let _ = Request::decode(&raw);
             let _ = Reply::decode(&raw, None);
         }
+    }
+
+    #[test]
+    fn request_vectors_decode_for_every_function_code() {
+        // the logged read
+        assert_eq!(RawFrame::parse(&SENDTO).request_vector(), Some(vec![0x30, 1000, 2]));
+        // a write this crate builds
+        let w = command::stop_all_no_decel().unwrap();
+        let f = Request::write(w.clone()).encode(5).unwrap();
+        assert_eq!(RawFrame::parse(&f).request_vector(), Some(w.request_vector()));
+        // a write this crate refuses to build still reads as what it is
+        let mut p = 150u32.to_le_bytes().to_vec();
+        p.extend_from_slice(&1u16.to_le_bytes());
+        p.extend_from_slice(&5555u32.to_le_bytes());
+        let f = build_frame(1, FUNC_WRITE, &p, CrcOrder::HiFirst).unwrap();
+        assert_eq!(RawFrame::parse(&f).request_vector(), Some(vec![0x40, 150, 1, 5555]));
+        assert!(Request::decode(&f).is_err());
+        // byte block and streams: address and sizes only
+        let f = encode_byte_block(2, 0x1000, &[1, 2, 3]).unwrap();
+        assert_eq!(RawFrame::parse(&f).request_vector(), Some(vec![0x26, 0x1000, 3]));
+        let f = encode_stream(3, FUNC_STREAM_ALT, &[9; 7]).unwrap();
+        assert_eq!(RawFrame::parse(&f).request_vector(), Some(vec![0x21, 7]));
+        // replies, short payloads and wrong counts have no request vector
+        assert_eq!(RawFrame::parse(&EXC_503).request_vector(), None);
+        assert_eq!(RawFrame::parse(&SENDTO[..12]).request_vector(), None);
+        let mut p = 0x65u32.to_le_bytes().to_vec();
+        p.extend_from_slice(&3u16.to_le_bytes());
+        p.extend_from_slice(&1u32.to_le_bytes());
+        let f = build_frame(1, FUNC_WRITE, &p, CrcOrder::HiFirst).unwrap();
+        assert_eq!(RawFrame::parse(&f).request_vector(), None);
+        assert_eq!(RawFrame::parse(&[]).request_vector(), None);
     }
 }

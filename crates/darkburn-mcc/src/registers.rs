@@ -248,6 +248,94 @@ impl StatusBlock {
             _ => false,
         }
     }
+
+    /// Digital input `port` with the PC-side input type applied: a normally-closed input is
+    /// active when its level is low. Port 0 (not assigned) is never active. Whether the card
+    /// already inverts the level itself is unconfirmed.
+    pub fn di_active(&self, port: u32, normally_closed: bool) -> bool {
+        if !(1..=28).contains(&port) {
+            return false;
+        }
+        self.di_level(port) != normally_closed
+    }
+
+    /// Id the next FIFO frame must carry: register 1015 plus one.
+    pub fn next_frame_id(&self) -> u32 {
+        self.fifo_frame_id().wrapping_add(1)
+    }
+
+    /// Program id and version (words 0 and 1).
+    pub fn version(&self) -> VersionInfo {
+        VersionInfo { program_id: self.word(Status::ProgramId), program_version: self.word(Status::ProgramVersion) }
+    }
+}
+
+/// Lowest card program version the owner's vendor release 0.0.1.44 accepts.
+pub const MIN_PROGRAM_VERSION: u32 = 20152;
+/// Lowest card program version vendor release 0.0.1.51 SP1 accepts.
+pub const MIN_PROGRAM_VERSION_SP1: u32 = 20177;
+
+/// Answer to the first read of a connect: `READ 1000/2`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VersionInfo {
+    /// Register 1000.
+    pub program_id: u32,
+    /// Register 1001; compared against the minimum the PC software accepts.
+    pub program_version: u32,
+}
+
+impl VersionInfo {
+    /// Decode the two words of `READ 1000/2` (or the start of a longer status read).
+    pub fn from_words(words: &[u32]) -> Option<VersionInfo> {
+        match words {
+            [id, ver, ..] => Some(VersionInfo { program_id: *id, program_version: *ver }),
+            _ => None,
+        }
+    }
+
+    /// True when the card's program is at least `minimum`.
+    pub fn meets(&self, minimum: u32) -> bool {
+        self.program_version >= minimum
+    }
+}
+
+/// Text for every set bit of the two alarm words, in our own words. Bits the analysis could not
+/// name are reported with their number.
+pub fn alarm_labels(alarm1: u32, alarm2: u32) -> Vec<String> {
+    let mut out = Vec::new();
+    for bit in 0..32u32 {
+        if (alarm1 >> bit) & 1 == 0 {
+            continue;
+        }
+        out.push(match bit {
+            0 => "axis X fault".to_string(),
+            1 => "axis Y fault".to_string(),
+            2 => "axis Y2 fault".to_string(),
+            3 => "height axis fault".to_string(),
+            4 => "axis W fault".to_string(),
+            5..=23 => format!("axis fault (alarm 1 bit {bit})"),
+            24 => "follower axis (unconfirmed)".to_string(),
+            25 => "bus fault".to_string(),
+            26 => "output fault".to_string(),
+            30 => "emergency stop".to_string(),
+            _ => format!("alarm 1 bit {bit} (no known meaning)"),
+        });
+    }
+    for bit in 0..32u32 {
+        if (alarm2 >> bit) & 1 == 0 {
+            continue;
+        }
+        out.push(match bit {
+            0 => "illegal command".to_string(),
+            1 => "interpolation length".to_string(),
+            2 => "axis command".to_string(),
+            3 => "follower command".to_string(),
+            4 => "sequence (PLC) command".to_string(),
+            5 => "motion queue ran empty".to_string(),
+            _ => format!("alarm 2 bit {bit} (no known meaning)"),
+        });
+    }
+    out
 }
 
 /// Alarm word 1 (register 1006) bits, 1 = active.
@@ -350,6 +438,26 @@ pub mod axis {
     pub const CMD_HOME: u32 = 2;
     /// Command type: jog (3, 4 and 5 are jog / move variants).
     pub const CMD_JOG: u32 = 3;
+    /// Hard limit, positive side (which switch is which is a bench check).
+    pub const HARD_LIMIT_POS: u32 = 1 << 0;
+    /// Hard limit, negative side.
+    pub const HARD_LIMIT_NEG: u32 = 1 << 1;
+    /// Soft limit, positive side.
+    pub const SOFT_LIMIT_POS: u32 = 1 << 2;
+    /// Soft limit, negative side.
+    pub const SOFT_LIMIT_NEG: u32 = 1 << 3;
+    /// Servo drive alarm.
+    pub const SERVO_ALARM: u32 = 1 << 4;
+    /// Dual-drive (gantry) deviation alarm.
+    pub const DUAL_DRIVE_ALARM: u32 = 1 << 5;
+    /// The six fault bits.
+    pub const FAULT_MASK: u32 = 0x3F;
+
+    /// Names of the fault bits set in an axis status word.
+    pub fn fault_names(status_word: u32) -> Vec<&'static str> {
+        const NAMES: [&str; 6] = ["hard limit +", "hard limit -", "soft limit +", "soft limit -", "servo alarm", "dual-drive alarm"];
+        (0..6).filter(|b| (status_word >> b) & 1 == 1).map(|b| NAMES[b]).collect()
+    }
 
     /// Byte 2 non-zero means a command is executing.
     pub const fn busy(status_word: u32) -> bool {
@@ -448,6 +556,71 @@ pub mod zf_alarm {
     pub const SIGNAL_ZERO: u32 = 1 << 13;
     /// FTC alarm.
     pub const FTC_ALARM: u32 = 1 << 15;
+
+    /// Names of the bits set in a follower alarm word. Bit 14 has no known meaning.
+    pub fn names(alarm: u32) -> Vec<&'static str> {
+        const NAMES: [&str; 16] = [
+            "Z hard limit up",
+            "Z hard limit down",
+            "Z soft limit up",
+            "Z soft limit down",
+            "servo input",
+            "touched the plate",
+            "encoder",
+            "signal too small",
+            "follow error",
+            "capacitance too small",
+            "signal too large",
+            "follower logic not loaded",
+            "axis value",
+            "signal zero",
+            "bit 14 (no known meaning)",
+            "follower alarm",
+        ];
+        (0..16).filter(|b| (alarm >> b) & 1 == 1).map(|b| NAMES[b]).collect()
+    }
+}
+
+/// Word index inside the follower status block at 10000, in the order of the vendor's table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum ZfWord {
+    /// General information.
+    Info = 0,
+    /// Alarm word, see [`zf_alarm`].
+    Alarm = 1,
+    /// Run status (high bit clear means emergency stop, low byte 4 means piercing).
+    RunStatus = 2,
+    /// Run command (102..=107).
+    RunCommand = 3,
+    /// Signal strength.
+    SignalStrength = 4,
+    /// Signal height.
+    SignalHeight = 5,
+    /// Z axis position.
+    ZPosition = 6,
+    /// Current speed.
+    Speed = 7,
+    /// Follow error.
+    FollowError = 8,
+    /// Follow time.
+    FollowTime = 9,
+    /// Sheet coordinate.
+    SheetCoordinate = 10,
+    /// Real-time signal strength.
+    LiveSignalStrength = 11,
+    /// Signal compensation.
+    SignalCompensation = 12,
+    /// Soft lower-limit coordinate.
+    SoftLowerLimit = 13,
+    /// Edge-seek sample count.
+    EdgeSeekSamples = 14,
+    /// Point of the largest edge-seek deviation.
+    EdgeSeekMaxDeviation = 15,
+    /// Position of the last edge-seek record.
+    EdgeSeekLastRecord = 16,
+    /// Other information.
+    Other = 17,
 }
 
 /// Follower run state, derived like the vendor VM from words 2 and 3.
@@ -478,6 +651,18 @@ impl ZfStatus {
     /// Follower alarm word.
     pub fn alarm(&self) -> u32 {
         self.words[1] & 0xFFFF
+    }
+
+    /// One word by name. Only [`ZfWord::Alarm`], [`ZfWord::RunStatus`] and [`ZfWord::RunCommand`]
+    /// have evidence for their meaning; the others carry the name of their place in the vendor's
+    /// table and no confirmed unit.
+    pub fn word(&self, w: ZfWord) -> u32 {
+        self.words[w as usize]
+    }
+
+    /// Names of the alarm bits that are set.
+    pub fn alarm_names(&self) -> Vec<&'static str> {
+        zf_alarm::names(self.alarm())
     }
 
     /// Follower state.
@@ -613,6 +798,279 @@ pub(crate) fn plain_write_reason(addr: u32) -> Forbidden {
     }
 }
 
+/// Word indices of the system block at 50000 that the PC software uses. The card is
+/// authoritative for all three.
+pub mod system {
+    /// Bus (interpolation) cycle in microseconds; the tick period of the motion queue.
+    pub const BUS_CYCLE: usize = 5;
+    /// Height-follower type; 0 means the machine has no on-board follower.
+    pub const ZF_TYPE: usize = 6;
+    /// Card units per millimetre (1000 on the owner's machine).
+    pub const K: usize = 17;
+}
+
+/// Typed view of the system block at 50000 (26 words).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SystemBlock {
+    /// All words as read.
+    pub words: Vec<u32>,
+}
+
+impl SystemBlock {
+    /// Wrap a block read of at least 26 words.
+    pub fn from_words(words: &[u32]) -> Option<SystemBlock> {
+        (words.len() >= 26).then(|| SystemBlock { words: words.to_vec() })
+    }
+
+    /// Bus cycle in microseconds (register 50005).
+    pub fn bus_cycle_us(&self) -> u32 {
+        self.words[system::BUS_CYCLE]
+    }
+
+    /// Follower type (register 50006).
+    pub fn zf_type(&self) -> u32 {
+        self.words[system::ZF_TYPE]
+    }
+
+    /// True when the card reports an on-board height follower.
+    pub fn has_follower(&self) -> bool {
+        self.zf_type() != 0
+    }
+
+    /// Card units per millimetre (register 50017). `None` when the card reports 0, which no
+    /// conversion can use.
+    pub fn k(&self) -> Option<u32> {
+        Some(self.words[system::K]).filter(|&k| k != 0)
+    }
+}
+
+/// Word index inside one axis slot of block 2000. Words 3 to 9 exist but their names are not
+/// confirmed, so they have no variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum AxisRo {
+    /// Status word, see [`axis`].
+    Status = 0,
+    /// Speed in card units per second (0.001 mm/s at K = 1000).
+    Speed = 1,
+    /// Commanded position in pulses.
+    PulsePosition = 2,
+}
+
+/// Typed view of the axis read-only block at 2000 (5 slots of 10 words).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxisRoBlock {
+    /// All 50 words as read.
+    pub words: Vec<u32>,
+}
+
+impl AxisRoBlock {
+    /// Wrap a block read of at least 50 words.
+    pub fn from_words(words: &[u32]) -> Option<AxisRoBlock> {
+        (words.len() >= AXIS_SLOTS * AXIS_RO_WORDS).then(|| AxisRoBlock { words: words[..AXIS_SLOTS * AXIS_RO_WORDS].to_vec() })
+    }
+
+    /// Raw word `word` (0..10) of `slot` (0..5), 0 when out of range.
+    pub fn raw(&self, slot: usize, word: usize) -> u32 {
+        if slot < AXIS_SLOTS && word < AXIS_RO_WORDS { self.words[AXIS_RO_WORDS * slot + word] } else { 0 }
+    }
+
+    /// Status word of `slot`.
+    pub fn status(&self, slot: usize) -> u32 {
+        self.raw(slot, AxisRo::Status as usize)
+    }
+
+    /// Signed speed word of `slot`.
+    pub fn speed(&self, slot: usize) -> i32 {
+        self.raw(slot, AxisRo::Speed as usize) as i32
+    }
+
+    /// Signed pulse position of `slot`.
+    pub fn pulse_position(&self, slot: usize) -> i32 {
+        self.raw(slot, AxisRo::PulsePosition as usize) as i32
+    }
+
+    /// True when the homed bit of `slot` is set.
+    pub fn is_homed(&self, slot: usize) -> bool {
+        self.status(slot) & axis::HOMED != 0
+    }
+
+    /// Five-bit mask of the homed slots.
+    pub fn homed_mask(&self) -> u32 {
+        (0..AXIS_SLOTS).filter(|&s| self.is_homed(s)).fold(0, |m, s| m | (1 << s))
+    }
+
+    /// True while `slot` executes a command.
+    pub fn busy(&self, slot: usize) -> bool {
+        axis::busy(self.status(slot))
+    }
+
+    /// The fault bits of `slot` (limits, servo, dual drive).
+    pub fn faults(&self, slot: usize) -> u32 {
+        self.status(slot) & axis::FAULT_MASK
+    }
+}
+
+/// Word index inside one axis slot of block 50200. Only [`AxisRw::Lead`] and
+/// [`AxisRw::CmdPulsesPerUnit`] have evidence; the other names follow the order of the vendor's
+/// table and are unconfirmed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(usize)]
+pub enum AxisRw {
+    /// Configuration word.
+    Config = 0,
+    /// Soft limit, positive side.
+    SoftLimitPos = 1,
+    /// Soft limit, negative side.
+    SoftLimitNeg = 2,
+    /// Acceleration.
+    Accel = 3,
+    /// Jerk.
+    Jerk = 4,
+    /// Homing speed, coarse pass.
+    HomeCoarseSpeed = 5,
+    /// Homing speed, fine pass.
+    HomeFineSpeed = 6,
+    /// Origin offset.
+    OriginOffset = 7,
+    /// Not used.
+    Spare = 8,
+    /// Screw lead times K.
+    Lead = 9,
+    /// Command pulses per revolution.
+    CmdPulsesPerUnit = 10,
+    /// Encoder pulses per revolution.
+    EncPulsesPerUnit = 11,
+    /// Input configuration.
+    InputCfg = 12,
+    /// Output configuration.
+    OutputCfg = 13,
+}
+
+/// Words per axis slot the vendor software keeps from block 50200 (and that the fast block carries).
+pub const AXIS_RW_WORDS_KEPT: usize = 14;
+
+/// Typed view of the axis read/write block at 50200 (5 slots of 20 words). Read only: this crate
+/// has no write for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxisRwBlock {
+    /// All 100 words as read.
+    pub words: Vec<u32>,
+}
+
+impl AxisRwBlock {
+    /// Wrap a block read of at least 100 words.
+    pub fn from_words(words: &[u32]) -> Option<AxisRwBlock> {
+        let n = AXIS_SLOTS * AXIS_RW_WORDS_ON_WIRE;
+        (words.len() >= n).then(|| AxisRwBlock { words: words[..n].to_vec() })
+    }
+
+    /// Word `w` of `slot`, 0 when the slot is out of range.
+    pub fn word(&self, slot: usize, w: AxisRw) -> u32 {
+        if slot < AXIS_SLOTS { self.words[AXIS_RW_WORDS_ON_WIRE * slot + w as usize] } else { 0 }
+    }
+
+    /// Command pulses per millimetre of `slot`: `pulses per revolution * K / (lead * K)`. `None`
+    /// when the card reports no lead.
+    pub fn pulses_per_mm(&self, slot: usize, k: u32) -> Option<f64> {
+        pulses_per_mm(self.word(slot, AxisRw::Lead), self.word(slot, AxisRw::CmdPulsesPerUnit), k)
+    }
+}
+
+fn pulses_per_mm(lead_word: u32, pulses_word: u32, k: u32) -> Option<f64> {
+    (lead_word != 0 && k != 0).then(|| pulses_word as f64 * k as f64 / lead_word as f64)
+}
+
+/// Typed view of the fast block at 60001: the axis read-only block (words 0..50) followed by the
+/// 14 kept words of every axis slot of block 50200 (words 50..120), in one read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FastBlock {
+    /// All words as read (at least 120).
+    pub words: Vec<u32>,
+}
+
+impl FastBlock {
+    /// Wrap a block read of at least 120 words.
+    pub fn from_words(words: &[u32]) -> Option<FastBlock> {
+        (words.len() >= 120).then(|| FastBlock { words: words.to_vec() })
+    }
+
+    /// The axis read-only part.
+    pub fn axis_ro(&self) -> AxisRoBlock {
+        AxisRoBlock { words: self.words[..AXIS_SLOTS * AXIS_RO_WORDS].to_vec() }
+    }
+
+    /// Word `w` of the read/write part of `slot`, 0 when the slot is out of range.
+    pub fn axis_rw(&self, slot: usize, w: AxisRw) -> u32 {
+        if slot < AXIS_SLOTS { self.words[AXIS_SLOTS * AXIS_RO_WORDS + AXIS_RW_WORDS_KEPT * slot + w as usize] } else { 0 }
+    }
+
+    /// Command pulses per millimetre of `slot`, like [`AxisRwBlock::pulses_per_mm`].
+    pub fn pulses_per_mm(&self, slot: usize, k: u32) -> Option<f64> {
+        pulses_per_mm(self.axis_rw(slot, AxisRw::Lead), self.axis_rw(slot, AxisRw::CmdPulsesPerUnit), k)
+    }
+}
+
+/// Start register of hardware-parameter block `index` (0..=31): `59600 + 0xD0 * index`, 52 words.
+/// These blocks are read to compare them with the PC's copy; this crate never writes them.
+pub fn hard_param_block_addr(index: u32) -> Option<u32> {
+    (index <= 31).then(|| HARD_PARAM_BASE + HARD_PARAM_STRIDE * index)
+}
+
+/// Period of the vendor's core loop in milliseconds: the status block is read once per loop.
+pub const VENDOR_POLL_MS: u32 = 30;
+/// A status poll that fails for this long during a job means: stop the stream and disarm.
+pub const STATUS_WATCHDOG_MS: u32 = 1000;
+
+/// One read of a polling schedule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PollEntry {
+    /// Name of the block in [`BLOCKS`].
+    pub block: &'static str,
+    /// Period in milliseconds.
+    pub period_ms: u32,
+    /// True for the fast queue, which slow reads never hold up.
+    pub fast: bool,
+    /// True when the read only happens on a machine with an on-board follower.
+    pub needs_follower: bool,
+}
+
+impl PollEntry {
+    /// The `(start, count)` of the read, if the block is known.
+    pub fn read(&self) -> Option<(u32, u32)> {
+        block(self.block).map(|b| (b.start, b.count))
+    }
+}
+
+/// Blocks the vendor reads every cycle in normal mode.
+pub const POLL_PROFILE_NORMAL: &[&str] = &["status", "axis_ro", "axis_rw", "system_rw"];
+/// Blocks the vendor reads every cycle in fast mode.
+pub const POLL_PROFILE_FAST: &[&str] = &["status", "system_rw", "fast"];
+
+/// Polling schedule of the owner's port. Only the 30 ms status period is the vendor's; the other
+/// periods are the port's own choice and unconfirmed against the card.
+pub const POLL_SCHEDULE: &[PollEntry] = &[
+    PollEntry { block: "status", period_ms: VENDOR_POLL_MS, fast: true, needs_follower: false },
+    PollEntry { block: "axis_ro", period_ms: 3 * VENDOR_POLL_MS, fast: true, needs_follower: false },
+    PollEntry { block: "system_rw", period_ms: 1000, fast: false, needs_follower: false },
+    PollEntry { block: "axis_rw", period_ms: 1000, fast: false, needs_follower: false },
+    PollEntry { block: "zf_status", period_ms: 10_000, fast: false, needs_follower: true },
+];
+
+/// The schedule entries due at `now_ms`, given when each was last read (`None` = never). Entries
+/// that need a follower are skipped when `has_follower` is false.
+pub fn polls_due(now_ms: u64, last_read_ms: &[Option<u64>], has_follower: bool) -> Vec<&'static PollEntry> {
+    POLL_SCHEDULE
+        .iter()
+        .enumerate()
+        .filter(|(i, e)| {
+            (has_follower || !e.needs_follower)
+                && last_read_ms.get(*i).copied().flatten().is_none_or(|t| now_ms.saturating_sub(t) >= e.period_ms as u64)
+        })
+        .map(|(_, e)| e)
+        .collect()
+}
+
 /// Facts the owner's analysis marks as inferred or unverified.
 pub const UNVERIFIED_NOTES: &[&str] = &[
     "register 1016 unit (bytes free assumed, 60000 = empty)",
@@ -741,5 +1199,148 @@ mod tests {
         assert!(matches!(plain_write_reason(11002), Forbidden::ZfProperty(_)));
         assert!(matches!(plain_write_reason(5008), Forbidden::Block5000(_)));
         assert!(matches!(plain_write_reason(3), Forbidden::NotInAllowList(3)));
+    }
+
+    #[test]
+    fn version_words_decode_and_are_compared_with_the_minimum() {
+        let v = VersionInfo::from_words(&[100, 20152]).unwrap();
+        assert_eq!((v.program_id, v.program_version), (100, 20152));
+        assert!(v.meets(MIN_PROGRAM_VERSION));
+        assert!(!v.meets(MIN_PROGRAM_VERSION_SP1));
+        assert!(VersionInfo::from_words(&[100]).is_none());
+        let mut w = vec![0u32; 36];
+        w[1] = 20177;
+        assert!(StatusBlock::from_words(&w).unwrap().version().meets(MIN_PROGRAM_VERSION_SP1));
+    }
+
+    #[test]
+    fn inputs_follow_the_input_type_and_port_zero_is_never_active() {
+        let mut w = vec![0u32; 36];
+        w[Status::Di as usize] = 0b101;
+        w[Status::ExtDi as usize] = 0b10;
+        w[Status::FifoFrameId as usize] = u32::MAX;
+        let s = StatusBlock::from_words(&w).unwrap();
+        assert!(s.di_active(1, false) && !s.di_active(2, false) && s.di_active(3, false));
+        assert!(!s.di_active(1, true) && s.di_active(2, true));
+        assert!(s.di_active(14, false) && !s.di_active(13, false));
+        assert!(!s.di_active(0, true) && !s.di_active(0, false) && !s.di_active(29, true));
+        assert_eq!(s.next_frame_id(), 0, "the frame id wraps");
+    }
+
+    #[test]
+    fn alarm_words_are_named() {
+        let l = alarm_labels(alarm1::AXIS_Y | alarm1::ESTOP | (1 << 27), alarm2::FIFO_STARVATION | (1 << 9));
+        assert_eq!(
+            l,
+            ["axis Y fault", "alarm 1 bit 27 (no known meaning)", "emergency stop", "motion queue ran empty", "alarm 2 bit 9 (no known meaning)"]
+        );
+        assert!(alarm_labels(0, 0).is_empty());
+        assert_eq!(axis::fault_names(axis::SOFT_LIMIT_NEG | axis::SERVO_ALARM | axis::HOMED), ["soft limit -", "servo alarm"]);
+        assert_eq!(zf_alarm::names(zf_alarm::TOUCH_PLATE | zf_alarm::FTC_ALARM), ["touched the plate", "follower alarm"]);
+    }
+
+    #[test]
+    fn system_block_gives_cycle_follower_type_and_k() {
+        let mut w = vec![0u32; 26];
+        (w[5], w[6], w[17]) = (250, 1, 1000);
+        let s = SystemBlock::from_words(&w).unwrap();
+        assert_eq!((s.bus_cycle_us(), s.zf_type(), s.k()), (250, 1, Some(1000)));
+        assert!(s.has_follower());
+        w[17] = 0;
+        w[6] = 0;
+        let s = SystemBlock::from_words(&w).unwrap();
+        assert_eq!(s.k(), None);
+        assert!(!s.has_follower());
+        assert!(SystemBlock::from_words(&w[..25]).is_none());
+    }
+
+    #[test]
+    fn axis_blocks_decode_per_slot() {
+        let mut ro = vec![0u32; 50];
+        ro[0] = axis::HOMED | axis::SOFT_LIMIT_POS;
+        ro[1] = (-2500i32) as u32;
+        ro[2] = 123_456;
+        ro[20] = axis::HOMED | (1 << 16) | (3 << 24);
+        ro[22] = (-7i32) as u32;
+        let b = AxisRoBlock::from_words(&ro).unwrap();
+        assert_eq!(b.homed_mask(), 0b101);
+        assert_eq!((b.speed(0), b.pulse_position(0), b.pulse_position(2)), (-2500, 123_456, -7));
+        assert_eq!(b.faults(0), axis::SOFT_LIMIT_POS);
+        assert!(b.busy(2) && !b.busy(0));
+        assert_eq!(b.status(9), 0, "a slot that does not exist reads as 0");
+        assert!(AxisRoBlock::from_words(&ro[..49]).is_none());
+
+        let mut rw = vec![0u32; 100];
+        rw[9] = 10_000; // lead 10 mm at K = 1000
+        rw[10] = 10_000; // pulses per revolution
+        rw[20 + 9] = 5_000;
+        rw[20 + 10] = 10_000;
+        let b = AxisRwBlock::from_words(&rw).unwrap();
+        assert_eq!(b.word(1, AxisRw::Lead), 5_000);
+        assert_eq!(b.pulses_per_mm(0, 1000), Some(1000.0));
+        assert_eq!(b.pulses_per_mm(1, 1000), Some(2000.0));
+        assert_eq!(b.pulses_per_mm(2, 1000), None, "no lead reported");
+        assert_eq!(b.pulses_per_mm(0, 0), None);
+        assert!(AxisRwBlock::from_words(&rw[..99]).is_none());
+    }
+
+    #[test]
+    fn the_fast_block_is_the_axis_block_plus_fourteen_words_per_slot() {
+        let mut f = vec![0u32; 120];
+        f[10] = axis::HOMED;
+        f[50 + 14 + 9] = 4_000;
+        f[50 + 14 + 10] = 8_000;
+        let b = FastBlock::from_words(&f).unwrap();
+        assert_eq!(b.axis_ro().homed_mask(), 0b10);
+        assert_eq!(b.axis_rw(1, AxisRw::CmdPulsesPerUnit), 8_000);
+        assert_eq!(b.pulses_per_mm(1, 1000), Some(2000.0));
+        assert!(FastBlock::from_words(&f[..119]).is_none());
+    }
+
+    #[test]
+    fn follower_words_have_names() {
+        let mut w = vec![0u32; 18];
+        w[1] = zf_alarm::ENCODER | 0xFFFF_0000;
+        w[6] = 42;
+        let z = ZfStatus::from_words(&w).unwrap();
+        assert_eq!(z.alarm_names(), ["encoder"]);
+        assert_eq!(z.word(ZfWord::ZPosition), 42);
+        assert_eq!(ZfWord::Other as usize, 17);
+    }
+
+    #[test]
+    fn hardware_parameter_blocks_are_readable_and_never_writable() {
+        assert_eq!(hard_param_block_addr(0), Some(59600));
+        assert_eq!(hard_param_block_addr(31), Some(59600 + 0xD0 * 31));
+        assert_eq!(hard_param_block_addr(32), None);
+        for i in 0..32 {
+            let a = hard_param_block_addr(i).unwrap();
+            assert!(check_read(a, 52).is_ok(), "block {i}");
+            assert!(matches!(plain_write_reason(a), Forbidden::HardwareParameters(_)));
+        }
+        // one word past a block is not part of it (block 2 lies inside the fast block's range,
+        // so the first and the last block are the ones to ask)
+        assert!(check_read(59600, 53).is_err());
+        assert!(check_read(hard_param_block_addr(31).unwrap(), 53).is_err());
+    }
+
+    #[test]
+    fn poll_schedule_names_known_blocks() {
+        for e in POLL_SCHEDULE {
+            assert!(e.read().is_some(), "{}", e.block);
+        }
+        assert_eq!(POLL_SCHEDULE[0].read(), Some((1000, 36)));
+        for name in POLL_PROFILE_NORMAL.iter().chain(POLL_PROFILE_FAST) {
+            assert!(block(name).is_some(), "{name}");
+        }
+        // nothing read yet: everything is due, the follower block only with a follower
+        assert_eq!(polls_due(0, &[], true).len(), 5);
+        assert_eq!(polls_due(0, &[], false).len(), 4);
+        // 40 ms after reading everything only the status block is due again
+        let last = [Some(0u64); 5];
+        let due: Vec<_> = polls_due(40, &last, true).iter().map(|e| e.block).collect();
+        assert_eq!(due, ["status"]);
+        let due: Vec<_> = polls_due(1000, &last, true).iter().map(|e| e.block).collect();
+        assert_eq!(due, ["status", "axis_ro", "system_rw", "axis_rw"]);
     }
 }

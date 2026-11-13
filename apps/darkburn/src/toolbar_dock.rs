@@ -283,7 +283,7 @@ fn zone(ctx: &egui::Context, bar: &str, to: Dock, pos: Pos2) -> Rect {
 
 fn paint_hint(ctx: &egui::Context, rect: Rect) {
     let t = Tokens::get();
-    let p = ctx.layer_painter(LayerId::unique(Order::Foreground, Id::unique("db_toolbar_hint")));
+    let p = ctx.layer_painter(LayerId::new(Order::Foreground, Id::unique("db_toolbar_hint")));
     p.rect(rect, t.radius_sm, t.accent.gamma_multiply(0.18), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     solidcraft_ui_registry::publish_target("bar:hint", rect);
 }

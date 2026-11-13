@@ -1015,6 +1015,7 @@ pub struct Window<'a> {
     dock_key: Option<&'a str>,
     /// Esc may close a footerless window floating in the main window this frame.
     escape_here: bool,
+    answer_keys: super::AnswerKeys,
 }
 
 /// How [`Window::content`] lays itself out for where the window is shown.
@@ -1061,6 +1062,7 @@ impl<'a> Window<'a> {
             page_header_in_titlebar: false,
             dock_key: None,
             escape_here: true,
+            answer_keys: super::AnswerKeys::Off,
         }
     }
 
@@ -1169,6 +1171,13 @@ impl<'a> Window<'a> {
     /// Place the existing page-header callback beside the title; other windows retain their body header.
     pub fn page_header_in_titlebar(mut self) -> Self {
         self.page_header_in_titlebar = true;
+        self
+    }
+
+    /// Let Y and N answer the box (see [`super::AnswerKeys`]): only for a yes or no question with
+    /// exactly two answers.
+    pub fn answer_keys(mut self, keys: super::AnswerKeys) -> Self {
+        self.answer_keys = keys;
         self
     }
 
@@ -1345,6 +1354,12 @@ impl<'a> Window<'a> {
                     super::Footer { apply: self.apply, nothing_to_apply: self.nothing_to_apply, keys_off: !chrome.keys, ..Default::default() },
                     left,
                 )
+            };
+            let action = match action {
+                super::Action::None if ui.is_enabled() && self.apply.is_none() && !self.cancel.is_empty() => {
+                    super::answer_key(ui.ctx(), self.answer_keys, valid && !self.ok.is_empty())
+                }
+                other => other,
             };
             (close, action)
         })

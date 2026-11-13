@@ -247,9 +247,7 @@ impl Prefs {
         }
         self.autosave_minutes = self.autosave_minutes.clamp(0.0, 240.0);
         self.opts.sanitise();
-        self.hotkeys.retain(|id, key| {
-            crate::keymap::bindable().iter().any(|(i, _, _)| i == id) && (key.is_empty() || crate::commands::parse_key(key).is_some())
-        });
+        self.hotkeys.retain(|id, key| crate::keymap::slot(id).is_some() && (key.is_empty() || crate::keymap::parse_binding(key).is_some()));
         self.recent.truncate(crate::files::RECENT_MAX);
         self.files.sanitise();
         for (id, state) in d.panels {

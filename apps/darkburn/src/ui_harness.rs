@@ -546,6 +546,19 @@ impl Gui {
         self.frames(2)
     }
 
+    /// Press and release a key whose place on the keyboard (`physical`) differs from what it
+    /// means (`key`): number pad 8 with NumLock off is `ArrowUp` on `Num8`, Shift+1 on a US
+    /// keyboard is `Exclamationmark` on `Num1`.
+    pub fn key_at(&mut self, key: Key, physical: Key, modifiers: Modifiers) -> &mut Self {
+        self.last = format!("key_at({key:?}, {physical:?}, {modifiers:?})");
+        for pressed in [true, false] {
+            self.h.event(Event::Key { key, physical_key: Some(physical), pressed, repeat: false, modifiers });
+        }
+        self.h.step();
+        self.after_frame();
+        self.frames(2)
+    }
+
     pub fn escape(&mut self) -> &mut Self {
         self.key(Key::Escape, Modifiers::NONE)
     }

@@ -219,8 +219,10 @@ impl Host {
                     }
                 });
             });
-        // Escape refuses, like Cancel. Nothing on the keyboard confirms.
-        if answer.is_none() && crate::escape::closes(ctx, window) {
+        // Escape and N refuse, like Cancel. Nothing on the keyboard confirms.
+        if answer.is_none()
+            && (crate::escape::closes(ctx, window) || ui_kit::answer_key(ctx, ui_kit::AnswerKeys::NoOnly, false) == ui_kit::Action::Cancel)
+        {
             answer = Some(false);
         }
         if let Some(yes) = answer {
@@ -482,6 +484,26 @@ mod tests {
         assert_eq!(open(&mut host), 1);
         // Escape refuses: the request ends with an error and no token.
         frame(&ctx, &mut host, vec![press(egui::Key::Escape)]);
+        assert_eq!(open(&mut host), 0);
+        let state = host.gate.as_mut().unwrap().pending(&pid).unwrap();
+        assert!(matches!(state, PendingState::Done { result: Err(_), .. }), "refused");
+    }
+
+    /// N refuses like Escape [KEY-01]; Y never confirms an agent's request.
+    #[test]
+    fn n_refuses_the_agents_request_and_y_does_not_confirm_it() {
+        let app: SharedApp = Rc::new(RefCell::new(DarkBurn::new(crate::prefs::Prefs::default())));
+        let ctx = egui::Context::default();
+        let mut host = Host::new(app.clone());
+        let policy = McpPolicy { allow_hardware: true, ..McpPolicy::default() };
+        let mut gate = Gate::new(McpBackend::new(app, ctx.clone(), true), PolicyHandle::new(policy));
+        let pid = gate.execute("job.start", json!({})).unwrap_err().pending_id.expect("the request waits for the user");
+        host.gate = Some(gate);
+        let open = |host: &mut Host| host.gate.as_mut().unwrap().open_confirmations().len();
+        frame(&ctx, &mut host, vec![]);
+        frame(&ctx, &mut host, vec![press(egui::Key::Y)]);
+        assert_eq!(open(&mut host), 1, "Y is no answer here");
+        frame(&ctx, &mut host, vec![press(egui::Key::N)]);
         assert_eq!(open(&mut host), 0);
         let state = host.gate.as_mut().unwrap().pending(&pid).unwrap();
         assert!(matches!(state, PendingState::Done { result: Err(_), .. }), "refused");

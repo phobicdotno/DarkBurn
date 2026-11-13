@@ -459,7 +459,7 @@ pub fn ui_json(app: &DarkBurn, ctx: Option<&egui::Context>) -> Value {
     let shortcuts: Vec<Value> = crate::keymap::effective(&app.prefs.hotkeys)
         .into_iter()
         .filter(|(_, k)| !k.is_empty())
-        .map(|(id, k)| json!({"command": id, "key": k}))
+        .map(|(id, k)| json!({"command": crate::keymap::command_of(id), "key": k}))
         .collect();
     json!({
         "window": ctx.map(|c| {

@@ -910,6 +910,8 @@ fn risky_confirm(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_risky_settings"), "settings", "Change protection settings?")
         .tone(Tone::Danger)
         .actions("Write anyway", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label("You are changing settings that limit the laser's power or motion (laser mode, power range, limits or homing).");
             ui.label("Switching these off or loosening them can stop the machine from holding its safety class, for example an enclosed machine that is safe by design. Check the machine's manual and your lid and interlock first.");
@@ -1128,6 +1130,8 @@ fn restore_confirm(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_restore_settings"), "settings", "Write these settings to the laser?")
         .tone(Tone::Warning)
         .actions("Write", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label(format!("{} values will be written to the controller. This replaces what it has now.", b.len()));
         });
@@ -1193,6 +1197,8 @@ fn confirm_connect_dialog(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_confirm_connect"), "settings", "Connect to a real machine?")
         .tone(Tone::Danger)
         .actions("Connect", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             let t = Tokens::get();
             ui.label(RichText::new("REAL MACHINE").strong().color(t.error));
@@ -1213,6 +1219,8 @@ fn confirm_close_dialog(ctx: &Context, app: &mut DarkBurn) {
     let (closed, action) = Confirm::new(Id::unique("db_confirm_close"), "settings", "A job is running")
         .tone(Tone::Warning)
         .actions("Stop and close", "Keep running", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label("Closing DarkBurn now stops the job and turns the laser off. Do you want to stop and close?");
         });

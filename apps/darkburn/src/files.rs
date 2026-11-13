@@ -744,6 +744,7 @@ pub fn dialogs(ctx: &egui::Context, app: &mut DarkBurn) {
     if let Some(path) = app.files.restore.clone() {
         let (_, action) = ui_kit::Window::new(egui::Id::unique("db_restore"), "open", "Restore auto-saved project?")
             .actions("Restore", "Discard", None)
+            .answer_keys(ui_kit::AnswerKeys::YesNo)
             .required()
             .show(ctx, true, |ui| {
                 ui.label("DarkBurn did not close properly last time. An auto-saved copy of the project you were working on was found.");
@@ -1150,6 +1151,42 @@ mod tests {
                 assert!(!settings.join(AUTOSAVE_PATH_FILE).exists());
             }
             // Leave nothing for the harness's own checks to trip over.
+            a.safe_mode = true;
+        }
+    }
+
+    /// Y and N answer the restore question [KEY-01]: Y restores, N throws the copy away.
+    #[test]
+    fn y_and_n_answer_the_restore_question() {
+        use crate::ui_harness::Gui;
+        use egui::{Key, Modifiers};
+        for yes in [true, false] {
+            let mut g = Gui::standard();
+            let settings = g.temp("crashed");
+            let project = g.temp("mine.dbrn");
+            leave_a_crashed_session(&settings, &project);
+            {
+                let mut a = g.app();
+                a.settings_dir = Some(settings.clone());
+                a.safe_mode = false;
+                a.files.started = false;
+            }
+            g.frames(2);
+            let asked = |g: &Gui| g.window_titles().contains(&"Restore auto-saved project?".to_string());
+            assert!(asked(&g), "{:?}", g.window_titles());
+            // Other letters are not answers.
+            g.key(Key::X, Modifiers::NONE);
+            assert!(asked(&g), "still asking");
+            g.key(if yes { Key::Y } else { Key::N }, Modifiers::NONE);
+            assert!(!asked(&g), "answered");
+            let mut a = g.app();
+            if yes {
+                assert_eq!(a.editor.doc.len(), 1, "Y restored the rectangle");
+                assert_eq!(a.project_path.as_deref(), Some(project.as_path()));
+            } else {
+                assert_eq!(a.editor.doc.len(), 0);
+                assert!(!settings.join(AUTOSAVE_FILE).exists(), "N threw the copy away");
+            }
             a.safe_mode = true;
         }
     }

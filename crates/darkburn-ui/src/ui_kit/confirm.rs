@@ -21,6 +21,7 @@ pub struct Confirm<'a> {
     secondary_left: bool,
     selected: Option<Action>,
     detail: Option<&'a str>,
+    answer_keys: super::AnswerKeys,
 }
 
 impl<'a> Confirm<'a> {
@@ -36,6 +37,7 @@ impl<'a> Confirm<'a> {
             secondary_left: false,
             selected: None,
             detail: None,
+            answer_keys: super::AnswerKeys::Off,
         }
     }
 
@@ -57,6 +59,13 @@ impl<'a> Confirm<'a> {
 
     pub fn selected(mut self, selected: Action) -> Self {
         self.selected = Some(selected);
+        self
+    }
+
+    /// Let Y and N answer the box (see [`super::AnswerKeys`]). A box with a third answer takes
+    /// neither.
+    pub fn answer_keys(mut self, keys: super::AnswerKeys) -> Self {
+        self.answer_keys = keys;
         self
     }
 
@@ -150,6 +159,10 @@ impl<'a> Confirm<'a> {
                 self.selected.unwrap_or(Action::Ok)
             } else {
                 action
+            };
+            let action = match action {
+                Action::None if ui.is_enabled() && self.left.is_none() => super::answer_key(ui.ctx(), self.answer_keys, valid),
+                other => other,
             };
             (closed, action)
         })

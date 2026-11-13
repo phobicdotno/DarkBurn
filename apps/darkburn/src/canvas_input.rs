@@ -630,7 +630,7 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
             let cmd = crate::commands::find(id);
             let icon = cmd.map(|c| c.icon).unwrap_or("");
             // The key the command has now (the user may have changed or removed it).
-            let shortcut = cmd.map_or_else(|| key.to_string(), |c| crate::keymap::key_in(&app.prefs.hotkeys, c.id, crate::keymap::default_key(c)));
+            let shortcut = cmd.map_or_else(|| key.to_string(), |c| crate::keymap::first_key(&app.prefs.hotkeys, c));
             let mut item = MenuItem::new(id, label, icon);
             item.shortcut = &shortcut;
             item.enabled = enabled[i];

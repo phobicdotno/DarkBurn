@@ -94,6 +94,9 @@ pub struct DarkBurn {
     pub vision: crate::vision_cmds::Vision,
     /// The job under way, for the job log (settings_wiring.rs).
     pub job_run: crate::settings_wiring::JobRun,
+    /// Per area, the panel that was in front when a docked window's tab came forward: back in
+    /// front when that window closes or moves away.
+    panel_before_window: std::collections::BTreeMap<Area, String>,
 }
 
 /// The commands that open a dockable window, and its key. Run while the window is open, they
@@ -152,6 +155,7 @@ impl DarkBurn {
             text: Default::default(),
             vision: Default::default(),
             job_run: Default::default(),
+            panel_before_window: Default::default(),
         }
     }
 
@@ -801,6 +805,36 @@ impl DarkBurn {
         self.dock_shown(Dock::Right, size, dragging.is_some(), shown.response.rect);
     }
 
+    /// The tab of `area` in front: the one brought forward; when that was a window's, now closed
+    /// or moved away, the panel that was in front before it; else the first.
+    fn front_tab(&mut self, area: Area, tabs: &[Tab]) -> String {
+        let here = |id: &String| tabs.iter().any(|p| &p.id == id);
+        let stored = self.prefs.active_tab.get(&area).cloned();
+        match stored {
+            Some(id) if here(&id) => id,
+            Some(id) if window_host::window_of_tab(&id).is_some() => {
+                let back = self.panel_before_window.remove(&area).filter(here).unwrap_or(tabs[0].id.clone());
+                // Not left naming a window that is gone, in the stored settings either.
+                self.prefs.active_tab.insert(area, back.clone());
+                back
+            }
+            _ => tabs[0].id.clone(),
+        }
+    }
+
+    /// Tab `id` of `area` comes to the front, in place of `front`. A window's tab remembers the
+    /// panel it covers.
+    fn bring_forward(&mut self, area: Area, front: &str, id: String) {
+        if window_host::window_of_tab(&id).is_some() {
+            if window_host::window_of_tab(front).is_none() {
+                self.panel_before_window.insert(area, front.to_string());
+            }
+        } else {
+            self.panel_before_window.remove(&area);
+        }
+        self.prefs.active_tab.insert(area, id);
+    }
+
     /// Whether area `area` has anything to show: a visible panel or a window docked there.
     fn area_used(&self, ctx: &egui::Context, area: Area) -> bool {
         !self.visible_in(area).is_empty() || !window_host::docked_tabs(ctx, &area_key(area)).is_empty()
@@ -825,9 +859,10 @@ impl DarkBurn {
         }
         // A window just docked here, or opened while docked here, comes to the front.
         if let Some(w) = window_host::take_activation(ui.ctx(), &key) {
-            self.prefs.active_tab.insert(area, window_host::tab_id(&w));
+            let front = self.front_tab(area, &tabs);
+            self.bring_forward(area, &front, window_host::tab_id(&w));
         }
-        let active = self.prefs.active_tab.get(&area).filter(|id| tabs.iter().any(|p| &p.id == *id)).cloned().unwrap_or(tabs[0].id.clone());
+        let active = self.front_tab(area, &tabs);
         let active_window = window_host::window_of_tab(&active).map(str::to_string);
         let r = ui.max_rect();
         solidcraft_ui_registry::publish_rect(&format!("panel:area:{area:?}"), r);
@@ -958,7 +993,7 @@ impl DarkBurn {
             }
         }
         if let Some(id) = pick {
-            self.prefs.active_tab.insert(area, id);
+            self.bring_forward(area, &active, id);
         }
         let body = Rect::from_min_max(pos2(r.left(), header.bottom()), r.max);
         match &active_window {

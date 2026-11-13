@@ -771,6 +771,45 @@ fn opening_a_docked_window_that_is_open_brings_its_tab_to_the_front() {
     assert_eq!(front(&g), tab_id(crate::cut_settings::WINDOW_KEY), "the editor, open behind the Cuts / Layers tab");
 }
 
+/// Closing a docked window brings back the tab it covered, not the area's first one: with the
+/// panels moved, that can be the Laser panel with its Stop button.
+#[test]
+fn closing_a_docked_window_brings_back_the_tab_it_covered() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("settings".into(), place);
+    let front = |g: &Gui| g.app().prefs.active_tab.get(&Area::RightTop).cloned().unwrap_or_default();
+    g.app().prefs.active_tab.insert(Area::RightTop, "console".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(2);
+    assert!(!g.app().settings_open, "the window closed");
+    assert_eq!(front(&g), "console", "the Console tab it covered is in front again, and stored so");
+
+    // The Laser panel moved up here, behind the first tab; the window's tab picked by hand.
+    for (id, area, visible) in [("laser", Area::RightTop, true), ("camera", Area::RightTop, false), ("variable_text", Area::RightTop, false)] {
+        let panel = g.app().prefs.panels.get_mut(id).expect(id);
+        (panel.area, panel.visible) = (area, visible);
+    }
+    g.app().prefs.active_tab.insert(Area::RightTop, "laser".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_id("panel:tab:console");
+    g.click_id("panel:tab:laser");
+    g.click_id(&format!("panel:tab:{}", tab_id("settings")));
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(2);
+    assert!(!g.app().settings_open);
+    assert_eq!(front(&g), "laser", "the Laser panel it covered is in front again");
+}
+
 #[test]
 fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
     use darkburn_ui::ui_kit::window_host::WindowPlace;

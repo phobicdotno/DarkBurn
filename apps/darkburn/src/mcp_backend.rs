@@ -736,6 +736,9 @@ impl McpBackend {
         if matches!(id, "image.trace_files" | "tools.trace_files") {
             // Off the UI thread: a long list of large pictures would freeze the window.
             let app = self.app.try_borrow().map_err(|_| CommandError::failed("the app is busy: try again"))?;
+            if let Some(e) = crate::agent_limits::before(&app, id, &args) {
+                return Err(e);
+            }
             let run = crate::multi_trace::PendingTrace::start(&app, &args).map_err(err_of)?;
             drop(app);
             let pid = self.id("t");

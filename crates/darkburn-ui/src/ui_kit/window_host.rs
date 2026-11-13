@@ -187,7 +187,7 @@ struct State {
     close: BTreeSet<String>,
     activate: BTreeMap<String, String>,
     /// A native window's size and position as it was opened, kept while it stays open.
-    opened: BTreeMap<String, (Option<[f32; 2]>, Option<[f32; 2]>)>,
+    opened: BTreeMap<String, ([f32; 2], Option<[f32; 2]>)>,
     /// Key presses made in native windows that nothing in them used, oldest first.
     keys: Vec<egui::Event>,
     /// Windows a command asked to bring into view, with the frame it asked in.
@@ -410,12 +410,13 @@ pub(crate) fn area_on_screen(ctx: &Context, area: &str) -> bool {
     target_rect(ctx, area).is_some() || with(ctx, |s| s.areas.iter().any(|(a, _)| a == area))
 }
 
-/// The size and position a native window opens with: what was stored when it opened, kept the
-/// same while it is open so the system's own moves are not fought.
-pub(crate) fn native_opening(ctx: &Context, key: &str) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+/// The size and position a native window opens with: what was stored when it opened (no size
+/// stored yet: `first_size`), kept the same while it is open so the system's own moves are not
+/// fought.
+pub(crate) fn native_opening(ctx: &Context, key: &str, first_size: Vec2) -> ([f32; 2], Option<[f32; 2]>) {
     with(ctx, |s| {
         let stored = s.places.get(key).map(|p| (p.native_size, p.native_pos)).unwrap_or_default();
-        *s.opened.entry(key.to_string()).or_insert(stored)
+        *s.opened.entry(key.to_string()).or_insert((stored.0.unwrap_or([first_size.x, first_size.y]), stored.1))
     })
 }
 
@@ -741,32 +742,42 @@ mod tests {
             p.detach();
             p.native_size = Some([640.0, 480.0]);
         });
-        assert_eq!(native_opening(&ctx, "a"), (Some([640.0, 480.0]), None));
+        let first = vec2(400.0, 300.0);
+        assert_eq!(native_opening(&ctx, "a", first), ([640.0, 480.0], None));
         native_moved(&ctx, "a", Some(vec2(700.0, 500.0)), Some(Pos2::new(10.0, 20.0)));
-        assert_eq!(native_opening(&ctx, "a"), (Some([640.0, 480.0]), None), "the system's own resize is not sent back");
+        assert_eq!(native_opening(&ctx, "a", first), ([640.0, 480.0], None), "the system's own resize is not sent back");
         assert_eq!(place(&ctx, "a").native_size, Some([700.0, 500.0]), "but it is remembered");
         // Closed (not drawn for two frames) and opened again: the next opening uses it.
         frame(&ctx, |ui| shown(ui.ctx(), "a", "A"));
         frame(&ctx, |_| {});
         frame(&ctx, |_| {});
         frame(&ctx, |ui| shown(ui.ctx(), "a", "A"));
-        assert_eq!(native_opening(&ctx, "a"), (Some([700.0, 500.0]), Some([10.0, 20.0])));
+        assert_eq!(native_opening(&ctx, "a", first), ([700.0, 500.0], Some([10.0, 20.0])));
+        // Nothing stored: the first size, the same while it is open.
+        update(&ctx, "b", |p| p.detach());
+        assert_eq!(native_opening(&ctx, "b", first), ([400.0, 300.0], None));
+        assert_eq!(native_opening(&ctx, "b", vec2(900.0, 900.0)), ([400.0, 300.0], None));
     }
 
     type Keys = std::rc::Rc<std::cell::RefCell<Vec<egui::Event>>>;
     type Info = std::rc::Rc<std::cell::RefCell<egui::ViewportInfo>>;
+    /// The size each native window was asked to have, in the order they were drawn.
+    type Opened = std::rc::Rc<std::cell::RefCell<Vec<(egui::ViewportId, Option<Vec2>)>>>;
 
     /// Native windows run the way a desktop backend runs them: each in a pass of its own, with
     /// input of its own, which here is what `keys` holds when the window is drawn.
     fn native_windows(keys: &Keys) {
-        native_windows_with(keys, &Info::default());
+        native_windows_with(keys, &Info::default(), &Opened::default());
     }
 
-    /// As [`native_windows`], each window saying of itself what `info` holds (focus, minimised).
-    fn native_windows_with(keys: &Keys, info: &Info) {
+    /// As [`native_windows`], each window saying of itself what `info` holds (focus, minimised)
+    /// and `opened` recording the size it asks for.
+    fn native_windows_with(keys: &Keys, info: &Info, opened: &Opened) {
         let keys = keys.clone();
         let info = info.clone();
+        let opened = opened.clone();
         Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            opened.borrow_mut().push((viewport.ids.this, viewport.builder.inner_size));
             let events = std::mem::take(&mut *keys.borrow_mut());
             let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 500.0)));
             let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..info.borrow().clone() };
@@ -826,7 +837,7 @@ mod tests {
         use egui::{Order, ViewportCommand, ViewportId, ViewportInfo};
         let keys = Keys::default();
         let info = Info::default();
-        native_windows_with(&keys, &info);
+        native_windows_with(&keys, &info, &Opened::default());
         let ctx = Context::default();
         crate::fonts::setup_bundled_fonts(&ctx);
         ctx.set_embed_viewports(false);
@@ -890,6 +901,50 @@ mod tests {
         raise(&ctx, "native");
         let (main, own) = draw(false);
         assert!(main.is_empty() && own.is_empty(), "a window that has the focus already stays as it is: {main:?} {own:?}");
+    }
+
+    #[test]
+    fn a_window_of_its_own_first_opens_at_its_card_size_held_to_the_screen() {
+        use egui::{ViewportId, ViewportInfo};
+        let opened = Opened::default();
+        native_windows_with(&Keys::default(), &Info::default(), &opened);
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        // The main window is on a 1536 x 864 screen; returns the size the window asked for.
+        let draw = |key: &str, cards: f32| {
+            let main = ViewportInfo { monitor_size: Some(vec2(1536.0, 864.0)), ..Default::default() };
+            let viewports = std::iter::once((ViewportId::ROOT, main)).collect();
+            let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0)));
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect, viewports, ..Default::default() }, |ui| {
+                super::super::Window::new(Id::unique(key), "", key).cards(cards).dockable(key).show(ui.ctx(), true, |ui| {
+                    ui.label(key);
+                });
+            });
+            out.textures_delta.clear();
+            let id = ViewportId::from_hash_of(("db_window", key));
+            opened.borrow().iter().rev().find(|(v, _)| *v == id).and_then(|(_, size)| *size)
+        };
+        let most = vec2(1536.0, 864.0) * 0.85;
+
+        // A wide window popped out for the first time fits on the screen, footer and all.
+        update(&ctx, "wide", |p| p.detach());
+        let size = draw("wide", 16.0).expect("opened");
+        assert!(size.x <= most.x && size.y <= most.y, "{size:?}");
+        assert!(size.x >= MIN_SIZE.x && size.y >= MIN_SIZE.y, "{size:?}");
+
+        // A card the user gave a size opens at that size.
+        update(&ctx, "sized", |p| p.resize(vec2(500.0, 400.0)));
+        draw("sized", 1.0);
+        update(&ctx, "sized", |p| p.detach());
+        assert_eq!(draw("sized", 1.0), Some(vec2(500.0, 400.0)));
+
+        // A card left at its own size opens at the size it was drawn at.
+        draw("drawn", 1.0);
+        draw("drawn", 1.0);
+        let card = egui::AreaState::load(&ctx, Id::unique("drawn")).and_then(|a| a.size).expect("drawn");
+        update(&ctx, "drawn", |p| p.detach());
+        assert_eq!(draw("drawn", 1.0), Some(card.max(MIN_SIZE)));
     }
 
     #[test]

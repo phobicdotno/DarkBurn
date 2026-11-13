@@ -1468,8 +1468,8 @@ impl Window<'_> {
     ) -> (bool, super::Action) {
         use super::window_host as host;
         super::Container::record_host_window(ctx, self.id, None);
-        let (size, pos) = host::native_opening(ctx, key);
-        let size = size.map(egui::Vec2::from).unwrap_or(vec2(self.width.max(host::MIN_SIZE.x), self.width.max(host::MIN_SIZE.y) * 0.9));
+        let (size, pos) = host::native_opening(ctx, key, self.first_native_size(ctx, key));
+        let size = egui::Vec2::from(size);
         let mut builder = egui::ViewportBuilder::default().with_title(self.title).with_inner_size(size).with_min_inner_size(host::MIN_SIZE);
         if let Some(pos) = pos {
             builder = builder.with_position(egui::Pos2::from(pos));
@@ -1522,6 +1522,23 @@ impl Window<'_> {
             shown
         });
         (shown.0 || closed_by_system, shown.1)
+    }
+
+    /// The size a window first opens with as a window of its own: its floating card's (the size
+    /// the user gave it, else the one it was last drawn at), held to most of the screen the main
+    /// window is on so its footer is in reach.
+    fn first_native_size(&self, ctx: &egui::Context, key: &str) -> egui::Vec2 {
+        use super::window_host as host;
+        let card = host::place(ctx, key)
+            .size
+            .map(egui::Vec2::from)
+            .or_else(|| egui::AreaState::load(ctx, self.id).and_then(|a| a.size))
+            .filter(|s| s.is_finite())
+            .unwrap_or(vec2(self.width, self.width * 0.9));
+        let screen = ctx.input_for(egui::ViewportId::ROOT, |i| i.viewport().monitor_size).filter(|m| m.is_finite() && m.x > 0.0 && m.y > 0.0);
+        // Room for the system's title bar and task bar.
+        let most = screen.map_or(host::MAX_SIZE, |m| m * 0.85).max(host::MIN_SIZE);
+        card.max(host::MIN_SIZE).min(most)
     }
 
     /// A floating card in the main window, resizable from its right and bottom edges, that

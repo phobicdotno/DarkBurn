@@ -105,6 +105,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.cut_shapes", "Cut Shapes", "Alt+Shift+C", "cut"),
     c("tools.adjust_image", "Adjust Image", "Alt+I", ""),
     c("tools.trace_image", "Trace Image", "Alt+T", "trace"),
+    c("tools.trace_files", "Trace Image Files...", "", "trace"),
     c("tools.path_to_text", "Apply Path to Text", "", ""),
     c("tools.mask_image", "Apply Mask to Image", "", ""),
     c("tools.resize_slots", "Resize Slots in Selection", "", ""),
@@ -354,6 +355,11 @@ pub const COMMANDS: &[Cmd] = &[
         r#"{"type":"object","properties":{"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"clip":{"type":"array","items":{"type":"number"},"description":"[left, top, right, bottom] as fractions of the picture"},"sketch":{"type":"boolean"},"delete_image":{"type":"boolean"},"layer":{"type":"integer"}}}"#,
     ),
     a(
+        "image.trace_files",
+        "Trace Picture Files",
+        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"},"description":"picture files, traced with the same settings"},"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"sketch":{"type":"boolean"},"layer":{"type":"integer"},"gap":{"type":"number","description":"mm between the files"},"columns":{"type":"integer","description":"files per row; 0 picks"}},"required":["paths"]}"#,
+    ),
+    a(
         "image.trace_capture",
         "Trace a Captured Picture",
         r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"dpi":{"type":"number"},"threshold":{"type":"integer"},"sketch":{"type":"boolean"},"layer":{"type":"integer"}},"required":["path"]}"#,
@@ -530,6 +536,7 @@ pub fn works(id: &str) -> bool {
             | "edit.image_remove_backup"
             | "tools.adjust_image"
             | "tools.trace_image"
+            | "tools.trace_files"
             | "tools.mask_image"
             | "file.save_bitmap"
             | "tools.select"
@@ -715,6 +722,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         }
         "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
         "image.trace_capture" => &["IMG-20"],
+        "tools.trace_files" | "image.trace_files" => &["IMG-21"],
         "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],
         "edit.image_replace" | "image.replace" => &["EDIT-22"],
         "edit.image_replace_fit" => &["EDIT-23"],
@@ -1068,6 +1076,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.cut_shapes"),
             C("tools.adjust_image"),
             C("tools.trace_image"),
+            C("tools.trace_files"),
             S,
             C("tools.path_to_text"),
             C("tools.mask_image"),

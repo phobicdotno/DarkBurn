@@ -1,0 +1,1 @@
+- New: Trace Image Files traces a whole batch of pictures with the same settings and lays them out side by side

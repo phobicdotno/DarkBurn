@@ -97,6 +97,7 @@ mod misc_cmds;
 #[cfg(test)]
 mod monkey_tests;
 mod motion_read;
+mod multi_trace;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;

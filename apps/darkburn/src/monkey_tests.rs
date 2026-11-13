@@ -91,6 +91,8 @@ fn excluded(id: &str) -> Option<&'static str> {
         ("image.replace", "reads a file"),
         ("image.save_bitmap", "writes a file"),
         ("image.trace_capture", "reads a file"),
+        ("image.trace_files", "reads files"),
+        ("tools.trace_files", "file dialog"),
         ("image.preset_import", "reads a file"),
         ("image.preset_export", "writes a file"),
         ("image.scan_offsets_import", "reads a file"),

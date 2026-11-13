@@ -25,7 +25,7 @@ use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 /// Dots on a side of the Adjust Image preview.
 const PREVIEW_SIDE: u32 = 280;
 /// Pixels the trace preview works on.
-const TRACE_PREVIEW_PIXELS: u64 = 400_000;
+pub(crate) const TRACE_PREVIEW_PIXELS: u64 = 400_000;
 const PRESET_FILE: &str = "image_presets.json";
 
 /// Everything the image windows keep between frames.
@@ -34,6 +34,8 @@ pub struct ImageUi {
     pub adjust: Option<AdjustDialog>,
     pub trace: Option<TraceDialog>,
     pub convert: Option<ConvertDialog>,
+    /// Trace Image Files [IMG-21].
+    pub multi: Option<crate::multi_trace::MultiTraceDialog>,
     pub offsets_open: bool,
     presets: Option<PresetLibrary>,
     /// Said under the open window (or in the status bar when none is open).
@@ -52,6 +54,7 @@ impl ImageUi {
 const MENU_COMMANDS: &[&str] = &[
     "tools.adjust_image",
     "tools.trace_image",
+    "tools.trace_files",
     "tools.mask_image",
     "edit.convert_bitmap",
     "edit.image_replace",
@@ -135,6 +138,8 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Result<Value, Stri
             Ok(json!({ "created": r.shapes.iter().map(|s| s.0).collect::<Vec<_>>(), "nodes": r.nodes }))
         }
         "image.trace_capture" => trace_capture(app, args),
+        "tools.trace_files" => crate::multi_trace::open(app, TraceArgs::default()).map(|()| json!({ "opened": "trace_files" })),
+        "image.trace_files" => crate::multi_trace::execute(app, args),
         "image.convert_bitmap" => {
             let a: ConvertArgs = parse(args)?;
             let ids: Vec<ShapeId> = app.editor.selected().into_iter().filter(|i| app.editor.doc.get(*i).is_some_and(|s| !s.is_image())).collect();
@@ -520,14 +525,14 @@ fn flag(ui: &mut Ui, label: &str, v: &mut Option<bool>) {
 /// Not `ui.separator()`: in a row that takes all the height it is offered, and offered all the
 /// height a window may have it made Adjust Image and Trace Image as tall as the main window,
 /// whatever was in them.
-fn column_gap(ui: &mut Ui) -> f32 {
+pub(crate) fn column_gap(ui: &mut Ui) -> f32 {
     // As wide as egui's own separator.
     let (gap, _) = ui.allocate_exact_size(vec2(6.0, 0.0), Sense::hover());
     gap.center().x
 }
 
 /// The rule in a [`column_gap`], as tall as the row of columns.
-fn column_rule(ui: &Ui, x: f32, row: Rect) {
+pub(crate) fn column_rule(ui: &Ui, x: f32, row: Rect) {
     ui.painter().vline(x, row.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
 }
 
@@ -535,7 +540,7 @@ fn column_rule(ui: &Ui, x: f32, row: Rect) {
 /// application bar; what does not fit scrolls. The kit offers a body the height of the main
 /// window less the window's own header and footer, and in a small main window a window that
 /// tall has its top edge over the bar.
-fn under_the_bar(ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+pub(crate) fn under_the_bar(ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
     let height = (ui.available_height() - APP_BAR_HEIGHT).max(0.0);
     egui::ScrollArea::vertical().id_salt("image_window_body").max_height(height).auto_shrink([false, true]).show(ui, body);
 }
@@ -659,6 +664,8 @@ pub struct TraceDialog {
     paths_for: Option<String>,
     size_mm: (f64, f64),
     pub notice: Option<String>,
+    /// The user asked to trace several files with these settings instead [IMG-21].
+    pub more_files: bool,
 }
 
 impl TraceDialog {
@@ -676,6 +683,7 @@ impl TraceDialog {
             paths_for: None,
             size_mm: (img.width, img.height),
             notice: None,
+            more_files: false,
         })
     }
 
@@ -736,44 +744,12 @@ fn open_trace(app: &mut DarkBurn) -> Result<(), String> {
 }
 
 fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
-    let t = Tokens::get();
     let mut rule = 0.0;
     let row = ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(320.0);
-            let a = &mut d.args;
             ui_kit::section_heading(ui, "Trace");
-            let mut th = f64::from(a.threshold);
-            if numeric::row(ui, "Cutoff", &mut th, &Num::new(0.0..=255.0, 0, "").speed(0.5)).changed {
-                a.threshold = th.clamp(0.0, 255.0) as u8;
-            }
-            let mut lo = f64::from(a.lower_cutoff);
-            if numeric::row(ui, "Lower cutoff", &mut lo, &Num::new(0.0..=255.0, 0, "").speed(0.5)).changed {
-                a.lower_cutoff = lo.clamp(0.0, 255.0) as u8;
-            }
-            let mut ign = f64::from(a.ignore_smaller);
-            if numeric::row(ui, "Ignore less than", &mut ign, &Num::new(0.0..=10_000.0, 0, " px").speed(0.5)).changed {
-                a.ignore_smaller = ign.clamp(0.0, 10_000.0) as u32;
-            }
-            let mut sm = f64::from(a.smoothness);
-            if numeric::row(ui, "Smoothness", &mut sm, &Num::new(0.0..=2.0, 2, "").speed(0.01)).changed {
-                a.smoothness = sm as f32;
-            }
-            let mut op = f64::from(a.optimize);
-            if numeric::row(ui, "Optimize", &mut op, &Num::new(0.05..=20.0, 2, "").speed(0.02)).changed {
-                a.optimize = op as f32;
-            }
-            ui_kit::checkbox(ui, "Sketch trace (lines instead of outlines)", &mut a.sketch);
-            if a.sketch {
-                let mut r = f64::from(a.sketch_radius);
-                if numeric::row(ui, "Detail size", &mut r, &Num::new(0.5..=50.0, 1, " px").speed(0.1)).changed {
-                    a.sketch_radius = r as f32;
-                }
-                let mut s = f64::from(a.sketch_sensitivity);
-                if numeric::row(ui, "Sensitivity", &mut s, &Num::new(0.0..=1.0, 2, "").speed(0.01)).changed {
-                    a.sketch_sensitivity = s as f32;
-                }
-            }
+            trace_settings(ui, &mut d.args);
             ui_kit::section_heading(ui, "Area");
             ui_kit::checkbox(ui, "Trace only inside a rectangle", &mut d.clip_on);
             if d.clip_on {
@@ -789,77 +765,130 @@ fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
             ui_kit::checkbox(ui, "Show points", &mut d.args.show_points);
             ui_kit::checkbox(ui, "Delete image after tracing", &mut d.args.delete_image);
             ui_kit::caption(ui, "Cutoff", &format!("{} outlines, {} nodes", d.paths.len(), image_ops::node_count(&d.paths)));
+            if ui_kit::button(ui, "Trace several files...", ui_kit::Button::Small).clicked() {
+                d.more_files = true;
+            }
             if let Some(n) = &d.notice {
                 ui_kit::status_line(ui, n, ui_kit::StatusTone::Error);
             }
         });
         rule = column_gap(ui);
         ui.vertical(|ui| {
-            let side = 340.0f32;
-            let (w, h) = d.size_mm;
-            let aspect = (w / h.max(1e-9)) as f32;
-            let size = if aspect >= 1.0 { vec2(side, side / aspect) } else { vec2(side * aspect, side) };
-            let (r, _) = ui.allocate_exact_size(size, Sense::hover());
-            let p = ui.painter().with_clip_rect(r);
-            p.rect_filled(r, 0.0, Color32::WHITE);
-            if let Some(tex) = &d.base {
-                let fade = d.args.fade.clamp(0.0, 1.0);
-                p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE.gamma_multiply(1.0 - fade));
-            }
-            let to_screen = |pt: darkburn_core::kurbo::Point| {
-                pos2(r.left() + ((pt.x + w / 2.0) / w) as f32 * r.width(), r.top() + ((h / 2.0 - pt.y) / h) as f32 * r.height())
-            };
-            let ink = t.accent;
-            let mut points = 0;
-            for path in &d.paths {
-                let mut line: Vec<egui::Pos2> = Vec::new();
-                let flush = |line: &mut Vec<egui::Pos2>| {
-                    if line.len() > 1 {
-                        p.add(egui::Shape::line(std::mem::take(line), Stroke::new(1.5, ink)));
-                    }
-                    line.clear();
-                };
-                darkburn_core::kurbo::flatten(path.elements().iter().copied(), 0.05 * w.max(h) / 100.0, |el| match el {
-                    darkburn_core::kurbo::PathEl::MoveTo(pt) => {
-                        flush(&mut line);
-                        line.push(to_screen(pt));
-                    }
-                    darkburn_core::kurbo::PathEl::LineTo(pt) => line.push(to_screen(pt)),
-                    darkburn_core::kurbo::PathEl::ClosePath => {
-                        if let Some(first) = line.first().copied() {
-                            line.push(first);
-                        }
-                        flush(&mut line);
-                    }
-                    _ => {}
-                });
-                flush(&mut line);
-                if d.args.show_points {
-                    for el in path.elements() {
-                        let pt = match el {
-                            darkburn_core::kurbo::PathEl::MoveTo(pt) | darkburn_core::kurbo::PathEl::LineTo(pt) => *pt,
-                            darkburn_core::kurbo::PathEl::QuadTo(_, pt) | darkburn_core::kurbo::PathEl::CurveTo(_, _, pt) => *pt,
-                            darkburn_core::kurbo::PathEl::ClosePath => continue,
-                        };
-                        if points < 6000 {
-                            p.circle_filled(to_screen(pt), 2.0, t.warning);
-                            points += 1;
-                        }
-                    }
-                }
-            }
-            if d.clip_on {
-                let c = d.clip;
-                let cr = Rect::from_min_max(
-                    pos2(r.left() + (c[0] / 100.0) as f32 * r.width(), r.top() + (c[1] / 100.0) as f32 * r.height()),
-                    pos2(r.left() + (c[2] / 100.0) as f32 * r.width(), r.top() + (c[3] / 100.0) as f32 * r.height()),
-                );
-                p.rect_stroke(cr, 0.0, Stroke::new(1.0, t.warning), egui::StrokeKind::Middle);
-            }
-            ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
+            let clip = d.clip_on.then_some(d.clip);
+            trace_preview(ui, d.base.as_ref(), d.size_mm, &d.paths, (d.args.fade, d.args.show_points), clip);
         });
     });
     column_rule(ui, rule, row.response.rect);
+}
+
+/// The trace settings rows (cutoffs, speckle size, smoothing, sketch), shared with Trace
+/// Image Files.
+pub(crate) fn trace_settings(ui: &mut Ui, a: &mut TraceArgs) {
+    let mut th = f64::from(a.threshold);
+    if numeric::row(ui, "Cutoff", &mut th, &Num::new(0.0..=255.0, 0, "").speed(0.5)).changed {
+        a.threshold = th.clamp(0.0, 255.0) as u8;
+    }
+    let mut lo = f64::from(a.lower_cutoff);
+    if numeric::row(ui, "Lower cutoff", &mut lo, &Num::new(0.0..=255.0, 0, "").speed(0.5)).changed {
+        a.lower_cutoff = lo.clamp(0.0, 255.0) as u8;
+    }
+    let mut ign = f64::from(a.ignore_smaller);
+    if numeric::row(ui, "Ignore less than", &mut ign, &Num::new(0.0..=10_000.0, 0, " px").speed(0.5)).changed {
+        a.ignore_smaller = ign.clamp(0.0, 10_000.0) as u32;
+    }
+    let mut sm = f64::from(a.smoothness);
+    if numeric::row(ui, "Smoothness", &mut sm, &Num::new(0.0..=2.0, 2, "").speed(0.01)).changed {
+        a.smoothness = sm as f32;
+    }
+    let mut op = f64::from(a.optimize);
+    if numeric::row(ui, "Optimize", &mut op, &Num::new(0.05..=20.0, 2, "").speed(0.02)).changed {
+        a.optimize = op as f32;
+    }
+    ui_kit::checkbox(ui, "Sketch trace (lines instead of outlines)", &mut a.sketch);
+    if a.sketch {
+        let mut r = f64::from(a.sketch_radius);
+        if numeric::row(ui, "Detail size", &mut r, &Num::new(0.5..=50.0, 1, " px").speed(0.1)).changed {
+            a.sketch_radius = r as f32;
+        }
+        let mut s = f64::from(a.sketch_sensitivity);
+        if numeric::row(ui, "Sensitivity", &mut s, &Num::new(0.0..=1.0, 2, "").speed(0.01)).changed {
+            a.sketch_sensitivity = s as f32;
+        }
+    }
+}
+
+/// The trace preview: the picture (`base`, faded by `fade`) with `paths` over it, in the
+/// picture's own millimetres (centred, Y up) of `size_mm`; `clip` is a rectangle in percent.
+pub(crate) fn trace_preview(
+    ui: &mut Ui,
+    base: Option<&TextureHandle>,
+    size_mm: (f64, f64),
+    paths: &[darkburn_core::kurbo::BezPath],
+    (fade, show_points): (f32, bool),
+    clip: Option<[f64; 4]>,
+) {
+    let t = Tokens::get();
+    let side = 340.0f32;
+    let (w, h) = size_mm;
+    let aspect = (w / h.max(1e-9)) as f32;
+    let size = if aspect >= 1.0 { vec2(side, side / aspect) } else { vec2(side * aspect, side) };
+    let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+    let p = ui.painter().with_clip_rect(r);
+    p.rect_filled(r, 0.0, Color32::WHITE);
+    if let Some(tex) = base {
+        let fade = fade.clamp(0.0, 1.0);
+        p.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE.gamma_multiply(1.0 - fade));
+    }
+    let to_screen = |pt: darkburn_core::kurbo::Point| {
+        pos2(r.left() + ((pt.x + w / 2.0) / w) as f32 * r.width(), r.top() + ((h / 2.0 - pt.y) / h) as f32 * r.height())
+    };
+    let ink = t.accent;
+    let mut points = 0;
+    for path in paths {
+        let mut line: Vec<egui::Pos2> = Vec::new();
+        let flush = |line: &mut Vec<egui::Pos2>| {
+            if line.len() > 1 {
+                p.add(egui::Shape::line(std::mem::take(line), Stroke::new(1.5, ink)));
+            }
+            line.clear();
+        };
+        darkburn_core::kurbo::flatten(path.elements().iter().copied(), 0.05 * w.max(h) / 100.0, |el| match el {
+            darkburn_core::kurbo::PathEl::MoveTo(pt) => {
+                flush(&mut line);
+                line.push(to_screen(pt));
+            }
+            darkburn_core::kurbo::PathEl::LineTo(pt) => line.push(to_screen(pt)),
+            darkburn_core::kurbo::PathEl::ClosePath => {
+                if let Some(first) = line.first().copied() {
+                    line.push(first);
+                }
+                flush(&mut line);
+            }
+            _ => {}
+        });
+        flush(&mut line);
+        if show_points {
+            for el in path.elements() {
+                let pt = match el {
+                    darkburn_core::kurbo::PathEl::MoveTo(pt) | darkburn_core::kurbo::PathEl::LineTo(pt) => *pt,
+                    darkburn_core::kurbo::PathEl::QuadTo(_, pt) | darkburn_core::kurbo::PathEl::CurveTo(_, _, pt) => *pt,
+                    darkburn_core::kurbo::PathEl::ClosePath => continue,
+                };
+                if points < 6000 {
+                    p.circle_filled(to_screen(pt), 2.0, t.warning);
+                    points += 1;
+                }
+            }
+        }
+    }
+    if let Some(c) = clip {
+        let cr = Rect::from_min_max(
+            pos2(r.left() + (c[0] / 100.0) as f32 * r.width(), r.top() + (c[1] / 100.0) as f32 * r.height()),
+            pos2(r.left() + (c[2] / 100.0) as f32 * r.width(), r.top() + (c[3] / 100.0) as f32 * r.height()),
+        );
+        p.rect_stroke(cr, 0.0, Stroke::new(1.0, t.warning), egui::StrokeKind::Middle);
+    }
+    ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
 }
 
 // ----- Convert to Bitmap window -----
@@ -980,9 +1009,20 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                 }
             }
             (true, _) | (_, ui_kit::Action::Cancel) => {}
+            _ if d.more_files => {
+                // The same settings, for files picked now; this window gives way to that one.
+                let mut args = d.effective();
+                args.clip = None;
+                if let Err(e) = crate::multi_trace::open(app, args) {
+                    d.more_files = false;
+                    d.notice = Some(e);
+                    app.images.trace = Some(d);
+                }
+            }
             _ => app.images.trace = Some(d),
         }
     }
+    crate::multi_trace::dialog(ctx, app);
     if let Some(mut d) = app.images.convert.take() {
         let mut edited = false;
         let (closed, action) = ui_kit::Window::new(Id::unique("db_convert_bitmap"), "db_app", "Convert to Bitmap")

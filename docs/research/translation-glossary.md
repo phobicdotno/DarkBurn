@@ -294,6 +294,11 @@ pulsar, añadir, en directo.
 - Theme: tema. Art library: Biblioteca de gráficos. Move (panel): Mover. Cut shapes: Dividir formas.
 - Feeder: alimentador. Camera control: Control de cámara. Serial ports: Puertos serie.
 - Cut table columns: Capa, Modo, Vel/Pot, Salida, Vis, Aire.
+- Width / Height: Ancho / Alto, also in "Igualar ancho" and "Igualar alto". The machine's height
+  follower is a part name of its own: seguidor de altura.
+- Reset: Restablecer. Backup (a saved copy of a file): copia de seguridad. Backup path (the
+  outline an image keeps after a crop): trazado de respaldo.
+- Start (the laser panel button, not translated yet): «Start», as in "Ignorar «Start» …".
 
 ## Spanish, Latin America (es-LA)
 
@@ -305,9 +310,9 @@ Everything not listed here is as in es-ES.
 - Edit (menu and ribbon group): Editar. Modify (ribbon tab): Modificar.
 - Computer: computadora. Laptop: laptop. Mouse: mouse. Press: presionar. Add: agregar.
 - Live: en vivo. Thickness: espesor. Icons: Íconos. Serial ports: Puertos seriales.
-- Same width: Igualar ancho. Paste in place: Pegar en el lugar. Autosave: Guardado automático.
+- Backup (a saved copy of a file): respaldo, as in the backup path. Paste in place: Pegar en el lugar. Autosave: Guardado automático.
 - Rotate 90°: Girar 90° a la izquierda / derecha. Clear selection: Quitar selección.
-- Take the key (hotkeys): Tomar la tecla.
+- Take the key (hotkeys): Tomar la tecla. Start (laser panel button): “Start”.
 
 ## Portuguese, Brazil (pt)
 
@@ -339,3 +344,6 @@ infinitive. Key names stay as in English. Quotes “like this”.
 - Feeder: alimentador. Camera control: Controle da câmera. Serial ports: Portas seriais.
 - Computer: computador. Laptop: notebook. Screen: tela.
 - Cut table columns: Camada, Modo, Vel/Pot, Saída, Vis, Ar.
+- Width / Height: Largura / Altura. Reset: Restaurar. Backup: backup, also in the image's
+  "caminho de backup".
+- Start (the laser panel button, not translated yet): “Start”.

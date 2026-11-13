@@ -1343,6 +1343,13 @@ pub const COMMANDS: &[Cmd] = &[
         "Use a Picture File as the Camera Image",
         r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
     ),
+    a("camera.find", "Find Cameras", ""),
+    a(
+        "camera.start",
+        "Start the Live Camera",
+        r#"{"type":"object","properties":{"index":{"type":"integer","minimum":0,"description":"camera number from camera.find; default the chosen camera"}}}"#,
+    ),
+    a("camera.stop", "Stop the Live Camera", ""),
     a("camera.update_overlay", "Update the Camera Overlay", ""),
     a(
         "camera.trace",
@@ -1469,9 +1476,15 @@ pub fn handles(id: &str) -> bool {
     ) || COMMANDS.iter().any(|c| c.id == id)
 }
 
-/// These move nothing and send nothing, so the `laser.` prefix rule does not apply.
+/// The commands that open, list or close a camera: they talk to a USB device, so an agent must
+/// be allowed hardware to run them.
+pub fn hardware(id: &str) -> bool {
+    matches!(id, "camera.find" | "camera.start" | "camera.stop")
+}
+
+/// The others move nothing and send nothing, so the `laser.` prefix rule does not apply.
 pub fn not_hardware(id: &str) -> bool {
-    handles(id)
+    handles(id) && !hardware(id)
 }
 
 pub fn works(id: &str) -> bool {
@@ -1500,6 +1513,9 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "laser.feeder" | "test.feeder" => &["OTHER-04"],
         "laser.capture" | "camera.update_overlay" | "camera.load_frame" => &["CAMP-02", "CAMP-03", "CAM-06"],
         "camera.trace" => &["CAMP-04"],
+        "camera.find" => &["CAMP-01", "CAM-01", "SET-37"],
+        "camera.start" => &["CAMP-01", "CAMP-02", "CAM-01", "SET-37"],
+        "camera.stop" => &["CAMP-02"],
         "camera.save_settings" => &["CAMP-05", "CAM-09"],
         "camera.set" | "camera.get" => &["CAMP-06", "CAMP-07", "CAM-01", "CAM-02", "CAM-08", "CAM-09"],
         "camera.export_settings" | "camera.import_settings" => &["CAM-07"],
@@ -1546,6 +1562,9 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
         "pnc.wizard" | "laser.pnc_wizard" => wizard_cmd(app, a),
         "camera.get" => Ok(camera_json(app)),
         "camera.set" => camera_set(app, a),
+        "camera.find" => crate::camera_devices::find(app),
+        "camera.start" => crate::camera_devices::start(app, a),
+        "camera.stop" => Ok(crate::camera_devices::stop(app)),
         "camera.load_frame" => path_arg(a).and_then(|p| load_frame_file(app, &p)).map(|(w, h)| json!({ "width_px": w, "height_px": h })),
         "camera.update_overlay" | "laser.capture" => update_overlay(app),
         "camera.trace" => trace_overlay(app, a),

@@ -1236,42 +1236,19 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 // ----- The Camera Control panel ----------------------------------------------------------------
 
-#[cfg(feature = "live-camera")]
+// Find, Start and Stop go through the command registry, where they are marked as hardware, and
+// the registry goes through camera_devices.rs: nothing here opens a camera itself.
+
 fn find_cameras(app: &mut DarkBurn) {
-    match darkburn_vision::capture::live::list_cameras() {
-        Ok(v) => {
-            app.vision.message = if v.is_empty() { Some("No camera found.".into()) } else { None };
-            app.vision.cameras = v;
-        }
-        Err(e) => app.vision.message = Some(e.to_string()),
-    }
+    let _ = crate::api::execute_headless(app, "camera.find", &json!({}));
 }
 
-#[cfg(not(feature = "live-camera"))]
-fn find_cameras(app: &mut DarkBurn) {
-    app.vision.message = Some("This build was made without live camera support. You can still use picture files.".into());
-}
-
-#[cfg(feature = "live-camera")]
 fn start_live(app: &mut DarkBurn, index: u32) {
-    match darkburn_vision::capture::live::LiveCamera::open(index) {
-        Ok(cam) => {
-            app.vision.source = Some(Box::new(cam));
-            app.vision.live = true;
-            app.vision.message = None;
-        }
-        Err(e) => app.vision.message = Some(e.to_string()),
-    }
-}
-
-#[cfg(not(feature = "live-camera"))]
-fn start_live(app: &mut DarkBurn, _index: u32) {
-    app.vision.message = Some("This build was made without live camera support.".into());
+    let _ = crate::api::execute_headless(app, "camera.start", &json!({ "index": index }));
 }
 
 fn stop_live(app: &mut DarkBurn) {
-    app.vision.live = false;
-    app.vision.source = None;
+    let _ = crate::api::execute_headless(app, "camera.stop", &json!({}));
 }
 
 /// The Camera Control panel [CAMP-01 to CAMP-07, CAM-01 to CAM-09].
@@ -1285,14 +1262,15 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     // Source
     ui_kit::section_heading(ui, "Camera");
     let mut allowed = app.vision.prefs.live_enabled;
-    if vc::live_built() && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
+    let possible = crate::camera_devices::available(app);
+    if possible && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
         app.vision.prefs.live_enabled = allowed;
         if !allowed {
             stop_live(app);
         }
         let _ = vc::save_prefs(app);
     }
-    if allowed && vc::live_built() {
+    if allowed && possible {
         let names: Vec<String> = app.vision.cameras.iter().map(|(_, n)| n.clone()).collect();
         let mut names_ref: Vec<&str> = vec!["No camera"];
         names_ref.extend(names.iter().map(String::as_str));
@@ -1320,7 +1298,7 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             }
         });
-    } else if !vc::live_built() {
+    } else if !possible {
         ui.label(RichText::new("No live camera in this build. Use a picture file.").size(t.font_small).color(t.text_dim));
     }
     ui.horizontal_wrapped(|ui| {
@@ -1339,8 +1317,12 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
     // Viewfinder
     if let Some(raw) = app.vision.raw.as_ref() {
-        let key = app.vision.frame_gen;
-        let id = upload(&ctx, &mut app.vision.ui.tex_raw, key, "vision_raw", raw);
+        let colour = app.prefs.opts.capture_colour;
+        let key = (app.vision.frame_gen << 1) | u64::from(colour);
+        // Turned black and white only when a new picture is uploaded, not on every frame.
+        let stale = app.vision.ui.tex_raw.as_ref().is_none_or(|(_, k)| *k != key);
+        let shown = if stale { crate::camera_devices::viewfinder(raw, colour) } else { std::borrow::Cow::Borrowed(raw) };
+        let id = upload(&ctx, &mut app.vision.ui.tex_raw, key, "vision_raw", &shown);
         let w = ui.available_width().min(300.0);
         let h = w * raw.height() as f32 / raw.width().max(1) as f32;
         ui.add(egui::Image::new(egui::load::SizedTexture::new(id, vec2(w, h))));

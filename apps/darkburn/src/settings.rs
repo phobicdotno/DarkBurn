@@ -121,6 +121,11 @@ pub const CHOICES: &[&str] = &[
     "mm/min",
     "Automatic",
     "Default camera",
+    "Default for this computer",
+    "Media Foundation (Windows)",
+    "Video4Linux (Linux)",
+    "AVFoundation (macOS)",
+    "Simulated camera",
 ];
 
 fn choice(label: &str) -> String {
@@ -429,9 +434,13 @@ fn devices(ui: &mut Ui, prefs: &mut Prefs) {
     ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.capture", "Camera capture"));
     ui_kit::row(ui, &tr("settings.capture_system", "Capture system"), |ui| {
-        let mut v = prefs.opts.capture_system.clone();
-        if ui_kit::field(ui, &mut v) {
-            prefs.opts.capture_system = v;
+        // The capture system camera_devices.rs opens cameras through [SET-37].
+        use darkburn_vision::capture::CaptureSystem;
+        let before = CaptureSystem::from_key(&prefs.opts.capture_system);
+        let mut v = before;
+        pick_enum(ui, "capture_system", &mut v, &CaptureSystem::ALL, CaptureSystem::label);
+        if v != before {
+            prefs.opts.capture_system = v.key().to_string();
         }
     });
     ui_kit::row(ui, &tr("settings.capture_width", "Width"), |ui| {

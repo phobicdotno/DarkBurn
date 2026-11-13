@@ -9,6 +9,9 @@ mod arrange_hunt_tests;
 #[cfg(test)]
 mod arrange_origin_tests;
 mod art_library;
+mod camera_devices;
+#[cfg(test)]
+mod camera_devices_tests;
 mod canvas;
 mod canvas_input;
 #[cfg(test)]

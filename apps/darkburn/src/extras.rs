@@ -346,14 +346,22 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         }
     }
     if app.extras.hotkeys.open {
-        capture_key(ctx, app);
+        let mut drawn = false;
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_hotkeys"), "settings", &tr("hotkeys.title", "Edit Hotkeys"))
             .dockable("db_hotkeys")
             .fields()
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {
+                drawn = true;
+                // The key comes from the window the page is in: a window of its own has keys of
+                // its own. Taken before the footer's, so Escape ends the wait, not the window.
+                capture_key(ui.ctx(), app);
                 hotkey_page(ui, app);
             });
+        if !drawn {
+            // A tab behind another one: a wait nobody can see would take the next key pressed.
+            app.extras.hotkeys.capturing = None;
+        }
         if closed || action != ui_kit::Action::None {
             app.extras.hotkeys.open = false;
             app.extras.hotkeys.capturing = None;
@@ -365,7 +373,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     }
 }
 
-/// While a command waits for a key: take the next key press.
+/// While a command waits for a key: take the next key press in the window `ctx` draws now.
 fn capture_key(ctx: &Context, app: &mut DarkBurn) {
     let Some(cmd) = app.extras.hotkeys.capturing.clone() else { return };
     let pressed = ctx.input_mut(|i| {
@@ -576,6 +584,58 @@ mod tests {
         let list = execute_headless(&mut app, "hotkeys.list", &json!({})).unwrap();
         assert_eq!(list["conflicts"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Edit Hotkeys in a window of its own takes the key pressed there, and not one pressed in
+    /// the main window. The key was read from the main window only, so F7 pressed in the
+    /// hotkey window was never taken and Delete pressed over the drawing was.
+    #[test]
+    fn edit_hotkeys_in_a_window_of_its_own_takes_the_key_pressed_there() {
+        use darkburn_ui::ui_kit::window_host;
+        use egui::{Context, Event, Key, Modifiers, Pos2, RawInput, Rect, vec2};
+        let own = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Event>::new()));
+        let events = own.clone();
+        // Native windows as a desktop backend runs them: each in a pass of its own, with keys of its own.
+        Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let input = RawInput {
+                viewport_id: viewport.ids.this,
+                viewports: std::iter::once((viewport.ids.this, info)).collect(),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(700.0, 600.0))),
+                events: std::mem::take(&mut *events.borrow_mut()),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+            out.textures_delta.clear();
+        });
+        let ctx = Context::default();
+        darkburn_ui::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        window_host::update(&ctx, "db_hotkeys", |p| p.detach());
+        let mut app = app();
+        app.extras.hotkeys.open = true;
+        let frame = |app: &mut DarkBurn, main: Vec<Event>, window: Vec<Event>| {
+            *own.borrow_mut() = window;
+            let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events: main, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| dialogs(ui.ctx(), app));
+            out.textures_delta.clear();
+        };
+        let tap =
+            |key| [true, false].map(|pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE }).to_vec();
+        frame(&mut app, vec![], vec![]);
+        let cmd = "tools.rect";
+        app.extras.hotkeys.capturing = Some(cmd.into());
+        frame(&mut app, tap(Key::Delete), vec![]);
+        assert_eq!(app.extras.hotkeys.capturing.as_deref(), Some(cmd), "a key pressed in the main window is not taken");
+        frame(&mut app, vec![], tap(Key::F7));
+        assert_eq!(app.extras.hotkeys.capturing, None);
+        assert_eq!(keymap::effective(&app.prefs.hotkeys)[cmd], "F7");
+        assert!(app.extras.hotkeys.open);
+        // Escape in the window ends a wait, not the window.
+        app.extras.hotkeys.capturing = Some(cmd.into());
+        frame(&mut app, vec![], tap(Key::Escape));
+        frame(&mut app, vec![], vec![]);
+        assert_eq!((app.extras.hotkeys.capturing.as_deref(), app.extras.hotkeys.open), (None, true));
     }
 
     #[test]

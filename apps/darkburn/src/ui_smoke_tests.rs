@@ -709,6 +709,33 @@ fn a_settings_window_docks_floats_resizes_and_detaches() {
     assert_eq!(placement(&g), Placement::Detached);
 }
 
+/// Edit Hotkeys as a tab, waiting for a key, and another tab clicked in front of it: the wait
+/// ends. It went on unseen and took the next key pressed anywhere.
+#[test]
+fn a_hidden_hotkey_tab_stops_waiting_for_a_key() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("db_hotkeys".into(), place);
+    g.app().extras.hotkeys.open = true;
+    g.frames(3);
+    g.click_id("panel:tab:window:db_hotkeys");
+    g.app().extras.hotkeys.capturing = Some("tools.rect".into());
+    g.frames(2);
+    assert!(g.app().extras.hotkeys.capturing.is_some(), "in front, it waits");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    let other = g
+        .rects("panel:tab:")
+        .into_iter()
+        .find(|(name, r)| name != "panel:tab:window:db_hotkeys" && area.contains(r.center()))
+        .unwrap_or_else(|| panic!("another tab in the area: {:?}", g.rects("panel:tab:")));
+    g.click_pos(other.1.center());
+    g.frames(2);
+    assert_eq!(g.app().extras.hotkeys.capturing, None, "behind {}, it waits no more", other.0);
+    assert!(g.app().extras.hotkeys.open, "the window is still open");
+}
+
 #[test]
 fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
     use darkburn_ui::ui_kit::window_host::WindowPlace;

@@ -99,6 +99,8 @@ mod monkey_tests;
 mod motion_read;
 #[cfg(target_os = "windows")]
 mod native_frame;
+mod nest_cmds;
+mod nest_ui;
 mod node_tool;
 mod numeric;
 mod numeric_edits;

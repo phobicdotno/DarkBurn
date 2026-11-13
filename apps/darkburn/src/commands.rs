@@ -148,6 +148,8 @@ pub const COMMANDS: &[Cmd] = &[
     c("arrange.same_height", "Make Same Height", "", "db_same_height"),
     c("arrange.move_selection", "Move Selection", "", "move"),
     c("arrange.nest", "Nest Selected", "", ""),
+    c("arrange.quick_nest", "Quick Nest", "", ""),
+    c("arrange.true_nest", "True Nest", "", ""),
     c("arrange.dock_left", "Dock Left", "", "db_dock_left"),
     c("arrange.dock_right", "Dock Right", "", "db_dock_right"),
     c("arrange.dock_up", "Dock Up", "", "db_dock_up"),
@@ -582,6 +584,7 @@ pub fn works(id: &str) -> bool {
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
+        || crate::nest_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -777,6 +780,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_page" => &["WIN-03"],
         _ if crate::machine_ui::handles(id) => crate::machine_ui::checklist(id),
         _ if crate::misc_cmds::works(id) => crate::misc_cmds::checklist(id),
+        _ if crate::nest_cmds::works(id) => crate::nest_cmds::checklist(id),
         "help.about" => &["HELP-01"],
         "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
         "help.docs" => &["HELP-03"],
@@ -833,7 +837,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
-                && let Some(args) = crate::shape_ops::args_schema(c.id)
+                && let Some(args) = crate::shape_ops::args_schema(c.id).or_else(|| crate::nest_cmds::args_schema(c.id))
             {
                 c.args = args;
             }
@@ -1121,6 +1125,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             ),
             S,
             C("arrange.nest"),
+            C("arrange.quick_nest"),
+            C("arrange.true_nest"),
             Sub("Dock", &[C("arrange.dock_left"), C("arrange.dock_right"), C("arrange.dock_up"), C("arrange.dock_down")]),
             Sub(
                 "Move Selected Objects",

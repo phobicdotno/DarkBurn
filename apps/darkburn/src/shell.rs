@@ -84,6 +84,8 @@ pub struct DarkBurn {
     pub images: crate::image_ui::ImageUi,
     /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
     pub shape_ui: crate::shape_ui::ShapeUi,
+    /// The Quick Nest and True Nest dialog (nest_ui.rs).
+    pub nest_ui: crate::nest_ui::NestUi,
     /// Opening, importing and exporting other file types (file_io.rs).
     pub fio: crate::file_io::FileIo,
     /// The text tool, text dialogs and the Variable Text panel (text_ui.rs).
@@ -127,6 +129,7 @@ impl DarkBurn {
             job: Default::default(),
             images: Default::default(),
             shape_ui: Default::default(),
+            nest_ui: Default::default(),
             fio: Default::default(),
             text: Default::default(),
             vision: Default::default(),
@@ -169,6 +172,7 @@ impl DarkBurn {
             | "edit.select_contained"
             | "arrange.ungroup" => sel > 0,
             "arrange.group" | "arrange.same_width" | "arrange.same_height" => sel > 1,
+            "arrange.quick_nest" | "arrange.true_nest" => sel > 0,
             "edit.paste" | "edit.paste_in_place" => true,
             _ if crate::image_ui::handles(id) => crate::image_ui::can_run(self, id),
             _ if id.starts_with("arrange.align_") || id.starts_with("arrange.distribute_") || id.starts_with("arrange.move_") => sel > 1,
@@ -216,6 +220,7 @@ impl DarkBurn {
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
             || crate::misc_cmds::run(self, ctx, id)
+            || crate::nest_ui::run(self, ctx, id)
             || crate::layer_defaults::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
@@ -369,6 +374,7 @@ impl DarkBurn {
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
+        crate::nest_ui::show(ui.ctx(), self);
         crate::text_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
         crate::vision_ui::frame(ui.ctx(), self);

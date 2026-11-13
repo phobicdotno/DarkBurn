@@ -192,8 +192,8 @@ fn analyse(pieces: &[Piece], allow_holes: bool, b: &mut Budget) -> Option<(Vec<b
         if hole[i] {
             continue;
         }
-        for j in 0..n {
-            if !hole[j] && inside(pieces, i, j, b)? {
+        for j in (0..n).filter(|&j| !hole[j]) {
+            if inside(pieces, i, j, b)? {
                 covered[i] = true;
                 break;
             }

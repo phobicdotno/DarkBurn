@@ -101,6 +101,11 @@ pub fn table_custom<R>(ui: &mut Ui, id: &str, columns: &[Column<'_>], empty: &st
     output.inner
 }
 
+/// A column's width basis, bounded so huge weights cannot sum to infinity and lay out at NaN.
+fn column_weight(column: &Column<'_>) -> f32 {
+    dimension(column.width).min(1.0e6)
+}
+
 /// The narrowest a user can drag a column.
 const MANUAL_MIN_WIDTH: f32 = 24.0;
 
@@ -117,24 +122,24 @@ fn column_widths(ui: &Ui, columns: &[Column<'_>], available: f32) -> Vec<f32> {
             } else if c.flexible || c.icon_only {
                 c.min_content_width.max(t.control_height)
             } else {
-                (header_column(ui, c.label) * dimension(c.width)).max(label_width(ui, c.label)).max(c.min_content_width)
+                (header_column(ui, c.label) * column_weight(c)).max(label_width(ui, c.label)).max(c.min_content_width)
             }
         })
         .collect();
     let fixed: f32 = columns.iter().zip(&widths).filter(|(c, _)| !c.shares()).map(|(_, w)| *w).sum();
     let mut remaining = (available - fixed - t.space_8 * (columns.len().saturating_sub(1) + 2) as f32).max(0.0);
-    let mut sharing: Vec<_> = columns.iter().map(|c| c.shares() && dimension(c.width) > 0.0).collect();
+    let mut sharing: Vec<_> = columns.iter().map(|c| c.shares() && column_weight(c) > 0.0).collect();
     // Freeze columns at their control minimum before sharing the remaining width. The bounded
     // passes also keep a hostile design with many columns from creating an unbounded loop.
     for _ in 0..columns.len().min(64) {
-        let weight: f32 = columns.iter().zip(&sharing).filter(|(_, share)| **share).map(|(c, _)| dimension(c.width)).sum();
+        let weight: f32 = columns.iter().zip(&sharing).filter(|(_, share)| **share).map(|(c, _)| column_weight(c)).sum();
         if weight <= 0.0 {
             break;
         }
         let available = remaining;
         let mut frozen = false;
         for ((column, width), share) in columns.iter().zip(&mut widths).zip(&mut sharing) {
-            if *share && *width > available * dimension(column.width) / weight {
+            if *share && *width > available * column_weight(column) / weight {
                 *share = false;
                 remaining = (remaining - *width).max(0.0);
                 frozen = true;
@@ -143,7 +148,7 @@ fn column_widths(ui: &Ui, columns: &[Column<'_>], available: f32) -> Vec<f32> {
         if !frozen {
             for ((column, width), share) in columns.iter().zip(&mut widths).zip(&sharing) {
                 if *share {
-                    *width = remaining * dimension(column.width) / weight;
+                    *width = remaining * column_weight(column) / weight;
                 }
             }
             break;

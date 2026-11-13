@@ -43,3 +43,24 @@ fn dragging_a_column_in_a_narrow_table_keeps_a_wider_tables_widths() {
     assert!(stored.first().copied().flatten().is_some(), "the test drags the first divider: {stored:?}");
     assert_eq!(stored.get(3).copied().flatten(), Some(120.0), "the wider table's fourth column: {stored:?}");
 }
+
+/// Huge column weights (a hostile design) still lay the table out at finite widths.
+#[test]
+fn huge_flexible_column_weights_keep_finite_widths() {
+    let ctx = egui::Context::default();
+    let cells = std::cell::RefCell::new(Vec::new());
+    let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), ..Default::default() };
+    let mut out = ctx.run_ui(input, |ui| {
+        let columns = [Column::new("a", f32::MAX).flex(), Column::new("b", f32::MAX).flex()];
+        table_custom(ui, "hunt10b_huge", &columns, "", |ui, table| {
+            table.headers(ui, |ui, _| {
+                cells.borrow_mut().push(ui.max_rect());
+                false
+            });
+        });
+    });
+    out.textures_delta.clear();
+    let cells = cells.into_inner();
+    assert_eq!(cells.len(), 2);
+    assert!(cells.iter().all(|cell| cell.is_finite()), "{cells:?}");
+}

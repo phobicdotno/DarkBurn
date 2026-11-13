@@ -16,7 +16,7 @@
 //!
 //! [`Board`] wraps a reader with packet checks and status replies, like the real board.
 
-use crate::packet::{PACKET_LEN, PAYLOAD_LEN, Status, crc8};
+use crate::packet::{CH341_EPP_WRITE, PACKET_LEN, PAYLOAD_LEN, Status, WIRE_LEN, crc8};
 use crate::speed::{self, Board as BoardModel, RasterStep};
 
 /// One move read back from EGV, in mils from where the reader started.
@@ -451,12 +451,17 @@ impl Board {
         Board { reader: EgvReader::new(model), accepted: 0, rejected: 0, corrupt_next: 0, payloads: Vec::new(), last: Status::OK }
     }
 
-    /// Takes one 32-byte packet (`0x00`, payload, CRC) or its 33-byte wire form (`0xA6` first).
+    /// Takes one 32-byte packet (`0x00`, payload, CRC) or its exact 34-byte wire form
+    /// (`A6 00 <30 bytes> A6 <crc>`). Anything else, a 33-byte write with one command byte
+    /// among it, is rejected like a damaged packet.
     /// Returns the status the board would report after it.
     pub fn receive(&mut self, bytes: &[u8]) -> Status {
-        let bytes = match bytes.len() {
-            n if n == PACKET_LEN + 1 && bytes[0] == crate::packet::CH341_EPP_WRITE => &bytes[1..],
-            _ => bytes,
+        let unwrapped: Vec<u8>;
+        let bytes = if bytes.len() == WIRE_LEN && bytes[0] == CH341_EPP_WRITE && bytes[32] == CH341_EPP_WRITE {
+            unwrapped = bytes[1..32].iter().chain(&bytes[33..]).copied().collect();
+            &unwrapped[..]
+        } else {
+            bytes
         };
         let ok = bytes.len() == PACKET_LEN && bytes[0] == 0 && crc8(&bytes[1..31]) == bytes[31];
         if !ok || self.corrupt_next > 0 {
@@ -568,6 +573,24 @@ mod tests {
         let p = frames(b"IBzS1P\n").frames[0].packet.unwrap();
         assert_eq!(board.receive(&p.to_wire()), Status::Ok);
         assert_eq!(board.reader.position(), (255, 0));
+    }
+
+    #[test]
+    fn board_rejects_a_wire_form_with_one_command_byte() {
+        let mut board = Board::new(BoardModel::M2);
+        let p = frames(b"IBzS1P\n").frames[0].packet.unwrap();
+        // `A6 00 <30> <crc>`: the CH341 would read the CRC as a new command byte.
+        let mut short = vec![CH341_EPP_WRITE];
+        short.extend_from_slice(&p.to_bytes());
+        assert_eq!(short.len(), 33);
+        assert_eq!(board.receive(&short), Status::Error);
+        // A 34-byte write without the second command byte in its place.
+        let mut wire = p.to_wire();
+        wire[32] = 0;
+        assert_eq!(board.receive(&wire), Status::Error);
+        assert_eq!(board.accepted, 0);
+        assert_eq!(board.rejected, 2);
+        assert_eq!(board.reader.position(), (0, 0));
     }
 
     #[test]

@@ -1,8 +1,9 @@
 //! Sending EGV to a board: the [`Transport`] trait, an in-memory link and the send loop.
 //!
 //! There is no real USB transport in this crate. The stock boards sit behind a CH341 chip
-//! (USB `1a86:5512`) in EPP mode: 33-byte writes on bulk endpoint `0x02` (`0xA6` and a
-//! 32-byte packet), status read with a vendor control request. Adding one needs the owner's
+//! (USB `1a86:5512`) in EPP mode: 34-byte writes on bulk endpoint `0x02` (the 32-byte packet
+//! with an `0xA6` command byte in front of each 31 bytes: `A6 00 <30 bytes> A6 <crc>`), status
+//! read with a vendor control request. Adding one needs the owner's
 //! approval and a test on a real machine first; until then every sender here talks to the
 //! in-memory board in [`crate::emulator`].
 //!
@@ -47,7 +48,7 @@ impl std::error::Error for TransportError {}
 pub trait Transport: Send {
     /// A short name for logs.
     fn name(&self) -> String;
-    /// Writes one packet in its wire form (`0xA6`, `0x00`, 30 bytes, CRC).
+    /// Writes one packet in its wire form (`0xA6`, `0x00`, 30 bytes, `0xA6`, CRC).
     fn write_packet(&mut self, wire: &[u8; WIRE_LEN]) -> Result<(), TransportError>;
     /// Reads the 6-byte status; byte 1 is the status.
     fn read_status(&mut self) -> Result<[u8; 6], TransportError>;

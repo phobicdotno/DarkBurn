@@ -3,8 +3,9 @@
 //! EGV text is sent in packets of 30 payload bytes. A packet ends early at a line end (`\n`);
 //! a short packet is padded with `F` (which the board reads as "nothing more"). Each packet is
 //! sent as `0x00`, the 30 bytes and a CRC-8 (Dallas / Maxim one-wire CRC of the 30 bytes). The
-//! CH341 in EPP mode puts its write command byte `0xA6` in front of every 32 bytes, so on the
-//! wire a packet is 33 bytes: `A6 00 <30 bytes> <crc>`.
+//! CH341 in EPP mode takes at most 31 data bytes after its write command byte `0xA6`, so the
+//! 32-byte packet needs the command byte twice and is 34 bytes on the wire:
+//! `A6 00 <30 bytes> A6 <crc>` (see [`ch341_epp_write`]).
 //!
 //! A few characters just before a line end are not sent; they tell the sender what to do after
 //! the packet ("meta" characters):
@@ -32,10 +33,28 @@
 pub const PAYLOAD_LEN: usize = 30;
 /// Bytes of one packet as handed to the CH341: `0x00`, payload, CRC.
 pub const PACKET_LEN: usize = 32;
-/// The CH341 EPP write command byte put in front of every 32 bytes.
+/// The CH341 EPP write command byte put in front of every 31 data bytes.
 pub const CH341_EPP_WRITE: u8 = 0xA6;
-/// Bytes of one packet on the USB wire (command byte included).
-pub const WIRE_LEN: usize = 33;
+/// Data bytes the CH341 takes after one EPP write command byte.
+pub const CH341_EPP_CHUNK: usize = 31;
+/// Bytes of one packet on the USB wire: two command bytes and the 32-byte packet.
+pub const WIRE_LEN: usize = 34;
+
+/// The bytes the CH341 needs on its bulk endpoint for an EPP data write of `data`: a `0xA6`
+/// command byte in front of every 31 data bytes, so that every 32-byte USB packet starts with
+/// a command byte.
+///
+/// For the 32-byte packets the board takes this is what MeerK40t's `CH341EppWrite` sends
+/// (`A6`, 31 bytes, `A6`, 1 byte). Its insertion loop only does so up to 62 bytes; longer
+/// writes are never sent to a Lihuiyu board.
+pub fn ch341_epp_write(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + data.len().div_ceil(CH341_EPP_CHUNK));
+    for chunk in data.chunks(CH341_EPP_CHUNK) {
+        out.push(CH341_EPP_WRITE);
+        out.extend_from_slice(chunk);
+    }
+    out
+}
 
 /// Dallas / Maxim one-wire CRC-8 (reflected polynomial 0x8C, start 0).
 pub fn crc8(data: &[u8]) -> u8 {
@@ -89,11 +108,10 @@ impl Packet {
         out
     }
 
-    /// The 33 bytes on the USB wire.
+    /// The 34 bytes on the USB wire: `A6 00 <30 bytes> A6 <crc>`.
     pub fn to_wire(&self) -> [u8; WIRE_LEN] {
         let mut out = [0u8; WIRE_LEN];
-        out[0] = CH341_EPP_WRITE;
-        out[1..].copy_from_slice(&self.to_bytes());
+        out.copy_from_slice(&ch341_epp_write(&self.to_bytes()));
         out
     }
 }
@@ -412,16 +430,47 @@ mod tests {
         assert_eq!(r.unsent, 5);
     }
 
+    /// MeerK40t's `CH341EppWrite`: `for i in range(0, len(data) + 1, 32): data.insert(i, 0xA6)`.
+    fn meerk40t_epp_write(data: &[u8]) -> Vec<u8> {
+        let mut out = data.to_vec();
+        for i in (0..data.len() + 1).step_by(32) {
+            out.insert(i, 0xA6);
+        }
+        out
+    }
+
     #[test]
-    fn wire_form_has_the_epp_byte_and_crc() {
+    fn wire_form_has_the_epp_byte_before_the_crc_too() {
         let r = frames(b"IPP\n");
         let p = r.frames[0].packet.unwrap();
         let w = p.to_wire();
-        assert_eq!(w.len(), 33);
+        assert_eq!(w.len(), 34);
         assert_eq!(w[0], 0xA6);
         assert_eq!(w[1], 0x00);
         assert_eq!(&w[2..32], &p.payload);
-        assert_eq!(w[32], crc8(&p.payload));
+        assert_eq!(w[32], 0xA6);
+        assert_eq!(w[33], crc8(&p.payload));
+        assert_eq!(w.to_vec(), meerk40t_epp_write(&p.to_bytes()));
+        let bad = Packet { bad_crc: true, ..p };
+        assert_eq!(bad.to_wire().to_vec(), meerk40t_epp_write(&bad.to_bytes()));
+        assert_eq!(bad.to_wire()[33], crc8(&p.payload) ^ 0xFF);
+    }
+
+    #[test]
+    fn epp_writes_carry_a_command_byte_per_thirty_one_data_bytes() {
+        // Agrees with MeerK40t's insertion loop for every length it handles correctly.
+        for n in 1..=62usize {
+            let data: Vec<u8> = (0..n as u8).map(|b| b.wrapping_mul(7).wrapping_add(1)).collect();
+            assert_eq!(ch341_epp_write(&data), meerk40t_epp_write(&data), "length {n}");
+        }
+        // Every 32-byte USB packet of the write starts with the command byte.
+        let data = vec![0x55u8; 100];
+        let w = ch341_epp_write(&data);
+        assert_eq!(w.len(), 104);
+        for usb_packet in w.chunks(32) {
+            assert_eq!(usb_packet[0], CH341_EPP_WRITE);
+        }
+        assert!(ch341_epp_write(&[]).is_empty());
     }
 
     #[test]

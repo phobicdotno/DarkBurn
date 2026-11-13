@@ -35,6 +35,8 @@ struct Session {
     saved_since: bool,
     /// A live edit was made.
     edited: bool,
+    /// The project being edited (`FileState::project_serial` when the editor opened).
+    project: u64,
 }
 
 fn session_id() -> Id {
@@ -163,6 +165,12 @@ fn fill_like(m: Mode) -> bool {
 
 /// Show the editor when it is open.
 pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
+    // Another project took the place of the one being edited (New or Open by its shortcut): the
+    // editor closes, and the layers it remembers are not put into the new project.
+    if ctx.data(|d| d.get_temp::<Session>(session_id())).is_some_and(|s| s.project != app.files.project_serial) {
+        close(ctx, app);
+        return;
+    }
     let Some(open) = app.cut_settings_open else {
         // Closed from elsewhere: the edits stay (as if OK).
         if let Some(s) = ctx.data_mut(|d| d.remove_temp::<Session>(session_id())) {
@@ -180,6 +188,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         clean_at: (!app.editor.is_modified()).then(|| app.editor.history.len()),
         saved_since: false,
         edited: false,
+        project: app.files.project_serial,
     });
     if s.edited && !app.editor.is_modified() {
         s.saved_since = true;

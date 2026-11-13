@@ -77,6 +77,63 @@ pub fn screen_polylines(path: &BezPath, xf: &Xf, smooth: bool) -> Vec<(Vec<Pos2>
         .collect()
 }
 
+/// Lines longer than this (screen points) are dashed only where they are on screen.
+const DASH_WHOLE_UP_TO: f32 = 100_000.0;
+
+/// `egui::Shape::dashed_line_many` for a line that may be far longer than the screen (a huge
+/// shape, or zoomed in close): the dashes outside `clip` are left out, else there could be more
+/// of them than memory holds. The dashes keep their places along the line.
+pub fn dashed_line_in(points: &[Pos2], clip: Rect, stroke: Stroke, dash: f32, gap: f32, out: &mut Vec<egui::Shape>) {
+    let length: f32 = points.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    if length <= DASH_WHOLE_UP_TO {
+        egui::Shape::dashed_line_many(points, stroke, dash, gap, out);
+        return;
+    }
+    let clip = clip.expand(stroke.width);
+    let period = f64::from(dash + gap);
+    let mut along = 0.0f64;
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let len = f64::from((b - a).length());
+        if let Some((t0, t1)) = clip_segment(a, b, clip) {
+            let (s0, s1) = (along + len * t0, along + len * t1);
+            let at = |s: f64| {
+                let t = (s - along) / len;
+                pos2((f64::from(a.x) + f64::from(b.x - a.x) * t) as f32, (f64::from(a.y) + f64::from(b.y - a.y) * t) as f32)
+            };
+            let mut k = (s0 / period).floor() * period;
+            while k < s1 {
+                let (d0, d1) = (k.max(s0), (k + f64::from(dash)).min(s1));
+                if d1 > d0 {
+                    out.push(egui::Shape::line_segment([at(d0), at(d1)], stroke));
+                }
+                k += period;
+            }
+        }
+        along += len;
+    }
+}
+
+/// The part of the line from `a` to `b` inside `r`, as the fractions of the way where it starts
+/// and ends.
+fn clip_segment(a: Pos2, b: Pos2, r: Rect) -> Option<(f64, f64)> {
+    let (x, y) = (f64::from(a.x), f64::from(a.y));
+    let (dx, dy) = (f64::from(b.x) - x, f64::from(b.y) - y);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (p, q) in [(-dx, x - f64::from(r.min.x)), (dx, f64::from(r.max.x) - x), (-dy, y - f64::from(r.min.y)), (dy, f64::from(r.max.y) - y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else if p < 0.0 {
+            t0 = t0.max(q / p);
+        } else {
+            t1 = t1.min(q / p);
+        }
+    }
+    (t0 < t1).then_some((t0, t1))
+}
+
 /// A trapezoid with horizontal top and bottom: top-left, top-right, bottom-right, bottom-left.
 pub type Trapezoid = [Pos2; 4];
 
@@ -233,7 +290,7 @@ pub fn paint(painter: &Painter, ctx: &Context, xf: &Xf, scene: &Scene) {
                     for (pts, _) in screen_polylines(&leaf.outline(), xf, scene.smooth) {
                         let mut pts = pts;
                         pts.push(pts[0]);
-                        egui::Shape::dashed_line_many(&pts, Stroke::new(1.5, scene.highlight), 5.0, 4.0, &mut overlay);
+                        dashed_line_in(&pts, clip, Stroke::new(1.5, scene.highlight), 5.0, 4.0, &mut overlay);
                     }
                 }
                 continue;
@@ -261,7 +318,7 @@ pub fn paint(painter: &Painter, ctx: &Context, xf: &Xf, scene: &Scene) {
                 }
                 if is_sel {
                     overlay.push(egui::Shape::line(pts.clone(), Stroke::new(3.5, scene.highlight.gamma_multiply(0.25))));
-                    egui::Shape::dashed_line_many(&pts, Stroke::new(1.5, colour), 6.0, 4.0, &mut overlay);
+                    dashed_line_in(&pts, clip, Stroke::new(1.5, colour), 6.0, 4.0, &mut overlay);
                 } else {
                     lines.push(egui::Shape::line(pts, Stroke::new(1.0, colour)));
                 }

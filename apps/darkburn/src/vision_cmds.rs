@@ -634,13 +634,16 @@ fn align_generate(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let margin = num(a, "margin").unwrap_or(20.0).max(0.0);
     let count = a.get("count").and_then(Value::as_u64).unwrap_or(4).clamp(4, 9) as usize;
     let size = num(a, "size").unwrap_or(8.0);
+    // A size typed with a slip (1e300) is refused before its circle is worked out: a circle
+    // that large took all the memory there was.
+    if size > MAX_TARGET_SIZE {
+        return Err(format!("The target size can be at most {MAX_TARGET_SIZE} mm."));
+    }
     let layer = layer_arg(app, a, "layer", app.editor.current_layer)?;
     let pos = align_positions(app, margin, count);
-    app.vision.align_margin = margin;
-    app.vision.align_count = count;
     let mut out = None;
     let mut err = None;
-    app.editor.edit("Camera alignment targets", |d, sel| match vision_tools::alignment_targets(d, &pos, size, layer) {
+    let done = app.editor.edit("Camera alignment targets", |d, sel| match vision_tools::alignment_targets(d, &pos, size, layer) {
         Ok(g) => {
             sel.set(g.shapes.iter().copied());
             out = Some(g);
@@ -655,6 +658,11 @@ fn align_generate(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         return Err(e);
     }
     let g = out.ok_or("nothing was drawn")?;
+    if !done {
+        return Err(OUT_OF_REACH.into());
+    }
+    app.vision.align_margin = margin;
+    app.vision.align_count = count;
     Ok(json!({ "targets": pos, "created": g.shapes.iter().map(|s| s.0).collect::<Vec<_>>(), "layer": layer }))
 }
 
@@ -1176,7 +1184,7 @@ fn run_generator(
 ) -> Result<Value, String> {
     let mut out = None;
     let mut err = None;
-    app.editor.edit(label, |d, sel| match f(d) {
+    let done = app.editor.edit(label, |d, sel| match f(d) {
         Ok(g) => {
             sel.set(g.shapes.iter().copied());
             out = Some(g);
@@ -1188,11 +1196,17 @@ fn run_generator(
         }
     });
     match (out, err) {
+        (Some(_), _) if !done => Err(OUT_OF_REACH.into()),
         (Some(g), _) => Ok(generated(&g)),
         (_, Some(e)) => Err(e),
         _ => Err("nothing was drawn".into()),
     }
 }
+
+/// What a tool says when the editor refused its shapes (they lie further out than a design reaches).
+const OUT_OF_REACH: &str = "That lies further out than a design can reach: nothing was drawn.";
+/// The largest camera alignment target, mm. A target is a small mark.
+const MAX_TARGET_SIZE: f64 = 1000.0;
 
 pub fn focus_generate(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     sync(app);
@@ -1267,12 +1281,18 @@ pub fn centre_find(app: &mut DarkBurn, pts: &[Point], mark: bool, layer: usize) 
     if mark {
         // The points are laser positions; the mark goes where that spot is in the design.
         let c = laser_to_design(app, fit.centre);
+        // Points nearly in a line give a circle no design can hold: it is not worked out (one
+        // of 1e300 mm took all the memory there was), and the mark is not said to be drawn.
+        let reach = darkburn_core::editor::MAX_COORD;
+        if !(fit.radius <= reach && c.x.abs() <= reach && c.y.abs() <= reach) {
+            return Err(OUT_OF_REACH.into());
+        }
         let path = {
             let mut p = darkburn_core::kurbo::Circle::new(c, fit.radius).to_path(0.05);
             p.extend(vision_tools::target_mark(c, (fit.radius * 0.3).clamp(2.0, 10.0)));
             p
         };
-        app.editor.edit("Centre finder", |d, sel| {
+        let done = app.editor.edit("Centre finder", |d, sel| {
             let mut s = darkburn_core::Shape::path(path, layer);
             s.name = "Centre mark".into();
             let id = d.add(s);
@@ -1280,6 +1300,9 @@ pub fn centre_find(app: &mut DarkBurn, pts: &[Point], mark: bool, layer: usize) 
             created.push(id.0);
             true
         });
+        if !done {
+            return Err(OUT_OF_REACH.into());
+        }
     }
     Ok(json!({ "centre": fit.centre, "diameter": fit.diameter, "radius": fit.radius, "rms_mm": fit.rms_mm, "created": created }))
 }

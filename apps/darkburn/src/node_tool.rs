@@ -1198,9 +1198,11 @@ fn warp_tool(
 ) {
     let deform = app.tool == Tool::Deform;
     let ids = crate::shape_ops::in_draw_order(&app.editor.doc, &app.editor.selected());
-    if st.warp.as_ref().is_none_or(|w| w.ids != ids) {
+    let bbox = app.editor.doc.bbox_of(&ids).filter(|r| r.width() > 1e-9 && r.height() > 1e-9);
+    // The handles start again on the box of the shapes when they were moved or changed.
+    if st.warp.as_ref().is_none_or(|w| w.ids != ids || Some(w.src) != bbox) {
         st.warp = None;
-        if let Some(src) = app.editor.doc.bbox_of(&ids).filter(|r| r.width() > 1e-9 && r.height() > 1e-9) {
+        if let Some(src) = bbox {
             let pts = warp_points(src, deform);
             st.warp = Some(WarpState { ids: ids.clone(), src, preview: Vec::new(), pts, perspective: true });
         }

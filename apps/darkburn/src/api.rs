@@ -313,11 +313,14 @@ fn sized(w: f64, h: f64) -> Result<(), String> {
 
 fn add(app: &mut DarkBurn, label: &str, shape: Shape) -> Result<Value, String> {
     let mut new = ShapeId(0);
-    app.editor.edit(label, |d, sel| {
+    let made = app.editor.edit(label, |d, sel| {
         new = d.add(shape);
         sel.set([new]);
         true
     });
+    if !made {
+        return Err(crate::shape_ops::OUT_OF_REACH.into());
+    }
     Ok(json!({ "id": new.0 }))
 }
 

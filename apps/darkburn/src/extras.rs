@@ -176,6 +176,25 @@ fn txt<'a>(a: &'a Value, key: &str) -> Result<&'a str, String> {
     a.get(key).and_then(Value::as_str).ok_or_else(|| format!("argument {key} must be text"))
 }
 
+/// The layer a cut library command names: one that exists (a larger number is not taken for
+/// the last tool layer).
+fn layer_arg(a: &Value) -> Result<usize, String> {
+    let layer = num(a, "layer")?;
+    if layer >= darkburn_core::LAYER_COUNT {
+        return Err(format!("layer {layer} does not exist"));
+    }
+    Ok(layer)
+}
+
+/// The cut library's file is the one opened for its device from now on, as after the panel's
+/// Load and Save as.
+fn remember_library_file(app: &mut DarkBurn) {
+    let st = &app.extras.library;
+    if let Some(p) = &st.path {
+        app.prefs.library_paths.insert(st.device.clone(), p.to_string_lossy().into_owned());
+    }
+}
+
 /// The commands for libraries, art and hotkeys that take arguments; None for any other id.
 pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     if id.starts_with("library.") {
@@ -190,22 +209,25 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
             app.extras.library.editing = None;
             app.extras.library.dirty_since = None;
             app.extras.library.touch();
+            // As in the panel: the file of the library before is no longer the device's.
+            app.prefs.library_paths.remove(&app.extras.library.device);
             Ok(json!({ "ok": true }))
         }
-        "library.open" => {
-            txt(a, "path").and_then(|p| app.extras.library.open(Path::new(p))).map(|_| json!({ "entries": app.extras.library.lib.entries.len() }))
-        }
+        "library.open" => txt(a, "path").and_then(|p| app.extras.library.open(Path::new(p))).map(|_| {
+            remember_library_file(app);
+            json!({ "entries": app.extras.library.lib.entries.len() })
+        }),
         "library.save" => app.extras.library.save().map(|_| json!({ "ok": true })),
-        "library.save_as" => txt(a, "path").and_then(|p| app.extras.library.save_as(Path::new(p))).map(|_| json!({ "ok": true })),
+        "library.save_as" => txt(a, "path").and_then(|p| app.extras.library.save_as(Path::new(p))).map(|_| {
+            remember_library_file(app);
+            json!({ "ok": true })
+        }),
         "library.list" => Ok(json!({
             "name": app.extras.library.lib.name,
             "entries": app.extras.library.lib.entries.iter().map(|e| json!({ "name": e.link_name(), "mode": e.mode().label() })).collect::<Vec<_>>(),
         })),
         "library.create_from_layer" => (|| {
-            let layer = num(a, "layer")?;
-            if layer >= darkburn_core::LAYER_COUNT {
-                return Err(format!("layer {layer} does not exist"));
-            }
+            let layer = layer_arg(a)?;
             let thickness = match a.get("thickness") {
                 Some(Value::String(t)) => library::parse_thickness(t, app.prefs.numeric_inches),
                 Some(v) => v.as_f64(),
@@ -214,10 +236,10 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
             let i = library::create_from_layer(app, layer, txt(a, "material").unwrap_or(""), thickness, txt(a, "description").unwrap_or(""));
             Ok(json!({ "entry": i, "name": app.extras.library.lib.entries[i].link_name() }))
         })(),
-        "library.assign" => (|| library::assign_to_layer(app, num(a, "entry")?, num(a, "layer")?).map(|_| json!({ "ok": true })))(),
-        "library.link" => (|| library::link_layer(app, num(a, "entry")?, num(a, "layer")?).map(|_| json!({ "ok": true })))(),
+        "library.assign" => (|| library::assign_to_layer(app, num(a, "entry")?, layer_arg(a)?).map(|_| json!({ "ok": true })))(),
+        "library.link" => (|| library::link_layer(app, num(a, "entry")?, layer_arg(a)?).map(|_| json!({ "ok": true })))(),
         "library.unlink" => (|| {
-            library::unlink_layer(app, num(a, "layer")?);
+            library::unlink_layer(app, layer_arg(a)?);
             Ok(json!({ "ok": true }))
         })(),
         "library.delete" => (|| library::delete_entry(app, num(a, "entry")?).map(|_| json!({ "ok": true })))(),

@@ -58,6 +58,9 @@ pub struct FileState {
     /// Hash of the bitmap last taken from the system clipboard.
     last_clip_image: Option<u64>,
     autosave: Autosave,
+    /// Counts the projects made or opened in this window: a window that holds on to one project
+    /// can tell that another has taken its place.
+    pub project_serial: u64,
 }
 
 #[derive(Default)]
@@ -177,11 +180,25 @@ fn last_dir(prefs: &Prefs) -> Option<PathBuf> {
     prefs.recent.first().and_then(|p| Path::new(p).parent()).filter(|d| d.is_dir()).map(Path::to_path_buf)
 }
 
+/// Another project has taken the place of the open one: the windows that worked on the old one
+/// close, and what they remember of it is not written into the new one.
+fn leave_project(app: &mut DarkBurn) {
+    app.files.project_serial += 1;
+    app.images.adjust = None;
+    app.images.trace = None;
+    app.images.convert = None;
+    app.text.edit.open = false;
+    app.text.qr.open = false;
+    // The shape tool windows: the Boolean Assistant's sets, an Auto-Join under way.
+    app.shape_ui.close();
+}
+
 /// A new empty project (the clipboard is kept).
 pub fn new_project(app: &mut DarkBurn) {
     let clipboard = std::mem::take(&mut app.editor.clipboard);
     app.editor = Editor::new();
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.project_path = None;
     app.notes_open = false;
     crate::settings_wiring::on_new_project(app);
@@ -200,6 +217,7 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     app.notes_open = loaded.doc.show_notes_on_load;
     app.editor = Editor::with_document(loaded.doc);
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.project_path = Some(path.to_path_buf());
     crate::settings_wiring::on_open_project(app);
     remember_recent(&mut app.prefs, path);
@@ -464,6 +482,7 @@ pub fn restore_autosave(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let clipboard = std::mem::take(&mut app.editor.clipboard);
     app.editor = Editor::with_document(loaded.doc);
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.editor.touch();
     app.project_path = original;
     Ok(())

@@ -93,7 +93,10 @@ impl Grid<'_> {
             let merge = resp.has_focus() && !resp.gained_focus();
             let ids = self.ids.clone();
             let ctx = ui.ctx().clone();
-            numeric::commit(&mut self.app.editor, &ctx, Id::unique(("sp_text", label)), label, merge, |d, _| set_each(d, &ids, get, |s| set(s, &v)));
+            // The shapes are part of the key: text typed for other shapes is another step.
+            numeric::commit(&mut self.app.editor, &ctx, Id::unique(("sp_text", label, &ids)), label, merge, |d, _| {
+                set_each(d, &ids, get, |s| set(s, &v))
+            });
         }
     }
 

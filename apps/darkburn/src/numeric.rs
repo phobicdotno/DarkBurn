@@ -137,8 +137,13 @@ pub fn commit(
     f: impl FnOnce(&mut Document, &mut Selection) -> bool,
 ) -> bool {
     let stamp = egui::Id::unique("darkburn_coalesce");
-    let last: Option<(egui::Id, u64)> = ctx.data(|d| d.get_temp(stamp));
-    let changed = if merge && last == Some((key, editor.revision())) {
+    // One drag is one press of the pointer: the next drag on the same field is a step of its
+    // own, also when its first frames change nothing and nothing else was edited in between.
+    let press = ctx.input(|i| i.pointer.press_start_time()).map(f64::to_bits);
+    let last: Option<(egui::Id, u64, Option<u64>)> = ctx.data(|d| d.get_temp(stamp));
+    let before = editor.revision();
+    let merged = merge && last == Some((key, before, press));
+    let changed = if merged {
         let changed = f(&mut editor.doc, &mut editor.selection);
         if changed {
             editor.touch();
@@ -147,8 +152,46 @@ pub fn commit(
     } else {
         editor.edit(label, f)
     };
-    ctx.data_mut(|d| d.insert_temp(stamp, (key, editor.revision())));
+    if merged || editor.revision() != before {
+        ctx.data_mut(|d| d.insert_temp(stamp, (key, editor.revision(), press)));
+    } else {
+        // No undo step was made (a whole-number field dragged by less than one): there is
+        // nothing for the next frame of the drag to add to, so it makes its own step.
+        ctx.data_mut(|d| d.remove::<(egui::Id, u64, Option<u64>)>(stamp));
+    }
     changed
+}
+
+/// As [`commit`], for a field whose change is made by a command, which records an undo step of
+/// its own: `run` runs the command, and when `merge` the step it made joins the step the same
+/// drag made in the frame before.
+pub fn commit_command(
+    app: &mut crate::shell::DarkBurn,
+    ctx: &egui::Context,
+    key: egui::Id,
+    merge: bool,
+    run: impl FnOnce(&mut crate::shell::DarkBurn),
+) {
+    let stamp = egui::Id::unique("darkburn_coalesce");
+    let press = ctx.input(|i| i.pointer.press_start_time()).map(f64::to_bits);
+    let last: Option<(egui::Id, u64, Option<u64>)> = ctx.data(|d| d.get_temp(stamp));
+    let (before, steps) = (app.editor.revision(), app.editor.history.len());
+    let merged = merge && last == Some((key, before, press));
+    run(app);
+    let editor = &mut app.editor;
+    if merged && editor.history.len() == steps + 1 {
+        // What the command made stays, its undo step goes: the drag has one already.
+        let (doc, selection) = (editor.doc.clone(), editor.selection.clone());
+        editor.drop_checkpoint();
+        editor.doc = doc;
+        editor.selection = selection;
+        editor.touch();
+    }
+    if merged || editor.revision() != before {
+        ctx.data_mut(|d| d.insert_temp(stamp, (key, editor.revision(), press)));
+    } else {
+        ctx.data_mut(|d| d.remove::<(egui::Id, u64, Option<u64>)>(stamp));
+    }
 }
 
 /// A whole number from a field's value.

@@ -478,12 +478,18 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(n, _)| n);
             for (n, leaf) in leaves.iter().filter(|(n, _)| (all && grouped) || Some(*n) == nearest) {
-                let Some(points) = start_points_after(leaf, p, all) else { continue };
+                let Some(mut points) = start_points_after(leaf, p, all) else { continue };
                 if !grouped && matches!(leaf.kind, ShapeKind::Path { .. }) {
                     let path = leaf.outline();
                     let q = gpath::set_start_point(&path, p, all);
-                    if q != path {
-                        any |= set_shape_path(d, *id, q);
+                    if q != path && set_shape_path(d, *id, q) {
+                        any = true;
+                        // The path is now kept where it lies in the document, with no transform
+                        // of its own: so are its start points.
+                        for q in &mut points {
+                            let at = leaf.transform * Point::new(q[0], q[1]);
+                            *q = [at.x, at.y];
+                        }
                     }
                 }
                 let Some(s) = leaf_mut(d, *id, *n) else { continue };
@@ -571,6 +577,12 @@ fn clear_start(e: &mut Editor, a: &Value) -> R {
 }
 
 fn for_each_rect(s: &mut Shape, f: &mut dyn FnMut(&mut f64, f64, f64) -> bool) -> usize {
+    // A virtual array is made again from its originals when it is edited: they change with it.
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            for_each_rect(c, f);
+        }
+    }
     match &mut s.kind {
         ShapeKind::Rect { width, height, radius } => usize::from(f(radius, *width, *height)),
         ShapeKind::Group { children } => children.iter_mut().map(|c| for_each_rect(c, f)).sum(),
@@ -580,6 +592,11 @@ fn for_each_rect(s: &mut Shape, f: &mut dyn FnMut(&mut f64, f64, f64) -> bool) -
 
 /// Remove tangent-arc corners from path shapes (also inside groups). Returns how many changed.
 fn unround_paths(s: &mut Shape) -> usize {
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            unround_paths(c);
+        }
+    }
     match &mut s.kind {
         ShapeKind::Group { children } => children.iter_mut().map(unround_paths).sum(),
         ShapeKind::Path { path } => {
@@ -694,11 +711,14 @@ fn add_line(e: &mut Editor, a: &Value, _env: &Env) -> R {
     let connect = flag(a, "connect", true) && !closed;
     let tol = num(a, "tolerance", 0.05).max(1e-6);
     let mut result = (ShapeId(0), false);
-    e.edit("Draw line", |d, sel| {
+    let made = e.edit("Draw line", |d, sel| {
         result = add_line_in(d, path, layer, connect, tol);
         sel.set([result.0]);
         true
     });
+    if !made {
+        return Err(crate::shape_ops::OUT_OF_REACH.into());
+    }
     Ok(json!({ "changed": true, "id": result.0.0, "joined": result.1 }))
 }
 

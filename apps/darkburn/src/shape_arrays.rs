@@ -175,7 +175,7 @@ fn place_array(e: &mut Editor, ids: &[ShapeId], def: ArrayDef, virtual_array: bo
     }
     let layer = def.source.first().map(|s| s.layer).unwrap_or(0);
     let mut out = Vec::new();
-    e.edit(label, |d, sel| {
+    let made = e.edit(label, |d, sel| {
         if virtual_array {
             let at = ids.iter().filter_map(|i| d.index_of(*i)).min().unwrap_or(d.len());
             d.remove(ids);
@@ -203,6 +203,9 @@ fn place_array(e: &mut Editor, ids: &[ShapeId], def: ArrayDef, virtual_array: bo
         sel.set(out.iter().copied());
         true
     });
+    if !made {
+        return Err(crate::shape_ops::OUT_OF_REACH.into());
+    }
     ok(true, &out)
 }
 

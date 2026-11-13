@@ -97,6 +97,13 @@ pub fn import(current: &mut Prefs, path: &Path, settings_dir: Option<&Path>) -> 
     new.mcp = current.mcp.clone();
     // The pendant opens a USB device, so it is also only switched on here.
     new.opts.pendant = current.opts.pendant;
+    // Where a window of its own opens is a place on this computer's screens: one from another
+    // computer can lie off every screen here, and nothing in the app could bring it back.
+    for (key, place) in &mut new.windows {
+        let here = current.windows.get(key);
+        place.native_pos = here.and_then(|p| p.native_pos);
+        place.native_size = here.and_then(|p| p.native_size);
+    }
     *current = new;
     Ok(())
 }
@@ -259,6 +266,35 @@ mod tests {
         let chosen = mine.mcp.clone();
         import(&mut mine, &file, None).unwrap();
         assert_eq!(mine.mcp, chosen);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A window of its own placed at x = 2500 on a computer with two screens used to open there,
+    /// off screen, on a computer with one.
+    #[test]
+    fn importing_takes_where_windows_are_docked_but_not_where_windows_of_their_own_sit() {
+        let d = temp("windows");
+        let mut theirs = Prefs::default();
+        let settings = theirs.windows.entry("settings".into()).or_default();
+        settings.detach();
+        settings.native_pos = Some([2500.0, 300.0]);
+        settings.native_size = Some([900.0, 700.0]);
+        let devices = theirs.windows.entry("db_devices".into()).or_default();
+        devices.dock("RightTop");
+        devices.native_pos = Some([-1800.0, 40.0]);
+        let file = d.join("prefs.json");
+        export(&theirs, &file).unwrap();
+        let mut mine = Prefs::default();
+        let here = mine.windows.entry("db_devices".into()).or_default();
+        here.native_pos = Some([100.0, 120.0]);
+        here.native_size = Some([640.0, 480.0]);
+        import(&mut mine, &file, None).unwrap();
+        let settings = &mine.windows["settings"];
+        assert_eq!(settings.placement, theirs.windows["settings"].placement, "the layout is taken");
+        assert_eq!((settings.native_pos, settings.native_size), (None, None), "it opens where the system puts a new window");
+        let devices = &mine.windows["db_devices"];
+        assert_eq!(devices.area(), Some("RightTop"));
+        assert_eq!((devices.native_pos, devices.native_size), (Some([100.0, 120.0]), Some([640.0, 480.0])), "this computer's place is kept");
         let _ = std::fs::remove_dir_all(&d);
     }
 

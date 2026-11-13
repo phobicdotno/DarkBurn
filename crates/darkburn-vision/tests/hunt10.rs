@@ -76,3 +76,19 @@ fn print_and_cut_full_affine_with_measured_marks_on_one_line_is_refused() {
     let r = fit_registration(&design, &measured, PnCMode::FullAffine);
     assert_eq!(r.err(), Some(PnCError::Degenerate));
 }
+
+/// Tiny or empty pictures (a camera that sent nothing) find no pattern; they must not panic.
+#[test]
+fn pattern_detection_on_tiny_images_finds_nothing() {
+    use darkburn_vision::detect::{PatternKind, PatternSpec, detect_checkerboard_corners, detect_circle_blobs, detect_pattern, otsu_threshold};
+    for (w, h) in [(0, 0), (1, 1), (0, 7), (7, 0), (2, 2), (3, 1)] {
+        let img = GrayImage::new(w, h);
+        let _ = otsu_threshold(&img);
+        assert!(detect_circle_blobs(&img, true).is_empty());
+        let _ = detect_checkerboard_corners(&img);
+        for kind in [PatternKind::Checkerboard, PatternKind::CircleGrid { dark_on_light: true }] {
+            let spec = PatternSpec { kind, cols: 7, rows: 5, spacing_mm: 25.0 };
+            assert!(detect_pattern(&img, &spec).is_none(), "{w}x{h}");
+        }
+    }
+}

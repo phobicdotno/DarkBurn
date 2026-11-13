@@ -2,7 +2,7 @@
 //! row or a column, floating, dragged by their background or grip, moved from their right-click
 //! menu, kept over a restart and per device, and put back by Reset to Default Layout.
 
-use egui::{Pos2, Rect, pos2, vec2};
+use egui::{Key, Modifiers, Pos2, Rect, pos2, vec2};
 use serde_json::json;
 
 use crate::devices::{Device, DeviceType};
@@ -268,4 +268,67 @@ fn each_device_keeps_its_toolbar_places() {
     a.machine.select_device(old);
     machine_ui::adopt_device_state(&mut a);
     assert_eq!(dock_of(&a.prefs, "palette"), Dock::Floating);
+}
+
+/// A floating toolbar is drawn over the window but is not a window: while one floats, Escape
+/// still closes the window on top, and Escape, the arrow keys and Delete are still the canvas's.
+#[test]
+fn the_keys_still_work_while_a_toolbar_floats() {
+    let mut g = Gui::standard();
+    g.sample_design();
+    place(&mut g, "modes", "floating");
+    assert!(g.rect_of("bar:modes").is_some(), "the toolbar floats");
+    assert!(!crate::escape::window_open(&g.ctx()), "a floating toolbar is not an open window");
+    for window in ["help.about", "window.preview", "tools.offset"] {
+        g.run_command(window);
+        assert!(g.dialog_open(), "{window} opened a window");
+        g.escape();
+        assert!(!g.dialog_open(), "{window}: Escape closes it while a toolbar floats: {:?}", g.window_titles());
+    }
+    assert!(!g.app().editor.selection.is_empty(), "the Escapes that closed the windows did not reach the canvas");
+    let before = g.app().editor.doc.clone();
+    g.key(Key::ArrowRight, Modifiers::NONE);
+    assert!(g.app().editor.doc != before, "the arrow key nudges the selection");
+    let shapes = g.app().editor.doc.len();
+    g.key(Key::Delete, Modifiers::NONE);
+    assert!(g.app().editor.doc.len() < shapes, "Delete deletes the selection");
+    g.sample_design();
+    g.run_command("tools.rect");
+    g.escape();
+    assert!(g.app().editor.selection.is_empty(), "Escape clears the selection");
+    assert_eq!(g.app().tool.command(), "tools.select", "Escape leaves the drawing tool");
+    assert!(g.rect_of("bar:modes").is_some(), "the toolbar still floats");
+    assert!(g.clashes().is_empty(), "{:?}", g.clashes());
+}
+
+/// In a narrow window the right-most groups of a ribbon tab go behind its chevron, where they
+/// have no caption to drag or right-click. The chevron's list offers their toolbar's menu.
+#[test]
+fn a_toolbar_behind_the_ribbons_chevron_can_still_be_moved() {
+    let mut g = Gui::new(960.0, 600.0, 1.0);
+    let mut moved = None;
+    for tab in ["home", "arrange", "modify", "text"] {
+        g.click_id(&format!("ribbon:tab:{tab}"));
+        g.frames(2);
+        let Some(chevron) = g.rect_of("ribbon:overflow") else { continue };
+        g.click_pos(chevron.center());
+        g.frames(1);
+        let rows = g.rects("menu:bar_move:");
+        assert!(!rows.is_empty(), "{tab}: the chevron's list offers to move the toolbars in it");
+        let (name, row) = rows[0].clone();
+        let bar = name.trim_start_matches("menu:bar_move:").to_string();
+        assert_eq!(dock_of(&g.app().prefs, &bar), Dock::Home, "{bar} is in the ribbon");
+        g.hover_pos(row.center());
+        g.click_pos(row.center());
+        assert!(g.rect_of("menu:bar_float").is_some(), "{tab}: the toolbar menu of {bar} opens beside its row");
+        g.click_id("menu:bar_float");
+        moved = Some(bar);
+        break;
+    }
+    let bar = moved.expect("at 960 x 600 some ribbon tab has groups behind its chevron");
+    assert_eq!(dock_of(&g.app().prefs, &bar), Dock::Floating);
+    g.frames(2);
+    assert!(g.rect_of(&format!("bar:{bar}")).is_some(), "{bar} floats");
+    assert!(g.clashes().is_empty(), "{:?}", g.clashes());
+    g.screenshot("toolbar-from-the-chevron");
 }

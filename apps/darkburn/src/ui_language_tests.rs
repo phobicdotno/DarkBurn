@@ -1,6 +1,6 @@
 //! The interface in German, French, Italian, Spanish (Spain and Latin America), Portuguese,
-//! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian, Turkish, Greek and
-//! Russian: with every panel open, in the settings and in a long help topic, the translated text fits
+//! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian, Turkish, Greek,
+//! Russian, Japanese and Korean: with every panel open, in the settings and in a long help topic, the translated text fits
 //! where the English text fits [I18N-04].
 use crate::ui_harness::Gui;
 
@@ -20,6 +20,20 @@ struct View {
     elided: Vec<String>,
 }
 
+/// Draws frames until the interface fonts draw every character of `text`. Japanese and Korean
+/// take their faces from the computer's fonts, worked out on a thread of their own; until they
+/// arrive their text shows as boxes.
+fn wait_for_glyphs(g: &mut Gui, text: &str) {
+    let font = egui::FontId::proportional(14.0);
+    let start = std::time::Instant::now();
+    while !g.ctx().fonts_mut(|f| text.chars().all(|c| c.is_whitespace() || f.has_glyph(&font, c))) {
+        assert!(start.elapsed() < std::time::Duration::from_secs(120), "no font on this computer draws {text:?}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        g.frames(1);
+    }
+    g.settle();
+}
+
 fn look(g: &mut Gui, code: &str, name: &'static str) -> View {
     g.screenshot(&format!("lang-{code}-{name}"));
     let elided = g.painted().into_iter().filter(|p| p.elided).map(|p| p.text).collect();
@@ -32,6 +46,7 @@ fn views_in(code: &str, edit: &str, general: &str, help_title: &str) -> Vec<View
     let mut g = Gui::standard();
     g.run_command(&format!("lang.{code}"));
     g.settle();
+    wait_for_glyphs(&mut g, edit);
     assert_eq!(crate::i18n::language(), code);
     assert!(g.has_text(edit), "{code}: no {edit:?} in {:?}", g.visible_texts());
     let mut out = Vec::new();
@@ -156,6 +171,29 @@ fn russian_fits_the_window() {
     fits_like_english("ru", "Правка", "Общие", "Выбор камеры");
 }
 
+#[test]
+fn japanese_fits_the_window() {
+    fits_like_english("ja", "編集", "一般", "カメラの選び方");
+}
+
+#[test]
+fn korean_fits_the_window() {
+    fits_like_english("ko", "편집", "일반", "카메라 선택");
+}
+
+/// A row may end between two Japanese characters, or next to one, without splitting a word;
+/// between two letters of a Latin or Korean word it splits the word.
+#[test]
+fn a_line_break_between_japanese_characters_splits_no_word() {
+    use crate::ui_harness::splits_a_word;
+    assert!(splits_a_word('a', 'b'));
+    assert!(splits_a_word('\u{d55c}', '\u{ae00}'), "Korean 한|글");
+    assert!(!splits_a_word('\u{30f3}', '\u{30c9}'), "katakana ン|ド");
+    assert!(!splits_a_word('\u{5b57}', 'a'), "kanji 字|a");
+    assert!(!splits_a_word('a', '\u{3092}'), "a|hiragana を");
+    assert!(!splits_a_word('a', ' '));
+}
+
 /// The cut table's column headers in `code`, left to right as painted, with the overlaps
 /// between neighbours. A header longer than its narrow column runs into the next one.
 fn cut_header_overlaps(code: &str) -> Vec<String> {
@@ -163,6 +201,7 @@ fn cut_header_overlaps(code: &str) -> Vec<String> {
     let mut g = Gui::standard();
     g.run_command(&format!("lang.{code}"));
     g.settle();
+    wait_for_glyphs(&mut g, &tr("menu.File", "File"));
     let labels = [
         tr("cuts.col.layer", "Layer"),
         tr("cuts.col.mode", "Mode"),
@@ -202,10 +241,11 @@ fn cut_header_overlaps(code: &str) -> Vec<String> {
 /// next column's header begins [I18N-04].
 #[test]
 fn cut_table_headers_fit_their_columns_in_every_language() {
-    let bad: Vec<String> = ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru"]
-        .iter()
-        .flat_map(|c| cut_header_overlaps(c))
-        .collect();
+    let bad: Vec<String> =
+        ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru", "ja", "ko"]
+            .iter()
+            .flat_map(|c| cut_header_overlaps(c))
+            .collect();
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 

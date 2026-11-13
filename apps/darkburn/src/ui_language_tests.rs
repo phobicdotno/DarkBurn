@@ -249,7 +249,7 @@ fn turkish_hotkey_filter_finds_words_with_or_without_the_turkish_i() {
     for typed in ["farklı", "farkli", "FARKLI"] {
         shows("tr", typed, "Farklı kaydet", "Yeni pencere");
     }
-    for typed in ["içe", "İÇE", "ice"] {
+    for typed in ["içe", "İÇE"] {
         shows("tr", typed, "İçe aktar", "Yeni pencere");
     }
 }

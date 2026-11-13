@@ -95,6 +95,7 @@ impl TranslateOptions {
                 MarlinPowerMode::Fan => {
                     PowerStyle::Command { set: format!("M106 P{} S{{value}}", g.tool_index), off: format!("M107 P{}", g.tool_index) }
                 }
+                MarlinPowerMode::Percent => PowerStyle::Command { set: "M3 P{value}".into(), off: "M5".into() },
             },
             DeviceKind::LinuxCnc => PowerStyle::Command { set: "M67 E0 Q{value}".into(), off: "M67 E0 Q0".into() },
             _ => PowerStyle::Passthrough,
@@ -102,7 +103,7 @@ impl TranslateOptions {
         Self {
             style,
             in_s_max: 1000.0,
-            out_s_max: g.s_max,
+            out_s_max: power_scale(p),
             air_on: g.air_assist.on.clone(),
             air_off: g.air_assist.off.clone(),
             swap_xy: g.swap_xy,
@@ -117,6 +118,16 @@ impl TranslateOptions {
             travel_s0: p.kind == DeviceKind::Custom,
             dwell_p_ms: matches!(p.kind, DeviceKind::Marlin | DeviceKind::Snapmaker),
         }
+    }
+}
+
+/// The number that means full power in the power words: 100 for the percent mode of a
+/// Marlin-style controller (`M3 P<percent>`), the profile's S range otherwise.
+pub fn power_scale(p: &DeviceProfile) -> f64 {
+    if matches!(p.kind, DeviceKind::Marlin | DeviceKind::Snapmaker) && p.gcode.marlin_power == MarlinPowerMode::Percent {
+        100.0
+    } else {
+        p.gcode.s_max
     }
 }
 

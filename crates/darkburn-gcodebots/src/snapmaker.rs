@@ -1,7 +1,9 @@
 //! Snapmaker (GCODE-04): the file header, focus and material height, and basic serial control.
 //!
-//! Snapmaker 2.0 machines run a Marlin-derived firmware, so the live driver is the Marlin one
-//! with the laser on a fan-style output (`M106`/`M107`). The file header (`;Header Start`
+//! Snapmaker 2.0 machines run a Marlin-derived firmware, so the live driver is the Marlin one.
+//! The vendor G-code reference gives the laser power in percent: `M3 P<percent>` (plain `M3` is
+//! full power) and `M5` off, so that is the default power mode; the fan-style output
+//! (`M106`/`M107`) stays as a choice. Serial runs at 115200 or 460800 baud. The file header (`;Header Start`
 //! ... `;Header End`) is the block Snapmaker's own software writes in front of laser files so
 //! the touchscreen can show size, speed and time. The field names here come from public
 //! Snapmaker forum and wiki descriptions of that block and have to be confirmed on a machine
@@ -114,6 +116,28 @@ mod tests {
         let c = config(&p);
         assert_eq!(c.family, MachineFamily::Snapmaker);
         assert!(c.accept.contains(&FirmwareGuess::Snapmaker));
-        assert_eq!(c.commands.fire_on, "M106 P0 S{s}");
+        assert_eq!(c.commands.fire_on, "M3 P{percent}");
+        assert_eq!(c.commands.fire_off, "M5");
+        assert_eq!(c.s_max, 100.0);
+        assert_eq!(p.gcode.baud, 115_200);
+        assert_eq!(crate::detect::baud_candidates(FirmwareGuess::Snapmaker)[..2], [115_200, 460_800]);
+    }
+
+    #[test]
+    fn job_power_is_written_in_percent() {
+        let p = DeviceProfile::for_kind(DeviceKind::Snapmaker);
+        let o = crate::translate::TranslateOptions::for_profile(&p);
+        // The job builder writes S on a 0..1000 scale.
+        let src = ["G0 X0 Y0", "M4 S0", "G1 X10 F600 S500", "G1 X20 S1000", "G0 X30", "M5"];
+        let out = crate::translate::translate(src.iter().copied(), &o);
+        assert!(out.iter().any(|l| l == "M3 P50"), "{out:?}");
+        assert!(out.iter().any(|l| l == "M3 P100"), "{out:?}");
+        assert!(out.iter().all(|l| !l.contains("M106") && !l.contains(" S")), "{out:?}");
+        assert!(out.iter().any(|l| l == "M5"), "{out:?}");
+        // The fan output is still there for a module wired to one.
+        let mut fan = p.clone();
+        fan.gcode.marlin_power = crate::profile::MarlinPowerMode::Fan;
+        let out = crate::translate::translate(src.iter().copied(), &crate::translate::TranslateOptions::for_profile(&fan));
+        assert!(out.iter().any(|l| l.starts_with("M106 P0 S")), "{out:?}");
     }
 }

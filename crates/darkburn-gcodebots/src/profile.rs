@@ -176,6 +176,9 @@ pub enum MarlinPowerMode {
     Inline,
     /// Laser on a fan output: `M106 P<tool> S<0..255>`, `M107 P<tool>` off.
     Fan,
+    /// `M3 P<percent>` / `M5`: the Snapmaker 2.0 laser module takes its power in percent
+    /// (GCODE-04).
+    Percent,
 }
 
 /// Air assist commands (DS-12). Empty strings mean no air assist.
@@ -514,7 +517,7 @@ impl DeviceProfile {
                 p.gcode.s_max = 255.0;
                 p.gcode.baud = 115_200;
                 p.gcode.air_assist = AirAssist { on: String::new(), off: String::new() };
-                p.gcode.marlin_power = MarlinPowerMode::Fan;
+                p.gcode.marlin_power = MarlinPowerMode::Percent;
                 p.gcode.transfer = TransferMode::Synchronous;
                 p.gcode.use_jog_command = false;
                 p.width_mm = 320.0;

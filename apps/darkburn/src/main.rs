@@ -49,6 +49,8 @@ mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
 mod gweike_card;
+#[cfg(test)]
+mod gweike_card_ui_tests;
 mod gweike_ui;
 mod gweike_workflow;
 mod help;

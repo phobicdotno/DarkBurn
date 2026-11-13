@@ -660,7 +660,13 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).chain(crate::connections::COMMANDS).find(|c| c.id == id)
+    COMMANDS
+        .iter()
+        .chain(crate::machine_ui::COMMANDS)
+        .chain(crate::machine_ext::COMMANDS)
+        .chain(crate::connections::COMMANDS)
+        .chain(crate::draw_more::COMMANDS)
+        .find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a

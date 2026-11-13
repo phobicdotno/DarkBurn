@@ -791,17 +791,18 @@ fn closing_a_docked_window_brings_back_the_tab_it_covered() {
     assert!(!g.app().settings_open, "the window closed");
     assert_eq!(front(&g), "console", "the Console tab it covered is in front again, and stored so");
 
-    // The Laser panel moved up here, behind the first tab; the window's tab picked by hand.
-    for (id, area, visible) in [("laser", Area::RightTop, true), ("camera", Area::RightTop, false), ("variable_text", Area::RightTop, false)] {
+    // The Laser panel moved up here, behind the first tab (the area holds only these three tabs,
+    // so none goes behind its chevron); the window's tab picked by hand.
+    for (id, visible) in [("laser", true), ("console", false), ("camera", false), ("variable_text", false), ("shape_properties", false)] {
         let mut app = g.app();
         let panel = app.prefs.panels.get_mut(id).expect(id);
-        (panel.area, panel.visible) = (area, visible);
+        (panel.area, panel.visible) = (Area::RightTop, visible);
     }
     g.app().prefs.active_tab.insert(Area::RightTop, "laser".into());
     g.frames(2);
     g.run_command("edit.settings");
     assert_eq!(front(&g), tab_id("settings"));
-    g.click_id("panel:tab:console");
+    g.click_id("panel:tab:cuts");
     g.click_id("panel:tab:laser");
     g.click_id(&format!("panel:tab:{}", tab_id("settings")));
     assert_eq!(front(&g), tab_id("settings"));

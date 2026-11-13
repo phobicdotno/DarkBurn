@@ -321,7 +321,7 @@
   "help.laser.title": "激光",
   "help.library.p1": "切割库保存效果良好的切割设置，按材料、厚度和描述分类。分配条目可将其设置应用到当前图层并建立关联；也可以用调好的图层创建条目。",
   "help.library.p2": "已关联的图层会显示它跟随的条目。删除条目会解除其图层的关联。切割库以文件形式保存，每台机器可以选择一个。",
-  "help.library.title": "材料库",
+  "help.library.title": "切割库",
   "help.move.p1": "按设定距离点动激光头、回原点或设置原点。连接机器后即可使用。",
   "help.move.title": "移动",
   "help.other_topics": "其他主题：",

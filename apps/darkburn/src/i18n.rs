@@ -936,7 +936,7 @@ mod tests {
     }
 
     /// Review corrections in Chinese [review of I18N-04]: the Library panel's tab, the label
-    /// inside it, its help text and the cut library commands name one library (切割库 /
+    /// inside it, its help and the cut library commands name one library (切割库 /
     /// 切割庫); every Remove command says 移除 and every Delete command the Delete word, so the
     /// two never read alike; and the getting-started help quotes the Settings button and the
     /// Edit Hotkeys command by their names instead of running them into one phrase.
@@ -953,7 +953,7 @@ mod tests {
             [("zh-CN", "切割库", "删除", "\u{201c}", "\u{201d}"), ("zh-TW", "切割庫", "刪除", "\u{300c}", "\u{300d}")]
         {
             let t = locale(code);
-            for key in ["panel.library", "library.name", "cmd.library.new", "help.library.p1", "help.library.p2"] {
+            for key in ["panel.library", "library.name", "cmd.library.new", "help.library.title", "help.library.p1", "help.library.p2"] {
                 if !t[key].contains(library) {
                     bad.push(format!("{code} {key}: {:?} lacks {library}", t[key]));
                 }

@@ -321,7 +321,7 @@
   "help.laser.title": "雷射",
   "help.library.p1": "切割庫保存效果良好的切割設定，依材質、厚度與描述分類。指派項目可將其設定套用到目前圖層並建立連結；也可以用調整好的圖層建立項目。",
   "help.library.p2": "已連結的圖層會顯示它依循的項目。刪除項目會解除其圖層的連結。切割庫以檔案形式儲存，每台機器可以選擇一個。",
-  "help.library.title": "材質庫",
+  "help.library.title": "切割庫",
   "help.move.p1": "以設定的距離寸動雷射頭、回原點或設定原點。連接機器後即可使用。",
   "help.move.title": "移動",
   "help.other_topics": "其他主題：",

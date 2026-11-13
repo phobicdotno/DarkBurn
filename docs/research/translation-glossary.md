@@ -911,7 +911,8 @@ their own. Brackets, commas and colons are full-width （），：; ellipses sta
 - Width / Height: 宽度 / 高度. Reset: 重置. Backup (a saved copy of a file): 备份.
   Backup path (the outline an image keeps after a crop): 备用路径.
 - Library (the Library panel tab, the label inside it, its help text and the cut library
-  commands): 切割库, one word for all of them. Only the help title "Material library" says 材料库.
+  commands): 切割库, one word for one library, the help topic
+  "Material library" included. Art library: 素材库.
 - Remove: 移除 (移除微连, 移除备用路径). Delete: 删除. The two never share a word.
 - Debug log: 调试日志. Laser: 激光. File menu: 文件. Help: 帮助. Window: 窗口.
 - Start (the laser panel button, not translated yet): “Start” in help, Start in the setting.
@@ -964,7 +965,8 @@ Simplified Chinese rules above.
 - Width / Height: 寬度 / 高度. Reset: 重設. Backup (a saved copy of a file): 備份.
   Backup path (the outline an image keeps after a crop): 備用路徑.
 - Library (the Library panel tab, the label inside it, its help text and the cut library
-  commands): 切割庫, one word for all of them. Only the help title "Material library" says 材質庫.
+  commands): 切割庫, one word for one library, the help topic
+  "Material library" included. Art library: 素材庫.
 - Remove: 移除 (移除微連, 移除備用路徑). Delete: 刪除. The two never share a word.
 - Debug log: 偵錯記錄. Laser: 雷射. File menu: 檔案. Help: 說明. Window: 視窗.
 - Units: Millimetres / Inches: 公釐 / 英吋.

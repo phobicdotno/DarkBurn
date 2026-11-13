@@ -193,6 +193,38 @@ fn korean_fits_the_window() {
     fits_like_english("ko", "편집", "일반", "카메라 선택");
 }
 
+/// The Editing page of the settings holds the job options. The setting that saves the job origin
+/// and "Cut selected graphics" with the project reads longer in Japanese and Korean since the
+/// review; it still shows whole, with the other job options, and nothing on the page clips
+/// [review of I18N-04].
+#[test]
+fn the_job_options_in_the_settings_fit_in_japanese_and_korean() {
+    let mut problems = Vec::new();
+    for code in ["en", "ja", "ko"] {
+        let mut g = Gui::standard();
+        g.run_command(&format!("lang.{code}"));
+        g.settle();
+        let label = crate::i18n::tr("settings.save_job_origin", "Save the job origin and cut selected in the project");
+        if !wait_for_glyphs(&mut g, code, &label) {
+            crate::i18n::set_language("en");
+            continue;
+        }
+        g.run_command("edit.settings");
+        g.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("db_settings_page"), 2usize));
+        g.settle();
+        g.screenshot(&format!("lang-{code}-settings-editing"));
+        let shown: Vec<_> = g.painted().into_iter().filter(|p| p.text == label).collect();
+        if shown.is_empty() {
+            problems.push(format!("{code}: no {label:?} in {:?}", g.visible_texts()));
+        }
+        problems.extend(shown.iter().filter(|p| p.elided).map(|p| format!("{code}: {:?} is cut short", p.text)));
+        problems.extend(g.layout_problems().into_iter().map(|p| format!("{code}: {p}")));
+        g.close_dialogs();
+        crate::i18n::set_language("en");
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
 /// On a computer with no font for a text there is nothing to wait for: the language is skipped
 /// at once, where the wait used to spin for two minutes and then fail [review of I18N-04].
 /// U+10FFFD is a private-use character no ordinary font draws.

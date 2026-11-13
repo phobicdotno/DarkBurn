@@ -133,7 +133,10 @@ pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError>
             continue;
         }
         let start = i;
-        while i < chars.len() && chars[i] != ';' && !(chars[i].is_ascii_alphabetic() && chars[i] != 'e' && chars[i] != 'E') {
+        // An `e` is part of the parameters only as an exponent (a digit or sign follows);
+        // otherwise it starts the next instruction (`PD400,0EA800,800`).
+        let exponent = |k: usize| matches!(chars[k], 'e' | 'E') && chars.get(k + 1).is_some_and(|n| n.is_ascii_digit() || matches!(n, '+' | '-'));
+        while i < chars.len() && chars[i] != ';' && !(chars[i].is_ascii_alphabetic() && !exponent(i)) {
             i += 1;
         }
         let params_str: String = chars[start..i].iter().collect();

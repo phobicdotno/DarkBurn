@@ -1,2 +1,0 @@
-- New: Trace Image Files traces a whole batch of pictures with the same settings and lays them out side by side
-- New: Import STL and OBJ 3D models as a grey height picture for 3D engraving

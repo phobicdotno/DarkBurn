@@ -973,11 +973,11 @@ fn an_agent_cannot_cut_the_users_connection_by_selecting_another_device() {
 
 #[test]
 fn showing_the_job_log_folder_counts_as_writing_files() {
-    // The folder is a setting an agent may change; showing it creates it.
+    // The folder is the person's setting; showing it creates it.
     let dir = std::env::temp_dir().join(format!("darkburn-hunt3-log-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let (mut gate, _seen, _app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
-    gate.execute("settings.set", json!({"key": "opts.job_log_dir", "value": dir.join("made/by/agent").to_string_lossy()})).unwrap();
+    let (mut gate, _seen, app) = spy_gate(McpPolicy { allow_file_write: false, ..McpPolicy::default() });
+    app.borrow_mut().prefs.opts.job_log_dir = dir.join("made/by/agent").to_string_lossy().into_owned();
     let e = gate.execute("job.log_show", json!({})).expect_err("file writes are off");
     assert_eq!(e.code, ErrorCode::Denied, "{}", e.message);
     assert!(!dir.exists(), "a folder was made with file writes off");

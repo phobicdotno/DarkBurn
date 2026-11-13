@@ -762,11 +762,15 @@ impl McpBackend {
                 "`{id}`: without a window DarkBurn only drives simulators; the active device is not one. Start DarkBurn with its window for real machines."
             )));
         }
+        if let Some(e) = crate::agent_limits::before(&app, id, &args) {
+            return Err(e);
+        }
         // The AI-agent settings are the user's: whatever a command did to them is undone.
         let policy = app.prefs.mcp.clone();
+        let kept = crate::agent_limits::Kept::of(&app);
         let r = run_command(&mut app, &self.ctx, id, &args);
         app.prefs.mcp = policy;
-        r.map_err(err_of)
+        crate::agent_limits::after(&mut app, id, &kept, r.map_err(err_of))
     }
 }
 

@@ -153,8 +153,12 @@ pub fn frame(mesh: &Mesh, s: &DepthSettings, limits: &DepthLimits) -> Result<Fra
     }
     let (lo, hi) = projected_bounds(mesh, s.view, s.flip);
     let (w, h) = (hi[0] - lo[0], hi[1] - lo[1]);
-    if mesh.triangles.is_empty() || !(w.is_finite() && w > 0.0) || !h.is_finite() {
+    if mesh.triangles.is_empty() || !(w.is_finite() && w > 0.0) {
         return bad("the model has no width seen from this side");
+    }
+    // A flat model seen edge on would give a picture with no height.
+    if !(h.is_finite() && h > 0.0) {
+        return bad("the model has no height seen from this side");
     }
     let scale = s.width_mm / w;
     let height_mm = h * scale;
@@ -229,7 +233,7 @@ pub fn depth_buffer(mesh: &Mesh, s: &DepthSettings, limits: &DepthLimits) -> Res
     let (span_u, span_v) = (f.hi[0] - f.lo[0], f.hi[1] - f.lo[1]);
     let to_px = |q: [f64; 3]| {
         let x = (q[0] - f.lo[0]) / span_u * w as f64;
-        let y = if span_v > 0.0 { (f.hi[1] - q[1]) / span_v * h as f64 } else { h as f64 * 0.5 };
+        let y = (f.hi[1] - q[1]) / span_v * h as f64;
         // Nearness in millimetres, measured from the far side of the model's box.
         [x, y, (q[2] - f.lo[2]) * f.scale]
     };

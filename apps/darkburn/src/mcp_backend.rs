@@ -84,6 +84,8 @@ pub struct McpBackend {
     builds: Vec<Build>,
     /// `image.trace_files` runs: id, start, the run [IMG-21].
     traces: Vec<(String, Instant, crate::multi_trace::PendingTrace)>,
+    /// `image.depth_map` runs: id, start, the run [IMG-25].
+    depth_maps: Vec<(String, Instant, crate::model_import::PendingDepthMap)>,
     shots: Vec<Shot>,
     finished: BTreeMap<String, (String, Result<Value, CommandError>)>,
     checkpoints: Vec<(String, Editor, Option<PathBuf>)>,
@@ -116,6 +118,9 @@ fn job_setup(app: &DarkBurn) -> String {
         app.prefs.opts.ignore_out_of_bounds,
     )
 }
+
+/// What a running `image.depth_map` call is doing, for the agent.
+const DEPTH_MAP_WHAT: &str = "making a height picture from a 3D model";
 
 fn err_of(m: String) -> CommandError {
     if m.contains("is not implemented in this build") {
@@ -262,6 +267,7 @@ impl McpBackend {
             headless,
             builds: Vec::new(),
             traces: Vec::new(),
+            depth_maps: Vec::new(),
             shots: Vec::new(),
             finished: BTreeMap::new(),
             checkpoints: Vec::new(),
@@ -280,7 +286,7 @@ impl McpBackend {
 
     /// A build or screenshot is in progress: the window should keep drawing frames.
     pub fn busy(&self) -> bool {
-        !self.builds.is_empty() || !self.traces.is_empty() || self.shots.iter().any(|s| s.result.is_none())
+        !self.builds.is_empty() || !self.traces.is_empty() || !self.depth_maps.is_empty() || self.shots.iter().any(|s| s.result.is_none())
     }
 
     fn id(&mut self, prefix: &str) -> String {
@@ -355,7 +361,7 @@ impl McpBackend {
         }
     }
 
-    /// Puts finished `image.trace_files` runs into the document.
+    /// Puts finished `image.trace_files` and `image.depth_map` runs into the document.
     fn poll_traces(&mut self) {
         while let Some(i) = self.traces.iter().position(|(.., t)| t.finished()) {
             let Ok(mut app) = self.app.try_borrow_mut() else { return };
@@ -363,6 +369,13 @@ impl McpBackend {
             let result = t.finish(&mut app).map_err(err_of);
             drop(app);
             self.finished.insert(id, ("tracing picture files".into(), result));
+        }
+        while let Some(i) = self.depth_maps.iter().position(|(.., d)| d.finished()) {
+            let Ok(mut app) = self.app.try_borrow_mut() else { return };
+            let (id, _, d) = self.depth_maps.remove(i);
+            let result = d.finish(&mut app).map_err(err_of);
+            drop(app);
+            self.finished.insert(id, (DEPTH_MAP_WHAT.into(), result));
         }
     }
 
@@ -627,6 +640,9 @@ impl Backend for McpBackend {
             let (done, total) = t.progress();
             return Ok(PendingState::Running { what: format!("tracing picture files ({done} of {total})"), running_s: started.elapsed().as_secs() });
         }
+        if let Some((_, started, _)) = self.depth_maps.iter().find(|(d, ..)| d == id) {
+            return Ok(PendingState::Running { what: DEPTH_MAP_WHAT.into(), running_s: started.elapsed().as_secs() });
+        }
         Ok(match self.finished.remove(id) {
             Some((what, result)) => PendingState::Done { what, result },
             None => PendingState::Unknown,
@@ -640,6 +656,11 @@ impl Backend for McpBackend {
         v.extend(self.traces.iter().map(|(id, started, _)| RunningOp {
             id: id.clone(),
             what: "tracing picture files".into(),
+            running_s: started.elapsed().as_secs(),
+        }));
+        v.extend(self.depth_maps.iter().map(|(id, started, _)| RunningOp {
+            id: id.clone(),
+            what: DEPTH_MAP_WHAT.into(),
             running_s: started.elapsed().as_secs(),
         }));
         v.extend(self.shots.iter().filter(|s| s.result.is_none()).map(|s| RunningOp {
@@ -720,6 +741,15 @@ impl McpBackend {
             let pid = self.id("t");
             self.traces.push((pid.clone(), Instant::now(), run));
             return Err(CommandError::still_running(pid, "tracing picture files"));
+        }
+        if id == "image.depth_map" {
+            // Off the UI thread too: a large model at a high resolution takes a while.
+            let app = self.app.try_borrow().map_err(|_| CommandError::failed("the app is busy: try again"))?;
+            let run = crate::model_import::PendingDepthMap::start(&app, &args).map_err(err_of)?;
+            drop(app);
+            let pid = self.id("d");
+            self.depth_maps.push((pid.clone(), Instant::now(), run));
+            return Err(CommandError::still_running(pid, DEPTH_MAP_WHAT));
         }
         let app_rc = self.app.clone();
         let mut app = app_rc.try_borrow_mut().map_err(|_| CommandError::failed("the app is busy: try again"))?;

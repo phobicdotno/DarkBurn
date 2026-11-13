@@ -159,6 +159,7 @@ mod tests {
         ("extras.rs", include_str!("extras.rs")),
         ("updates.rs", include_str!("updates.rs")),
         ("cuts_panel.rs", include_str!("cuts_panel.rs")),
+        ("model_import.rs", include_str!("model_import.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,
@@ -261,7 +262,7 @@ mod tests {
         let widgets =
             ["ui_kit::row(ui, \"", "ui_kit::checkbox(ui, \"", "ui_kit::section_heading(ui, \"", "ui_kit::caption(ui, \"", "ui_kit::button(ui, \""];
         for (file, src) in SOURCES {
-            if !matches!(*file, "settings.rs" | "library.rs" | "art_library.rs" | "extras.rs" | "help.rs" | "keymap.rs") {
+            if !matches!(*file, "settings.rs" | "library.rs" | "art_library.rs" | "extras.rs" | "help.rs" | "keymap.rs" | "model_import.rs") {
                 continue;
             }
             for w in widgets {

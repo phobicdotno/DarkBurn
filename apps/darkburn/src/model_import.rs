@@ -27,6 +27,7 @@ use darkburn_ui::ui_kit;
 use egui::{Align2, Color32, Context, Id, Rect, Sense, TextureHandle, TextureOptions, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
+use crate::i18n::tr;
 use crate::image_ui;
 use crate::numeric::{self, Num};
 use crate::shell::DarkBurn;
@@ -156,62 +157,130 @@ fn opt_bool(a: &Value, key: &str) -> Result<Option<bool>, String> {
     }
 }
 
-/// The settings in the arguments of `image.depth_map`, for model `m`.
-pub fn settings_from(a: &Value, m: &Mesh) -> Result<DepthSettings, String> {
-    let view = match a.get("view") {
-        None | Some(Value::Null) => View::Top,
-        Some(v) => v.as_str().and_then(View::from_name).ok_or("argument view must be top, front or side")?,
-    };
-    let flip = opt_bool(a, "flip")?.unwrap_or(false);
-    let width_mm = opt_num(a, "width")?.unwrap_or_else(|| natural_width(m, view, flip));
-    if !(width_mm > 0.0 && width_mm <= MAX_WIDTH_MM) {
-        return Err(format!("argument width must be more than 0 and at most {MAX_WIDTH_MM} mm"));
+/// The arguments of `image.depth_map`, checked before the model is read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Request {
+    pub path: PathBuf,
+    pub layer: Option<usize>,
+    pub centre: Point,
+    /// The settings; the width is filled in from the model when the arguments leave it out.
+    pub settings: DepthSettings,
+    pub width: Option<f64>,
+}
+
+impl Request {
+    /// Checks the arguments of `image.depth_map`. Nothing is read yet.
+    pub fn parse(app: &DarkBurn, a: &Value) -> Result<Request, String> {
+        let path = a.get("path").and_then(Value::as_str).ok_or("argument path must be a file path")?;
+        let layer = match a.get("layer") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(
+                v.as_u64()
+                    .filter(|l| *l < LAYER_COUNT as u64 && !darkburn_core::layer::is_tool_layer(*l as usize))
+                    .ok_or(format!("argument layer must be 0 to {}", darkburn_core::T1 - 1))? as usize,
+            ),
+        };
+        let centre = match (opt_num(a, "x")?, opt_num(a, "y")?) {
+            (Some(x), Some(y)) => Point::new(x, y),
+            (None, None) => page_centre(app),
+            _ => return Err("give both x and y, or neither".into()),
+        };
+        let view = match a.get("view") {
+            None | Some(Value::Null) => View::Top,
+            Some(v) => v.as_str().and_then(View::from_name).ok_or("argument view must be top, front or side")?,
+        };
+        let width = opt_num(a, "width")?;
+        if width.is_some_and(|w| !(w > 0.0 && w <= MAX_WIDTH_MM)) {
+            return Err(format!("argument width must be more than 0 and at most {MAX_WIDTH_MM} mm"));
+        }
+        let dpi = opt_num(a, "dpi")?.unwrap_or(DEFAULT_DPI);
+        if !(1.0..=2400.0).contains(&dpi) {
+            return Err("argument dpi must be 1 to 2400".into());
+        }
+        let (depth_from, depth_to) = (opt_num(a, "depth_from")?, opt_num(a, "depth_to")?);
+        if [depth_from, depth_to].into_iter().flatten().any(|v| v < 0.0) {
+            return Err("argument depth_from and depth_to must be 0 or more".into());
+        }
+        if let (Some(from), Some(to)) = (depth_from, depth_to)
+            && to <= from
+        {
+            return Err("argument depth_to must be deeper than depth_from".into());
+        }
+        let settings = DepthSettings {
+            view,
+            flip: opt_bool(a, "flip")?.unwrap_or(false),
+            width_mm: width.unwrap_or(FALLBACK_WIDTH_MM),
+            dpi,
+            near_white: opt_bool(a, "near_white")?.unwrap_or(true),
+            depth_from,
+            depth_to,
+        };
+        Ok(Request { path: PathBuf::from(path), layer, centre, settings, width })
     }
-    let dpi = opt_num(a, "dpi")?.unwrap_or(DEFAULT_DPI);
-    if !(1.0..=2400.0).contains(&dpi) {
-        return Err("argument dpi must be 1 to 2400".into());
+
+    /// The settings for model `m`: the model's own width when none was asked for.
+    pub fn settings_for(&self, m: &Mesh) -> DepthSettings {
+        let width_mm = self.width.unwrap_or_else(|| natural_width(m, self.settings.view, self.settings.flip));
+        DepthSettings { width_mm, ..self.settings }
     }
-    Ok(DepthSettings {
-        view,
-        flip,
-        width_mm,
-        dpi,
-        near_white: opt_bool(a, "near_white")?.unwrap_or(true),
-        depth_from: opt_num(a, "depth_from")?,
-        depth_to: opt_num(a, "depth_to")?,
-    })
+
+    /// Reads the model and draws its picture: the slow part, which needs no app. Returns the
+    /// picture and the model's triangle count.
+    pub fn make(&self) -> Result<(Rendered, usize), String> {
+        let m = read_model(&self.path).map_err(|e| format!("{}: {e}", crate::multi_trace::name_of(&self.path)))?;
+        let r = render(&m, &self.settings_for(&m))?;
+        Ok((r, m.triangles.len()))
+    }
+
+    /// Puts a finished picture into the document and reports it.
+    pub fn land(&self, e: &mut Editor, made: Result<(Rendered, usize), String>) -> Result<Value, String> {
+        let (r, triangles) = made?;
+        let (id, layer) = insert(e, &r, self.layer, self.centre)?;
+        Ok(json!({
+            "created": id.0,
+            "layer": layer,
+            "px": [r.px.0, r.px.1],
+            "size_mm": [r.size_mm.0, r.size_mm.1],
+            "depth_mm": r.depth_mm,
+            "triangles": triangles,
+        }))
+    }
 }
 
 /// `image.depth_map`: reads model `path`, draws its height picture with the settings in `a`
-/// and puts it in as an image shape (at `x`, `y`, else the middle of the work area).
+/// and puts it in as an image shape (at `x`, `y`, else the middle of the work area). This runs
+/// on the calling thread (scripts and tests); an agent's call goes through [`PendingDepthMap`].
 pub fn execute(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
-    let path = a.get("path").and_then(Value::as_str).ok_or("argument path must be a file path")?;
-    let path = PathBuf::from(path);
-    let layer = match a.get("layer") {
-        None | Some(Value::Null) => None,
-        Some(v) => Some(
-            v.as_u64()
-                .filter(|l| *l < LAYER_COUNT as u64 && !darkburn_core::layer::is_tool_layer(*l as usize))
-                .ok_or(format!("argument layer must be 0 to {}", darkburn_core::T1 - 1))? as usize,
-        ),
-    };
-    let centre = match (opt_num(a, "x")?, opt_num(a, "y")?) {
-        (Some(x), Some(y)) => Point::new(x, y),
-        (None, None) => page_centre(app),
-        _ => return Err("give both x and y, or neither".into()),
-    };
-    let m = read_model(&path).map_err(|e| format!("{}: {e}", crate::multi_trace::name_of(&path)))?;
-    let s = settings_from(a, &m)?;
-    let r = render(&m, &s)?;
-    let (id, layer) = insert(&mut app.editor, &r, layer, centre)?;
-    Ok(json!({
-        "created": id.0,
-        "layer": layer,
-        "px": [r.px.0, r.px.1],
-        "size_mm": [r.size_mm.0, r.size_mm.1],
-        "depth_mm": r.depth_mm,
-        "triangles": m.triangles.len(),
-    }))
+    let req = Request::parse(app, a)?;
+    let made = req.make();
+    req.land(&mut app.editor, made)
+}
+
+/// An `image.depth_map` call running on a worker, so a large model does not freeze the window.
+/// The picture goes into the document when the agent asks for the result.
+pub struct PendingDepthMap {
+    req: Request,
+    job: JoinHandle<Result<(Rendered, usize), String>>,
+}
+
+impl PendingDepthMap {
+    /// Checks the arguments and starts reading and drawing.
+    pub fn start(app: &DarkBurn, a: &Value) -> Result<PendingDepthMap, String> {
+        let req = Request::parse(app, a)?;
+        let worker = req.clone();
+        Ok(PendingDepthMap { req, job: std::thread::spawn(move || worker.make()) })
+    }
+
+    pub fn finished(&self) -> bool {
+        self.job.is_finished()
+    }
+
+    /// Puts the picture into the document, as [`execute`] does. Waits for the worker if it has
+    /// not finished.
+    pub fn finish(self, app: &mut DarkBurn) -> Result<Value, String> {
+        let made = self.job.join().unwrap_or_else(|_| Err("the picture could not be drawn".into()));
+        self.req.land(&mut app.editor, made)
+    }
 }
 
 // ----- Window -----
@@ -359,7 +428,17 @@ pub fn open_files(app: &mut DarkBurn, paths: Vec<PathBuf>, at: Option<Point>) {
     }
 }
 
-const VIEWS: [&str; 6] = ["Top", "Front", "Side", "Bottom", "Back", "Left side"];
+/// The View choices: the three views, then the same three seen from the other side.
+fn views() -> [String; 6] {
+    [
+        tr("model_import.top", "Top"),
+        tr("model_import.front", "Front"),
+        tr("model_import.side", "Side"),
+        tr("model_import.bottom", "Bottom"),
+        tr("model_import.back", "Back"),
+        tr("model_import.left_side", "Left side"),
+    ]
+}
 
 fn view_index(s: &DepthSettings) -> usize {
     View::ALL.iter().position(|v| *v == s.view).unwrap_or(0) + if s.flip { 3 } else { 0 }
@@ -375,7 +454,7 @@ fn body(ui: &mut Ui, d: &mut DepthDialog) {
     let row = ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(320.0);
-            ui_kit::section_heading(ui, "Model");
+            ui_kit::section_heading(ui, &tr("model_import.model", "Model"));
             note(ui, &crate::multi_trace::name_of(&d.path));
             match (&d.model, &d.error) {
                 (_, Some(e)) => {
@@ -383,37 +462,48 @@ fn body(ui: &mut Ui, d: &mut DepthDialog) {
                 }
                 (Some(m), None) => {
                     let [x, y, z] = m.size();
-                    note(ui, &format!("Size X {x:.2}, Y {y:.2}, Z {z:.2}; {} triangles", m.triangles.len()));
+                    let size = tr("model_import.size", "Size X {x}, Y {y}, Z {z}; {n} triangles")
+                        .replace("{x}", &format!("{x:.2}"))
+                        .replace("{y}", &format!("{y:.2}"))
+                        .replace("{z}", &format!("{z:.2}"))
+                        .replace("{n}", &m.triangles.len().to_string());
+                    note(ui, &size);
                 }
-                (None, None) => note(ui, "Reading the model..."),
+                (None, None) => note(ui, &tr("model_import.reading", "Reading the model...")),
             }
             ui.add_enabled_ui(d.model.is_some() && d.job.is_none(), |ui| {
-                ui_kit::section_heading(ui, "View");
+                ui_kit::section_heading(ui, &tr("model_import.view", "View"));
                 let mut view = view_index(&d.settings);
-                ui_kit::choice_row(ui, "Look from", "model_depth_view", &mut view, &VIEWS);
+                let views = views();
+                let names: Vec<&str> = views.iter().map(String::as_str).collect();
+                ui_kit::choice_row(ui, &tr("model_import.look_from", "Look from"), "model_depth_view", &mut view, &names);
                 if view != view_index(&d.settings) {
                     d.settings.view = View::ALL[view % 3];
                     d.settings.flip = view >= 3;
                 }
-                ui_kit::section_heading(ui, "Picture");
-                numeric::row(ui, "Width", &mut d.settings.width_mm, &Num::new(1.0..=MAX_WIDTH_MM, 2, " mm").speed(0.1));
-                numeric::row(ui, "Resolution", &mut d.settings.dpi, &Num::new(10.0..=1200.0, 0, " DPI").speed(1.0));
+                ui_kit::section_heading(ui, &tr("model_import.picture", "Picture"));
+                numeric::row(ui, &tr("model_import.width", "Width"), &mut d.settings.width_mm, &Num::new(1.0..=MAX_WIDTH_MM, 2, " mm").speed(0.1));
+                numeric::row(ui, &tr("model_import.resolution", "Resolution"), &mut d.settings.dpi, &Num::new(10.0..=1200.0, 0, " DPI").speed(1.0));
                 let mut near = usize::from(!d.settings.near_white);
-                ui_kit::choice_row(ui, "Near surfaces", "model_depth_near", &mut near, &["White", "Black"]);
+                let tones = [tr("model_import.white", "White"), tr("model_import.black", "Black")];
+                ui_kit::choice_row(ui, &tr("model_import.near", "Near surfaces"), "model_depth_near", &mut near, &[&tones[0], &tones[1]]);
                 d.settings.near_white = near == 0;
-                ui_kit::checkbox(ui, "Limit the depth range", &mut d.clamp);
+                ui_kit::checkbox(ui, &tr("model_import.limit_depth", "Limit the depth range"), &mut d.clamp);
                 if d.clamp {
-                    numeric::row(ui, "From depth", &mut d.from, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
-                    numeric::row(ui, "To depth", &mut d.to, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
+                    numeric::row(ui, &tr("model_import.from_depth", "From depth"), &mut d.from, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
+                    numeric::row(ui, &tr("model_import.to_depth", "To depth"), &mut d.to, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
                 }
             });
             match d.frame() {
                 Some(Ok(f)) => {
                     let deep = f.model_depth * f.scale;
-                    note(
-                        ui,
-                        &format!("Picture {:.2} x {:.2} mm, {} x {} pixels, {deep:.2} mm deep", f.width_mm, f.height_mm, f.px_width, f.px_height),
-                    );
+                    let facts = tr("model_import.facts", "Picture {w} x {h} mm, {pw} x {ph} pixels, {d} mm deep")
+                        .replace("{w}", &format!("{:.2}", f.width_mm))
+                        .replace("{h}", &format!("{:.2}", f.height_mm))
+                        .replace("{pw}", &f.px_width.to_string())
+                        .replace("{ph}", &f.px_height.to_string())
+                        .replace("{d}", &format!("{deep:.2}"));
+                    note(ui, &facts);
                 }
                 Some(Err(e)) => {
                     ui_kit::status_line(ui, &e, ui_kit::StatusTone::Warning);
@@ -421,7 +511,7 @@ fn body(ui: &mut Ui, d: &mut DepthDialog) {
                 None => {}
             }
             if d.job.is_some() {
-                note(ui, "Making the picture...");
+                note(ui, &tr("model_import.making", "Making the picture..."));
             }
         });
         rule = image_ui::column_gap(ui);
@@ -455,11 +545,12 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     let Some(mut d) = app.images.depth.dialog.take() else { return };
     d.refresh(ctx);
     let valid = d.model.is_some() && d.job.is_none() && matches!(d.frame(), Some(Ok(_)));
-    let (closed, action) = ui_kit::Window::new(Id::unique("db_model_depth"), "import", "Import 3D Model")
+    let (title, ok, cancel) = (tr("model_import.title", "Import 3D Model"), tr("model_import.import", "Import"), tr("model_import.cancel", "Cancel"));
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_model_depth"), "import", &title)
         .cards(2.9)
         .fields()
         .placed(Align2::CENTER_CENTER, crate::shell::room_under_the_bar(ctx).center())
-        .actions("Import", "Cancel", None)
+        .actions(&ok, &cancel, None)
         .show(ctx, valid, |ui| image_ui::under_the_bar(ui, |ui| body(ui, &mut d)));
     if closed || action == ui_kit::Action::Cancel {
         return;
@@ -478,7 +569,8 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
         let centre = d.at.unwrap_or_else(|| page_centre(app));
         match job.join().unwrap_or_else(|_| Err("the picture could not be drawn".into())).and_then(|r| insert(&mut app.editor, &r, None, centre)) {
             Ok(_) => {
-                app.note = Some(format!("Imported {} as a height picture", crate::multi_trace::name_of(&d.path)));
+                app.note =
+                    Some(tr("model_import.imported", "Imported {name} as a height picture").replace("{name}", &crate::multi_trace::name_of(&d.path)));
                 return;
             }
             Err(e) => d.error = Some(e),
@@ -620,6 +712,7 @@ pub(crate) mod tests {
             json!({ "path": path, "layer": 99 }),
             json!({ "path": path, "layer": 30 }),
             json!({ "path": path, "depth_from": 3, "depth_to": 1 }),
+            json!({ "path": path, "depth_from": -1 }),
             json!({ "path": path, "width": 5000, "dpi": 2400 }),
             json!({ "path": dir.join("missing.stl").display().to_string() }),
             json!({ "path": dir.join("p.png").display().to_string() }),
@@ -684,6 +777,133 @@ pub(crate) mod tests {
         }
         assert_eq!(app.editor.doc.len(), 0);
         assert!(!app.editor.history.can_undo());
+    }
+
+    /// A wedge: 20 long in X, 10 deep in Y, its top sloping from 10 high at x = 0 down to 0 at
+    /// x = 20. Seen from the front its outline is a right triangle with the tall side on the left.
+    const WEDGE: &[u8] = b"v 0 0 0\nv 20 0 0\nv 20 10 0\nv 0 10 0\nv 0 0 10\nv 0 10 10\nf 1 2 3 4\nf 1 4 6 5\nf 2 3 6 5\nf 1 2 5\nf 4 3 6\n";
+
+    #[test]
+    fn a_flat_plate_has_no_picture_from_the_front_or_the_side() {
+        let dir = temp("plate");
+        let plate = write(&dir, "plate.obj", b"v 0 0 0\nv 20 0 0\nv 20 10 0\nv 0 10 0\nf 1 2 3 4\n");
+        let path = plate.display().to_string();
+        let mut app = DarkBurn::new(Prefs::default());
+        for (view, flip) in [("front", false), ("front", true), ("side", false), ("side", true)] {
+            let e = crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "view": view, "flip": flip, "dpi": 25.4 }))
+                .unwrap_err();
+            assert!(e.contains("no height"), "{view} {flip}: {e}");
+        }
+        assert_eq!(app.editor.doc.len(), 0, "nothing goes in");
+        assert!(!app.editor.history.can_undo());
+        // From above it is an ordinary picture: all of it near, so all white.
+        let v = crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "dpi": 25.4 })).unwrap();
+        assert_eq!(v["px"], json!([20, 10]), "{v}");
+        let (shape, picture) = image_of(&app, v["created"].as_u64().unwrap());
+        let ShapeKind::Image(img) = &shape.kind else { unreachable!() };
+        assert!(img.height > 0.0);
+        assert!(picture.as_luma16().unwrap().pixels().all(|p| p.0[0] == 65535));
+    }
+
+    #[test]
+    fn flip_looks_from_the_other_side_through_the_command() {
+        let dir = temp("flip");
+        let wedge = write(&dir, "wedge.obj", WEDGE);
+        let path = wedge.display().to_string();
+        let mut app = DarkBurn::new(Prefs::default());
+        let covered = |app: &DarkBurn, v: &Value, x: u32, y: u32| {
+            let (_, picture) = image_of(app, v["created"].as_u64().unwrap());
+            // Every covered pixel is equally near (a flat face), so covered = white.
+            picture.as_luma16().unwrap().get_pixel(x, y).0[0] == 65535
+        };
+        let front = crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "view": "front", "dpi": 25.4 })).unwrap();
+        assert_eq!(front["px"], json!([20, 10]), "{front}");
+        assert!(covered(&app, &front, 1, 1) && !covered(&app, &front, 18, 1), "front: the tall side on the left");
+        let back =
+            crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "view": "front", "flip": true, "dpi": 25.4 })).unwrap();
+        assert_eq!(back["px"], json!([20, 10]), "{back}");
+        assert!(!covered(&app, &back, 1, 1) && covered(&app, &back, 18, 1), "back: mirrored, the tall side on the right");
+        // From above the slope runs from white on the left to black on the right; from below
+        // the flat base is all one depth.
+        let top = crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "dpi": 25.4 })).unwrap();
+        // Pixel centres run from x = 0.5 (9.75 high) to x = 19.5 (0.25 high).
+        assert!((top["depth_mm"].as_f64().unwrap() - 9.5).abs() < 1e-3, "{top}");
+        let bottom = crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "flip": true, "dpi": 25.4 })).unwrap();
+        assert!(bottom["depth_mm"].as_f64().unwrap().abs() < 1e-6, "{bottom}");
+        assert!(crate::api::execute_headless(&mut app, "image.depth_map", &json!({ "path": path, "flip": "yes" })).is_err());
+    }
+
+    #[test]
+    fn an_agent_call_draws_on_a_worker_and_lands_when_it_is_done() {
+        use darkburn_mcp::{Backend, ErrorCode, PendingState};
+        let dir = temp("agent");
+        let stl = write(&dir, "pyramid.stl", &mesh::write_binary_stl(&pyramid()));
+        let broken = write(&dir, "broken.stl", &mesh::write_binary_stl(&pyramid())[..200]);
+        let app = std::rc::Rc::new(std::cell::RefCell::new(DarkBurn::new(Prefs::default())));
+        let mut b = crate::mcp_backend::McpBackend::new(app.clone(), Context::default(), true);
+        let run = |b: &mut crate::mcp_backend::McpBackend, args: Value| {
+            let e = b.execute("image.depth_map", args).unwrap_err();
+            assert_eq!(e.code, ErrorCode::StillRunning, "{e:?}");
+            assert_eq!(app.borrow().editor.doc.len(), 0, "nothing lands before the agent asks");
+            assert!(b.busy(), "the window keeps drawing frames while it runs");
+            let pid = e.pending_id.expect("a pending id");
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            loop {
+                match b.pending(&pid).unwrap() {
+                    PendingState::Running { .. } => {}
+                    PendingState::Done { result, .. } => return result,
+                    PendingState::Unknown => panic!("the run vanished"),
+                }
+                assert!(std::time::Instant::now() < end, "timed out waiting for the agent's run");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        // A damaged file: the run fails and nothing goes in.
+        let e = run(&mut b, json!({ "path": broken.display().to_string() })).unwrap_err();
+        assert!(e.message.contains("ends early"), "{e:?}");
+        let v = run(&mut b, json!({ "path": stl.display().to_string(), "width": 40, "dpi": 25.4 })).unwrap();
+        assert_eq!(v["px"], json!([40, 40]), "{v}");
+        assert_eq!(app.borrow().editor.doc.len(), 1);
+        assert_eq!(app.borrow().editor.history.undo_label(), Some(UNDO_LABEL));
+        assert!(!b.busy());
+        // Bad arguments are refused at once, without a run.
+        for bad in [
+            json!({}),
+            json!({ "path": stl.display().to_string(), "dpi": 0 }),
+            json!({ "path": stl.display().to_string(), "depth_from": 2, "depth_to": 1 }),
+        ] {
+            let e = b.execute("image.depth_map", bad.clone()).unwrap_err();
+            assert_eq!(e.code, ErrorCode::InvalidParams, "{bad}: {e:?}");
+        }
+        assert!(!b.busy());
+        assert_eq!(app.borrow().editor.doc.len(), 1);
+    }
+
+    #[test]
+    fn the_window_speaks_norwegian() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        g.app().prefs.language = "nb".into();
+        g.frames(3);
+        assert_eq!(crate::i18n::language(), "nb");
+        g.app().images.depth.dialog = Some(state_case_dialog());
+        wait(&mut g, "the preview", &|g: &mut Gui| g.app().images.depth.dialog.as_ref().is_some_and(DepthDialog::preview_ready));
+        g.frames(2);
+        assert!(g.window_titles().iter().any(|t| t == "Importer 3D-modell"), "{:?}", g.window_titles());
+        let texts = g.visible_texts();
+        for want in ["Se fra", "Ovenfra", "Bredde", "Oppl\u{f8}sning", "Hvite", "Importer", "Avbryt"] {
+            assert!(texts.iter().any(|t| t == want), "{want} is missing: {texts:?}");
+        }
+        assert!(texts.iter().any(|t| t.contains("6 trekanter")), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("piksler")), "{texts:?}");
+        for english in ["Look from", "Width", "Import 3D Model", "Cancel"] {
+            assert!(!texts.iter().any(|t| t == english), "{english} is still English: {texts:?}");
+        }
+        g.screenshot("model-import-nb");
+        g.close_dialogs();
+        g.app().prefs.language = "en".into();
+        g.frames(2);
+        crate::i18n::set_language("en");
     }
 
     fn wait(g: &mut crate::ui_harness::Gui, what: &str, done: &dyn Fn(&mut crate::ui_harness::Gui) -> bool) {

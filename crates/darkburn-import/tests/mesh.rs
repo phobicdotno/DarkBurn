@@ -267,6 +267,19 @@ fn settings_are_checked() {
     let flat = Mesh { triangles: vec![[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 1.0]]] };
     assert!(frame(&flat, &DepthSettings::default(), &lim).is_err());
     assert!(frame(&Mesh::default(), &DepthSettings::default(), &lim).is_err());
+    // A plate with no thickness: fine from above, but from the front, the back or either side it
+    // has no height, so there is no picture to make.
+    let plate =
+        Mesh { triangles: vec![[[0.0, 0.0, 0.0], [20.0, 0.0, 0.0], [20.0, 10.0, 0.0]], [[0.0, 0.0, 0.0], [20.0, 10.0, 0.0], [0.0, 10.0, 0.0]]] };
+    let top = frame(&plate, &DepthSettings::default(), &lim).unwrap();
+    assert!(top.height_mm > 0.0 && top.px_height > 1, "{top:?}");
+    for view in [View::Front, View::Side] {
+        for flip in [false, true] {
+            let e = frame(&plate, &DepthSettings { view, flip, ..DepthSettings::default() }, &lim).unwrap_err();
+            assert!(e.to_string().contains("no height"), "{view:?} {flip}: {e}");
+            assert!(depth_map(&plate, &DepthSettings { view, flip, ..DepthSettings::default() }, &lim).is_err());
+        }
+    }
 }
 
 #[test]

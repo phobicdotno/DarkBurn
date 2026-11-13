@@ -197,15 +197,18 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                 ui_kit::number_field(ui, &mut slot, 0..=10, 1.0, "");
             });
             note(ui, "The slot is the layer number a contour in the craft file carries.");
-            ui_kit::section_heading(ui, &tr("gweike.recipes", "Recipes from the Gweike software"));
-            if let Some(c) = crate::gweike_recipes::section(ui, &mut shelf, head, slot) {
-                cmd = Some(c);
-            }
-            ui_kit::section_heading(ui, &tr("gweike.craft_values", "Craft values"));
-            match head {
-                Head::Fibre => fibre_editor(ui, &mut s.crafts.fibre[slot]),
-                _ => co2_editor(ui, &mut s.crafts.co2[slot]),
-            }
+            // The craft editor and, beside it, the recipes of the vendor software for the same
+            // head: one click puts a recipe on the slot open in the editor.
+            ui.columns(2, |cols| {
+                match head {
+                    Head::Fibre => fibre_editor(&mut cols[0], &mut s.crafts.fibre[slot]),
+                    _ => co2_editor(&mut cols[0], &mut s.crafts.co2[slot]),
+                }
+                ui_kit::section_heading(&mut cols[1], &tr("gweike.recipes", "Recipes from the Gweike software"));
+                if let Some(c) = crate::gweike_recipes::section(&mut cols[1], &mut shelf, head, slot) {
+                    cmd = Some(c);
+                }
+            });
             for p in s.craft_problems() {
                 ui_kit::status_line(ui, &p, StatusTone::Warning);
             }

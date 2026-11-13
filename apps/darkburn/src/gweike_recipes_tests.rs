@@ -141,7 +141,7 @@ fn the_gweike_window_switches_recipes_with_one_click() {
         run(&mut a, "gweike.open", Value::Null).unwrap();
     }
     g.frames(4);
-    assert!(g.has_text("Recipes from the Gweike software"), "{:?}", g.visible_texts());
+    assert!(g.has_text("RECIPES FROM THE GWEIKE SOFTWARE"), "{:?}", g.visible_texts());
     let pkg = g.temp("package");
     package(&pkg);
     g.answer_dialog(&pkg);

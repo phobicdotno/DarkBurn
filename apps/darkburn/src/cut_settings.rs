@@ -35,6 +35,8 @@ struct Session {
     saved_since: bool,
     /// A live edit was made.
     edited: bool,
+    /// The project the editor was opened in ([`darkburn_core::Editor::project`]).
+    project: u64,
 }
 
 fn session_id() -> Id {
@@ -163,13 +165,23 @@ fn fill_like(m: Mode) -> bool {
 
 /// Show the editor when it is open.
 pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
+    let project = app.editor.project();
     let Some(open) = app.cut_settings_open else {
         // Closed from elsewhere: the edits stay (as if OK).
-        if let Some(s) = ctx.data_mut(|d| d.remove_temp::<Session>(session_id())) {
+        if let Some(s) = ctx.data_mut(|d| d.remove_temp::<Session>(session_id()))
+            && s.project == project
+        {
             finish(app, &s, true);
         }
         return;
     };
+    if ctx.data(|d| d.get_temp::<Session>(session_id())).is_some_and(|s| s.project != project) {
+        // Another project was opened, or a new one made, while the editor was open. What it would
+        // put back (Cancel) or keep as an undo step (OK) are the layers of the project that is
+        // gone: the editor closes and leaves this one as it came.
+        close(ctx, app);
+        return;
+    }
     let mut s = ctx.data(|d| d.get_temp::<Session>(session_id())).unwrap_or_else(|| Session {
         opened_for: open,
         original: app.editor.doc.layers.clone(),
@@ -180,6 +192,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         clean_at: (!app.editor.is_modified()).then(|| app.editor.history.len()),
         saved_since: false,
         edited: false,
+        project,
     });
     if s.edited && !app.editor.is_modified() {
         s.saved_since = true;

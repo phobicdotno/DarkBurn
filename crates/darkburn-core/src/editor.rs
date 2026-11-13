@@ -144,7 +144,7 @@ impl History {
 }
 
 /// The editing session for one open project.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Editor {
     pub doc: Document,
     pub selection: Selection,
@@ -155,11 +155,36 @@ pub struct Editor {
     /// Bumped on every change; renderers and auto-save compare it.
     revision: u64,
     saved_revision: u64,
+    /// Which project this is: see [`Editor::project`].
+    project: u64,
+}
+
+impl Default for Editor {
+    fn default() -> Editor {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Editor {
+            doc: Document::default(),
+            selection: Selection::default(),
+            history: History::default(),
+            clipboard: Clipboard::default(),
+            current_layer: 0,
+            revision: 0,
+            saved_revision: 0,
+            project: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
 }
 
 impl Editor {
     pub fn new() -> Editor {
         Editor::default()
+    }
+
+    /// A number of its own for every editor made (a new or an opened project); a copy keeps it.
+    /// Something that holds on to the project between frames (a window's draft) compares it to
+    /// learn that another project took this one's place.
+    pub fn project(&self) -> u64 {
+        self.project
     }
 
     /// An editor on an opened document, unmodified.
@@ -315,6 +340,17 @@ mod tests {
 
     fn square(x: f64) -> Shape {
         Shape::rect(Rect::new(x, 0.0, x + 10.0, 10.0), 0.0, 0)
+    }
+
+    #[test]
+    fn every_new_or_opened_project_is_another_project() {
+        let a = Editor::new();
+        let b = Editor::with_document(a.doc.clone());
+        let mut c = a.clone();
+        c.touch();
+        assert_ne!(a.project(), b.project());
+        assert_ne!(a.project(), Editor::default().project());
+        assert_eq!(a.project(), c.project(), "a copy, changed or not, is the same project");
     }
 
     #[test]

@@ -31,6 +31,7 @@ mod devices_ui;
 mod doc_hunt10_tests;
 mod dock_geom;
 mod dock_layout;
+mod draw_more;
 mod escape;
 mod extras;
 mod file_io;

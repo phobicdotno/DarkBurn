@@ -582,6 +582,7 @@ pub fn works(id: &str) -> bool {
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
+        || crate::draw_more::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -828,6 +829,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
         v.extend_from_slice(crate::misc_cmds::COMMANDS);
+        v.extend_from_slice(crate::draw_more::COMMANDS);
         v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());

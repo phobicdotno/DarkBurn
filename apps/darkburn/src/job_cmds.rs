@@ -103,7 +103,12 @@ pub const COMMANDS: &[Cmd] = &[
     ),
     // Machine commands: registered now, connected by the machine side.
     cmd("job.start", "Start", "Alt+S", ""),
-    cmd("job.pause", "Pause", "", ""),
+    cmd(
+        "job.pause",
+        "Pause",
+        "",
+        r#"{"type":"object","properties":{"only_pause":{"type":"boolean","description":"never resume a job that is already paused (left out, the window's button resumes it)"}}}"#,
+    ),
     cmd("job.stop", "Stop", "", ""),
     cmd("job.frame", "Frame", "Alt+R", ""),
     cmd("job.frame_rubber", "Frame (rubber band)", "Alt+Shift+R", ""),

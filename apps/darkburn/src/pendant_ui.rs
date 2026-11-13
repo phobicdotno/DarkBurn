@@ -7,8 +7,11 @@
 //! applies to the pendant exactly as to the buttons.
 //!
 //! Key map:
-//! - Start: `job.start`, only when the Start button is enabled.
-//! - Pause: `job.pause` (pause or resume, like the button). Stop: `job.stop`.
+//! - Start: `job.start`, only when the Start button is enabled. On a paused job Start resumes
+//!   it, through `job.pause` as the window's Resume button does: Start is the pendant's Play.
+//! - Pause: `job.pause`, pause only (the owner's decision). Unlike the window's button it
+//!   never resumes: a press can arrive twice or late over the radio, and on some controllers a
+//!   second pause sets the job going again. Stop: `job.stop`.
 //! - Frame: `job.frame`. Go to origin: `job.go_origin`. Both only when the head may be jogged.
 //! - Arrows: one step of the Move panel's distance and speed through `machine.jog`, the path
 //!   the keyboard arrows use. Held FastStep makes the step ten times longer (the panel's Ctrl).
@@ -32,8 +35,10 @@
 //! it reads it. If the app gets to a press more than [`MAX_AGE`] later (the window was hidden,
 //! a file dialog was open, a long import ran), the press is dropped: nothing moves or starts
 //! long after its key was pressed, perhaps with nobody at the machine any more. Stop is
-//! carried out however old it is. A late Pause only ever pauses, it never sets a paused job
-//! going again, and of several Pause presses that arrive together only the first counts.
+//! carried out however old it is. Pause, late or not, only ever pauses. Once the pendant has
+//! sent a pause, further Pause presses are not sent again until the machine reports the job
+//! paused (or stopped), for at most [`PAUSE_SETTLE`]: a second pause that reached the
+//! controller before the first one showed could set the job going again there.
 //!
 //! One window at a time: every window that opened the receiver would get every key press, so
 //! one Start would start a job in each window and one arrow would move each machine. Before it
@@ -105,6 +110,10 @@ pub fn error_text(e: &PendantError) -> String {
 /// Stop (always carried out) and Pause (pauses, never resumes).
 pub const MAX_AGE: Duration = Duration::from_millis(500);
 
+/// How long after the pendant sent a pause a further Pause press is not sent, while the
+/// machine does not yet report the job paused.
+pub const PAUSE_SETTLE: Duration = Duration::from_secs(1);
+
 /// A key press that waits for the next drawn frame.
 struct Waiting {
     /// When the poll thread read the press.
@@ -142,6 +151,8 @@ pub struct PendantUi {
     /// Where the lock is. None: [`LOCK_FILE`] in the settings folder, or in the system's
     /// temporary folder when there is no settings folder.
     pub lock_path: Option<PathBuf>,
+    /// When the pendant last sent a pause the machine has not yet reported as taken.
+    pause_sent: Option<Instant>,
 }
 
 impl Default for PendantUi {
@@ -156,6 +167,7 @@ impl Default for PendantUi {
             lock: None,
             next_try: None,
             lock_path: None,
+            pause_sent: None,
         }
     }
 }
@@ -219,14 +231,13 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
         app.pendant.next_try = None;
         app.pendant.status = PendantStatus::Off;
     }
+    // A pause the machine reports as taken (or a job that ended) lets the next Pause through.
+    if settled(app.machine.handle.snapshot().state) {
+        app.pendant.pause_sent = None;
+    }
     let events = app.pendant.pendant.as_ref().map(Pendant::poll_stamped).unwrap_or_default();
-    let now = Instant::now();
-    // Of the Pause presses that arrive together only the first counts: two in one go are a
-    // replay or a radio drop-out, and the second would set the job going again.
-    let mut paused = false;
     for Stamped { at, event } in events {
-        let late = now.saturating_duration_since(at) > app.pendant.max_age;
-        on_event(app, event, at, late, &mut paused);
+        on_event(app, event, at);
     }
     if let Some(p) = &app.pendant.pendant {
         p.set_leds(leds(app));
@@ -289,9 +300,8 @@ pub fn frame(app: &mut DarkBurn) {
     }
 }
 
-/// `at` is when the poll thread read the event, `late` whether that is more than the allowed
-/// age ago, `paused` whether a Pause was already carried out in this go.
-fn on_event(app: &mut DarkBurn, ev: PendantEvent, at: Instant, late: bool, paused: &mut bool) {
+/// `at` is when the poll thread read the event.
+fn on_event(app: &mut DarkBurn, ev: PendantEvent, at: Instant) {
     match ev {
         PendantEvent::Connected(name) => {
             log::info!("pendant: {name}");
@@ -318,9 +328,9 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent, at: Instant, late: bool, pause
                 if k == Key::Stop {
                     // However old: a Stop is always carried out.
                     key_down(app, k, false);
-                } else if !*paused {
-                    *paused = true;
-                    pause(app, late);
+                } else {
+                    // However old too: it only ever pauses.
+                    pause(app);
                 }
             } else {
                 if app.pendant.waiting.len() >= MAX_WAITING {
@@ -342,17 +352,40 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent, at: Instant, late: bool, pause
     }
 }
 
-/// The Pause key. A press the app got to late pauses a running job and nothing else: on a job
-/// that is already paused the button's command would set it going again.
-fn pause(app: &mut DarkBurn, late: bool) {
-    if late {
-        app.machine.tick();
-        if app.machine.handle.snapshot().state == LaserState::Paused {
-            log::info!("pendant: a late Pause is not carried out on a paused job");
-            return;
-        }
+/// Whether the machine shows that no pause of the pendant is still on its way: the job is
+/// paused, or nothing is running.
+fn settled(state: LaserState) -> bool {
+    state == LaserState::Paused || !state.is_working()
+}
+
+/// Whether a Pause press is held back: the pendant sent a pause less than [`PAUSE_SETTLE`]
+/// before `now`, and the machine, in `state`, does not show it yet.
+pub fn pause_held_back(state: LaserState, pause_sent: Option<Instant>, now: Instant) -> bool {
+    !settled(state) && pause_sent.is_some_and(|t| now.saturating_duration_since(t) < PAUSE_SETTLE)
+}
+
+/// The Pause key: pauses a running job and nothing else, fresh or late (the owner's decision).
+/// On a job that is already paused nothing is sent; the window's button would resume it.
+fn pause(app: &mut DarkBurn) {
+    app.machine.tick();
+    let state = app.machine.handle.snapshot().state;
+    if settled(state) {
+        app.pendant.pause_sent = None;
     }
-    key_down(app, Key::Pause, false);
+    if pause_held_back(state, app.pendant.pause_sent, Instant::now()) {
+        log::info!("pendant: Pause again before the machine showed the last one; not sent");
+        return;
+    }
+    run_with(app, "job.pause", &json!({ "only_pause": true }));
+    if state != LaserState::Paused {
+        app.pendant.pause_sent = Some(Instant::now());
+    }
+}
+
+/// The Start key on a paused job: what the window's Resume button does, through its command.
+fn resume(app: &mut DarkBurn) {
+    app.pendant.pause_sent = None;
+    run_with(app, "job.pause", &json!({}));
 }
 
 /// One key went down on its own; `fast` is whether FastStep was held then. Everything goes
@@ -360,14 +393,16 @@ fn pause(app: &mut DarkBurn, late: bool) {
 fn key_down(app: &mut DarkBurn, key: Key, fast: bool) {
     match key {
         Key::Start => {
-            if start_allowed(app) {
+            // Fresh, as the window's Resume button reads it before it is clicked.
+            app.machine.tick();
+            if app.machine.handle.snapshot().state == LaserState::Paused {
+                resume(app);
+            } else if start_allowed(app) {
                 run_with(app, "job.start", &json!({}));
             }
         }
-        // Pause and Stop, like their buttons, are never held back.
-        Key::Pause => {
-            run_with(app, "job.pause", &json!({}));
-        }
+        // Pause and Stop, like their buttons, are never held back by the window's state.
+        Key::Pause => pause(app),
         Key::Stop => {
             run_with(app, "job.stop", &json!({}));
         }

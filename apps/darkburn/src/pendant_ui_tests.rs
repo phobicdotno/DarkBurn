@@ -639,3 +639,201 @@ fn only_one_window_has_the_receiver_and_another_takes_over_when_it_is_done() {
     drop(a);
     let _ = std::fs::remove_file(lock);
 }
+
+// ----- Pause only pauses; Start (Play) resumes a paused job -----------------------------------
+
+fn starts(a: &DarkBurn) -> usize {
+    a.machine.job_log.iter().filter(|l| l.starts_with("Job started")).count()
+}
+
+/// The pendant's Pause pressed on a paused job leaves it paused, fresh or not: unlike the
+/// window's button it never resumes.
+#[test]
+fn pause_twice_leaves_the_job_paused() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    tap(&emu, Key::Pause);
+    pump(&ctx, &mut a, "the job paused", |a| state(a) == LaserState::Paused);
+    settle(&ctx, &mut a);
+    for round in 0..3 {
+        tap(&emu, Key::Pause);
+        settle(&ctx, &mut a);
+        assert_eq!(state(&a), LaserState::Paused, "Pause number {} set the job going again", round + 2);
+    }
+    assert!(a.machine.message.as_ref().is_none_or(|m| !m.error), "{:?}", a.machine.message.as_ref().map(|m| &m.text));
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the job stopped", stopped);
+}
+
+/// Pause presses that pile up in the receiver's queue and reach the app together, fresh or long
+/// after they were pressed, never set a paused job going.
+#[test]
+fn pause_presses_replayed_from_the_queue_never_resume() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    tap(&emu, Key::Pause);
+    pump(&ctx, &mut a, "the job paused", |a| state(a) == LaserState::Paused);
+    // Four at once, read by the poll thread before the next frame takes them: an odd number
+    // of toggles would leave the job running.
+    for _ in 0..4 {
+        tap(&emu, Key::Pause);
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused, "a burst of Pause presses set the job going again");
+    // Three that the app gets to late.
+    a.pendant.max_age = Duration::from_millis(200);
+    for _ in 0..3 {
+        tap(&emu, Key::Pause);
+    }
+    std::thread::sleep(Duration::from_millis(1200));
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused, "late Pause presses set the job going again");
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the job stopped", stopped);
+}
+
+/// After the pendant sent a pause, another Pause is not sent until the machine shows the job
+/// paused or stopped, for at most PAUSE_SETTLE.
+#[test]
+fn a_second_pause_waits_until_the_machine_shows_the_first() {
+    use pendant_ui::{PAUSE_SETTLE, pause_held_back};
+    let t = Instant::now();
+    let ms = Duration::from_millis;
+    assert!(!pause_held_back(LaserState::Busy, None, t), "the first Pause goes out");
+    assert!(pause_held_back(LaserState::Busy, Some(t), t), "a second one at once does not");
+    assert!(pause_held_back(LaserState::Busy, Some(t), t + ms(100)));
+    assert!(pause_held_back(LaserState::Framing, Some(t), t + ms(100)));
+    assert!(!pause_held_back(LaserState::Busy, Some(t), t + PAUSE_SETTLE), "a pause that was lost does not block Pause for long");
+    assert!(!pause_held_back(LaserState::Paused, Some(t), t), "the machine shows it: nothing to wait for");
+    assert!(!pause_held_back(LaserState::Ready, Some(t), t), "the job ended");
+    // A press earlier than the pause (a clock read before it) is held back too, not let through.
+    assert!(pause_held_back(LaserState::Busy, Some(t + ms(50)), t));
+}
+
+/// Start is the pendant's Play: on a paused job it resumes it through the Resume button's
+/// command, and only as Start is carried out, fresh and with the window drawn. No new job is
+/// planned or started.
+#[test]
+fn start_resumes_a_paused_job_like_the_resume_button() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    // Something to burn, so that a Start taken for a new job would plan one.
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    tap(&emu, Key::Pause);
+    pump(&ctx, &mut a, "the job paused", |a| state(a) == LaserState::Paused);
+    assert!(!crate::laser_panel::start_allowed(&a), "the Start button is off on a paused job");
+    let started = starts(&a);
+
+    // A Play the app gets to late is dropped, like every key but Stop and Pause.
+    a.pendant.max_age = Duration::from_millis(200);
+    tap(&emu, Key::Start);
+    std::thread::sleep(Duration::from_millis(1200));
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused, "a late Play resumed the job");
+    a.pendant.max_age = Duration::from_secs(60);
+
+    // With the window not drawn only the app's logic runs: Play waits for a drawn frame.
+    tap(&emu, Key::Start);
+    let end = Instant::now() + T;
+    while a.pendant.waiting_len() == 0 {
+        pendant_ui::logic(&ctx, &mut a);
+        assert!(Instant::now() < end, "Play never reached the app");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    a.machine.tick();
+    assert_eq!(state(&a), LaserState::Paused, "Play resumed the job with the window hidden");
+
+    // The window is drawn again: the job goes on.
+    pendant_ui::frame(&mut a);
+    pump(&ctx, &mut a, "the job going on", |a| state(a) == LaserState::Busy);
+    assert!(a.job.pending.is_none(), "Play planned a new job instead of resuming");
+    settle(&ctx, &mut a);
+    assert_eq!(starts(&a), started, "Play started a new job: {:?}", a.machine.job_log);
+
+    // Pause works again at once, and Play once more.
+    tap(&emu, Key::Pause);
+    pump(&ctx, &mut a, "the job paused again", |a| state(a) == LaserState::Paused);
+    tap(&emu, Key::Start);
+    pump(&ctx, &mut a, "the job going on again", |a| state(a) == LaserState::Busy);
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the job stopped", stopped);
+    assert!(a.job.pending.is_none());
+}
+
+/// With nothing paused, Play is the Start button as before: nothing while a job runs.
+#[test]
+fn start_on_a_running_job_does_nothing() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    let started = starts(&a);
+    tap(&emu, Key::Start);
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Busy);
+    assert!(a.job.pending.is_none(), "Start on a running job planned another one");
+    assert_eq!(starts(&a), started);
+    tap(&emu, Key::Stop);
+    pump(&ctx, &mut a, "the job stopped", stopped);
+}
+
+/// The window's Pause button is unchanged: on a paused job it resumes. `only_pause`, what the
+/// pendant sends, leaves a paused job paused.
+#[test]
+fn the_pause_button_still_resumes_and_only_pause_does_not() {
+    use crate::machine_ui::run_with;
+    let mut a = DarkBurn::new(Prefs::default());
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    start_slow_job(&ctx, &mut a);
+    assert!(run_with(&mut a, "job.pause", &json!({ "only_pause": true })));
+    pump(&ctx, &mut a, "only_pause pausing a running job", |a| state(a) == LaserState::Paused);
+    assert!(run_with(&mut a, "job.pause", &json!({ "only_pause": true })));
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused, "only_pause resumed the job");
+    assert!(run_with(&mut a, "job.pause", &json!({})));
+    pump(&ctx, &mut a, "the button resuming the job", |a| state(a) == LaserState::Busy);
+    assert!(run_with(&mut a, "job.stop", &json!({})));
+    pump(&ctx, &mut a, "the job stopped", stopped);
+}
+
+/// The Settings page says what Pause and Start do on the pendant.
+#[test]
+fn the_settings_page_says_pause_only_pauses() {
+    let mut g = crate::ui_harness::Gui::new(1600.0, 1200.0, 1.0);
+    g.app().settings_open = true;
+    g.frames(3);
+    let win = g.rect_of("dialog:window").expect("the Settings window");
+    let tab = g.find_texts("Devices").into_iter().find(|r| win.contains(r.center())).expect("the Devices page in the Settings window");
+    g.click_pos(tab.center());
+    g.frames(2);
+    let text = "Pause only pauses; Start goes on with a paused job.";
+    if !g.has_text(text) {
+        let win = g.rect_of("dialog:window").unwrap();
+        g.scroll(win.center(), egui::vec2(0.0, -2000.0));
+        g.frames(2);
+    }
+    assert!(g.has_text(text), "{:?}", g.visible_texts());
+    g.screenshot("pendant-settings");
+    g.close_dialogs();
+}

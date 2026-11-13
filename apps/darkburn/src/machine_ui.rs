@@ -743,9 +743,12 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
             if app.machine.handle.snapshot().state == LaserState::Paused {
                 // The button in the window toggles. For an agent, pause only ever pauses: it is
                 // one of the commands that are always allowed, and going on is machine.resume.
+                // `only_pause` asks the same in the window: the pendant's Pause key never
+                // sets a paused job going, since a press can arrive twice or late.
+                let only_pause = a.get("only_pause").and_then(Value::as_bool).unwrap_or(false);
                 match src {
-                    Source::Ui => mach(app.machine.handle.resume()),
-                    Source::Api => Ok(json!({ "ok": true, "paused": true })),
+                    Source::Ui if !only_pause => mach(app.machine.handle.resume()),
+                    _ => Ok(json!({ "ok": true, "paused": true })),
                 }
             } else {
                 mach(app.machine.handle.pause())

@@ -540,7 +540,7 @@
   "settings.pendant": "Håndkontroll",
   "settings.pendant_copy": "Kopier installasjonskommandoen",
   "settings.pendant_on": "Bruk trådløs håndkontroll",
-  "settings.pendant_text": "Den trådløse håndkontrollen fra XHC. Tastene gjør det samme som knappene de svarer til, og bare når de knappene er på. Laser-tasten gjør ingenting.",
+  "settings.pendant_text": "Den trådløse håndkontrollen fra XHC. Tastene gjør det samme som knappene de svarer til, og bare når de knappene er på. Pause-tasten setter bare på pause; Start-tasten fortsetter en jobb som står på pause. Laser-tasten gjør ingenting.",
   "settings.pendant_udev": "Installer udev-regelen én gang, og trekk så mottakeren ut og sett den inn igjen:",
   "settings.pendant_unsupported": "Denne utgaven har ikke støtte for håndkontroll.",
   "settings.ports": "Serielle porter",

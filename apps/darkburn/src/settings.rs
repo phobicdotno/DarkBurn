@@ -453,7 +453,7 @@ fn pendant(ui: &mut Ui, prefs: &mut Prefs) {
     ui.label(
         egui::RichText::new(tr(
             "settings.pendant_text",
-            "The XHC wireless handheld pendant. Its keys do what the matching buttons do, and only when those buttons are enabled. The Laser key does nothing.",
+            "The XHC wireless handheld pendant. Its keys do what the matching buttons do, and only when those buttons are enabled. Pause only pauses; Start goes on with a paused job. The Laser key does nothing.",
         ))
         .size(t.font_small)
         .color(t.text_dim),

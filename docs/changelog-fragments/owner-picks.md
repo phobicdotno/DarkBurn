@@ -1,0 +1,1 @@
+- Fix: The pendant's Pause key only pauses now, and its Start key goes on with a paused job

@@ -229,6 +229,13 @@ fn turkish_headings_keep_the_dotted_capital_i() {
 /// Turkish dotless ı, and also when it is typed with a plain i.
 #[test]
 fn turkish_hotkey_filter_finds_words_with_a_dotless_i() {
+    let mut g = Gui::standard();
+    g.app().extras.hotkeys.filter = "grid".into();
+    g.run_command("file.hotkeys");
+    g.settle();
+    g.screenshot("lang-en-hotkeys");
+    assert!(g.has_text("Grid Array"), "grid does not find Grid Array: {:?}", g.visible_texts());
+    g.close_dialogs();
     for typed in ["ızgara", "izgara", "IZGARA"] {
         let mut g = Gui::standard();
         g.run_command("lang.tr");

@@ -225,11 +225,20 @@ fn fire_button(ui: &mut Ui, app: &mut DarkBurn, enabled: bool) {
         .inner;
     let down = r.is_pointer_button_down_on();
     let on = app.machine.handle.snapshot().fire_on;
-    if down && !on && enabled {
+    // One fire per press: the machine reports the laser on a little later, and a held button
+    // must not send a second fire in between, nor after the laser went off by itself.
+    let sent = ui.data(|d| d.get_temp::<bool>(r.id)).unwrap_or(false);
+    if down && !on && enabled && !sent {
         let (p, s) = (app.machine.fire_percent, app.machine.fire_secs.clamp(1.0, 10.0));
         go(app, "machine.fire", json!({ "percent": p, "secs": s }));
-    } else if !down && on {
-        go(app, "machine.fire_off", json!({}));
+        ui.data_mut(|d| d.insert_temp(r.id, true));
+    } else if !down {
+        if sent {
+            ui.data_mut(|d| d.remove::<bool>(r.id));
+        }
+        if on {
+            go(app, "machine.fire_off", json!({}));
+        }
     }
     ui_kit::row(ui, "Fire power", |ui| {
         let max = app.machine.active().settings.fire_max_percent.max(0.1);

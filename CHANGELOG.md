@@ -1,6 +1,7 @@
 # Changelog
 
-## v0.0.607 (build 7)
+## v0.0.608 (build 7)
+- Fix: holding the Fire button never fires twice when the machine is slow to answer
 - Fix: the new windows, tools and texts are translated into every language
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs

@@ -973,8 +973,14 @@ impl Worker {
         let st = self.sh.snapshot.lock().expect("snapshot").activity;
         if matches!(self.state, State::Idle) && st != Activity::Idle {
             self.idle_snapshot();
-        } else if matches!(self.state, State::Frame(_)) {
-            self.sh.update(|s| s.activity = Activity::Framing);
+        } else if let State::Frame(f) = &self.state {
+            // A frame held by a pause stays shown as held.
+            let a = match f.pause {
+                Some(Pause::Door) => Activity::PausedDoor,
+                Some(Pause::User) => Activity::Paused,
+                None => Activity::Framing,
+            };
+            self.sh.update(|s| s.activity = a);
         }
     }
 

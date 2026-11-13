@@ -660,3 +660,101 @@ quoted “like this”. Turkish adds suffixes to its words, so the one-word chec
   Distribute.
 - Captions in capitals keep the Turkish i: "Birimler" is shown as "BİRİMLER". The program does
   this itself, so the file holds normal case.
+
+## Greek (el)
+
+Commands are nouns, as Greek programs write them ("Αποθήκευση", "Άνοιγμα", "Επικόλληση"); help
+texts use the formal imperative ("Κάντε κλικ", "Πατήστε"). The Greek question mark is ";", never
+"?", and there is no ano teleia (·): a comma or a full stop does. Panel labels that are not
+translated yet are quoted «like this». Greek changes the endings of its words, so the one-word
+check compares stems ("επαναφορ" finds "Επαναφορά" and "επαναφοράς").
+
+- Job: εργασία. Cut (laser): κοπή, as in Ρυθμίσεις κοπής, βιβλιοθήκη κοπής, κατεύθυνση κοπής,
+  Παλέτα κοπής. Cut (clipboard): Αποκοπή. Cut shapes: Διαχωρισμός σχημάτων.
+- Layer: επίπεδο. Line / Fill / Image: Γραμμή / Γέμισμα / Εικόνα.
+- Power: ισχύς. Speed: ταχύτητα. Pass: πέρασμα. Interval: διάστημα. Thickness: πάχος.
+- Air assist: φύσημα αέρα (column: Αέρας). Frame (the laser traces the outline): πλαισίωση.
+  Frame Selection (the view): Προσαρμογή στην επιλογή.
+- Home: αρχική θέση. Origin: αφετηρία. Start point: σημείο έναρξης.
+- Tab: γέφυρα. Rotary: περιστροφικός άξονας. Print and cut: Εκτύπωση και κοπή; its targets:
+  σημάδια.
+- Device / Machine / Controller: συσκευή / μηχάνημα / ελεγκτής. Command: εντολή.
+  Preview: Προεπισκόπηση.
+- Shape / Object: σχήμα / αντικείμενο. Selection: επιλογή. Path: διαδρομή. Node: κόμβος.
+  Weld: Συγκόλληση.
+- Boolean union / difference / intersection: Λογική ένωση / διαφορά / τομή; the group: Λογικές
+  πράξεις.
+- Offset: Μετατόπιση (Move is μετακίνηση). Trace: Ανίχνευση. Bitmap: ψηφιογραφία.
+- Group / Ungroup: Ομαδοποίηση / Κατάργηση ομάδας. Break apart: Διάσπαση. Auto-join: συνένωση.
+- Array: συστοιχία (Συστοιχία πλέγματος, Κυκλική συστοιχία, Εικονική συστοιχία).
+- Align: Στοίχιση; the ribbon group Alignment: Ευθυγράμμιση. Distribute: Κατανομή.
+  Dock: Ώθηση. Nest: Ένθεση. Flip: Αναστροφή. Mirror: Κατοπτρισμός.
+- Snap: προσκόλληση. Grid: πλέγμα. Lock: κλείδωμα. Crop: περικοπή. Mask: μάσκα.
+  Pan: Μετακίνηση προβολής. Nudge (arrow keys): μικρομετακίνηση.
+- Page: σελίδα. Canvas: καμβάς. Work area: περιοχή εργασίας. Bed: τραπέζι. Panel: πάνελ.
+  Window layout: διάταξη.
+- Toolbar: γραμμή εργαλείων. Ribbon tab Home: Κεντρική. Ribbon group Setup: Προετοιμασία.
+  Hotkeys: συντομεύσεις. Settings: Ρυθμίσεις. Preferences (the settings file): προτιμήσεις.
+- Edit: Επεξεργασία. Modify (ribbon tab): Τροποποίηση. Arrange: Τακτοποίηση. File menu: Αρχείο.
+- Mode: λειτουργία. Art library: Βιβλιοθήκη γραφικών. Library entry: καταχώριση (feminine:
+  "συνδεδεμένη"). Art item: στοιχείο. Link / Unlink: Σύνδεση / Αποσύνδεση.
+- Feeder: τροφοδότης. Camera control: Έλεγχος κάμερας. Print: εκτύπωση.
+- Output and Exit are both Έξοδος, as in other Greek programs; they never stand side by side.
+- Cut table columns: Επίπεδο, Λειτ., Ταχ/Ισχ, Έξοδος, Ορατό, Αέρας.
+- Status bar count: αντικείμενο / αντικείμενα.
+- Width / Height: Πλάτος / Ύψος. Reset: Επαναφορά. Backup (a saved copy of a file): αντίγραφο
+  ασφαλείας. Backup path (the outline an image keeps after a crop): εφεδρική διαδρομή.
+- Debug log: καταγραφή σφαλμάτων.
+- Start (the laser panel button, not translated yet): «Start».
+- Hotkey conflicts: "Ctrl+S χρησιμοποιείται ήδη από την εντολή ..."; Take the key: Μεταφορά
+  πλήκτρου.
+- Choices agree with their label: Toolbar icons (εικονίδια) are Μικρά / Μεσαία / Μεγάλα; Curve
+  quality (ποιότητα) is Χαμηλή / Κανονική / Υψηλή; Theme (θέμα) is Σκοτεινό / Φωτεινό.
+- Captions in capitals drop the accent: "Μονάδες" is shown as "ΜΟΝΑΔΕΣ", and "τσάι" as "ΤΣΑΪ".
+  The program does this itself, so the file holds normal case. The hotkey search ignores accents.
+
+## Russian (ru)
+
+The infinitive in commands ("Сохранить", "Открыть", "Вставить") and the formal imperative in
+help texts ("Щелкните", "Нажмите"). The letter ё is written е, as most programs do; the hotkey
+search treats them as one letter. Panel labels that are not translated yet are quoted «like
+this». Russian changes the endings of its words, so the one-word check compares stems
+("резервн копи" finds "резервную копию").
+
+- Job: задание. Cut (laser): резка, as in Параметры резки, библиотека резки, направление резки,
+  Палитра резки. Cut (clipboard): Вырезать. Cut shapes: Разрезать фигуры.
+- Layer: слой. Line / Fill / Image: Линия / Заливка / Изображение.
+- Power: мощность. Speed: скорость. Pass: проход. Interval: интервал. Thickness: толщина.
+- Air assist: обдув. Frame: рамка.
+- Home: исходная позиция. Origin: начало координат. Start point: начальная точка.
+- Tab: перемычка. Rotary: поворотная ось. Print and cut: Печать и резка; its targets: метки.
+- Device / Machine / Controller: устройство / станок / контроллер. Command: команда.
+  Preview: Предпросмотр.
+- Shape / Object: фигура / объект. Selection: выделение. Path: контур. Node: узел.
+  Weld: Слить фигуры.
+- Boolean union / difference / intersection: Логическое объединение / вычитание / пересечение;
+  the group: Логические операции.
+- Offset: Смещение контура (Move is Перемещение). Trace: Векторизация. Bitmap: растр.
+- Group / Ungroup: Сгруппировать / Разгруппировать. Break apart: Разъединить.
+- Array: массив (Массив сеткой, Круговой массив, Виртуальный массив).
+- Align / Distribute / Dock: Выровнять / Распределить / Прижать. Nest: Раскладка.
+  Flip: Отразить (the group: Отражение). Mirror: Зеркалировать.
+- Snap: привязка. Grid: сетка. Lock: заблокировать. Crop: обрезка. Mask: маска.
+  Pan: Панорамирование. Nudge (arrow keys): сдвиг.
+- Page: страница. Canvas: холст. Work area: рабочая область. Bed: рабочий стол.
+- Toolbar: панель инструментов. Ribbon tab Home: Главная. Ribbon group Setup: Настройка.
+  Hotkeys: горячие клавиши. Settings and preferences: настройки. Cut settings: Параметры резки.
+- Edit: Правка. Modify (ribbon tab): Изменить. Arrange: Упорядочить. File menu: Файл.
+- Mode: режим. Art library: Библиотека графики. Library entry: запись (feminine: "связана").
+  Art item: элемент. Link / Unlink: Связать / Отвязать.
+- Feeder: податчик. Camera control: Управление камерой. Output: вывод; Print: печать.
+- Cut table columns: Слой, Режим, Скор/Мощн, Вывод, Видим, Обдув. Off would be Выкл.
+- Status bar count: шт. (one word for object and objects).
+- Width / Height: Ширина / Высота. Reset: Сбросить. Backup (a saved copy of a file): резервная
+  копия. Backup path (the outline an image keeps after a crop): запасной контур.
+- Space (the key): Пробел. Debug log: журнал отладки.
+- Start (the laser panel button, not translated yet): «Start».
+- Hotkey conflicts: "Ctrl+S уже назначено команде ...", "назначено нескольким командам";
+  Take the key: Забрать клавишу.
+- Choices agree with their label: Toolbar icons (значки) are Маленькие / Средние / Большие;
+  Curve quality (качество) is Низкое / Обычное / Высокое; Theme (тема) is Темная / Светлая.

@@ -367,6 +367,41 @@ mod tests {
         set_language("en");
     }
 
+    /// Greek and Russian translate the English texts, and the Language menu offers them
+    /// [I18N-04].
+    #[test]
+    fn greek_and_russian_are_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("el", "Αρχείο"), ("ru", "Файл")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
+    /// Greek asks with ";" (the Greek question mark), never "?", and both Greek and Russian
+    /// quote the English labels the help names with « », not straight quotes.
+    #[test]
+    fn greek_and_russian_keep_their_own_punctuation() {
+        for (code, text) in locale("el") {
+            assert!(!text.contains('?'), "el {code}: {text:?}");
+        }
+        for lang in ["el", "ru"] {
+            for (key, text) in locale(lang) {
+                if key != "library.thickness_hint" {
+                    assert!(!text.contains('"'), "{lang} {key}: {text:?}");
+                }
+            }
+            let help = &locale(lang)["help.camera_selection.p1"];
+            for label in ["Allow live camera", "Find cameras", "Camera", "Start"] {
+                assert!(help.contains(&format!("\u{ab}{label}\u{bb}")), "{lang}: {help:?}");
+            }
+        }
+    }
+
     /// Review corrections: Danish aligns "nederst"/"øverst"/"midt" (not the plurals "bunde",
     /// "toppe", "midter"), the library button puts settings *on* a layer ("til lag", not
     /// "assign a layer"), and the Move help says "kør hjem".
@@ -507,7 +542,7 @@ mod tests {
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr"] {
+        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru"] {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -553,6 +588,8 @@ mod tests {
             ("hu", "Ki"),
             ("sl", "Izklop"),
             ("tr", "Kapalı"),
+            ("el", "Ανενεργό"),
+            ("ru", "Выкл"),
             ("en", "Off"),
         ];
         for (code, word) in off {
@@ -658,6 +695,16 @@ mod tests {
             ("hu", ["szélesség", "magasság", "visszaállít", "biztonsági mentés", "tartalék útvonal"]),
             ("sl", ["širin", "višin", "ponastavi", "varnostn kopij", "rezervn pot"]),
             ("tr", ["genişlik", "yükseklik", "sıfırla", "yedek", "yedek yol"]),
+        ]);
+    }
+
+    /// Greek and Russian change the endings of their words too ("αντίγραφο ασφαλείας",
+    /// "резервную копию"), so their terms are given as stems.
+    #[test]
+    fn greek_and_russian_use_one_word_per_term() {
+        assert_one_stem_per_term(&[
+            ("el", ["πλάτ", "ύψ", "επαναφορ", "αντίγραφ ασφαλείας", "εφεδρικ διαδρομ"]),
+            ("ru", ["ширин", "высот", "сброс", "резервн копи", "запасн контур"]),
         ]);
     }
 

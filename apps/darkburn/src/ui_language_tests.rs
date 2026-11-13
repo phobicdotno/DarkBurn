@@ -1,5 +1,6 @@
 //! The interface in German, French, Italian, Spanish (Spain and Latin America), Portuguese,
-//! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian and Turkish: with every panel open, in the settings and in a long help topic, the translated text fits
+//! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian, Turkish, Greek and
+//! Russian: with every panel open, in the settings and in a long help topic, the translated text fits
 //! where the English text fits [I18N-04].
 use crate::ui_harness::Gui;
 
@@ -145,6 +146,16 @@ fn turkish_fits_the_window() {
     fits_like_english("tr", "Düzen", "Genel", "Kamera seçimi");
 }
 
+#[test]
+fn greek_fits_the_window() {
+    fits_like_english("el", "Επεξεργασία", "Γενικά", "Επιλογή κάμερας");
+}
+
+#[test]
+fn russian_fits_the_window() {
+    fits_like_english("ru", "Правка", "Общие", "Выбор камеры");
+}
+
 /// The cut table's column headers in `code`, left to right as painted, with the overlaps
 /// between neighbours. A header longer than its narrow column runs into the next one.
 fn cut_header_overlaps(code: &str) -> Vec<String> {
@@ -191,7 +202,7 @@ fn cut_header_overlaps(code: &str) -> Vec<String> {
 /// next column's header begins [I18N-04].
 #[test]
 fn cut_table_headers_fit_their_columns_in_every_language() {
-    let bad: Vec<String> = ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr"]
+    let bad: Vec<String> = ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru"]
         .iter()
         .flat_map(|c| cut_header_overlaps(c))
         .collect();
@@ -251,5 +262,50 @@ fn turkish_hotkey_filter_finds_words_with_or_without_the_turkish_i() {
     }
     for typed in ["içe", "İÇE"] {
         shows("tr", typed, "İçe aktar", "Yeni pencere");
+    }
+}
+
+/// Greek capitals carry no accent: the settings headings read "ΜΟΝΑΔΕΣ" and "ΑΥΤΟΜΑΤΗ
+/// ΑΠΟΘΗΚΕΥΣΗ", never "ΜΟΝΆΔΕΣ" or "ΑΥΤΌΜΑΤΗ". Russian capitals are the plain ones.
+#[test]
+fn greek_headings_drop_the_accent() {
+    let accented_capital = |t: &String| t.chars().any(|c| "ΆΈΉΊΌΎΏ".contains(c)) && *t == t.to_uppercase();
+    let mut g = Gui::standard();
+    g.run_command("lang.el");
+    g.settle();
+    g.run_command("edit.settings");
+    g.settle();
+    g.screenshot("lang-el-headings");
+    for heading in ["ΜΟΝΑΔΕΣ", "ΗΧΟΙ ΚΑΙ ΚΑΤΑΓΡΑΦΗ ΕΡΓΑΣΙΩΝ", "ΑΥΤΟΜΑΤΗ ΑΠΟΘΗΚΕΥΣΗ"] {
+        assert!(g.has_text(heading), "no {heading:?} in {:?}", g.visible_texts());
+    }
+    let wrong: Vec<String> = g.visible_texts().into_iter().filter(accented_capital).collect();
+    assert!(wrong.is_empty(), "capitals with an accent: {wrong:?}");
+    g.close_dialogs();
+
+    g.run_command("lang.ru");
+    g.settle();
+    g.run_command("edit.settings");
+    g.settle();
+    assert!(g.has_text("ЕДИНИЦЫ"), "no ЕДИНИЦЫ in {:?}", g.visible_texts());
+    g.close_dialogs();
+    crate::i18n::set_language("en");
+}
+
+/// The Edit Hotkeys filter in Greek finds a command whether its accents are typed or not:
+/// "ρυθμισεις" and "ΡΥΘΜΙΣΕΙΣ" find "Ρυθμίσεις συσκευής".
+#[test]
+fn greek_hotkey_filter_finds_words_with_or_without_the_accents() {
+    for typed in ["ρυθμίσεις", "ρυθμισεις", "ΡΥΘΜΙΣΕΙΣ"] {
+        let mut g = Gui::standard();
+        g.run_command("lang.el");
+        g.settle();
+        g.app().extras.hotkeys.filter = typed.into();
+        g.run_command("file.hotkeys");
+        g.settle();
+        assert!(!g.find_texts("Ρυθμίσεις συσκευής").is_empty(), "{typed:?} does not find it: {:?}", g.visible_texts());
+        assert!(g.find_texts("Νέο παράθυρο").is_empty(), "{typed:?} also shows Νέο παράθυρο");
+        g.close_dialogs();
+        crate::i18n::set_language("en");
     }
 }

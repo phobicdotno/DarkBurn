@@ -461,8 +461,9 @@ pub fn mean_luma(img: &RgbaImage) -> f64 {
 
 /// Brightness and contrast, both in -1.0..=1.0 (0 leaves the image unchanged).
 pub fn adjust_brightness_contrast(img: &RgbaImage, brightness: f32, contrast: f32) -> RgbaImage {
-    let b = brightness.clamp(-1.0, 1.0);
-    let c = contrast.clamp(-1.0, 1.0);
+    // NaN would survive the clamp and turn every pixel black; treat it as no change.
+    let b = if brightness.is_nan() { 0.0 } else { brightness.clamp(-1.0, 1.0) };
+    let c = if contrast.is_nan() { 0.0 } else { contrast.clamp(-1.0, 1.0) };
     let factor = if c >= 0.0 { 1.0 / (1.0 - c * 0.99) } else { 1.0 + c };
     let mut out = img.clone();
     for p in out.pixels_mut() {

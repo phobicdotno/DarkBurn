@@ -84,3 +84,12 @@ fn rotary_setup_with_infinite_values_is_refused() {
     let bad_roller = RotaryParams { kind: RotaryKind::Roller, roller_diameter: f64::INFINITY, ..ok };
     assert_eq!(bad_roller.y_to_axis(10.0).unwrap_err(), RotaryError::InvalidRollerDiameter);
 }
+
+/// A brightness or contrast that is not a number must leave the picture alone, not turn it black.
+#[test]
+fn nan_brightness_or_contrast_leaves_the_image_unchanged() {
+    use darkburn_vision::camera::adjust_brightness_contrast;
+    let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 100, 50, 255]));
+    assert_eq!(adjust_brightness_contrast(&img, f32::NAN, 0.0), img);
+    assert_eq!(adjust_brightness_contrast(&img, 0.0, f32::NAN), img);
+}

@@ -19,10 +19,12 @@ use crate::util::{ct_eq, random_hex};
 /// window is idle.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
-/// One open connection: its id (they only grow, so the smallest is the oldest), a second handle
-/// to its socket, and whether it has logged in ([`HELLO_PENDING`], [`LOGGED_IN`] or [`EVICTED`]).
+/// One open connection: its id (they only grow, so the smallest is the oldest), when it came, a
+/// second handle to its socket, and whether it has logged in ([`HELLO_PENDING`], [`LOGGED_IN`] or
+/// [`EVICTED`]).
 struct Conn {
     id: u64,
+    since: Instant,
     stream: TcpStream,
     login: Arc<AtomicU8>,
 }
@@ -39,6 +41,11 @@ const LOGGED_IN: u8 = 1;
 const EVICTED: u8 = 2;
 /// How many dropped connections may still be finishing before new ones are refused outright.
 const DROPPED_STILL_CLOSING: usize = 64;
+/// A connection this new is not dropped to make room: a real client sends its hello well within
+/// it, so agents that connect at the same moment all get in.
+const HELLO_GRACE: Duration = Duration::from_millis(250);
+/// Past this many connections in the handshake even new ones are dropped, oldest first.
+const HELLO_HARD_LIMIT: usize = 64;
 
 #[derive(Clone)]
 pub struct ControlConfig {
@@ -52,8 +59,9 @@ pub struct ControlConfig {
     /// Logged-in connections served at once. Only a client with the token can take one.
     pub max_connections: usize,
     /// Connections that have not logged in yet, held apart from `max_connections`. When a new
-    /// connection would pass this limit the oldest one still in the handshake is dropped, so a
-    /// program without the token cannot keep the real agent out by holding connections open.
+    /// connection would pass this limit the oldest one still in the handshake is dropped (once it
+    /// has had a moment to send its hello), so a program without the token cannot keep the real
+    /// agent out by holding connections open.
     pub max_unauthenticated: usize,
     /// The whole hello must arrive within this time, however slowly its bytes come.
     pub hello_timeout: Duration,
@@ -215,7 +223,7 @@ fn accept_loop(
     // Room for the logged-in connections, the ones in the handshake, and some that were just
     // dropped and are still finishing; past that a new connection is refused at the door, so a
     // flood of connections cannot start threads without end.
-    let thread_limit = cfg.max_connections + unauth_limit + DROPPED_STILL_CLOSING;
+    let thread_limit = cfg.max_connections + unauth_limit.max(HELLO_HARD_LIMIT) + DROPPED_STILL_CLOSING;
     while !shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, peer)) => {
@@ -234,7 +242,7 @@ fn accept_loop(
                 let login = Arc::new(AtomicU8::new(HELLO_PENDING));
                 {
                     let mut list = streams.lock().unwrap_or_else(|e| e.into_inner());
-                    make_room_for_a_hello(&list, unauth_limit);
+                    make_room_for_a_hello(&list, unauth_limit, Instant::now());
                     if list.len() >= thread_limit {
                         drop(list);
                         refused.fetch_add(1, Ordering::Relaxed);
@@ -242,7 +250,7 @@ fn accept_loop(
                         continue;
                     }
                     conn_id += 1;
-                    list.push(Conn { id: conn_id, stream: second, login: login.clone() });
+                    list.push(Conn { id: conn_id, since: Instant::now(), stream: second, login: login.clone() });
                 }
                 let (my_id, my_streams) = (conn_id, streams.clone());
                 active.fetch_add(1, Ordering::SeqCst);
@@ -276,15 +284,20 @@ fn accept_loop(
     }
 }
 
-/// Drops the oldest connections still in the handshake until a new one fits under `limit`.
-/// Logged-in connections are never touched.
-fn make_room_for_a_hello(list: &[Conn], limit: usize) {
+/// Drops the oldest connections still in the handshake until a new one fits under `limit`. One
+/// that came less than [`HELLO_GRACE`] ago is left alone, and the newcomer is let in beside it,
+/// unless [`HELLO_HARD_LIMIT`] is reached. Logged-in connections are never touched.
+fn make_room_for_a_hello(list: &[Conn], limit: usize, now: Instant) {
     loop {
         let waiting = list.iter().filter(|c| c.login.load(Ordering::SeqCst) == HELLO_PENDING);
-        if waiting.clone().count() < limit {
+        let count = waiting.clone().count();
+        if count < limit {
             return;
         }
         let Some(oldest) = waiting.min_by_key(|c| c.id) else { return };
+        if count < limit.max(HELLO_HARD_LIMIT) && now.duration_since(oldest.since) < HELLO_GRACE {
+            return;
+        }
         // It may have logged in a moment ago; then it stays, and the next oldest is looked at.
         if oldest.login.compare_exchange(HELLO_PENDING, EVICTED, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
             let _ = oldest.stream.shutdown(std::net::Shutdown::Both);

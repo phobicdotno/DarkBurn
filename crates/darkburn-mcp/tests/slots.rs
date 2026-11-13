@@ -182,10 +182,11 @@ fn logged_in_agents_are_never_dropped_for_newcomers() {
 #[test]
 fn a_dropped_handshake_gets_nothing_and_its_place_is_free() {
     let app = App::start(ControlConfig { max_unauthenticated: 1, ..cfg() });
-    // The first connection sits in the handshake; a second one pushes it out.
+    // The first connection sits in the handshake past the moment a hello takes; a second one
+    // pushes it out.
     let mut first = TcpStream::connect(app.addr).unwrap();
     first.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    std::thread::sleep(Duration::from_millis(100));
+    std::thread::sleep(Duration::from_millis(600));
     let _second = TcpStream::connect(app.addr).unwrap();
     std::thread::sleep(Duration::from_millis(200));
     // The first one is closed: a hello sent now gets no login.
@@ -195,4 +196,23 @@ fn a_dropped_handshake_gets_nothing_and_its_place_is_free() {
         Ok(None) | Err(_) => {}
     }
     agent_gets_in(app.addr).expect("the agent got in");
+}
+
+#[test]
+fn agents_that_connect_at_the_same_moment_all_get_in() {
+    let app = App::start(ControlConfig { max_unauthenticated: 1, ..cfg() });
+    let addr = app.addr;
+    let go = Arc::new(std::sync::Barrier::new(6));
+    let all: Vec<_> = (0..6)
+        .map(|_| {
+            let go = go.clone();
+            std::thread::spawn(move || {
+                go.wait();
+                agent_gets_in(addr)
+            })
+        })
+        .collect();
+    for h in all {
+        h.join().unwrap().expect("an agent that came at the same moment as others was dropped");
+    }
 }

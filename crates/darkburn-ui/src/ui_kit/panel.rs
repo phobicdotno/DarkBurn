@@ -1426,10 +1426,17 @@ impl Window<'_> {
             return (true, super::Action::None);
         }
         let place = host::place(ctx, key);
+        // Asked to come into view (its tab is brought to the front by `raise` itself).
+        let raise = host::take_raise(ctx, key);
         match &place.placement {
-            host::Placement::Docked(area) if host::area_on_screen(ctx, area) => self.docked(ctx, key, valid, body, left),
-            host::Placement::Detached => self.detached(ctx, key, valid, body, left),
-            _ => self.floating(ctx, key, &place, valid, body, left),
+            host::Placement::Docked(area) if host::area_on_screen(ctx, area) => {
+                if raise {
+                    host::focus_main_window(ctx);
+                }
+                self.docked(ctx, key, valid, body, left)
+            }
+            host::Placement::Detached => self.detached(ctx, key, raise, valid, body, left),
+            _ => self.floating(ctx, key, &place, raise, valid, body, left),
         }
     }
 
@@ -1450,7 +1457,15 @@ impl Window<'_> {
 
     /// A native window of its own. Where the system cannot open one (a single-window backend,
     /// the test harness) egui shows it as a plain window inside the main one.
-    fn detached(&self, ctx: &egui::Context, key: &str, valid: bool, body: impl FnOnce(&mut Ui), left: impl FnOnce(&mut Ui)) -> (bool, super::Action) {
+    fn detached(
+        &self,
+        ctx: &egui::Context,
+        key: &str,
+        raise: bool,
+        valid: bool,
+        body: impl FnOnce(&mut Ui),
+        left: impl FnOnce(&mut Ui),
+    ) -> (bool, super::Action) {
         use super::window_host as host;
         super::Container::record_host_window(ctx, self.id, None);
         let (size, pos) = host::native_opening(ctx, key);
@@ -1478,8 +1493,20 @@ impl Window<'_> {
             let screen = dimension(ui.ctx().content_rect().height()) - Tokens::get().space_24 * 3.0;
             let mut height = Some(size.y.min(screen) - self.chrome_height(true));
             if native {
-                let (inner, outer, close) = ui.input(|i| (i.viewport().inner_rect, i.viewport().outer_rect, i.viewport().close_requested()));
+                let (inner, outer, close, focused, minimized) = ui.input(|i| {
+                    let v = i.viewport();
+                    (v.inner_rect, v.outer_rect, v.close_requested(), v.focused == Some(true), v.minimized == Some(true))
+                });
                 host::native_moved(ui.ctx(), key, inner.map(|r| r.size()), outer.map(|r| r.min));
+                host::native_focus(ui.ctx(), key, focused);
+                if raise && host::app_focused(ui.ctx()) {
+                    if minimized {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    }
+                    if minimized || !focused {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Focus);
+                    }
+                }
                 closed_by_system = close;
                 let rect = ui.max_rect();
                 ui.painter().rect_filled(rect, 0.0, Tokens::get().dialog_body);
@@ -1504,6 +1531,7 @@ impl Window<'_> {
         ctx: &egui::Context,
         key: &str,
         place: &super::window_host::WindowPlace,
+        raise: bool,
         valid: bool,
         body: impl FnOnce(&mut Ui),
         left: impl FnOnce(&mut Ui),
@@ -1558,6 +1586,10 @@ impl Window<'_> {
         if let Some(shown) = &shown {
             solidcraft_ui_registry::publish_rect("dialog:window", shown.response.rect);
             drop_on_dock(ctx, self.id, key, place.pos.is_some(), &shown.response);
+            if raise {
+                ctx.move_to_top(shown.response.layer_id);
+                host::focus_main_window(ctx);
+            }
         }
         shown.and_then(|r| r.inner).unwrap_or((false, super::Action::None))
     }

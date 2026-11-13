@@ -15,6 +15,9 @@ use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 /// The device has a Z axis (otherwise the Z settings are greyed out).
 const DEVICE_HAS_Z: bool = false;
 
+/// The editor window's key, where the user put it (docked, a window of its own...).
+pub const WINDOW_KEY: &str = "cut_settings_window";
+
 /// One open editing session.
 #[derive(Clone, Debug, Default)]
 struct Session {
@@ -210,7 +213,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     // the top of this tall one lay over the bar and its menus in most main windows.
     let middle = crate::shell::room_under_the_bar(ctx).center();
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
-        .dockable("cut_settings_window")
+        .dockable(WINDOW_KEY)
         .cards(2.7)
         .fields()
         .placed(Align2::CENTER_CENTER, middle)

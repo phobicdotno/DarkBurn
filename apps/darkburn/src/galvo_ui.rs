@@ -70,12 +70,15 @@ pub fn panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui.horizontal_wrapped(|ui| {
         if small(ui, &tr("galvo.frame", "Frame..."), "Open the red-light framing window", connected) {
             app.machine.ext.galvo_frame_open = true;
+            ui_kit::window_host::raise(ui.ctx(), "db_galvo_frame");
         }
         if small(ui, &tr("galvo.lens", "Lens and test..."), "Lens correction file, test pattern and scale calibration", true) {
             app.machine.ext.galvo_lens_open = true;
+            ui_kit::window_host::raise(ui.ctx(), "db_galvo_lens");
         }
         if small(ui, &tr("galvo.repeat", "Repeat marking..."), "Mark the job several times", true) {
             app.machine.ext.galvo_repeat_open = true;
+            ui_kit::window_host::raise(ui.ctx(), "db_galvo_repeat");
         }
     });
     let framed = g.framed_key.is_some();

@@ -141,6 +141,7 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                     && let Some(d) = sel.and_then(|id| app.machine.devices.get(id).cloned())
                 {
                     app.machine.dlg.settings = Some((d, 0));
+                    ui_kit::window_host::raise(ui.ctx(), "db_device_settings");
                 }
                 if small(ui, "Duplicate", "Make a copy", has)
                     && let Some(id) = sel

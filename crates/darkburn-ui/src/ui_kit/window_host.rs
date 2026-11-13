@@ -190,6 +190,10 @@ struct State {
     opened: BTreeMap<String, (Option<[f32; 2]>, Option<[f32; 2]>)>,
     /// Key presses made in native windows that nothing in them used, oldest first.
     keys: Vec<egui::Event>,
+    /// Windows a command asked to bring into view, with the frame it asked in.
+    raise: BTreeMap<String, u64>,
+    /// The native windows that had the system focus, with the frame they last had it in.
+    native_focus: BTreeMap<String, u64>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -311,6 +315,62 @@ pub fn request_close(ctx: &Context, key: &str) {
         s.close.insert(key.to_string());
     });
     ctx.request_repaint();
+}
+
+/// Bring window `key` into view, for a command that opens it: when it is open already, behind
+/// another tab, under the main window or minimised, setting its open flag again shows nothing.
+/// A docked window's tab comes to the front, a floating card comes on top, a native window is
+/// restored. The system focus only moves while the app has it, so a command an agent runs does
+/// not take the focus from another program.
+pub fn raise(ctx: &Context, key: &str) {
+    let frame = now(ctx);
+    with(ctx, |s| {
+        if let Some(area) = s.places.get(key).and_then(WindowPlace::area) {
+            s.activate.insert(area.to_string(), key.to_string());
+        }
+        s.raise.insert(key.to_string(), frame);
+    });
+    ctx.request_repaint();
+}
+
+/// Whether window `key` was just asked to come into view ([`raise`]); once.
+pub(crate) fn take_raise(ctx: &Context, key: &str) -> bool {
+    let frame = now(ctx);
+    with(ctx, |s| s.raise.remove(key).is_some_and(|asked| asked + 2 >= frame))
+}
+
+/// Whether the native window of `key` has the system focus, as it reports when drawn.
+pub(crate) fn native_focus(ctx: &Context, key: &str, focused: bool) {
+    let frame = now(ctx);
+    with(ctx, |s| {
+        if focused {
+            s.native_focus.insert(key.to_string(), frame);
+        } else {
+            s.native_focus.remove(key);
+        }
+    });
+}
+
+fn native_window_focused(ctx: &Context) -> bool {
+    let frame = now(ctx);
+    with(ctx, |s| s.native_focus.values().any(|f| f + 1 >= frame))
+}
+
+fn main_window_focused(ctx: &Context) -> bool {
+    ctx.input_for(egui::ViewportId::ROOT, |i| i.viewport().focused == Some(true))
+}
+
+/// Whether the app has the system focus: its main window or one of its own windows.
+pub(crate) fn app_focused(ctx: &Context) -> bool {
+    main_window_focused(ctx) || native_window_focused(ctx)
+}
+
+/// A window raised in the main window ([`raise`]) while one of the app's own windows has the
+/// focus: the main window comes up too, or the window stays behind the one the command came from.
+pub(crate) fn focus_main_window(ctx: &Context) {
+    if !main_window_focused(ctx) && native_window_focused(ctx) {
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+    }
 }
 
 /// A window that was just docked in `area`, or opened there, which should come to the front.
@@ -694,15 +754,22 @@ mod tests {
     }
 
     type Keys = std::rc::Rc<std::cell::RefCell<Vec<egui::Event>>>;
+    type Info = std::rc::Rc<std::cell::RefCell<egui::ViewportInfo>>;
 
     /// Native windows run the way a desktop backend runs them: each in a pass of its own, with
     /// input of its own, which here is what `keys` holds when the window is drawn.
     fn native_windows(keys: &Keys) {
+        native_windows_with(keys, &Info::default());
+    }
+
+    /// As [`native_windows`], each window saying of itself what `info` holds (focus, minimised).
+    fn native_windows_with(keys: &Keys, info: &Info) {
         let keys = keys.clone();
+        let info = info.clone();
         Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
             let events = std::mem::take(&mut *keys.borrow_mut());
             let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(600.0, 500.0)));
-            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..info.borrow().clone() };
             let viewports = std::iter::once((viewport.ids.this, info)).collect();
             let input = egui::RawInput { viewport_id: viewport.ids.this, viewports, screen_rect, events, ..Default::default() };
             let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
@@ -752,6 +819,77 @@ mod tests {
         *keys.borrow_mut() = vec![key(Key::S, Modifiers::COMMAND, true)];
         detached_window(&ctx, true);
         assert!(take_window_keys(&ctx).is_empty(), "keys typed into a field are the field's");
+    }
+
+    #[test]
+    fn opening_a_window_that_is_open_already_brings_it_into_view() {
+        use egui::{Order, ViewportCommand, ViewportId, ViewportInfo};
+        let keys = Keys::default();
+        let info = Info::default();
+        native_windows_with(&keys, &info);
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        update(&ctx, "docked", |p| p.dock("RightTop"));
+        update(&ctx, "native", |p| p.detach());
+        let native = ViewportId::from_hash_of(("db_window", "native"));
+        let card = std::cell::Cell::new(None);
+        // One pass of the main window, which has the system focus or not: what it asks of the
+        // main window and of the native one.
+        let draw = |main_focused: bool| {
+            let viewports = std::iter::once((ViewportId::ROOT, ViewportInfo { focused: Some(main_focused), ..Default::default() })).collect();
+            let screen_rect = Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0)));
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect, viewports, ..Default::default() }, |ui| {
+                dock_target(ui.ctx(), "RightTop", Rect::from_min_size(Pos2::new(900.0, 40.0), vec2(300.0, 400.0)));
+                for key in ["docked", "native", "card", "other"] {
+                    super::super::Window::new(Id::unique(key), "", key).dockable(key).show(ui.ctx(), true, |ui| {
+                        if key == "card" {
+                            card.set(Some(ui.layer_id()));
+                        }
+                    });
+                }
+            });
+            out.textures_delta.clear();
+            let commands = |id| out.viewport_output.get(&id).map(|o| o.commands.clone()).unwrap_or_default();
+            (commands(ViewportId::ROOT), commands(native))
+        };
+        let top = || ctx.memory(|m| m.areas().top_layer_id(Order::Middle));
+        draw(true);
+        draw(true);
+        while take_activation(&ctx, "RightTop").is_some() {}
+        let (main, own) = draw(true);
+        assert!(main.is_empty() && own.is_empty(), "nothing asked, nothing moves: {main:?} {own:?}");
+        assert_ne!(top(), card.get(), "the other card was opened after this one");
+
+        // Another program has the focus: the tab still comes to the front, the focus stays put.
+        *info.borrow_mut() = ViewportInfo { focused: Some(false), minimized: Some(true), ..Default::default() };
+        for key in ["docked", "native", "card"] {
+            raise(&ctx, key);
+        }
+        assert_eq!(take_activation(&ctx, "RightTop").as_deref(), Some("docked"), "a docked window's tab comes to the front");
+        let (main, own) = draw(false);
+        assert!(main.is_empty() && own.is_empty(), "the focus is not taken from another program: {main:?} {own:?}");
+        assert_eq!(top(), card.get(), "the card comes on top of the other");
+
+        // The main window has the focus: the minimised window of its own is restored and focused.
+        raise(&ctx, "native");
+        let (_, own) = draw(true);
+        assert_eq!(own, vec![ViewportCommand::Minimized(false), ViewportCommand::Focus]);
+        let (_, own) = draw(true);
+        assert!(own.is_empty(), "once");
+
+        // A command in the window of its own opens a window in the main one: the main window comes up.
+        *info.borrow_mut() = ViewportInfo { focused: Some(true), minimized: Some(false), ..Default::default() };
+        draw(false);
+        for key in ["card", "docked"] {
+            raise(&ctx, key);
+            let (main, own) = draw(false);
+            assert_eq!(main, vec![ViewportCommand::Focus], "{key}");
+            assert!(own.is_empty(), "{key}");
+        }
+        raise(&ctx, "native");
+        let (main, own) = draw(false);
+        assert!(main.is_empty() && own.is_empty(), "a window that has the focus already stays as it is: {main:?} {own:?}");
     }
 
     #[test]

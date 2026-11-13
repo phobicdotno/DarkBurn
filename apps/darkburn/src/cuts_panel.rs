@@ -410,6 +410,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             Act::Open(l) => {
                 e.current_layer = l;
                 app.cut_settings_open = Some(l);
+                ui_kit::window_host::raise(&ctx, crate::cut_settings::WINDOW_KEY);
             }
             Act::StartRename(l) => {
                 e.current_layer = l;
@@ -541,6 +542,7 @@ fn quick_settings(ui: &mut Ui, app: &mut DarkBurn) {
     ui.horizontal(|ui| {
         if ui_kit::button(ui, "Edit cut settings", ui_kit::Button::Small).clicked() {
             app.cut_settings_open = Some(l);
+            ui_kit::window_host::raise(ui.ctx(), crate::cut_settings::WINDOW_KEY);
         }
     });
 }

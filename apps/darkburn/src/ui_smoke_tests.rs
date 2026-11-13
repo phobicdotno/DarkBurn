@@ -736,6 +736,41 @@ fn a_hidden_hotkey_tab_stops_waiting_for_a_key() {
     assert!(g.app().extras.hotkeys.open, "the window is still open");
 }
 
+/// A docked window open behind another tab comes to the front when it is opened again: Settings
+/// from its command, the Cut Settings Editor from the Cuts panel's button. Their open flag was set
+/// already, so nothing could be seen to happen.
+#[test]
+fn opening_a_docked_window_that_is_open_brings_its_tab_to_the_front() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    g.sample_design();
+    for key in ["settings", crate::cut_settings::WINDOW_KEY] {
+        let mut place = WindowPlace::default();
+        place.dock("RightTop");
+        g.app().prefs.windows.insert(key.into(), place);
+    }
+    let front = |g: &Gui| g.app().prefs.active_tab.get(&Area::RightTop).cloned().unwrap_or_default();
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"), "Settings, open behind the Cuts / Layers tab");
+
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    g.click_label("Edit cut settings");
+    g.frames(2);
+    assert_eq!(front(&g), tab_id(crate::cut_settings::WINDOW_KEY));
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    assert!(g.app().cut_settings_open.is_some(), "the editor stays open behind the tab");
+    g.click_label("Edit cut settings");
+    g.frames(2);
+    assert_eq!(front(&g), tab_id(crate::cut_settings::WINDOW_KEY), "the editor, open behind the Cuts / Layers tab");
+}
+
 #[test]
 fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
     use darkburn_ui::ui_kit::window_host::WindowPlace;

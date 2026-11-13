@@ -1057,6 +1057,7 @@ pub fn devices_toolbar(ui: &mut Ui, app: &mut DarkBurn) {
     }
     if small(ui, "Automation", "Let another program start jobs and ask for the status", true) {
         app.machine.conn.automation_open = true;
+        ui_kit::window_host::raise(ui.ctx(), "db_automation");
     }
 }
 

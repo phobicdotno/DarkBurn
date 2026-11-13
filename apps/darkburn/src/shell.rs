@@ -96,6 +96,24 @@ pub struct DarkBurn {
     pub job_run: crate::settings_wiring::JobRun,
 }
 
+/// The commands that open a dockable window, and its key. Run while the window is open, they
+/// bring it into view.
+pub(crate) const WINDOW_COMMANDS: [(&str, &str); 13] = [
+    ("edit.settings", "settings"),
+    ("file.hotkeys", "db_hotkeys"),
+    ("file.import_options", "db_import_options"),
+    ("file.prefs_backup", "db_prefs_backups"),
+    ("laser.devices", "db_devices"),
+    ("edit.device_settings", "db_device_settings"),
+    ("edit.machine_settings", "db_machine_settings"),
+    ("laser.controller_info", "db_controller_info"),
+    ("tools.adjust_image", "db_adjust_image"),
+    ("job.optimization_settings", "db_job_optimization"),
+    ("job.gcode_settings", "db_job_gcode"),
+    ("gweike.open", "db_gweike"),
+    ("device.automation_open", "db_automation"),
+];
+
 impl DarkBurn {
     pub fn new(prefs: Prefs) -> Self {
         DarkBurn {
@@ -212,6 +230,10 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
+        if let Some((_, key)) = WINDOW_COMMANDS.iter().find(|(c, _)| *c == id) {
+            // Open already, behind a tab or another window: setting its flag again shows nothing.
+            window_host::raise(ctx, key);
+        }
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
@@ -1175,6 +1197,25 @@ fn tab_dragged_out(ctx: &egui::Context, resp: &egui::Response, area: &str, own: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_command_that_raises_a_window_names_a_command_and_a_dockable_window() {
+        let sources = [
+            include_str!("shell.rs"),
+            include_str!("extras.rs"),
+            include_str!("file_io.rs"),
+            include_str!("devices_ui.rs"),
+            include_str!("image_ui.rs"),
+            include_str!("job_ui.rs"),
+            include_str!("gweike_ui.rs"),
+            include_str!("connections.rs"),
+        ]
+        .concat();
+        for (id, key) in WINDOW_COMMANDS {
+            assert!(commands::lookup(id).is_some(), "{id} is a command");
+            assert!(sources.contains(&format!(".dockable(\"{key}\")")), "{key} is a dockable window");
+        }
+    }
 
     #[test]
     fn every_button_of_the_tools_column_works_and_picks_its_tool() {

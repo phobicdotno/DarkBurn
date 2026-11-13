@@ -241,7 +241,8 @@ impl Table<'_> {
             let count = self.columns.len().min(64);
             ui.ctx().data_mut(|m| {
                 let mut stored: Vec<Option<f32>> = m.get_persisted(key).unwrap_or_default();
-                stored.resize(count, None);
+                // Grow only: a wider table sharing the key keeps its later columns' widths.
+                stored.resize(stored.len().clamp(count, 64), None);
                 if let Some(slot) = stored.get_mut(index) {
                     *slot = chosen;
                 }

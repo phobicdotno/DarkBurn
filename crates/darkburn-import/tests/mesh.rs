@@ -1,7 +1,7 @@
 //! STL and OBJ readers and the depth picture made from a model.
 
 use darkburn_import::ImportError;
-use darkburn_import::depth_map::{DepthLimits, DepthSettings, View, depth_buffer, depth_map, frame};
+use darkburn_import::depth_map::{DepthLimits, DepthSettings, View, depth_buffer, depth_map, extent, frame};
 use darkburn_import::mesh::*;
 
 /// A square pyramid: base 0..20 by 0..20 at z = 0, apex (10, 10, 10).
@@ -95,6 +95,9 @@ fn views_map_axes_and_flip_mirrors() {
     assert_eq!(View::Top.project(true, p), [-1.0, 2.0, -3.0]);
     assert_eq!(View::from_name("FRONT"), Some(View::Front));
     assert_eq!(View::from_name("back"), None);
+    assert_eq!(extent(&pyramid(), View::Front, false), [20.0, 10.0, 20.0]);
+    assert_eq!(extent(&pyramid(), View::Side, true), [20.0, 10.0, 20.0]);
+    assert_eq!(extent(&Mesh::default(), View::Top, false), [0.0; 3]);
 
     // A ramp rising to the right (+X): from the top the right edge is nearest; from below
     // (flipped) the flat underside is all one depth and the picture is mirrored.

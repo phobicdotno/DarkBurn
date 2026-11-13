@@ -109,6 +109,29 @@ pub struct Frame {
     hi: [f64; 3],
 }
 
+fn projected_bounds(mesh: &Mesh, view: View, flip: bool) -> ([f64; 3], [f64; 3]) {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for &p in mesh.triangles.iter().flatten() {
+        let q = view.project(flip, p);
+        for k in 0..3 {
+            lo[k] = lo[k].min(q[k]);
+            hi[k] = hi[k].max(q[k]);
+        }
+    }
+    (lo, hi)
+}
+
+/// The model's extent seen from `view`: picture width, picture height and depth, in model
+/// units. Zero for an empty mesh.
+pub fn extent(mesh: &Mesh, view: View, flip: bool) -> [f64; 3] {
+    if mesh.triangles.is_empty() {
+        return [0.0; 3];
+    }
+    let (lo, hi) = projected_bounds(mesh, view, flip);
+    [0, 1, 2].map(|k| hi[k] - lo[k])
+}
+
 /// Works out the picture size without drawing anything.
 pub fn frame(mesh: &Mesh, s: &DepthSettings, limits: &DepthLimits) -> Result<Frame, ImportError> {
     let bad = |m: &str| Err(ImportError::Unsupported(m.into()));
@@ -128,15 +151,7 @@ pub fn frame(mesh: &Mesh, s: &DepthSettings, limits: &DepthLimits) -> Result<Fra
     {
         return bad("the depth range must end deeper than it starts");
     }
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
-    for &p in mesh.triangles.iter().flatten() {
-        let q = s.view.project(s.flip, p);
-        for k in 0..3 {
-            lo[k] = lo[k].min(q[k]);
-            hi[k] = hi[k].max(q[k]);
-        }
-    }
+    let (lo, hi) = projected_bounds(mesh, s.view, s.flip);
     let (w, h) = (hi[0] - lo[0], hi[1] - lo[1]);
     if mesh.triangles.is_empty() || !(w.is_finite() && w > 0.0) || !h.is_finite() {
         return bad("the model has no width seen from this side");

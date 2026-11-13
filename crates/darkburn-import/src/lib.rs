@@ -13,16 +13,19 @@
 //! | SVG | done in the app with usvg | [`svg_export`] |
 //! | SignCut `.sc` | not publicly documented: [`ImportError::Unsupported`] | - |
 //! | Gweike / Mlaser | - | [`gweike`] (DXF per material, `.nc` G-code) |
+//! | STL / OBJ 3D models | [`mesh`], drawn as a height picture by [`depth_map`] | - |
 //!
 //! SVG import is not here on purpose; the app uses usvg for it.
 
 pub mod ai_export;
+pub mod depth_map;
 pub mod dxf_export;
 pub mod dxf_import;
 pub mod geom;
 pub mod gweike;
 pub mod hpgl;
 pub mod lbrn;
+pub mod mesh;
 pub mod model;
 pub mod pdf_import;
 pub mod svg_export;

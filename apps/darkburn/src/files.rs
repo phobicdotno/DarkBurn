@@ -377,7 +377,7 @@ pub fn show_message(app: &mut DarkBurn, title: &str, text: String) {
 pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: Vec<darkburn_core::layer::Layer>) -> Vec<ShapeId> {
     let (group, select) = (app.prefs.import_group, app.prefs.import_select);
     let mut new = Vec::new();
-    app.editor.edit("Import", |d, sel| {
+    let done = app.editor.edit("Import", |d, sel| {
         crate::formats::apply_layers(d, &layers, &Default::default(), |_| true);
         for imp in imported {
             for (k, data) in imp.images {
@@ -395,7 +395,8 @@ pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: V
         }
         !new.is_empty() || !layers.is_empty()
     });
-    new
+    // The editor refuses a drawing further out than a design can reach: nothing was added.
+    if done { new } else { Vec::new() }
 }
 
 /// Document point under the pointer on the canvas.

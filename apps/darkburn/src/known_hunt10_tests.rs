@@ -144,3 +144,23 @@ fn ctrl_z_during_a_drag_that_moves_nothing_keeps_the_step_before_it() {
     assert!(rig.app.editor.doc.get(id).is_some(), "the shape is still there");
     assert_eq!(rig.app.editor.history.undo_label(), Some("Add"), "the step before the drag is still in the history");
 }
+
+/// An import whose drawing lies further out than a design can reach is refused by the editor,
+/// but the import still reported the ids of the shapes it would have added, and said nothing.
+#[test]
+fn an_import_the_editor_refuses_reports_no_shapes_and_says_why() {
+    let dir = std::env::temp_dir().join(format!("darkburn-known-hunt10-reach-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let svg = dir.join("huge.svg");
+    std::fs::write(
+        &svg,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="4000000000mm" height="10mm" viewBox="0 0 4000000000 10"><rect x="0" y="0" width="4000000000" height="10" fill="black"/></svg>"#,
+    )
+    .unwrap();
+    let mut a = crate::shell::DarkBurn::new(crate::prefs::Prefs::default());
+    let report = crate::file_io::import_sync(&mut a, std::slice::from_ref(&svg), None, None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(a.editor.doc.is_empty(), "the editor took a drawing 4000 km wide");
+    assert!(report.ids.is_empty(), "the ids of shapes that were never added: {:?}", report.ids);
+    assert!(!report.errors.is_empty(), "the import was refused without a word");
+}

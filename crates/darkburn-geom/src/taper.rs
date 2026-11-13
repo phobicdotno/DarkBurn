@@ -147,6 +147,11 @@ impl TaperWarp {
         Ok(TaperWarp { src, taper, kind })
     }
 
+    /// The size the artwork is given.
+    pub fn taper(&self) -> Taper {
+        self.taper
+    }
+
     /// True when the warp leaves every point where it is.
     pub fn is_identity(&self) -> bool {
         let w = self.src.width();

@@ -117,6 +117,7 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.select_smaller", "Select Shapes Smaller than Selected", "", ""),
     c("tools.warp", "Warp Selection (4 points)", "", ""),
     c("tools.deform", "Deform Selection (16 points)", "", ""),
+    c("tools.taper_warp", "Taper Warp", "", ""),
     c("tools.start_points", "Start Points", "", "db_start_points"),
     c("tools.round_corners", "Round Corners", "", "db_round_corners"),
     // Arrange
@@ -586,6 +587,7 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("help.topic")
         || crate::laser_position::handles(id)
         || crate::tangent_tool::handles(id)
+        || crate::taper_warp::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
@@ -765,6 +767,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.back" => &["ARR-38"],
         "tools.position_laser" => &["TOOLS-09", "DRAW-20"],
         "tools.tangent_circle" | "shape.tangent_circle" => &["DRAW-22"],
+        "tools.taper_warp" => &["OTHER-10"],
         "arrange.to_laser" => &["ARR-28"],
         id if id.starts_with("arrange.laser_") => &["ARR-29"],
         "arrange.lock" => &["ARR-39", "SHAPE-30"],
@@ -841,7 +844,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::text_cmds::commands());
         for c in &mut v {
             if c.args.is_empty()
-                && let Some(args) = crate::shape_ops::args_schema(c.id)
+                && let Some(args) = crate::shape_ops::args_schema(c.id).or_else(|| crate::taper_warp::args_schema(c.id))
             {
                 c.args = args;
             }
@@ -1084,6 +1087,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.select_smaller"),
             C("tools.warp"),
             C("tools.deform"),
+            C("tools.taper_warp"),
             C("tools.start_points"),
             C("tools.round_corners"),
         ],

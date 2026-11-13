@@ -160,6 +160,7 @@ mod tests {
         ("updates.rs", include_str!("updates.rs")),
         ("cuts_panel.rs", include_str!("cuts_panel.rs")),
         ("tangent_tool.rs", include_str!("tangent_tool.rs")),
+        ("taper_warp.rs", include_str!("taper_warp.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

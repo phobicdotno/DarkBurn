@@ -2,3 +2,4 @@
 - New: Japanese, Korean and Chinese will be drawn with the fonts already on your computer
 - Fix: the Language menu no longer lists languages that cannot be picked yet
 - New: German, French and Italian (machine-translated; corrections are welcome)
+- New: Spanish (Spain), Spanish (Latin America) and Portuguese (machine-translated; corrections are welcome)

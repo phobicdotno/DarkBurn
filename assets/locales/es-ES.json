@@ -319,7 +319,7 @@
   "help.laser.p1": "Inicia, pausa y detén un trabajo, recorre su contorno o guárdalo como archivo. «Start from» elige dónde se coloca el trabajo: en las coordenadas de la propia página, en la posición actual del láser o en un origen de usuario.",
   "help.laser.p2": "Nada de esto se comunica con una máquina hasta que conectes una.",
   "help.laser.title": "Láser",
-  "help.library.p1": "Una biblioteca guarda ajustes de corte que han funcionado, ordenados por material, grosor y descripción. Asigna una entrada para poner sus ajustes en la capa actual y vincularlos, o crea una entrada a partir de la capa que has afinado.",
+  "help.library.p1": "Una biblioteca guarda ajustes de corte que han funcionado, ordenados por material, grosor y descripción. Asigna una entrada para poner sus ajustes en la capa actual y vincularla, o crea una entrada a partir de la capa que has afinado.",
   "help.library.p2": "Una capa vinculada muestra qué entrada sigue. Al eliminar una entrada se desvinculan sus capas. Las bibliotecas se guardan como archivos; se puede elegir una para cada máquina.",
   "help.library.title": "Biblioteca de materiales",
   "help.move.p1": "Desplaza el cabezal del láser una distancia fija, referencia la máquina o fija el origen. Se activa cuando hay una máquina conectada.",

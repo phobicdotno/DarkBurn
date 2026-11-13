@@ -292,15 +292,51 @@ mod tests {
         set_language("en");
     }
 
+    /// Spanish for Spain, Spanish for Latin America and (Brazilian) Portuguese translate the
+    /// English texts, and the Language menu offers them [I18N-04].
+    #[test]
+    fn spanish_and_portuguese_are_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("es-ES", "Archivo"), ("es-LA", "Archivo"), ("pt", "Arquivo")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
+    /// The two Spanish files are not copies of each other: each uses the words of its own
+    /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
+    /// in Latin America, and "ordenador" against "computadora".
+    #[test]
+    fn spanish_for_spain_and_for_latin_america_use_their_own_words() {
+        let spain = locale("es-ES");
+        let latam = locale("es-LA");
+        let differ = spain.iter().filter(|(k, v)| latam.get(*k) != Some(*v)).count();
+        assert!(differ >= 30, "only {differ} texts differ between es-ES and es-LA");
+        for (key, es, la) in [
+            ("menu.Edit", "Edición", "Editar"),
+            ("cmd.edit.settings", "Ajustes", "Configuración"),
+            ("settings.invert_wheel", "ratón", "mouse"),
+            ("help.hotkeys.p2", "ordenador", "computadora"),
+        ] {
+            assert!(spain[key].contains(es), "es-ES {key}: {:?}", spain[key]);
+            assert!(latam[key].contains(la), "es-LA {key}: {:?}", latam[key]);
+            assert!(!latam[key].contains(es), "es-LA {key} keeps the Spain word: {:?}", latam[key]);
+        }
+    }
+
     /// A builder who adds a few texts in English and Norwegian only does not break the German,
-    /// French and Italian checks; the new texts show in English there.
+    /// French, Italian, Spanish and Portuguese checks; the new texts show in English there.
     #[test]
     fn texts_added_in_english_only_keep_the_other_languages_passing() {
         let mut en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it"] {
+        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt"] {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -329,7 +365,16 @@ mod tests {
     /// ticked layer look switched off.
     #[test]
     fn the_output_column_header_does_not_read_as_off() {
-        let off = [("de", "Aus"), ("nb", "Av"), ("fr", "Arrêt"), ("it", "Spento"), ("en", "Off")];
+        let off = [
+            ("de", "Aus"),
+            ("nb", "Av"),
+            ("fr", "Arrêt"),
+            ("it", "Spento"),
+            ("es-ES", "Apagado"),
+            ("es-LA", "Apagado"),
+            ("pt", "Desligado"),
+            ("en", "Off"),
+        ];
         for (code, word) in off {
             set_language(code);
             assert_ne!(tr("cuts.col.out", "Out"), word, "{code}");

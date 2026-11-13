@@ -262,3 +262,80 @@ English: Ctrl, Shift, Esc. Panel labels that are not translated yet are quoted �
 - Theme: tema. Art library: Libreria grafica. Move (panel): Sposta. Cut shapes: Dividi forme.
 - Feeder: caricatore. Camera control: Controllo telecamera.
 - Cut table columns: Livello, Modalità, Vel/Pot, Usc, Vis, Aria.
+
+## Spanish, Spain (es-ES)
+
+Informal "tú" with the imperative in help texts ("Haz clic", "Pulsa"); commands use the
+infinitive ("Guardar", "Abrir"). Key names stay as in English: Ctrl, Shift, Esc. Panel labels
+that are not translated yet are quoted «like this». Spain words: ordenador, portátil, ratón,
+pulsar, añadir, en directo.
+
+- Job: trabajo. Cut (laser): corte, cortar. Cut (clipboard): Cortar.
+- Layer: capa. Line / Fill / Image: Línea / Relleno / Imagen. Engrave: grabar.
+- Power: potencia. Speed: velocidad. Pass: pasada. Interval: intervalo. Thickness: grosor.
+- Air assist: asistencia de aire. Frame: recorrer el contorno.
+- Home: referenciar. Origin: origen. Start point: punto de inicio.
+- Cut direction: dirección de corte. Tab: puente. Focus test: Prueba de enfoque.
+- Material test: Prueba de material. Cut library / Material library: Biblioteca de corte / de materiales.
+- Rotary: rotativo. Camera: cámara. Print and cut: Imprimir y cortar.
+- Device / Machine: dispositivo / máquina. Console: Consola. Preview: Vista previa. Nudge: paso de las flechas.
+- Shape / Object: forma / objeto. Path: trazado. Node: nodo. Weld: soldar.
+- Boolean union / difference / intersection: Unión / Diferencia / Intersección booleana.
+- Offset: desfase, Desfasar formas. Trace: vectorizar. Bitmap: mapa de bits.
+- Group / Ungroup: Agrupar / Desagrupar. Array: matriz.
+- Align / Distribute / Dock: Alinear / Distribuir / Acoplar. Flip: voltear. Mirror: reflejar.
+- Snap: ajustar a; the settings heading is "Ajuste magnético". Grid: cuadrícula. Lock: bloquear.
+- Crop: recorte. Mask: máscara. Variable text: Texto variable. Selection: selección.
+- Page: página. Canvas: lienzo. Bed: mesa. Work area: área de trabajo. Panel: panel.
+- Toolbar: barra de herramientas. Ribbon tab Home: Inicio. Hotkeys: atajos.
+- Settings (preferences and cut settings): Ajustes, ajustes de corte. Setup (ribbon group): Configuración.
+- Edit (menu, clipboard and undo): Edición. Modify (ribbon tab, changing shapes): Modificar.
+- Curve quality: Baja / Normal / Alta. Toolbar icon sizes agree with the plural «Iconos»: Pequeños, Medianos, Grandes.
+- Theme: tema. Art library: Biblioteca de gráficos. Move (panel): Mover. Cut shapes: Dividir formas.
+- Feeder: alimentador. Camera control: Control de cámara. Serial ports: Puertos serie.
+- Cut table columns: Capa, Modo, Vel/Pot, Salida, Vis, Aire.
+
+## Spanish, Latin America (es-LA)
+
+Neutral Latin American Spanish, built from the Spain file and then changed wherever the two
+regions say it differently; it is not a copy. Same "tú" imperative, quotes “like this”.
+Everything not listed here is as in es-ES.
+
+- Settings: Configuración (also "configuración de corte"). Setup (ribbon group): Preparación.
+- Edit (menu and ribbon group): Editar. Modify (ribbon tab): Modificar.
+- Computer: computadora. Laptop: laptop. Mouse: mouse. Press: presionar. Add: agregar.
+- Live: en vivo. Thickness: espesor. Icons: Íconos. Serial ports: Puertos seriales.
+- Same width: Igualar ancho. Paste in place: Pegar en el lugar. Autosave: Guardado automático.
+- Rotate 90°: Girar 90° a la izquierda / derecha. Clear selection: Quitar selección.
+- Take the key (hotkeys): Tomar la tecla.
+
+## Portuguese, Brazil (pt)
+
+Brazilian Portuguese: the project's research notes name no other variant, so "pt" is written
+for Brazil. "Você" with the imperative in help texts ("Clique", "Pressione"); commands use the
+infinitive. Key names stay as in English. Quotes “like this”.
+
+- Job: trabalho. Cut (laser): corte, cortar. Cut (clipboard): Recortar.
+- Layer: camada. Line / Fill / Image: Linha / Preenchimento / Imagem. Engrave: gravar.
+- Power: potência. Speed: velocidade. Pass: passada. Interval: intervalo. Thickness: espessura.
+- Air assist: assistência de ar. Frame: contornar.
+- Home: referenciar. Origin: origem. Start point: ponto inicial.
+- Cut direction: direção de corte. Tab: ponte. Focus test: Teste de foco.
+- Material test: Teste de material. Cut library / Material library: Biblioteca de corte / de materiais.
+- Rotary: rotativo. Camera: câmera. Print and cut: Imprimir e cortar.
+- Device / Machine: dispositivo / máquina. Console: Console. Preview: Pré-visualização. Nudge: passo das setas.
+- Shape / Object: forma / objeto. Path: caminho. Node: nó. Weld: soldar.
+- Boolean union / difference / intersection: União / Diferença / Interseção booleana.
+- Offset: Offset. Trace: vetorizar. Bitmap: bitmap.
+- Group / Ungroup: Agrupar / Desagrupar. Array: matriz.
+- Align / Distribute / Dock: Alinhar / Distribuir / Encostar. Flip: inverter. Mirror: espelhar.
+- Snap: ajustar a; the settings heading is "Ajuste magnético". Grid: grade. Lock: bloquear.
+- Crop: recorte. Mask: máscara. Variable text: Texto variável. Selection: seleção.
+- Page: página. Canvas: área de desenho. Bed: mesa. Work area: área de trabalho. Panel: painel.
+- Toolbar: barra de ferramentas. Ribbon tab Home: Início. Hotkeys: atalhos. Settings: Configurações.
+- Edit (menu, clipboard and undo): Editar. Modify (ribbon tab, changing shapes): Modificar.
+- Curve quality: Baixa / Normal / Alta. Toolbar icon sizes agree with the plural «Ícones»: Pequenos, Médios, Grandes.
+- Theme: tema. Art library: Biblioteca de artes. Move (panel): Mover. Cut shapes: Dividir formas.
+- Feeder: alimentador. Camera control: Controle da câmera. Serial ports: Portas seriais.
+- Computer: computador. Laptop: notebook. Screen: tela.
+- Cut table columns: Camada, Modo, Vel/Pot, Saída, Vis, Ar.

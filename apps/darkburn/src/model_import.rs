@@ -365,22 +365,27 @@ fn view_index(s: &DepthSettings) -> usize {
     View::ALL.iter().position(|v| *v == s.view).unwrap_or(0) + if s.flip { 3 } else { 0 }
 }
 
+/// A dim line of facts, wrapped to the column.
+fn note(ui: &mut Ui, text: &str) {
+    ui_kit::status_line(ui, text, ui_kit::StatusTone::Dim);
+}
+
 fn body(ui: &mut Ui, d: &mut DepthDialog) {
     let mut rule = 0.0;
     let row = ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(320.0);
             ui_kit::section_heading(ui, "Model");
-            ui_kit::caption(ui, "Model", &crate::multi_trace::name_of(&d.path));
+            note(ui, &crate::multi_trace::name_of(&d.path));
             match (&d.model, &d.error) {
                 (_, Some(e)) => {
                     ui_kit::status_line(ui, e, ui_kit::StatusTone::Error);
                 }
                 (Some(m), None) => {
                     let [x, y, z] = m.size();
-                    ui_kit::caption(ui, "Model", &format!("Size {x:.2} x {y:.2} x {z:.2} (X, Y, Z), {} triangles", m.triangles.len()));
+                    note(ui, &format!("Size X {x:.2}, Y {y:.2}, Z {z:.2}; {} triangles", m.triangles.len()));
                 }
-                (None, None) => ui_kit::caption(ui, "Model", "Reading the model..."),
+                (None, None) => note(ui, "Reading the model..."),
             }
             ui.add_enabled_ui(d.model.is_some() && d.job.is_none(), |ui| {
                 ui_kit::section_heading(ui, "View");
@@ -398,17 +403,16 @@ fn body(ui: &mut Ui, d: &mut DepthDialog) {
                 d.settings.near_white = near == 0;
                 ui_kit::checkbox(ui, "Limit the depth range", &mut d.clamp);
                 if d.clamp {
-                    numeric::row(ui, "From", &mut d.from, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
-                    numeric::row(ui, "To", &mut d.to, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
+                    numeric::row(ui, "From depth", &mut d.from, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
+                    numeric::row(ui, "To depth", &mut d.to, &Num::new(0.0..=1000.0, 2, " mm").speed(0.05));
                 }
             });
             match d.frame() {
                 Some(Ok(f)) => {
                     let deep = f.model_depth * f.scale;
-                    ui_kit::caption(
+                    note(
                         ui,
-                        "Resolution",
-                        &format!("{:.2} x {:.2} mm, {} x {} pixels, {deep:.2} mm deep", f.width_mm, f.height_mm, f.px_width, f.px_height),
+                        &format!("Picture {:.2} x {:.2} mm, {} x {} pixels, {deep:.2} mm deep", f.width_mm, f.height_mm, f.px_width, f.px_height),
                     );
                 }
                 Some(Err(e)) => {
@@ -417,7 +421,7 @@ fn body(ui: &mut Ui, d: &mut DepthDialog) {
                 None => {}
             }
             if d.job.is_some() {
-                ui_kit::caption(ui, "Model", "Making the picture...");
+                note(ui, "Making the picture...");
             }
         });
         rule = image_ui::column_gap(ui);

@@ -662,12 +662,19 @@ pub trait DriverAdapter {
 
 const CONSOLE_LIMIT: usize = 2000;
 
+/// How long after a resume the machine may still show the job as paused: until its next status
+/// report, which comes every 200 to 500 ms (Ruida is the slowest), with room for one late answer.
+pub const RESUME_SETTLE: Duration = Duration::from_millis(1500);
+
 /// The one machine connection of the app.
 pub struct MachineHandle {
     adapter: Option<Box<dyn DriverAdapter>>,
     snapshot: Snapshot,
     console: VecDeque<ConsoleEntry>,
     last_link: Option<Link>,
+    /// When the last resume was sent, until the machine shows the job going (see
+    /// [`MachineHandle::resume_pending`]).
+    resume_sent: Option<Instant>,
 }
 
 impl Default for MachineHandle {
@@ -678,7 +685,7 @@ impl Default for MachineHandle {
 
 impl MachineHandle {
     pub fn new() -> Self {
-        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None }
+        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None, resume_sent: None }
     }
 
     /// A handle already connected to a simulator (tests, demos). Returns once the connection is
@@ -746,6 +753,7 @@ impl MachineHandle {
         }
         let (family, bed) = (self.snapshot.family, self.snapshot.bed);
         self.snapshot = Snapshot { family, bed, ..Default::default() };
+        self.resume_sent = None;
     }
 
     /// Drop the connection and open the same link again (right-click on Devices) [LASER-17].
@@ -760,6 +768,10 @@ impl MachineHandle {
         let Some(a) = self.adapter.as_mut() else { return Vec::new() };
         let events = a.poll();
         self.snapshot = a.snapshot();
+        if self.snapshot.state != LaserState::Paused {
+            // The machine shows the resume (or the job ended): the snapshot is up to date.
+            self.resume_sent = None;
+        }
         let mut gone = false;
         for e in &events {
             match e {
@@ -822,13 +834,24 @@ impl MachineHandle {
     }
     /// Always sent while connected.
     pub fn pause(&mut self) -> Result<(), MachineError> {
+        self.resume_sent = None;
         self.command(MachineCommand::Pause)
     }
     pub fn resume(&mut self) -> Result<(), MachineError> {
-        self.command(MachineCommand::Resume)
+        let r = self.command(MachineCommand::Resume);
+        if r.is_ok() {
+            self.resume_sent = Some(Instant::now());
+        }
+        r
+    }
+    /// A resume went out less than [`RESUME_SETTLE`] ago and the machine has not reported since
+    /// that the job goes on: the snapshot says paused, but the job is most likely running again.
+    pub fn resume_pending(&self) -> bool {
+        self.snapshot.state == LaserState::Paused && self.resume_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
     }
     /// Always sent while connected.
     pub fn stop(&mut self) -> Result<(), MachineError> {
+        self.resume_sent = None;
         self.command(MachineCommand::Stop)
     }
     pub fn frame_rect(&mut self, r: Rect, spec: FrameSpec) -> Result<(), MachineError> {

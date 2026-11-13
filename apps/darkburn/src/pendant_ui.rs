@@ -38,7 +38,9 @@
 //! carried out however old it is. Pause, late or not, only ever pauses. Once the pendant has
 //! sent a pause, further Pause presses are not sent again until the machine reports the job
 //! paused (or stopped), for at most [`PAUSE_SETTLE`]: a second pause that reached the
-//! controller before the first one showed could set the job going again there.
+//! controller before the first one showed could set the job going again there. A job resumed
+//! a moment ago (by Start or the window's Resume) still shows as paused until the machine's next
+//! status report: a Pause in that gap pauses it, since it is running again.
 //!
 //! One window at a time: every window that opened the receiver would get every key press, so
 //! one Start would start a job in each window and one arrow would move each machine. Before it
@@ -143,6 +145,8 @@ pub struct PendantUi {
     pub make_connector: Option<MakeConnector>,
     /// [`MAX_AGE`]; a field so that tests on a loaded computer can allow more.
     pub max_age: Duration,
+    /// [`PAUSE_SETTLE`]; a field for the same reason.
+    pub pause_settle: Duration,
     /// Held while this window has the receiver open: no other DarkBurn window opens it then.
     /// After `pendant`, so a window that goes away closes the receiver before it lets go.
     lock: Option<File>,
@@ -153,6 +157,9 @@ pub struct PendantUi {
     pub lock_path: Option<PathBuf>,
     /// When the pendant last sent a pause the machine has not yet reported as taken.
     pause_sent: Option<Instant>,
+    /// That pause went out just after a resume, while the machine still showed the job paused
+    /// from before: that Paused does not show the pause, a Paused after the job ran again does.
+    pause_over_resume: bool,
 }
 
 impl Default for PendantUi {
@@ -164,10 +171,12 @@ impl Default for PendantUi {
             waiting: VecDeque::new(),
             make_connector: None,
             max_age: MAX_AGE,
+            pause_settle: PAUSE_SETTLE,
             lock: None,
             next_try: None,
             lock_path: None,
             pause_sent: None,
+            pause_over_resume: false,
         }
     }
 }
@@ -231,10 +240,7 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
         app.pendant.next_try = None;
         app.pendant.status = PendantStatus::Off;
     }
-    // A pause the machine reports as taken (or a job that ended) lets the next Pause through.
-    if settled(app.machine.handle.snapshot().state) {
-        app.pendant.pause_sent = None;
-    }
+    pause_shown(app);
     let events = app.pendant.pendant.as_ref().map(Pendant::poll_stamped).unwrap_or_default();
     for Stamped { at, event } in events {
         on_event(app, event, at);
@@ -358,33 +364,52 @@ fn settled(state: LaserState) -> bool {
     state == LaserState::Paused || !state.is_working()
 }
 
-/// Whether a Pause press is held back: the pendant sent a pause less than [`PAUSE_SETTLE`]
-/// before `now`, and the machine, in `state`, does not show it yet.
-pub fn pause_held_back(state: LaserState, pause_sent: Option<Instant>, now: Instant) -> bool {
-    !settled(state) && pause_sent.is_some_and(|t| now.saturating_duration_since(t) < PAUSE_SETTLE)
+/// A pause the machine reports as taken (or a job that ended) lets the next Pause through.
+fn pause_shown(app: &mut DarkBurn) {
+    let state = app.machine.handle.snapshot().state;
+    if state != LaserState::Paused {
+        app.pendant.pause_over_resume = false;
+    }
+    if settled(state) && !app.pendant.pause_over_resume {
+        app.pendant.pause_sent = None;
+    }
+}
+
+/// Whether a Pause press is held back: the pendant sent a pause less than `settle` (normally
+/// [`PAUSE_SETTLE`]) before `now`, and the machine, in `state`, does not show it yet.
+pub fn pause_held_back(state: LaserState, pause_sent: Option<Instant>, now: Instant, settle: Duration) -> bool {
+    !settled(state) && pause_sent.is_some_and(|t| now.saturating_duration_since(t) < settle)
 }
 
 /// The Pause key: pauses a running job and nothing else, fresh or late (the owner's decision).
-/// On a job that is already paused nothing is sent; the window's button would resume it.
+/// On a job that is already paused nothing is sent; the window's button would resume it. A job
+/// that was resumed a moment ago (by Start or the window's Resume) and still shows as paused,
+/// because the machine has not reported since, is running: that one is paused.
 fn pause(app: &mut DarkBurn) {
     app.machine.tick();
+    pause_shown(app);
     let state = app.machine.handle.snapshot().state;
-    if settled(state) {
-        app.pendant.pause_sent = None;
-    }
-    if pause_held_back(state, app.pendant.pause_sent, Instant::now()) {
+    let resumed = app.machine.handle.resume_pending();
+    // A Paused from before a resume shows no pause sent since: wait as for a running job.
+    let shown = if app.pendant.pause_over_resume { LaserState::Busy } else { state };
+    if pause_held_back(shown, app.pendant.pause_sent, Instant::now(), app.pendant.pause_settle) {
         log::info!("pendant: Pause again before the machine showed the last one; not sent");
         return;
     }
+    // What `job.pause` with `only_pause` does: it sends a pause unless the job shows as paused
+    // and was not resumed a moment ago.
+    let sends = state != LaserState::Paused || resumed;
     run_with(app, "job.pause", &json!({ "only_pause": true }));
-    if state != LaserState::Paused {
+    if sends {
         app.pendant.pause_sent = Some(Instant::now());
+        app.pendant.pause_over_resume = resumed;
     }
 }
 
 /// The Start key on a paused job: what the window's Resume button does, through its command.
 fn resume(app: &mut DarkBurn) {
     app.pendant.pause_sent = None;
+    app.pendant.pause_over_resume = false;
     run_with(app, "job.pause", &json!({}));
 }
 

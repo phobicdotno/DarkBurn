@@ -1,2 +1,3 @@
 - Fix: The pendant's Pause key only pauses now, and its Start key goes on with a paused job
 - Fix: The pendant's help text in Settings shows in full
+- Fix: The pendant's Pause pressed right after going on with a job pauses it again

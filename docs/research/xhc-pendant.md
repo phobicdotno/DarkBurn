@@ -68,6 +68,10 @@ most one per 250 ms.
   repeated. A press can come twice over the radio, and on some controllers a second pause sets
   the job going again. For the same reason, once the pendant has sent a pause it sends no other
   until the machine reports the job paused or stopped, for at most a second.
+- A job resumed a moment ago (by Start or the window's Resume) still shows as paused until the
+  machine's next status report, up to half a second later. The pendant's Pause in that gap
+  pauses it, since it is running again; once the resume is 1.5 s old and the machine still shows
+  the job paused, Pause sends nothing again.
 - Start is the pendant's Play: on a paused job it resumes it, through the same command the
   window's Resume button runs. Like Start it is carried out only while fresh and while the
   window is drawn. With nothing paused it starts a job when the Start button is enabled, as

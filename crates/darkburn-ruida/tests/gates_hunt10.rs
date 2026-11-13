@@ -158,3 +158,56 @@ fn stop_and_disconnect_let_a_held_jog_key_go() {
         assert!(!key_is_down(&emu, PanelKey::PlusX), "disconnect {disconnect}: the jog key stays held");
     }
 }
+
+// ----- uploading: requests that wait behind a send, then a Stop -----
+
+fn replies(h: &mut RuidaHandle, ids: &[u64]) -> Vec<(u64, std::result::Result<Response, RuidaError>)> {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut out = Vec::new();
+    while out.len() < ids.len() {
+        assert!(std::time::Instant::now() < end, "replies missing: {out:?}");
+        for e in h.poll() {
+            if let Event::Reply { id, result } = e
+                && ids.contains(&id)
+            {
+                out.push((id, result));
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    out
+}
+
+#[test]
+fn a_key_press_or_frame_asked_before_a_stop_is_not_done_after_it() {
+    let (mut m, emu) = rig();
+    m.send_job("GATE", &square_job((10.0, 10.0), 50.0, 20.0), &SendOptions::default(), &mut never).unwrap();
+    let mut h = RuidaHandle::spawn(m, WorkerConfig { status_interval: None });
+    // The name is taken, so the send waits for an answer while the rest is asked.
+    let send =
+        h.request(Request::SendJob { name: "GATE".into(), job: Box::new(square_job((1.0, 1.0), 5.0, 20.0)), options: SendOptions::default() });
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    'prompt: loop {
+        assert!(std::time::Instant::now() < end, "no overwrite prompt");
+        for e in h.poll() {
+            if matches!(e, Event::OverwritePrompt { id, .. } if id == send) {
+                break 'prompt;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let moves = lock(&emu).motion.len();
+    let press = h.request(Request::PanelKey { key: PanelKey::Pulse, down: true });
+    let frame = h.request(Request::FrameRect { rect: Rect::new(0.0, 0.0, 20.0, 20.0), light: false });
+    let stop = h.request(Request::Stop);
+    let status = h.request(Request::Status);
+    let got = replies(&mut h, &[send, press, frame, stop, status]);
+    let of = |id| got.iter().find(|(i, _)| *i == id).map(|(_, r)| r.clone()).unwrap();
+    assert_eq!(of(send), Err(RuidaError::Cancelled));
+    assert_eq!(of(stop), Ok(Response::Done));
+    assert!(of(status).is_ok());
+    assert!(!key_is_down(&emu, PanelKey::Pulse), "the Pulse key was pressed after the Stop: {:?}", of(press));
+    assert_eq!(lock(&emu).motion.len(), moves, "a frame ran after the Stop: {:?}", of(frame));
+    assert_eq!(lock(&emu).files().len(), 1);
+    h.shutdown();
+}

@@ -53,6 +53,14 @@ pub const DEFAULT_TOLERANCE: f64 = 0.1;
 /// Points closer than this (mm) count as one point.
 const MIN_GAP: f64 = 1e-3;
 
+/// How far from the origin (mm) a design can reach: anything further is refused before its
+/// outline is built, since a curve that big would take more pieces than memory holds.
+const REACH: f64 = darkburn_core::editor::MAX_COORD;
+
+fn in_reach(values: &[f64]) -> Result<(), String> {
+    if values.iter().all(|v| v.is_finite() && v.abs() <= REACH) { Ok(()) } else { Err(crate::shape_ops::OUT_OF_REACH.into()) }
+}
+
 pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     Some(match id {
         "edit.select_similar" => select_similar(app, a),
@@ -153,6 +161,7 @@ fn add_star(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     }
     let outer = num(a, "outer")?;
     let inner = num(a, "inner")?;
+    in_reach(&[x, y, outer, x.abs() + outer, y.abs() + outer])?;
     if outer < MIN_GAP || inner < MIN_GAP {
         return Err("outer and inner radius must be above zero".into());
     }
@@ -179,6 +188,7 @@ fn three_points(a: &Value) -> Result<[Point; 3], String> {
         }
         *o = Point::new(x, y);
     }
+    in_reach(&out.iter().flat_map(|p| [p.x, p.y]).collect::<Vec<_>>())?;
     let [p, q, r] = out;
     if p.distance(q) < MIN_GAP || q.distance(r) < MIN_GAP || p.distance(r) < MIN_GAP {
         return Err("the three points must be apart from each other".into());
@@ -194,14 +204,17 @@ fn add_circle(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let [p, q, r] = three_points(a)?;
     let layer = layer(app, a)?;
     let (centre, radius) = darkburn_geom::query::circle_through(p, q, r).ok_or("the three points lie on one line")?;
+    in_reach(&[radius, centre.x.abs() + radius, centre.y.abs() + radius])?;
     let shape = Shape::ellipse(Rect::from_center_size(centre, (2.0 * radius, 2.0 * radius)), layer);
     let id = add(app, "Add circle", shape)?;
     Ok(json!({ "id": id.0, "centre": [centre.x, centre.y], "radius": radius }))
 }
 
 /// The arc from `start` through `mid` to `end`, as curves that begin and end exactly there.
+/// None also for a circle beyond [`REACH`].
 pub fn arc_path(start: Point, mid: Point, end: Point) -> Option<BezPath> {
     let m = darkburn_geom::query::arc_through(start, mid, end)?;
+    in_reach(&[m.radius, m.center.x, m.center.y]).ok()?;
     let arc = Arc::new(m.center, Vec2::new(m.radius, m.radius), (start - m.center).atan2(), m.sweep, 0.0);
     let mut els: Vec<PathEl> = arc.path_elements(1e-4).collect();
     if let Some(PathEl::MoveTo(p)) = els.first_mut() {
@@ -217,8 +230,9 @@ pub fn arc_path(start: Point, mid: Point, end: Point) -> Option<BezPath> {
 fn add_arc(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let [p, q, r] = three_points(a)?;
     let layer = layer(app, a)?;
-    let path = arc_path(p, q, r).ok_or("the three points lie on one line")?;
     let m = darkburn_geom::query::arc_through(p, q, r).ok_or("the three points lie on one line")?;
+    in_reach(&[m.radius, m.center.x, m.center.y])?;
+    let path = arc_path(p, q, r).ok_or("the three points lie on one line")?;
     let id = add(app, "Add arc", Shape::path(path, layer))?;
     Ok(json!({ "id": id.0, "centre": [m.center.x, m.center.y], "radius": m.radius, "sweep_degrees": m.sweep.to_degrees() }))
 }
@@ -586,6 +600,38 @@ mod tests {
             }
         }
         assert!(a.editor.doc.iter().next().is_none(), "nothing was drawn");
+    }
+
+    #[test]
+    fn shapes_far_beyond_reach_are_refused_before_anything_is_built() {
+        // Found by the monkey: an arc through points 1e100 mm out asked kurbo for an outline of
+        // more pieces than memory holds, and the app died before the edit could refuse it.
+        let mut a = app();
+        let far = [1e100, 1e150, 1e300, 2e9];
+        for f in far {
+            let pts = json!({ "points": [[0, 0], [f, f], [2.0 * f, 0]] });
+            for id in ["shape.add_arc_3pt", "shape.add_circle_3pt"] {
+                let err = run(&mut a, id, pts.clone()).unwrap_err();
+                assert_eq!(err, crate::shape_ops::OUT_OF_REACH, "{id} {pts}");
+            }
+            for bad in [
+                json!({ "x": f, "y": 0, "points": 5, "outer": 10, "inner": 4 }),
+                json!({ "x": 0, "y": -f, "points": 5, "outer": 10, "inner": 4 }),
+                json!({ "x": 0, "y": 0, "points": 5, "outer": f, "inner": 4 }),
+            ] {
+                let err = run(&mut a, "shape.add_star", bad.clone()).unwrap_err();
+                assert_eq!(err, crate::shape_ops::OUT_OF_REACH, "{bad}");
+            }
+        }
+        // Points in reach, but so nearly on one line that the circle through them is not.
+        let flat = json!({ "points": [[0, 0], [5e8, 10], [1e9, 0]] });
+        for id in ["shape.add_arc_3pt", "shape.add_circle_3pt"] {
+            assert_eq!(run(&mut a, id, flat.clone()).unwrap_err(), crate::shape_ops::OUT_OF_REACH, "{id}");
+        }
+        assert!(a.editor.doc.iter().next().is_none(), "nothing was drawn");
+        // Big but in reach still works.
+        run(&mut a, "shape.add_arc_3pt", json!({ "points": [[0, 0], [4e8, 4e8], [8e8, 0]] })).unwrap();
+        run(&mut a, "shape.add_star", json!({ "x": 9e8, "y": 0, "points": 5, "outer": 1e7, "inner": 4 })).unwrap();
     }
 
     // ------------------------------------------------------------ leave a gap

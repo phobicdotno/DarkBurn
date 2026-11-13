@@ -76,6 +76,8 @@ mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
+#[cfg(test)]
+mod known_hunt10_tests;
 mod laser_panel;
 mod laser_position;
 mod layer_defaults;

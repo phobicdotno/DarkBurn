@@ -813,6 +813,7 @@ fn nodes_tool(
                             if j != p {
                                 crate::shape_ops::set_shape_path(&mut app.editor.doc, *id, j);
                                 st.nodes.retain(|(i, _)| i != id);
+                                app.editor.touch();
                             }
                         }
                     }

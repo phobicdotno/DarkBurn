@@ -286,6 +286,12 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 /// `path` with the file ending `ext`: kept as it is when it ends in it already (in any case),
 /// otherwise the ending is put after the whole name. A dot in the name is part of the name
 /// ("Birch 3.5" becomes "Birch 3.5.dbclb", not "Birch 3.dbclb").
+/// A Save as path that names a file: an empty or blank one (which would save a file called only
+/// by its ending in the current folder) is refused.
+pub(crate) fn named(path: &Path) -> Result<(), String> {
+    if path.to_string_lossy().trim().is_empty() { Err("Give the file a name.".into()) } else { Ok(()) }
+}
+
 pub(crate) fn with_ending(path: &Path, ext: &str) -> PathBuf {
     if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
         return path.to_path_buf();

@@ -578,8 +578,8 @@ impl Device {
         if let Some(why) = self.kind.needs_capture() {
             v.push(why.to_owned());
         }
-        if self.settings.gcode.s_max <= 0.0 && self.family() == Family::Grbl {
-            v.push("S max must be above zero.".into());
+        if !s_max_ok(self.settings.gcode.s_max) && self.family() == Family::Grbl {
+            v.push("S max must be a number above zero.".into());
         }
         v
     }
@@ -642,6 +642,9 @@ impl Device {
     pub fn connect_spec(&self, ports: &[PortInfo]) -> Result<ConnectSpec, String> {
         let link = self.link(ports)?;
         let g = &self.settings.gcode;
+        if self.family() == Family::Grbl && !self.is_simulator() && !s_max_ok(g.s_max) {
+            return Err("S max must be a number above zero.".into());
+        }
         let config = ConnectConfig {
             toggle_dtr: g.dtr,
             dtr: self.settings.conn.dtr_enabled,
@@ -658,6 +661,11 @@ impl Device {
         };
         Ok(ConnectSpec { link, config })
     }
+}
+
+/// S max is a finite number above zero (NaN and infinity are not).
+fn s_max_ok(s_max: f64) -> bool {
+    s_max.is_finite() && s_max > 0.0
 }
 
 /// The serial port to use: the remembered one if it is still there and not excluded, else the

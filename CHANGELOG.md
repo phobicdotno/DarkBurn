@@ -1,6 +1,7 @@
 # Changelog
 
-## v0.0.608 (build 7)
+## v0.0.609 (build 7)
+- Fix: disconnecting a Ruida while firing always lets go of its Pulse key
 - Fix: holding the Fire button never fires twice when the machine is slow to answer
 - Fix: the new windows, tools and texts are translated into every language
 - New: wireless handheld pendant support (turn it on in Settings)

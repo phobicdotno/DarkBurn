@@ -225,46 +225,31 @@ fn turkish_headings_keep_the_dotted_capital_i() {
     crate::i18n::set_language("en");
 }
 
-/// The Edit Hotkeys filter in Turkish finds "Izgara dizisi" when "ızgara" is typed with the
-/// Turkish dotless ı, and also when it is typed with a plain i.
+/// The Edit Hotkeys filter in Turkish finds a command whether its Turkish letters are typed or
+/// not: "farkli" and "FARKLI" find "Farklı kaydet", "içe" and "İÇE" find "İçe aktar". English
+/// keeps working ("save" finds "Save As").
 #[test]
-fn turkish_hotkey_filter_finds_words_with_a_dotless_i() {
-    let mut g = Gui::standard();
-    g.run_command("file.hotkeys");
-    g.settle();
-    g.screenshot("lang-en-hotkeys-all");
-    g.app().extras.hotkeys.filter = "grid".into();
-    g.settle();
-    g.screenshot("lang-en-hotkeys");
-    assert!(g.has_text("Grid Array"), "grid does not find Grid Array: {:?}", g.visible_texts());
-    g.close_dialogs();
-    for typed in ["ızgara", "izgara", "IZGARA"] {
+fn turkish_hotkey_filter_finds_words_with_or_without_the_turkish_i() {
+    let shows = |code: &str, typed: &str, want: &str, not: &str| {
         let mut g = Gui::standard();
-        g.run_command("lang.tr");
+        g.run_command(&format!("lang.{code}"));
         g.settle();
         g.app().extras.hotkeys.filter = typed.into();
         g.run_command("file.hotkeys");
         g.settle();
-        g.screenshot("lang-tr-hotkeys");
-        assert!(g.has_text("Izgara dizisi"), "{typed:?} does not find Izgara dizisi: {:?}", g.visible_texts());
-        assert!(!g.has_text("Dairesel dizi"), "{typed:?} also shows Dairesel dizi");
+        if code == "tr" && typed == "farkli" {
+            g.screenshot("lang-tr-hotkeys");
+        }
+        assert!(!g.find_texts(want).is_empty(), "{code}: {typed:?} does not find {want:?}: {:?}", g.visible_texts());
+        assert!(g.find_texts(not).is_empty(), "{code}: {typed:?} also shows {not:?}");
         g.close_dialogs();
         crate::i18n::set_language("en");
+    };
+    shows("en", "save", "Save As", "New Window");
+    for typed in ["farklı", "farkli", "FARKLI"] {
+        shows("tr", typed, "Farklı kaydet", "Yeni pencere");
     }
-}
-
-#[test]
-fn zz_hotkey_filter_probe() {
-    for (typed, want) in
-        [("new", "New Window"), ("save", "Save As"), ("grid", "Grid Array"), ("arrange.grid", "Grid Array"), ("circ", "Circular Array")]
-    {
-        let mut g = Gui::standard();
-        g.app().extras.hotkeys.filter = typed.into();
-        g.run_command("file.hotkeys");
-        g.settle();
-        let n = crate::keymap::bindable().into_iter().filter(|(id, l, _)| id.contains(typed) || l.to_lowercase().contains(typed)).count();
-        let ids: Vec<_> = crate::keymap::bindable().into_iter().filter(|(id, _, _)| id.contains("array")).map(|(id, _, _)| id).collect();
-        eprintln!("PROBE {typed:?}: shows {want:?} = {}, matching bindable = {n}, array ids {ids:?}", g.has_text(want));
-        g.close_dialogs();
+    for typed in ["içe", "İÇE", "ice"] {
+        shows("tr", typed, "İçe aktar", "Yeni pencere");
     }
 }

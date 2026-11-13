@@ -1234,9 +1234,12 @@ impl<'a> Window<'a> {
             egui::Frame::NONE.inner_margin(if self.body_padding { t.space_12 } else { 0.0 }).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = t.form_gap_y;
                 if let (true, Some(height)) = (self.body_padding, chrome.body_height) {
-                    // A window with a size of its own: the body fills it and scrolls.
+                    // A window with a size of its own (a tab too): the body fills it and scrolls,
+                    // also sideways when it is wider. A body that only scrolled up and down would
+                    // make the whole window as wide as itself and push the footer's buttons out of
+                    // a tab, past the edge of its panel area.
                     let height = height.max(0.0);
-                    egui::ScrollArea::vertical()
+                    egui::ScrollArea::both()
                         .id_salt("window_body")
                         .max_height(height)
                         .min_scrolled_height(height)

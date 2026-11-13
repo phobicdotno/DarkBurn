@@ -708,3 +708,22 @@ fn a_settings_window_docks_floats_resizes_and_detaches() {
     g.frames(3);
     assert_eq!(placement(&g), Placement::Detached);
 }
+
+#[test]
+fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("db_hotkeys".into(), place);
+    // Edit Hotkeys asks for more width than the right panel area has at first.
+    g.app().extras.hotkeys.open = true;
+    g.frames(3);
+    g.click_id("panel:tab:window:db_hotkeys");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    assert!(area.width() < 560.0, "the area is narrower than the page: {area:?}");
+    let close = g.rect_of("dialog:cancel").unwrap_or_else(|| panic!("the Close button: {:?}", g.rects("dialog:")));
+    assert!(area.contains_rect(close), "Close {close:?} lies in the tab {area:?}");
+    g.click_id("dialog:cancel");
+    assert!(!g.app().extras.hotkeys.open, "and it closes the window");
+}

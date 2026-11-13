@@ -27,7 +27,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use darkburn_core::arrange;
-use darkburn_core::kurbo::{Affine, BezPath, Point, Rect};
+use darkburn_core::kurbo::{Affine, Point, Rect};
 use darkburn_core::{Document, Editor, Mode, Shape, ShapeId};
 use darkburn_geom::path::flatten_to_polylines;
 use darkburn_geom::sheet_nest::{self, NestPart, NestProgress, SheetNestOptions, SheetNestResult};
@@ -661,14 +661,32 @@ mod tests {
         let ids: Vec<ShapeId> = (0..40).map(|i| add_rect(&mut app, 300.0 + 12.0 * i as f64, 300.0, 10.0, 7.0, 0)).collect();
         select(&mut app, &ids);
         let s = settings(TRUE, &json!({ "x": 0, "y": 0, "width": 200, "height": 200, "time_limit": 30 }), page(&app)).unwrap();
-        let worker = NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision());
+        let wait = |worker: &NestJob| {
+            let end = Instant::now() + Duration::from_secs(20);
+            while !worker.finished() {
+                assert!(Instant::now() < end, "the cancelled run never ended");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        // Cancelled at once (most likely while the selection is still being sorted out):
+        // nothing to move, or a stopped run.
+        let worker = NestJob::start(app.editor.doc.clone(), app.editor.selected(), s.clone(), app.editor.revision());
         worker.cancel();
         assert!(worker.cancelled());
-        let end = std::time::Instant::now() + Duration::from_secs(20);
-        while !worker.finished() {
-            assert!(std::time::Instant::now() < end, "the cancelled run never ended");
-            std::thread::sleep(Duration::from_millis(2));
+        wait(&worker);
+        match worker.take() {
+            Err(e) => assert_eq!(e, STOPPED),
+            Ok((_, r)) => assert!(r.stopped),
         }
+        // Cancelled while placing: what it found so far is used.
+        let worker = NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision());
+        let end = Instant::now() + Duration::from_secs(20);
+        while worker.progress().1 == 0 && !worker.finished() {
+            assert!(Instant::now() < end, "the run never started placing");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        worker.cancel();
+        wait(&worker);
         let (job, result) = worker.take().unwrap();
         assert!(result.stopped);
         let out = apply(&mut app.editor, &job, &result).unwrap();

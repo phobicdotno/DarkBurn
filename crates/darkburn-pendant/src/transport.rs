@@ -44,7 +44,8 @@ pub trait PendantTransport: Send {
     /// Reads one input report (report id first) into `buf`, waiting at most `timeout`.
     /// `Ok(0)` on timeout. An `Err` means the receiver is gone.
     fn read_report(&mut self, buf: &mut [u8], timeout: Duration) -> Result<usize, PendantError>;
-    /// Sends a feature report (report id first).
+    /// Sends a feature report (report id first). An `Err` only means this report was not taken:
+    /// whether the receiver is gone is for the next read to say.
     fn send_feature_report(&mut self, data: &[u8]) -> Result<(), PendantError>;
     /// A human name for messages, for example `XHC pendant 10ce:eba0`.
     fn name(&self) -> String;
@@ -66,6 +67,8 @@ struct Shared {
     generation: u64,
     reports: VecDeque<Vec<u8>>,
     feature_reports: Vec<Vec<u8>>,
+    /// Set by `fail_feature_reports`: the receiver takes no LED report, but keys still arrive.
+    feature_fails: bool,
     connects: usize,
 }
 
@@ -129,6 +132,12 @@ impl EmulatorHandle {
         self.lock().denied = denied;
     }
 
+    /// Makes every LED (feature) report fail while the link itself stays up, as a receiver or a
+    /// system that refuses the report does; or lets them through again.
+    pub fn fail_feature_reports(&self, fail: bool) {
+        self.lock().feature_fails = fail;
+    }
+
     /// Every feature report sent so far, in order.
     pub fn feature_reports(&self) -> Vec<Vec<u8>> {
         self.lock().feature_reports.clone()
@@ -189,6 +198,9 @@ impl PendantTransport for EmulatorTransport {
     fn send_feature_report(&mut self, data: &[u8]) -> Result<(), PendantError> {
         let mut s = self.handle.lock();
         self.alive(&s)?;
+        if s.feature_fails {
+            return Err(PendantError::Io("the receiver refused the feature report".into()));
+        }
         s.feature_reports.push(data.to_vec());
         Ok(())
     }

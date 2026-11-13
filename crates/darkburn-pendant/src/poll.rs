@@ -5,6 +5,9 @@
 //! its own wake every few seconds). So the thread sends only when the wanted LED state differs
 //! from what it last sent, and never more often than [`PollOptions::led_min_gap`]: a burst of
 //! changes ends up as one message with the last state.
+//!
+//! The LEDs are only a display. An LED message the receiver does not take is tried again later
+//! and never ends the link: the keys, Stop among them, are read whatever happens to the LEDs.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -62,6 +65,7 @@ impl Pendant {
             last_error: None,
             sent: None,
             last_send: None,
+            led_retry_at: None,
             seq: 0,
         };
         let thread = std::thread::Builder::new().name("pendant".into()).spawn(move || worker.run()).ok();
@@ -115,6 +119,8 @@ struct Worker {
     /// The LED state the receiver last took; `None` after (re)connecting.
     sent: Option<Leds>,
     last_send: Option<Instant>,
+    /// Set after an LED message failed: no LED message goes out before this.
+    led_retry_at: Option<Instant>,
     seq: u8,
 }
 
@@ -146,6 +152,7 @@ impl Worker {
                         self.last_error = None;
                         self.sent = None;
                         self.last_send = None;
+                        self.led_retry_at = None;
                         self.emit([PendantEvent::Connected(t.name())]);
                         link = Some(t);
                     }
@@ -159,8 +166,9 @@ impl Worker {
                 }
                 continue;
             };
-            let r = self.send_leds(t.as_mut()).and_then(|_| t.read_report(&mut buf, self.opts.read_timeout));
-            match r {
+            self.send_leds(t.as_mut());
+            // Only a failed read means the receiver is gone.
+            match t.read_report(&mut buf, self.opts.read_timeout) {
                 Ok(0) => {}
                 Ok(n) => match decode_input(&buf[..n]) {
                     Ok(report) => {
@@ -186,17 +194,31 @@ impl Worker {
         self.emit(ev);
     }
 
-    /// Sends the wanted LED state if it changed and the last message is old enough.
-    fn send_leds(&mut self, t: &mut dyn PendantTransport) -> Result<(), PendantError> {
+    /// Sends the wanted LED state if it changed and the last message is old enough. A message
+    /// the receiver does not take is tried again after [`PollOptions::retry_every`]; the link
+    /// stays open, because the keys do not depend on the LEDs.
+    fn send_leds(&mut self, t: &mut dyn PendantTransport) {
         let want = Leds(self.leds.load(Ordering::Relaxed));
         if self.sent == Some(want) || self.last_send.is_some_and(|l| l.elapsed() < self.opts.led_min_gap) {
-            return Ok(());
+            return;
         }
-        t.send_feature_report(&encode_leds(self.seq, want))?;
-        self.seq = self.seq.wrapping_add(1);
-        self.sent = Some(want);
-        self.last_send = Some(Instant::now());
-        Ok(())
+        if self.led_retry_at.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        match t.send_feature_report(&encode_leds(self.seq, want)) {
+            Ok(()) => {
+                self.seq = self.seq.wrapping_add(1);
+                self.sent = Some(want);
+                self.last_send = Some(Instant::now());
+                self.led_retry_at = None;
+            }
+            Err(e) => {
+                if self.led_retry_at.is_none() {
+                    log::warn!("pendant: the LEDs could not be set ({e}); the keys still work");
+                }
+                self.led_retry_at = Some(Instant::now() + self.opts.retry_every);
+            }
+        }
     }
 }
 
@@ -312,6 +334,29 @@ mod tests {
         wait_until(|| h.feature_reports().len() == before + 1);
         assert_eq!(h.feature_reports().last().unwrap()[4], 0x04);
         assert_eq!(h.connects(), 2);
+    }
+
+    /// The LEDs are a display: a receiver that takes no LED report still gives its keys.
+    #[test]
+    fn a_failed_led_write_does_not_cost_the_keys() {
+        let h = EmulatorHandle::new();
+        h.fail_feature_reports(true);
+        let p = Pendant::start(Box::new(h.connector()), fast(), None);
+        assert!(matches!(wait_for(&p, |_| true), Connected(_)));
+        h.hold(&[Key::Stop]);
+        assert_eq!(wait_for(&p, |_| true), KeyDown(Key::Stop), "the first thing after connecting is the key, not a lost link");
+        h.release();
+        assert_eq!(wait_for(&p, |_| true), KeyUp(Key::Stop));
+        // Several retry times later the link is still the first one.
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(p.poll().is_empty(), "no disconnect, no reconnect");
+        assert_eq!(h.connects(), 1);
+        assert!(h.feature_reports().is_empty());
+        // Once the receiver takes LED reports again, the wanted state goes out.
+        p.set_leds(Leds::FRAME);
+        h.fail_feature_reports(false);
+        wait_until(|| h.feature_reports().len() == 1);
+        assert_eq!(h.feature_reports()[0][4], 0x04);
     }
 
     #[test]

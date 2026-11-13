@@ -1029,6 +1029,11 @@ pub fn fast_whitespace(tp: &Toolpath, speed: f64) -> Toolpath {
     out
 }
 
+/// True when some operation of `tp` fires the laser (a cut, arc or dwell above power 0).
+fn fires_anywhere(tp: &Toolpath) -> bool {
+    tp.ops.iter().any(|o| matches!(o, Op::Cut { power, .. } | Op::Arc { power, .. } | Op::Dwell { power, .. } if *power > 0.0))
+}
+
 /// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
@@ -1042,6 +1047,11 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
         Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
         Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
     };
+    // A job that fires the laser nowhere (every layer at power 0) is refused like an image at
+    // power 0, before anything reaches the machine or a file.
+    if !fires_anywhere(&toolpath) {
+        return Err(BuildError::NothingToBurn);
+    }
     let design = inverse_ops(&toolpath, origin.transform(bounds));
     let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
     let mut warnings = c.warnings;

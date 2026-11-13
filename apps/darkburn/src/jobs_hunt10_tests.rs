@@ -381,3 +381,52 @@ fn jobs_hunt10_an_image_layer() {
     let r = run_doc(d, |_| {});
     compare(&r, "image");
 }
+
+/// A job in which nothing would burn: every output layer at power 0, as a line, a fill and an
+/// image. Start and the G-code save both refuse it with "nothing to burn", and nothing reaches the
+/// machine. A job with one layer that burns is not affected.
+#[test]
+fn jobs_hunt10_a_job_at_power_0_everywhere_is_refused_like_an_image() {
+    let grey: Vec<u8> = (0..16).map(|i| (i * 16) as u8).collect();
+    let mut line = Document::new();
+    styled(&mut line, 0, 20.0, 0.0);
+    sq(&mut line, 0, 10.0, 10.0, 20.0);
+    styled(&mut line, 1, 30.0, 0.0);
+    sq(&mut line, 1, 50.0, 50.0, 20.0);
+    let mut fill = Document::new();
+    styled(&mut fill, 0, 20.0, 0.0);
+    fill.layer_mut(0).main_mut().mode = Mode::Fill;
+    sq(&mut fill, 0, 10.0, 10.0, 20.0);
+    let image = image_doc(
+        |s| {
+            s.image_mode = darkburn_core::layer::ImageMode::Grayscale;
+            s.min_power = 0.0;
+            s.max_power = 0.0;
+        },
+        grey,
+    );
+    for (what, doc) in [("lines at power 0", line), ("fill at power 0", fill), ("image at power 0", image)] {
+        let r = run_doc(doc.clone(), |_| {});
+        assert!(r.job.as_ref().is_err_and(|e| e.contains("nothing to burn")), "{what}: built {:?}", r.job.as_ref().map(|j| j.toolpath.ops.len()));
+        assert!(r.started.as_ref().is_err_and(|e| e.contains("nothing to burn")), "{what}: Start gave {:?}", r.started);
+        assert!(r.lines.is_empty(), "{what}: the machine got {} lines: {:?}", r.lines.len(), &r.lines[..r.lines.len().min(20)]);
+        // The G-code save agrees with Start.
+        let mut a = DarkBurn::new(Prefs::default());
+        a.editor.doc = doc;
+        let path = std::env::temp_dir().join(format!("darkburn-hunt10-power0-{}-{}.gc", std::process::id(), what.replace(' ', "-")));
+        let _ = std::fs::remove_file(&path);
+        let saved = execute_headless(&mut a, "job.save_gcode", &json!({ "path": path.to_string_lossy() }));
+        assert!(saved.as_ref().is_err_and(|e| e.contains("nothing to burn")), "{what}: save gave {saved:?}");
+        assert!(!path.exists(), "{what}: a G-code file was written");
+    }
+    // One layer that burns: started and burned as the preview shows.
+    let mut d = Document::new();
+    styled(&mut d, 0, 20.0, 0.0);
+    sq(&mut d, 0, 10.0, 10.0, 20.0);
+    styled(&mut d, 1, 30.0, 40.0);
+    sq(&mut d, 1, 50.0, 50.0, 20.0);
+    let r = run_doc(d, |_| {});
+    assert!(r.started.is_ok(), "{:?}", r.started);
+    assert!(!burns(&r.lines).is_empty());
+    compare(&r, "one layer of two at power 0");
+}

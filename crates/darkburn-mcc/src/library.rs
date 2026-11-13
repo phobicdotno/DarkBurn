@@ -725,4 +725,29 @@ mod tests {
         let missing = scan(&t.0.join("no such folder"));
         assert_eq!(missing.unreadable.len(), 1);
     }
+
+    /// Scan a real Mlaser package named by `DARKBURN_MLASER_DIR` and print what the craft checks and
+    /// the name checks flag (`cargo test -p darkburn-mcc real_package -- --nocapture`). Skipped when
+    /// the variable is unset, so no real file is needed in the repository.
+    #[test]
+    fn real_package_from_env() {
+        let Some(dir) = std::env::var_os("DARKBURN_MLASER_DIR") else {
+            return;
+        };
+        let lib = scan(Path::new(&dir));
+        println!("{} recipes, {} unreadable", lib.recipes.len(), lib.unreadable.len());
+        for (r, issues) in lib.flagged() {
+            for i in issues {
+                println!("craft {:?} {} {}: {}", i.severity, r.path.display(), i.path, i.message);
+            }
+        }
+        for r in &lib.recipes {
+            for c in &r.checks {
+                println!("check {:?} {}: {}", c.level, r.path.display(), c.message);
+            }
+        }
+        for u in &lib.unreadable {
+            println!("unreadable {}: {}", u.path.display(), u.reason);
+        }
+    }
 }

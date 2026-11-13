@@ -1,0 +1,1 @@
+- New: Reads the laser's own cutting recipes and machine settings, ready for quick switching

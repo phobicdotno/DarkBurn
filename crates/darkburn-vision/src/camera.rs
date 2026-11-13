@@ -164,6 +164,11 @@ fn one() -> f64 {
     1.0
 }
 
+/// A zoom saved as `null` (JSON has no NaN) loads as the default instead of failing the whole file.
+fn one_if_null<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.filter(|v| v.is_finite()).unwrap_or(1.0))
+}
+
 /// Standard N-target layout: 4 targets at the corners of the work area inset by `margin`, extra ones along the edges.
 pub fn default_targets(bed: BedRect, margin: f64, count: usize) -> Vec<Point> {
     let (x0, y0, x1, y1) = (bed.x + margin, bed.y + margin, bed.x + bed.width - margin, bed.y + bed.height - margin);
@@ -496,7 +501,7 @@ pub struct CaptureSettings {
     pub brightness: Option<f64>,
     #[serde(default)]
     pub lens: Option<LensModel>,
-    #[serde(default = "one")]
+    #[serde(default = "one", deserialize_with = "one_if_null")]
     pub focal_scale: f64,
     #[serde(default)]
     pub alignment: Option<CameraAlignment>,

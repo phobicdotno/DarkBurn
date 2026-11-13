@@ -27,8 +27,9 @@ pub struct PatternSpec {
 }
 
 impl PatternSpec {
+    /// Number of grid points (saturates instead of overflowing on an absurd size, which nothing can match).
     pub fn count(&self) -> usize {
-        self.cols * self.rows
+        self.cols.saturating_mul(self.rows)
     }
 
     /// Plane coordinates (mm) of the grid points in row-major order.
@@ -392,7 +393,7 @@ fn quad_area(q: [Point; 4]) -> f64 {
 /// The first point is the grid corner whose neighbours run right and down in the image
 /// (so a mirrored arrangement is never produced). Handles perspective and moderate lens distortion.
 pub fn order_grid(points: &[Point], cols: usize, rows: usize) -> Option<Vec<Point>> {
-    let n = cols * rows;
+    let n = cols.checked_mul(rows)?;
     if cols < 2 || rows < 2 || points.len() != n {
         return None;
     }

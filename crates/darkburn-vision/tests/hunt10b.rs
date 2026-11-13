@@ -45,3 +45,26 @@ fn cylinder_with_infinite_radius_or_nan_centre_is_refused() {
     assert!(r.is_err(), "{r:?}");
     assert!(base.map_point(Point::new(0.0, 110.0)).is_ok());
 }
+
+/// A pattern size so large that columns times rows does not fit in a number: nothing is found, no crash.
+#[test]
+fn pattern_with_an_absurd_grid_size_finds_nothing_instead_of_panicking() {
+    use darkburn_vision::detect::{PatternKind, PatternSpec, detect_pattern, order_grid};
+    let img = image::GrayImage::new(32, 32);
+    for kind in [PatternKind::Checkerboard, PatternKind::CircleGrid { dark_on_light: true }] {
+        let spec = PatternSpec { kind, cols: usize::MAX, rows: 2, spacing_mm: 1.0 };
+        assert_eq!(detect_pattern(&img, &spec), None);
+    }
+    assert_eq!(order_grid(&[Point::ZERO; 4], usize::MAX, 2), None);
+}
+
+/// Settings whose lens zoom became NaN were saved as `null` and then refused on load, losing every camera
+/// setting. They must load again, with the zoom back at its default.
+#[test]
+fn settings_with_a_nan_focal_scale_still_load() {
+    use darkburn_vision::camera::CaptureSettings;
+    let s = CaptureSettings { focal_scale: f64::NAN, camera_name: "Bed cam".into(), ..CaptureSettings::default() };
+    let back = CaptureSettings::from_json(&s.to_json()).expect("saved settings must load");
+    assert_eq!(back.camera_name, "Bed cam");
+    assert_eq!(back.focal_scale, 1.0);
+}

@@ -1131,6 +1131,8 @@ mod tests {
             d.args.ignore_smaller = 9;
             d.clip_on = true;
         }
+        // The rectangle rows move the button down: let the window lay out again before clicking.
+        g.frames(3);
         // The file picker cancelled: Trace Image stays, and says why.
         g.click_label("Trace several files...");
         g.frames(3);

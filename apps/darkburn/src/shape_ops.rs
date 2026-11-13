@@ -827,6 +827,12 @@ fn select_smaller(e: &mut Editor, _a: &Value) -> R {
 
 // ---------------------------------------------------------------- warp, deform, corners
 
+/// A point a design can reach: finite and no further out than the editor allows.
+fn within_reach(p: Point) -> bool {
+    let max = darkburn_core::editor::MAX_COORD;
+    p.x.is_finite() && p.y.is_finite() && p.x.abs() <= max && p.y.abs() <= max
+}
+
 fn warp(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
     let src = bbox_of_ids(&e.doc, &ids).ok_or("nothing to warp")?;
@@ -841,6 +847,9 @@ fn warp(e: &mut Editor, a: &Value) -> R {
         }
         _ => return Err("corners must list four [x, y] points: bottom-left, bottom-right, top-right, top-left".into()),
     };
+    if !corners.iter().all(|p| within_reach(*p)) {
+        return Err(OUT_OF_REACH.into());
+    }
     let perspective = word(a, "mode", "perspective") == "perspective";
     let mut failed = false;
     let done = e.edit("Warp", |d, _| {
@@ -867,6 +876,11 @@ fn deform(e: &mut Editor, a: &Value) -> R {
     for (i, v) in pts.iter().enumerate() {
         let arr = v.as_array().filter(|x| x.len() == 2).ok_or("grid points are [x, y]")?;
         grid[i / 4][i % 4] = Point::new(arr[0].as_f64().ok_or("bad point")?, arr[1].as_f64().ok_or("bad point")?);
+    }
+    // A point beyond reach could only give a shape nobody can reach, and flattening the mapping
+    // of such a point asks for gigabytes.
+    if !grid.iter().flatten().all(|p| within_reach(*p)) {
+        return Err(OUT_OF_REACH.into());
     }
     let done = e.edit("Deform", |d, _| map_shapes_in_doc(d, &ids, &mut |_, p| gxf::deform_grid(p, src, grid, TOL)) > 0);
     ok(done, &ids)

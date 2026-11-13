@@ -1081,3 +1081,36 @@ fn convert_to_bitmap_of_a_huge_shape_says_it_is_too_large() {
     let problem = g.app().images.convert.as_ref().expect("Convert to Bitmap is open").problem();
     assert!(problem.as_deref().is_some_and(|p| p.contains("too large")), "{problem:?}");
 }
+
+/// Warp corners and Deform grid points beyond the editor's reach are refused before anything is
+/// mapped: a grid point at -1e300 made the flattening ask for gigabytes (seen in the wild monkey,
+/// seed 102 step 269), and the result could only be a shape nobody can reach.
+#[test]
+fn warp_and_deform_points_beyond_reach_are_refused() {
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 50.0, 50.0, 0);
+    select(&mut a, &[r]);
+    let before = bbox(&a, r);
+    let steps = a.editor.history.len();
+    let mut grid = Vec::new();
+    for i in 0..4 {
+        for j in 0..4 {
+            grid.push(json!([50.0 * j as f64 / 3.0, 50.0 * i as f64 / 3.0]));
+        }
+    }
+    for far in [-1e300, 1e150, 2e9] {
+        let mut g = grid.clone();
+        g[5] = json!([15.0, far]);
+        let res = run(&mut a, "tools.deform", json!({ "grid": g }));
+        assert_eq!(res, Err(crate::shape_ops::OUT_OF_REACH.to_string()), "deform with a point at {far}");
+        let corners = json!([[0.0, 0.0], [50.0, 0.0], [far, 50.0], [0.0, 50.0]]);
+        let res = run(&mut a, "tools.warp", json!({ "corners": corners }));
+        assert_eq!(res, Err(crate::shape_ops::OUT_OF_REACH.to_string()), "warp with a corner at {far}");
+    }
+    assert_eq!(bbox(&a, r), before, "the shape is as it was");
+    assert_eq!(a.editor.history.len(), steps, "no undo step was made");
+    // A far but reachable grid still works.
+    let mut g = grid.clone();
+    g[5] = json!([15.0, 1e6]);
+    assert!(run(&mut a, "tools.deform", json!({ "grid": g })).is_ok());
+}

@@ -21,7 +21,7 @@ pub mod transport;
 pub use events::{KeyTracker, PendantEvent, never_chords};
 #[cfg(feature = "hid")]
 pub use hid::{HidConnector, HidTransport};
-pub use poll::{Pendant, PollOptions};
+pub use poll::{Pendant, PollOptions, Stamped};
 pub use protocol::{Key, KeyReport, KeySet, Leds, PRODUCT_IDS, VENDOR_ID, decode_input, encode_leds};
 pub use transport::{Connector, EmulatorConnector, EmulatorHandle, EmulatorTransport, NoConnector, PendantError, PendantTransport};
 

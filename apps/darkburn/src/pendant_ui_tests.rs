@@ -34,6 +34,10 @@ fn app_with(emu: &EmulatorHandle) -> (DarkBurn, Arc<AtomicUsize>) {
         m.fetch_add(1, Ordering::SeqCst);
         Box::new(e.connector())
     }));
+    // A loaded test computer can stall for longer than a key press may be old in the app. The
+    // tests about late presses set their own limit.
+    assert_eq!(a.pendant.max_age, pendant_ui::MAX_AGE);
+    a.pendant.max_age = Duration::from_secs(60);
     (a, made)
 }
 
@@ -311,6 +315,86 @@ fn stop_and_pause_work_while_the_window_is_not_drawn() {
     hidden("the keys taken", &|a: &DarkBurn| a.pendant.waiting_len() == 2);
     assert_eq!(pos(&app.borrow()), before);
     assert!(app.borrow().job.pending.is_none(), "Start was carried out with the window hidden");
+}
+
+/// The window thread did not run for a while (a file dialog was open, the window was hidden):
+/// the keys pressed meanwhile are not carried out when it runs again.
+#[test]
+fn keys_pressed_while_the_app_was_busy_are_not_carried_out_late() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    run(&mut a, "machine.move_to", json!({ "x": 100, "y": 100 })).unwrap();
+    pump(&ctx, &mut a, "the move", |a| state(a) == LaserState::Ready && pos(a) == (100.0, 100.0));
+    a.machine.jog.distance = 10.0;
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    a.pendant.max_age = Duration::from_millis(200);
+    // Five steps with FastStep held (500 mm in all) and Start, with no frame in between.
+    emu.hold(&[Key::FastStep]);
+    for _ in 0..5 {
+        emu.hold(&[Key::FastStep, Key::Up]);
+        emu.hold(&[Key::FastStep]);
+    }
+    emu.release();
+    tap(&emu, Key::Start);
+    std::thread::sleep(Duration::from_millis(1200));
+    assert!(
+        crate::laser_panel::start_allowed(&a) && crate::laser_panel::jog_free(&a),
+        "the buttons are enabled, so only the age holds the keys back"
+    );
+    settle(&ctx, &mut a);
+    assert_eq!(pos(&a), (100.0, 100.0), "a late arrow moved the head");
+    assert!(a.job.pending.is_none(), "a late Start began planning a job");
+    assert_eq!(state(&a), LaserState::Ready);
+    // A fresh press works again at once.
+    a.pendant.max_age = Duration::from_secs(60);
+    tap(&emu, Key::Up);
+    pump(&ctx, &mut a, "a fresh step", |a| state(a) == LaserState::Ready && (pos(a).1 - 110.0).abs() < 1e-3);
+}
+
+/// A Pause the app gets to late must not set a paused job going again; a late Stop still stops.
+#[test]
+fn a_late_pause_never_resumes_and_a_late_stop_still_stops() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    tap(&emu, Key::Pause);
+    pump(&ctx, &mut a, "the job paused", |a| state(a) == LaserState::Paused);
+    a.pendant.max_age = Duration::from_millis(200);
+    tap(&emu, Key::Pause);
+    std::thread::sleep(Duration::from_millis(1200));
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused, "a Pause pressed long ago set the job going again");
+    tap(&emu, Key::Stop);
+    std::thread::sleep(Duration::from_millis(1200));
+    pump(&ctx, &mut a, "the late Stop", stopped);
+}
+
+/// Two Pause presses that reach the app together are a replay or a radio drop-out: the job is
+/// paused, not paused and set going again.
+#[test]
+fn two_pause_presses_at_once_pause_once() {
+    let emu = EmulatorHandle::new();
+    let (mut a, _) = app_with(&emu);
+    let ctx = egui::Context::default();
+    connect_sim(&ctx, &mut a);
+    a.prefs.opts.pendant = true;
+    pump(&ctx, &mut a, "the receiver", connected);
+    start_slow_job(&ctx, &mut a);
+    tap(&emu, Key::Pause);
+    tap(&emu, Key::Pause);
+    // Both are read by the poll thread before the next frame takes them.
+    std::thread::sleep(Duration::from_millis(300));
+    pump(&ctx, &mut a, "the job paused", |a| state(a) == LaserState::Paused);
+    settle(&ctx, &mut a);
+    assert_eq!(state(&a), LaserState::Paused);
 }
 
 #[test]

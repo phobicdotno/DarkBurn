@@ -38,10 +38,19 @@ impl Default for PollOptions {
 
 type Wake = Box<dyn Fn() + Send>;
 
+/// An event with the moment the poll thread read it from the receiver. The app may get to an
+/// event much later than that (its window thread can be busy for seconds), and a key press that
+/// old must not move a machine: the stamp is how the app tells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stamped {
+    pub at: Instant,
+    pub event: PendantEvent,
+}
+
 /// A running pendant: events come out, the wanted LED state goes in. Dropping it stops the
 /// thread and closes the receiver.
 pub struct Pendant {
-    events: Receiver<PendantEvent>,
+    events: Receiver<Stamped>,
     leds: Arc<AtomicU8>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -80,12 +89,17 @@ impl Pendant {
 
     /// Every event that has arrived, oldest first. Never waits.
     pub fn poll(&self) -> Vec<PendantEvent> {
+        self.events.try_iter().map(|s| s.event).collect()
+    }
+
+    /// [`Self::poll`] with the moment each event was read from the receiver.
+    pub fn poll_stamped(&self) -> Vec<Stamped> {
         self.events.try_iter().collect()
     }
 
     /// Waits up to `timeout` for the next event.
     pub fn next_event(&self, timeout: Duration) -> Option<PendantEvent> {
-        self.events.recv_timeout(timeout).ok()
+        self.events.recv_timeout(timeout).ok().map(|s| s.event)
     }
 
     /// Stops the thread and closes the receiver.
@@ -110,7 +124,7 @@ impl Drop for Pendant {
 struct Worker {
     connector: Box<dyn Connector>,
     opts: PollOptions,
-    tx: Sender<PendantEvent>,
+    tx: Sender<Stamped>,
     wake: Mutex<Option<Wake>>,
     leds: Arc<AtomicU8>,
     stop: Arc<AtomicBool>,
@@ -127,9 +141,10 @@ struct Worker {
 impl Worker {
     fn emit(&self, events: impl IntoIterator<Item = PendantEvent>) {
         let mut any = false;
-        for e in events {
+        let at = Instant::now();
+        for event in events {
             any = true;
-            let _ = self.tx.send(e);
+            let _ = self.tx.send(Stamped { at, event });
         }
         if any && let Some(w) = self.wake.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             w();
@@ -272,6 +287,28 @@ mod tests {
             got,
             vec![KeyDown(Key::Start), KeyUp(Key::Start), KeyDown(Key::Fn), Chord(Key::GoToOrigin), KeyUp(Key::GoToOrigin), KeyUp(Key::Fn)]
         );
+    }
+
+    /// The stamp is the moment the thread read the key, not the moment somebody asked for it.
+    #[test]
+    fn events_carry_the_time_they_were_read() {
+        let h = EmulatorHandle::new();
+        let p = Pendant::start(Box::new(h.connector()), fast(), None);
+        wait_for(&p, |e| matches!(e, Connected(_)));
+        let before = Instant::now();
+        h.hold(&[Key::Up]);
+        // Long after the key was read, the app gets round to asking.
+        std::thread::sleep(Duration::from_millis(150));
+        let end = Instant::now() + Duration::from_secs(2);
+        loop {
+            let asked = Instant::now();
+            if let Some(s) = p.poll_stamped().into_iter().find(|s| s.event == KeyDown(Key::Up)) {
+                assert!(s.at >= before && s.at <= asked, "the stamp is not from the read");
+                break;
+            }
+            assert!(Instant::now() < end, "the key did not arrive");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     #[test]

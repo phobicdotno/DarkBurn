@@ -27,11 +27,19 @@
 //! while the window is minimised or covered and nothing is drawn. Every other key waits for
 //! [`frame`], which runs only when the window is drawn: with the window out of sight the
 //! pendant stops and pauses, and does nothing else.
+//!
+//! A key press is only carried out while it is fresh. The poll thread stamps each press when
+//! it reads it. If the app gets to a press more than [`MAX_AGE`] later (the window was hidden,
+//! a file dialog was open, a long import ran), the press is dropped: nothing moves or starts
+//! long after its key was pressed, perhaps with nobody at the machine any more. Stop is
+//! carried out however old it is. A late Pause only ever pauses, it never sets a paused job
+//! going again, and of several Pause presses that arrive together only the first counts.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
-use darkburn_pendant::{Connector, Key, KeySet, Leds, Pendant, PendantError, PendantEvent, PollOptions};
+use darkburn_pendant::{Connector, Key, KeySet, Leds, Pendant, PendantError, PendantEvent, PollOptions, Stamped};
 use serde_json::json;
 
 use crate::laser_panel::{jog_free, start_allowed};
@@ -64,8 +72,14 @@ impl PendantStatus {
     }
 }
 
+/// How old a key press may be when the app carries it out. Older presses are dropped, except
+/// Stop (always carried out) and Pause (pauses, never resumes).
+pub const MAX_AGE: Duration = Duration::from_millis(500);
+
 /// A key press that waits for the next drawn frame.
 struct Waiting {
+    /// When the poll thread read the press.
+    at: Instant,
     key: Key,
     /// Whether FastStep was held when the key went down.
     fast: bool,
@@ -74,7 +88,6 @@ struct Waiting {
 /// The most key presses that wait for a drawn frame; the oldest is dropped beyond that.
 const MAX_WAITING: usize = 16;
 
-#[derive(Default)]
 pub struct PendantUi {
     pendant: Option<Pendant>,
     pub status: PendantStatus,
@@ -84,6 +97,14 @@ pub struct PendantUi {
     waiting: VecDeque<Waiting>,
     /// None: the real receiver (`darkburn_pendant::system_connector`); in tests, no receiver.
     pub make_connector: Option<MakeConnector>,
+    /// [`MAX_AGE`]; a field so that tests on a loaded computer can allow more.
+    pub max_age: Duration,
+}
+
+impl Default for PendantUi {
+    fn default() -> Self {
+        PendantUi { pendant: None, status: PendantStatus::Off, held: KeySet::EMPTY, waiting: VecDeque::new(), make_connector: None, max_age: MAX_AGE }
+    }
 }
 
 #[cfg(test)]
@@ -139,9 +160,14 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
         app.pendant.held = KeySet::EMPTY;
         app.pendant.waiting.clear();
     }
-    let events = app.pendant.pendant.as_ref().map(Pendant::poll).unwrap_or_default();
-    for ev in events {
-        on_event(app, ev);
+    let events = app.pendant.pendant.as_ref().map(Pendant::poll_stamped).unwrap_or_default();
+    let now = Instant::now();
+    // Of the Pause presses that arrive together only the first counts: two in one go are a
+    // replay or a radio drop-out, and the second would set the job going again.
+    let mut paused = false;
+    for Stamped { at, event } in events {
+        let late = now.saturating_duration_since(at) > app.pendant.max_age;
+        on_event(app, event, at, late, &mut paused);
     }
     if let Some(p) = &app.pendant.pendant {
         p.set_leds(leds(app));
@@ -149,14 +175,23 @@ pub fn logic(ctx: &egui::Context, app: &mut DarkBurn) {
     STATUS.with(|s| *s.borrow_mut() = app.pendant.status.clone());
 }
 
-/// Once per drawn frame, after [`logic`]: carry out the key presses that waited for the window.
+/// Once per drawn frame, after [`logic`]: carry out the key presses that waited for the window
+/// and are still fresh.
 pub fn frame(app: &mut DarkBurn) {
+    let now = Instant::now();
     while let Some(w) = app.pendant.waiting.pop_front() {
+        let age = now.saturating_duration_since(w.at);
+        if age > app.pendant.max_age {
+            log::info!("pendant: {} was pressed {} ms ago and is not carried out", w.key, age.as_millis());
+            continue;
+        }
         key_down(app, w.key, w.fast);
     }
 }
 
-fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
+/// `at` is when the poll thread read the event, `late` whether that is more than the allowed
+/// age ago, `paused` whether a Pause was already carried out in this go.
+fn on_event(app: &mut DarkBurn, ev: PendantEvent, at: Instant, late: bool, paused: &mut bool) {
     match ev {
         PendantEvent::Connected(name) => {
             log::info!("pendant: {name}");
@@ -180,13 +215,19 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
             if matches!(k, Key::Stop | Key::Pause) {
                 // Nothing pressed before a Stop or a Pause is carried out after it.
                 app.pendant.waiting.clear();
-                key_down(app, k, false);
+                if k == Key::Stop {
+                    // However old: a Stop is always carried out.
+                    key_down(app, k, false);
+                } else if !*paused {
+                    *paused = true;
+                    pause(app, late);
+                }
             } else {
                 if app.pendant.waiting.len() >= MAX_WAITING {
                     app.pendant.waiting.pop_front();
                 }
                 let fast = app.pendant.held.contains(Key::FastStep);
-                app.pendant.waiting.push_back(Waiting { key: k, fast });
+                app.pendant.waiting.push_back(Waiting { at, key: k, fast });
             }
         }
         PendantEvent::Chord(k) => {
@@ -199,6 +240,19 @@ fn on_event(app: &mut DarkBurn, ev: PendantEvent) {
             app.pendant.held.remove(k);
         }
     }
+}
+
+/// The Pause key. A press the app got to late pauses a running job and nothing else: on a job
+/// that is already paused the button's command would set it going again.
+fn pause(app: &mut DarkBurn, late: bool) {
+    if late {
+        app.machine.tick();
+        if app.machine.handle.snapshot().state == LaserState::Paused {
+            log::info!("pendant: a late Pause is not carried out on a paused job");
+            return;
+        }
+    }
+    key_down(app, Key::Pause, false);
 }
 
 /// One key went down on its own; `fast` is whether FastStep was held then. Everything goes

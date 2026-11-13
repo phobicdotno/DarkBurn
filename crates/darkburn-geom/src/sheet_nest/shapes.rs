@@ -1,7 +1,7 @@
 //! True nest: greedy placement of real outlines.
 //!
 //! For each part (in a pass's order) and each rotation, start positions are tried: dropped in
-//! from the top of the sheet at a spread of x positions, next to the bodies already placed,
+//! from the highest free spot at a spread of x positions, next to the bodies already placed,
 //! and in the middle of usable holes. From each start that fits, the part slides down, then
 //! left, then down again, until it settles. The settled spot with the lowest top edge (then
 //! the leftmost) wins. Every spot is checked with the full fit test before it is taken.
@@ -15,6 +15,8 @@ use kurbo::{Affine, Vec2};
 const NEAR_BODIES: usize = 48;
 /// Most start positions dropped in from the top.
 const TOP_STARTS: usize = 32;
+/// Most start heights tried at each of those x positions, highest first.
+const TOP_LEVELS: usize = 12;
 /// Most holes tried as start positions.
 const HOLE_STARTS: usize = 64;
 
@@ -37,7 +39,8 @@ fn thin(mut xs: Vec<f64>, max: usize) -> Vec<f64> {
     xs
 }
 
-fn candidates(space: &Space, o: &Oriented, gap: f64) -> Vec<Vec2> {
+/// Start positions in groups: from each group the first one that fits is used.
+fn candidates(space: &Space, o: &Oriented, gap: f64) -> Vec<Vec<Vec2>> {
     let u = space.usable;
     let s = o.slack;
     let (w, h) = (o.size.x, o.size.y);
@@ -48,17 +51,23 @@ fn candidates(space: &Space, o: &Oriented, gap: f64) -> Vec<Vec2> {
     let (x1, y1) = (x1.max(x0), y1.max(y0));
     let at = |x: f64, y: f64| Vec2::new(x.clamp(x0, x1), y.clamp(y0, y1));
     let mut xs: Vec<f64> = (0..=8).map(|i| x0 + (x1 - x0) * i as f64 / 8.0).collect();
+    let mut ys: Vec<f64> = (0..=8).map(|i| y0 + (y1 - y0) * i as f64 / 8.0).collect();
     let near: Vec<_> = space.bodies.iter().rev().take(NEAR_BODIES).collect();
     for b in &near {
         let c = gap + s + b.slack + 1e-5;
         xs.push((b.bbox.x1 + c).clamp(x0, x1));
         xs.push((b.bbox.x0 - c - w).clamp(x0, x1));
+        ys.push((b.bbox.y1 + c).clamp(y0, y1));
+        ys.push((b.bbox.y0 - c - h).clamp(y0, y1));
     }
-    let mut out: Vec<Vec2> = thin(xs, TOP_STARTS).into_iter().map(|x| Vec2::new(x, y1)).collect();
+    let mut ys = thin(ys, TOP_LEVELS);
+    ys.reverse();
+    // Dropped in from the top: the highest start that fits at each x.
+    let mut out: Vec<Vec<Vec2>> = thin(xs, TOP_STARTS).into_iter().map(|x| ys.iter().map(|&y| Vec2::new(x, y)).collect()).collect();
     for b in &near {
         let c = gap + s + b.slack + 1e-5;
         let r = b.bbox;
-        out.extend([at(r.x1 + c, r.y0), at(r.x0, r.y1 + c), at(r.x1 + c, r.y1 - h), at(r.x1 - w, r.y1 + c)]);
+        out.extend([at(r.x1 + c, r.y0), at(r.x0, r.y1 + c), at(r.x1 + c, r.y1 - h), at(r.x1 - w, r.y1 + c)].map(|p| vec![p]));
     }
     let holes = space.bodies.iter().flat_map(|b| (0..b.holes.len()).map(move |i| (b, i))).take(HOLE_STARTS);
     for (b, i) in holes {
@@ -68,8 +77,8 @@ fn candidates(space: &Space, o: &Oriented, gap: f64) -> Vec<Vec2> {
             continue;
         }
         let mid = hb.center();
-        out.push(at(mid.x - w / 2.0, mid.y - h / 2.0));
-        out.push(at(hb.x0 + c, hb.y0 + c));
+        out.push(vec![at(mid.x - w / 2.0, mid.y - h / 2.0)]);
+        out.push(vec![at(hb.x0 + c, hb.y0 + c)]);
     }
     out
 }
@@ -111,10 +120,8 @@ impl Nester<'_> {
             if oi > 0 && tick.stop() {
                 break;
             }
-            for start in candidates(space, o, self.run.gap) {
-                if !space.fits(o, start) {
-                    continue;
-                }
+            for group in candidates(space, o, self.run.gap) {
+                let Some(start) = group.into_iter().find(|p| space.fits(o, *p)) else { continue };
                 let pos = settle(space, o, start);
                 if !space.fits(o, pos) {
                     continue;

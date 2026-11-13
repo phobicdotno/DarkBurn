@@ -91,7 +91,7 @@ impl Bin {
 /// Bounding boxes the parts must keep clear of: one per obstacle contour. A closed contour
 /// around the whole usable sheet counts by its line, one box per flattened edge.
 fn obstacle_boxes(obstacles: &[NestPart], run: &Run) -> Vec<Rect> {
-    let around = run.usable.inflate(run.tol, run.tol);
+    let around = run.usable.inflate(-run.tol, -run.tol);
     let mut out = Vec::new();
     for c in obstacles.iter().flat_map(NestPart::all).flat_map(contours) {
         let Some(b) = c.bounding_box() else { continue };

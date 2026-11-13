@@ -180,8 +180,8 @@ fn hull_fallback(o: &Outline, tol: f64) -> Outline {
     r
 }
 
-/// Builds a part's outline. `surround`: an obstacle's closed contour whose box contains this
-/// rectangle counts by its line only. `None` when the part has no points at all.
+/// Builds a part's outline. `surround`: an obstacle's closed contour whose box covers this
+/// rectangle (within the tolerance) counts by its line only. `None` when the part has no points at all.
 pub(super) fn outline(cuts: &[BezPath], marks: &[BezPath], tol: f64, allow_holes: bool, surround: Option<Rect>) -> Option<Outline> {
     let mut pieces: Vec<Piece> = Vec::new();
     for (paths, cut) in [(cuts, true), (marks, false)] {
@@ -195,7 +195,7 @@ pub(super) fn outline(cuts: &[BezPath], marks: &[BezPath], tol: f64, allow_holes
                 }
                 let area = polygon_signed_area(&pts).abs();
                 let bbox = bbox_of(&pts);
-                let around = surround.is_some_and(|u| rect_inside(&bbox, &u.inflate(tol, tol)));
+                let around = surround.is_some_and(|u| rect_inside(&bbox, &u.inflate(-tol, -tol)));
                 if closed && (pts.len() < 3 || area <= tol * tol * 1e-3 || around) {
                     // A flat or surrounding "closed" contour is just its line.
                     if pts.len() >= 2 {

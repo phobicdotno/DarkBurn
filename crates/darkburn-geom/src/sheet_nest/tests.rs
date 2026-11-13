@@ -102,7 +102,7 @@ fn check_layout(parts: &[NestPart], obstacles: &[NestPart], sheet: Rect, o: &She
         );
         placed.push((k, w));
     }
-    let around = sheet.inset(-o.margin);
+    let around = sheet.inset(-o.margin).inflate(-o.tolerance, -o.tolerance);
     for ob in obstacles {
         let mut w = world(ob, Affine::IDENTITY);
         // A contour around the whole sheet counts by its line.
@@ -213,7 +213,7 @@ fn both_keep_clear_of_obstacles() {
 fn a_frame_around_the_sheet_counts_by_its_line() {
     let parts: Vec<NestPart> = (0..4).map(|_| part(rect(0.0, 0.0, 20.0, 20.0))).collect();
     let sheet = Rect::new(0.0, 0.0, 100.0, 100.0);
-    let frame = vec![part(rect(-1.0, -1.0, 102.0, 102.0))];
+    let frame = vec![part(rect(-1.0, -1.0, 102.0, 102.0)), part(rect(0.0, 0.0, 100.0, 100.0))];
     for nest in [quick_nest, true_nest] {
         let r = nest(&parts, &frame, sheet, &opts(2.0), &mut all_true).unwrap();
         assert_eq!(r.unplaced, 0);
@@ -285,7 +285,7 @@ fn true_nest_puts_small_parts_in_holes_when_allowed() {
 fn obstacle_holes_take_parts_too() {
     let obstacles = vec![NestPart::cut(vec![rect(0.0, 0.0, 100.0, 100.0), rect(20.0, 20.0, 60.0, 60.0)])];
     let parts = vec![part(rect(0.0, 0.0, 40.0, 40.0))];
-    let sheet = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let sheet = Rect::new(-10.0, -10.0, 110.0, 110.0);
     let r = shaped(&parts, &obstacles, sheet, &opts(2.0));
     assert_eq!(r.unplaced, 0);
     check_layout(&parts, &obstacles, sheet, &opts(2.0), &r);

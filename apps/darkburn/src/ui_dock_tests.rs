@@ -344,6 +344,9 @@ const ONE_SHOT: &[&str] = &[
     "Macro 1",
     // Set up, then OK traces the picture once and closes the window.
     "Trace Image",
+    // Set up, then Nest packs the selection once (the window stays for another try).
+    "Quick Nest",
+    "True Nest",
     // Picks a machine or walks through setting one up, step by step, then closes.
     "Find my laser",
     "Network bridge setup",
@@ -463,9 +466,10 @@ const NOT_DOCKABLE: &[(&str, &str)] = &[
 ];
 
 /// Files that build a window on plain egui, and why: the floating Preview (its own window, sized
-/// and maximised freely; docked or in a window of its own it goes through the kit) and the
-/// agent's request to start the machine (a one-shot safety prompt).
-const PLAIN_EGUI: &[&str] = &["job_ui.rs", "mcp_ui.rs"];
+/// and maximised freely; docked or in a window of its own it goes through the kit), the
+/// agent's request to start the machine (a one-shot safety prompt) and the Quick/True Nest
+/// dialog (set up, then Nest packs the selection once).
+const PLAIN_EGUI: &[&str] = &["job_ui.rs", "mcp_ui.rs", "nest_ui.rs"];
 
 fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("the source folder") {

@@ -210,7 +210,7 @@ pub fn simulate(tp: &Toolpath, m: &MotionSettings) -> Simulation {
             }
             Op::Dwell { ms, power } => {
                 t = flush(&mut chain, m, t, &mut sim, &mut per);
-                let d = ms / 1000.0;
+                let d = (ms / 1000.0).max(0.0);
                 sim.segments.push(still(i, t, d, pos, *power, layer, pass));
                 if let Some(l) = layer {
                     *per.entry((l, pass)).or_default() += d;

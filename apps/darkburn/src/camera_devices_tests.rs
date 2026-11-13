@@ -196,3 +196,116 @@ fn the_camera_panel_finds_starts_and_stops_a_camera() {
     g.frames(4);
     assert_eq!(g.app().vision.frame_gen, stopped, "no pictures after Stop");
 }
+
+// ----- Trace from the camera [IMG-20] ---------------------------------------------------------
+
+fn images(a: &DarkBurn) -> usize {
+    a.editor.doc.iter().filter(|s| matches!(s.kind, darkburn_core::ShapeKind::Image(_))).count()
+}
+
+fn paths(a: &DarkBurn) -> usize {
+    a.editor.doc.iter().filter(|s| !matches!(s.kind, darkburn_core::ShapeKind::Image(_))).count()
+}
+
+/// Trace takes a picture, Cancel takes it away again with no undo step left behind, and OK
+/// leaves only the traced paths as one undo step.
+#[test]
+fn trace_from_the_camera_takes_a_picture_that_cancel_takes_away() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    let steps = a.editor.history.len();
+    crate::capture_trace::open(&mut a).unwrap();
+    let d = a.images.trace.take().expect("the Trace Image window opens");
+    assert!(d.args.delete_image, "the picture is only there for the trace");
+    assert_eq!(images(&a), 1);
+    crate::capture_trace::cancel(&mut a, &d);
+    assert_eq!((a.editor.doc.len(), a.editor.history.len()), (0, steps), "Cancel leaves nothing behind");
+    assert!(!a.editor.history.redo_label().is_some_and(|l| l == "Camera picture"), "and nothing to redo either");
+
+    crate::capture_trace::open(&mut a).unwrap();
+    let d = a.images.trace.take().unwrap();
+    let r = crate::capture_trace::finish(&mut a, &d).unwrap();
+    assert!(r.nodes > 0);
+    assert_eq!((images(&a), paths(&a)), (0, 1), "only the traced paths stay");
+    assert_eq!(a.editor.history.len(), steps + 1);
+    assert_eq!(a.editor.history.undo_label(), Some("Trace camera picture"));
+    run(&mut a, "edit.undo", json!({})).unwrap();
+    assert_eq!(a.editor.doc.len(), 0, "one undo takes the whole trace away");
+}
+
+/// With "Delete image after tracing" cleared the picture stays beside the paths; Capture again
+/// swaps the picture for a new one.
+#[test]
+fn trace_from_the_camera_can_keep_the_picture_and_capture_again() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    crate::capture_trace::open(&mut a).unwrap();
+    let mut d = a.images.trace.take().unwrap();
+    let first = d.ids[0];
+    crate::capture_trace::again(&mut a, &mut d).unwrap();
+    assert_ne!(d.ids[0], first, "a new picture");
+    assert!(a.editor.doc.get(first).is_none(), "in place of the old one");
+    assert_eq!(images(&a), 1);
+    d.args.delete_image = false;
+    crate::capture_trace::finish(&mut a, &d).unwrap();
+    assert_eq!((images(&a), paths(&a)), (1, 1), "picture and paths");
+    // Capture again needs a camera or picture file to take from.
+    let mut a = app();
+    a.vision.raw = Some(image::RgbaImage::from_pixel(64, 48, image::Rgba([90, 90, 90, 255])));
+    crate::capture_trace::open(&mut a).unwrap();
+    let mut d = a.images.trace.take().unwrap();
+    assert!(crate::capture_trace::again(&mut a, &mut d).unwrap_err().contains("Start the camera"));
+}
+
+/// The camera panel's Trace button opens Trace Image on a fresh picture; Cancel takes it away,
+/// Capture again and OK leave only the traced paths [IMG-20].
+#[test]
+fn the_camera_panel_traces_a_fresh_picture() {
+    let mut g = Gui::standard();
+    {
+        let mut a = g.app();
+        a.prefs.opts.capture_system = "simulated".into();
+        a.prefs.opts.capture_width = 400;
+        a.prefs.opts.capture_height = 300;
+        a.vision.prefs.live_enabled = true;
+    }
+    g.exec("camera.start", json!({ "index": 0 }));
+    show_camera_panel(&mut g);
+    click_beside(&mut g, "Update overlay", "Trace");
+    g.frames(3);
+    assert!(g.app().images.trace.is_some(), "Trace Image is open");
+    assert!(g.has_text("Capture again"));
+    assert_eq!(images(&g.app()), 1);
+    g.screenshot("camera_trace_window");
+    g.click_label("Cancel");
+    g.frames(2);
+    assert!(g.app().images.trace.is_none());
+    assert_eq!(g.app().editor.doc.len(), 0, "Cancel took the picture away");
+
+    click_beside(&mut g, "Update overlay", "Trace");
+    g.frames(3);
+    let first = g.app().images.trace.as_ref().unwrap().ids[0];
+    g.click_label("Capture again");
+    g.frames(3);
+    let now = g.app().images.trace.as_ref().unwrap().ids[0];
+    assert_ne!(now, first, "Capture again took a new picture");
+    assert_eq!(images(&g.app()), 1);
+    g.click_label("OK");
+    g.frames(3);
+    assert!(g.app().images.trace.is_none(), "{:?}", g.app().images.trace.as_ref().and_then(|d| d.notice.clone()));
+    assert_eq!((images(&g.app()), paths(&g.app())), (0, 1));
+    assert_eq!(g.app().editor.history.undo_label(), Some("Trace camera picture"));
+    g.screenshot("camera_trace_done");
+}
+
+/// Click the `label` button on the row of `anchor`.
+fn click_beside(g: &mut Gui, anchor: &str, label: &str) {
+    let row = g.find_text(anchor).unwrap_or_else(|| panic!("{anchor} is shown"));
+    let r = g
+        .find_texts(label)
+        .into_iter()
+        .filter(|r| (r.center().y - row.center().y).abs() < 4.0)
+        .min_by(|a, b| (a.center().x - row.center().x).abs().total_cmp(&(b.center().x - row.center().x).abs()))
+        .unwrap_or_else(|| panic!("no {label} button beside {anchor}"));
+    g.click_pos(r.center());
+}

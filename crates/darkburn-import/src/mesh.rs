@@ -163,7 +163,7 @@ pub fn read_binary_stl(bytes: &[u8], limits: &MeshLimits) -> Result<Mesh, Import
         return Err(truncated());
     }
     let mut triangles = Vec::with_capacity(n);
-    for record in bytes[STL_HEADER + 4..].chunks_exact(STL_RECORD as usize).take(n) {
+    for record in bytes[STL_HEADER + 4..].as_chunks::<{ STL_RECORD as usize }>().0.iter().take(n) {
         let f = |i: usize| {
             let o = 12 + i * 4;
             f32::from_le_bytes([record[o], record[o + 1], record[o + 2], record[o + 3]])

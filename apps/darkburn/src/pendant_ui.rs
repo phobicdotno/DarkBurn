@@ -170,7 +170,7 @@ pub fn status() -> PendantStatus {
 /// The message for a receiver this user may not open (Linux without the udev rule).
 pub fn permission_message() -> String {
     format!(
-        "The pendant receiver is plugged in, but this user may not open it. Install the udev rule once (it is also in packaging/linux), then unplug and replug the receiver:\n{}",
+        "The pendant receiver is plugged in, but this user may not open it. Install the udev rule once (it is also in the Linux download, with install-pendant-rule.sh), then unplug and replug the receiver:\n{}",
         darkburn_pendant::linux_install_command()
     )
 }

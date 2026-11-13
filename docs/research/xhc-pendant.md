@@ -11,8 +11,9 @@ wires it into the app.
 - Other XHC receivers seem to use products in the range 0xeb61..0xeba1. Only 0xeba0 has been
   seen, so only it is in `PRODUCT_IDS`.
 - On Linux it is a `/dev/hidraw*` node that only root can open. `packaging/linux/70-darkburn-pendant.rules`
-  (installed by `packaging/linux/install-pendant-rule.sh`, or by the command the app shows) gives
-  the logged-in user access.
+  (installed by `packaging/linux/install-pendant-rule.sh`, which the Linux download also holds, or
+  by the command the app shows) gives the logged-in user access. It does so through the `uaccess`
+  tag, which only systemd-logind or elogind act on; without either the rule needs a `GROUP=`.
 
 ## Keys: input report 4
 

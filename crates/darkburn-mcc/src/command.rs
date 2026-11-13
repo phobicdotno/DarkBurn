@@ -174,7 +174,8 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
             deny("malformed stop vector (only [1,0x1F] or [1,mask,2,vd,10vd])")
         }
         CMD_HOME => {
-            if n == 3 && w[2] == 0 && cfg.home_slots.iter().any(|s| w[1] == 1 << s) {
+            // A slot past bit 31 of the mask names no axis (and must not overflow the shift).
+            if n == 3 && w[2] == 0 && cfg.home_slots.iter().any(|&s| 1u32.checked_shl(s) == Some(w[1])) {
                 return d(Policy::Motion);
             }
             deny("system, multi-axis and lift-table home are not supported")
@@ -243,7 +244,8 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
                     let dec = do_policy(newly_on | (value & allow), cfg)?;
                     return Ok(dec);
                 }
-                if mask & (mask - 1) != 0 || mask == 0 || mask > 0x200 {
+                // `mask == 0` first: `mask - 1` would overflow for it.
+                if mask == 0 || mask & (mask - 1) != 0 || mask > 0x200 {
                     return deny("DO write must address one port 1..10");
                 }
                 do_policy(value, cfg)
@@ -443,12 +445,28 @@ pub fn connect_prologue() -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_9999, MISC_PROLOGUE, 0, 0], "connect_prologue")
 }
 
+/// A jog is a relative move: bit 31 of its axis word would make the card move to a position.
+fn relative_axis(axis_index: u32) -> Result<(), Forbidden> {
+    if axis_index & ABSOLUTE_BIT != 0 {
+        return deny(format!("jog axis index {axis_index:#x} has the absolute bit"));
+    }
+    Ok(())
+}
+
 /// Held jog `[3, i, v, a, 10a, +-d]`, relative, `d = trunc(20 * JogFastSpeed * K)`. When
 /// `soft_limit_remaining_mm` is given the distance is clipped to it.
+///
+/// A remaining distance that is not a number is refused: `min` would ignore it and the jog would
+/// go out with its full length. An axis index with bit 31 set is refused: on the card that bit
+/// makes the move absolute.
 pub fn jog_continuous(axis_index: u32, positive: bool, params: &MachineParams, soft_limit_remaining_mm: Option<f64>) -> Result<SafeWrite, Forbidden> {
+    relative_axis(axis_index)?;
     let (v, a) = params.jog_speed_acc()?;
     let mut dist = 20.0 * params.jog_fast_speed;
     if let Some(rem) = soft_limit_remaining_mm {
+        if rem.is_nan() {
+            return deny("distance to the soft limit is not a number");
+        }
         dist = dist.min(rem).max(0.0);
     }
     let d = trunc_int(dist * params.k as f64)?;
@@ -456,8 +474,10 @@ pub fn jog_continuous(axis_index: u32, positive: bool, params: &MachineParams, s
     SafeWrite::build(REG_COMMAND, vec![CMD_JOG, axis_index, v, a, a.wrapping_mul(10), word(d)?], "jog_continuous")
 }
 
-/// Step jog `[3, i, v, a, 10a, trunc(dist * K)]`, relative, signed distance in mm.
+/// Step jog `[3, i, v, a, 10a, trunc(dist * K)]`, relative, signed distance in mm. An axis index
+/// with bit 31 set is refused (that bit makes the move absolute).
 pub fn jog_step(axis_index: u32, distance_mm: f64, params: &MachineParams) -> Result<SafeWrite, Forbidden> {
+    relative_axis(axis_index)?;
     let (v, a) = params.jog_speed_acc()?;
     let d = trunc_int(distance_mm * params.k as f64)?;
     SafeWrite::build(REG_COMMAND, vec![CMD_JOG, axis_index, v, a, a.wrapping_mul(10), word(d)?], "jog_step")
@@ -690,9 +710,14 @@ pub fn fifo_packed_frame(frame_id: u32, frame: &fifo::PackedFrame) -> Result<Saf
     SafeWrite::build(REG_FIFO_DATA, frame.payload(frame_id), "fifo_frame")
 }
 
-/// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then outputs off. The follower stop
+/// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then the laser outputs off, as the
+/// vendor does right after the motion stop; then PWM and analogue outputs off. The follower stop
 /// `[101]` of the vendor sequence is deliberately absent (project rule). Every write in it has
-/// [`Policy::Always`].
+/// [`Policy::Always`] and writes no 1 to any output.
+///
+/// The laser outputs switched off are `laser_ports` and, whatever they say, the default laser
+/// ports of [`SafetyConfig`] (5, 6 and 9): a machine configuration may add ports, never take the
+/// default ones out of a stop.
 ///
 /// A stop is never held back by one step: a step that cannot be built (a port number the card
 /// does not have, say) is left out and every other step is still returned. If the motion stop
@@ -701,22 +726,30 @@ pub fn stop_sequence(params: &MachineParams, fifo_running: bool, v_last_word: i6
     let mut seq = Vec::new();
     let motion = if fifo_running { fifo_stop() } else { stop_all(v_last_word, params) };
     seq.extend(motion.or_else(|_| stop_all_no_decel()));
-    seq.extend(pwm_off(1234, MISC_PWM));
-    seq.extend(pwm_off(1234, MISC_PWM_5V));
-    seq.extend(da_zero(1));
-    seq.extend(da_zero(2));
-    // Every step of a stop must be one the gate lets through in any arming state: after an alarm
-    // or an E-stop the gate is disarmed. The bulk write is that only while no lamp or gas port
-    // stays on in it (keeping one on counts as a motion write). With one on, the laser ports are
-    // switched off one by one instead, which touches no other port and needs no arming.
-    match do_bulk_off(current_do_word, laser_ports) {
-        Ok(w) if w.policy() == Policy::Always => seq.push(w),
+    let mut ports: Vec<u32> = SafetyConfig::default().laser_do_ports;
+    for &port in laser_ports {
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    // The bulk write `[9999, 2, 0xFFFF, keep]` rewrites every output from `current_do_word`, a
+    // word read up to a second ago. It is used only when it keeps nothing on: then it writes
+    // zeros alone and every gate lets it through. Otherwise an output that went off since that
+    // read would be switched on again, and keeping a lamp or gas port on is a motion write the
+    // gate refuses while disarmed. So the laser ports are then switched off one by one, which
+    // touches no other port and needs no arming.
+    match do_bulk_off(current_do_word, &ports) {
+        Ok(w) if w.policy() == Policy::Always && w.words()[3] == 0 => seq.push(w),
         _ => {
-            for &port in laser_ports {
+            for &port in &ports {
                 seq.extend(do_off(port));
             }
         }
     }
+    seq.extend(pwm_off(1234, MISC_PWM));
+    seq.extend(pwm_off(1234, MISC_PWM_5V));
+    seq.extend(da_zero(1));
+    seq.extend(da_zero(2));
     seq
 }
 

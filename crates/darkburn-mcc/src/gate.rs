@@ -451,7 +451,7 @@ impl SafetyGate {
         let streaming = w.register() == REG_FIFO_DATA || (w.register() == REG_FIFO_CONTROL && words == [2]);
         if streaming && !self.comm_ok(now_ms) {
             if self.fifo_running || self.arming.job_token().is_some() {
-                self.arming.disarm("comm loss");
+                self.give_up_job();
             }
             return Err(GateRefusal::CommLoss);
         }
@@ -574,6 +574,14 @@ impl SafetyGate {
         }
     }
 
+    /// The release stop for `axis_index` that [`service`](Self::service) asked for did not reach the
+    /// card (no answer, or one that could not be read). The lease comes back, already due, so the
+    /// next call of [`service`](Self::service) asks for the stop again. A card that answered, even
+    /// with an exception, has the stop and needs no second one.
+    pub fn release_stop_not_confirmed(&mut self, axis_index: u32, now_ms: u64) {
+        self.leases.entry(axis_index).or_insert(now_ms);
+    }
+
     /// Axis indices whose deadman lease ran out; each needs a release stop. The leases are removed.
     pub fn service(&mut self, now_ms: u64) -> Vec<u32> {
         let expired: Vec<u32> = self.leases.iter().filter(|&(_, &d)| now_ms >= d).map(|(&i, _)| i).collect();
@@ -587,10 +595,17 @@ impl SafetyGate {
     /// status poll is stale.
     pub fn watchdog(&mut self, now_ms: u64) -> bool {
         if (self.fifo_running || self.arming.job_token().is_some()) && !self.comm_ok(now_ms) {
-            self.arming.disarm("comm loss");
+            self.give_up_job();
             return true;
         }
         false
+    }
+
+    /// Contact was lost during a job: disarm, and treat the job as stopped. Whatever the card
+    /// still holds of it is not run on by a bare start ([`GateRefusal::QueueHeld`]).
+    fn give_up_job(&mut self) {
+        self.arming.disarm("comm loss");
+        self.note_stop();
     }
 }
 

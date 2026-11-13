@@ -936,8 +936,10 @@ impl SimLink {
     pub fn read(&mut self, addr: u32, count: u16) -> Result<Vec<u32>, LinkError> {
         self.gate.check_read(addr, count as u32).map_err(LinkError::Refused)?;
         let req = Request::read(addr, count).map_err(LinkError::Forbidden)?;
+        // Like the vendor driver, an answer counts only when it names the request's function and
+        // address; the block read must also be the length asked for.
         match self.exchange(&req)? {
-            Reply::Read { words, .. } if words.len() == count as usize => Ok(words),
+            Reply::Read { addr: a, words } if a == addr && words.len() == count as usize => Ok(words),
             _ => Err(LinkError::Unexpected),
         }
     }
@@ -946,8 +948,10 @@ impl SimLink {
     pub fn write(&mut self, w: &crate::command::SafeWrite) -> Result<(), LinkError> {
         let now = self.sim.now_ms();
         self.gate.check_write(w, now).map_err(LinkError::Refused)?;
+        // An echo counts only when it is a write echo of this register (the vendor driver checks
+        // function and address too): an answer to something else confirms nothing.
         match self.exchange(&Request::write(w.clone())) {
-            Ok(Reply::Write { .. }) => {
+            Ok(Reply::Write { func: crate::frame::FUNC_WRITE, addr, .. }) if addr == w.register() => {
                 self.gate.after_send(w, now);
                 Ok(())
             }
@@ -1056,8 +1060,23 @@ impl SimLink {
     }
 
     /// Read block 1000/36, feed the gate, and send the stop sequence if the gate asks for it.
+    ///
+    /// A poll that fails runs the gate's comm-loss watchdog: once the last good poll of a running
+    /// job is older than the timeout, the job is given up and the queue stopped (on every failed
+    /// poll until the card acknowledges the stop).
     pub fn poll_status(&mut self) -> Result<StatusBlock, LinkError> {
-        let words = self.read(1000, 36)?;
+        let words = match self.read(1000, 36) {
+            Ok(words) => words,
+            Err(e) => {
+                if self.gate.watchdog(self.sim.now_ms())
+                    && self.gate.fifo_running
+                    && let Ok(w) = crate::command::fifo_stop()
+                {
+                    self.send_stop_steps(&[w]);
+                }
+                return Err(e);
+            }
+        };
         let status = StatusBlock::from_words(&words).ok_or(LinkError::Unexpected)?;
         let now = self.sim.now_ms();
         let actions = self.gate.observe_status(now, &status);
@@ -1079,7 +1098,7 @@ impl SimLink {
         self.gate.note_stop();
         let params = crate::command::MachineParams::default();
         let do_word = self.gate.last_do_word.unwrap_or(0);
-        // The laser ports are the ones this gate is set up with, not a fixed list.
+        // The laser ports this gate is set up with; the stop adds the default ones to them.
         let laser_ports = self.gate.config.safety.laser_do_ports.clone();
         let seq = crate::command::stop_sequence(&params, self.gate.fifo_running, 0, do_word, &laser_ports);
         self.send_stop_steps(&seq)
@@ -1095,12 +1114,20 @@ impl SimLink {
         sent
     }
 
-    /// Move the virtual clock.
+    /// Move the virtual clock. A deadman release stop that does not reach the card is asked for
+    /// again on the next call, until the card has answered it.
     pub fn advance(&mut self, dt: Duration) {
         self.sim.advance(dt);
-        for idx in self.gate.service(self.sim.now_ms()) {
+        let now = self.sim.now_ms();
+        for idx in self.gate.service(now) {
             if let Ok(w) = crate::command::jog_release_stop(&[idx], 200_000, &crate::command::MachineParams::default()) {
-                self.send_stop_steps(&[w]);
+                let attempts = self.attempts;
+                self.attempts = attempts.max(STOP_ATTEMPTS);
+                let result = self.write(&w);
+                self.attempts = attempts;
+                if matches!(result, Err(LinkError::Timeout | LinkError::Decode(_) | LinkError::Unexpected)) {
+                    self.gate.release_stop_not_confirmed(idx, now);
+                }
             }
         }
     }

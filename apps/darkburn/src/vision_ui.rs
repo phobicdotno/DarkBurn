@@ -69,6 +69,8 @@ pub struct PncDraft {
     /// Waiting for a click on the canvas: (target, is the design position).
     pick: Option<(usize, bool)>,
     text: String,
+    /// The head is placed on the targets with the red dot, which sits at the pointer offset.
+    pointer: bool,
 }
 
 #[derive(Default, Clone)]
@@ -178,6 +180,20 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
     match id {
         "laser.rotary" => open(app, Dlg::Rotary),
         "laser.cylinder" => open(app, Dlg::Cylinder),
+        // With a laser connected, the menu sets the target where the head stands [LT-01, LT-02].
+        "laser.pnc_first" | "laser.pnc_second" if app.machine.handle.is_connected() => {
+            let i = usize::from(id == "laser.pnc_second");
+            let r =
+                vc::execute(app, id, &json!({ "pointer": app.vision.ui.pnc.pointer })).unwrap_or_else(|| Err("not a print and cut command".into()));
+            app.note = Some(match r {
+                Ok(v) => {
+                    let (x, y) = (v["laser"]["x"].as_f64().unwrap_or(0.0), v["laser"]["y"].as_f64().unwrap_or(0.0));
+                    app.vision.ui.pnc.laser[i] = [x, y];
+                    format!("{} target set where the laser is: X {x:.2}, Y {y:.2} mm.", if i == 0 { "First" } else { "Second" })
+                }
+                Err(e) => e,
+            });
+        }
         "laser.print_and_cut" | "laser.pnc_first" | "laser.pnc_second" | "laser.pnc_wizard" => open(app, Dlg::PrintCut),
         "laser.pnc_align" => {
             let r = vc::pnc_align(app, PnCMode::Scaled);
@@ -508,13 +524,22 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
         ui_kit::section_heading(ui, "Test rotation");
         field(ui, "Turns", &mut d.revs, "");
         ui.horizontal(|ui| {
-            if button(ui, "Plan test", "Shows what the test would do; nothing is sent from here") {
+            if button(ui, "Plan test", "Shows what the test would do; nothing is sent") {
                 // From what the window shows; only Apply keeps the settings.
                 d.plan = msg(vc::rotary_plan_for(app, &rotary_args(&d), d.revs), plan_text);
             }
+            let ready = app.machine.handle.is_connected() && app.machine.handle.snapshot().state == crate::machine_api::LaserState::Ready;
+            if ui.add_enabled_ui(ready, |ui| button(ui, "Run test", "Turn the object by the turns above and back on the connected laser")).inner {
+                let mut args = rotary_args(&d);
+                args["revolutions"] = json!(d.revs);
+                let r = crate::machine_ui::dispatch(app, "machine.rotary_test", &args, crate::machine_ui::Source::Ui);
+                d.plan = msg(r.unwrap_or_else(|| Err("the rotary test is not available".into())), |_| {
+                    "Test rotation sent: the object turns and comes back.".into()
+                });
+            }
         });
         result_line(ui, &d.plan);
-        note(ui, "A test rotation turns the object one way and back so you can check it returns to the start. The machine side sends it.");
+        note(ui, "A test rotation turns the object one way and back so you can check it returns to the start. Run test needs a connected laser.");
         ui.separator();
         ui.horizontal(|ui| {
             if button(ui, "Apply", "Keep these settings") {
@@ -591,6 +616,7 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui,
             "Mark two spots on the printed artwork. For each, put the laser on the spot, note the laser position and the matching position in the design, then set the target.",
         );
+        ui_kit::checkbox(ui, "Placed with the red dot (adds the pointer offset)", &mut d.pointer);
         let names = ["First target", "Second target", "Third target", "Fourth target"];
         #[allow(clippy::needless_range_loop, reason = "i indexes several parallel arrays")]
         for i in 0..2 {
@@ -602,10 +628,12 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, false));
                 }
-                if button(ui, "Head", "Take the position of the laser head as the controller reports it") && app.machine.handle.is_connected() {
-                    let s = app.machine.handle.snapshot();
-                    let p = if s.family == crate::machine_api::Family::Grbl { s.work_pos } else { s.machine_pos };
-                    d.laser[i] = [p[0], p[1]];
+                if button(ui, "Head", "Take the position of the laser head as the controller reports it") {
+                    // From machine zero, as the targets are kept (a GRBL work position is off by the origin).
+                    match crate::motion_cmds::head_target(app, d.pointer) {
+                        Ok(p) => d.laser[i] = [p.x, p.y],
+                        Err(e) => d.text = e,
+                    }
                 }
             });
             ui.horizontal(|ui| {

@@ -697,6 +697,7 @@ impl DriverAdapter for GcodeAdapter {
             C::JogStart { .. } => unsupported("Continuous jogging (use the step buttons)"),
             C::JogStop => m.jog_cancel().map_err(map_err),
             C::Home => m.home().map_err(map_err),
+            C::FocusZ => unsupported("A focus routine"),
             C::Unlock => m.unlock().map_err(map_err),
             C::GoToOrigin => m.go_to_origin().map_err(map_err),
             C::MoveTo(t) => m

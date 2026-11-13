@@ -1519,7 +1519,12 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
     Some(match id {
         "laser.pnc_first" | "laser.pnc_second" => (|| {
             let idx = if id == "laser.pnc_first" { 0 } else { 1 };
-            let laser = point_of(a)?;
+            // Without a position the target is where the laser head stands now.
+            let laser = if a.get("x").is_none() && a.get("y").is_none() {
+                crate::motion_cmds::head_target(app, flag(a, "pointer").unwrap_or(false))?
+            } else {
+                point_of(a)?
+            };
             let design = match (num(a, "design_x"), num(a, "design_y")) {
                 (Some(x), Some(y)) => Some(Point::new(x, y)),
                 _ => None,

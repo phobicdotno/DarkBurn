@@ -1,0 +1,6 @@
+- New: Focus Z runs the controller's own focus routine on Ruida machines
+- New: Turn the rotary from the Move panel, measured along the object's surface
+- New: Run a rotary test turn from Rotary Setup
+- New: Set First/Second Target takes the spot where the laser head stands
+- New: Print and Cut can add the red dot offset when you line up with the pointer
+- Fix: Print and Cut "Head" no longer gets the position wrong on GRBL with an origin set

@@ -398,6 +398,7 @@ impl RuidaEmulator {
             HomeXY => self.home(&[0, 1]),
             HomeZ => self.home(&[2]),
             HomeU => self.home(&[3]),
+            FocusZ => self.focus_z(),
             KeyDown(k) => {
                 self.keys_down.insert(k);
             }
@@ -669,6 +670,13 @@ impl RuidaEmulator {
         for &a in axes {
             to[a] = 0;
         }
+        self.record(MotionKind::Home, to);
+    }
+
+    /// Focus Z: the simulated table stops with the head at the focus distance (Z settings).
+    fn focus_z(&mut self) {
+        let mut to = self.pos;
+        to[2] = self.mem.get(&addr::FOCUS_DEPTH).copied().unwrap_or(0) as i32;
         self.record(MotionKind::Home, to);
     }
 

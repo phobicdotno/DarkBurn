@@ -540,6 +540,9 @@ pub enum MachineCommand {
     },
     JogStop,
     Home,
+    /// Ruida: the controller's own Focus Z routine (`D8 2E`). Other controllers have none;
+    /// `machine.focus_z` moves their Z axis to a typed height instead.
+    FocusZ,
     Unlock,
     GoToOrigin,
     MoveTo(MoveSpec),
@@ -1290,6 +1293,7 @@ impl DriverAdapter for GrblAdapter {
             C::JogStart { dir, feed } => Ok(m.jog_continuous(grbl::JogDirection { x: dir[0], y: dir[1], z: dir[2] }, feed)?),
             C::JogStop => Ok(m.jog_cancel()?),
             C::Home => Ok(m.home()?),
+            C::FocusZ => unsupported("A focus routine"),
             C::Unlock => Ok(m.unlock()?),
             C::GoToOrigin => Ok(m.go_to_origin()?),
             C::MoveTo(t) => Ok(m.move_to(grbl::MoveTarget {
@@ -1834,6 +1838,11 @@ impl DriverAdapter for RuidaAdapter {
                 busy(working)?;
                 self.release_fire();
                 self.req(R::Home(ruida::HomeAxes::XY), Op::Other("home"))
+            }
+            C::FocusZ => {
+                busy(working)?;
+                self.release_fire();
+                self.req(R::Raw(vec![ruida::Command::FocusZ]), Op::Other("focus"))
             }
             C::Unlock => Ok(()),
             C::GoToOrigin => {

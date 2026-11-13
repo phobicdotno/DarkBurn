@@ -96,7 +96,12 @@ mod mcp_ui;
 mod misc_cmds;
 #[cfg(test)]
 mod monkey_tests;
+mod motion_cmds;
+#[cfg(test)]
+mod motion_cmds_tests;
 mod motion_read;
+#[cfg(test)]
+mod motion_ui_tests;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;

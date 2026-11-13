@@ -239,6 +239,17 @@ fn home_and_origin() {
 }
 
 #[test]
+fn focus_z_stops_at_the_focus_distance() {
+    let (mut m, emu) = udp_machine();
+    m.home(HomeAxes::Z).unwrap();
+    m.write_setting(addr::FOCUS_DEPTH, 7_500).unwrap();
+    m.focus_z().unwrap();
+    assert_eq!(lock(&emu).position()[2], 7_500);
+    assert_eq!(lock(&emu).motion.last().unwrap().kind, MotionKind::Home);
+    assert_eq!(m.status().unwrap().z, 7_500);
+}
+
+#[test]
 fn frame_rectangle_and_outline() {
     let (mut m, emu) = udp_machine();
     m.frame_rect(Rect::new(10.0, 20.0, 110.0, 70.0), false).unwrap();

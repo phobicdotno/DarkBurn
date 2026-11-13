@@ -646,6 +646,13 @@ impl<T: Transport> RuidaMachine<T> {
         }])
     }
 
+    /// Focus Z (`D8 2E`): the controller runs its own focus routine on the Z axis and stops at
+    /// the focus distance set in its Z settings. What the routine does is the controller's own
+    /// (a probe, a sensor, or a plain move); this only asks for it.
+    pub fn focus_z(&mut self) -> Result<()> {
+        self.send_commands(&[Command::FocusZ])
+    }
+
     /// Rapid move to the job origin. UNCERTAIN: sent as `D9 10 00 0 0` (rapid XY with the
     /// "origin" option); a real controller may need the panel Origin key instead.
     pub fn go_to_origin(&mut self) -> Result<()> {

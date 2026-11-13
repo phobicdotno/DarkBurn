@@ -366,6 +366,19 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     }
+    // With the project's rotary on, the object turns by the distance along its surface.
+    let rotary = crate::vision_state::VisionState::from_doc(&app.editor.doc).rotary;
+    if rotary.enabled {
+        ui.horizontal(|ui| {
+            ui.label(format!("Rotary ({})", rotary.axis.letter()));
+            for (label, dir) in [("Turn \u{2212}", -1.0), ("Turn +", 1.0)] {
+                if btn(ui, label, "Turn the object by the distance, measured along its surface", free) {
+                    let feed = app.machine.jog.speed * 60.0;
+                    go(app, "machine.jog_rotary", json!({ "distance": dir * app.machine.jog.distance * mult, "feed": feed }));
+                }
+            }
+        });
+    }
 
     // Distance, speed, options [MOVE-05, MOVE-06, MOVE-16]
     let inches = app.prefs.numeric_inches;
@@ -416,13 +429,19 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             }
             go(app, "machine.move_to", a);
         }
-        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && typed_mm(&app.machine.jog.goto_z, inches).is_some()) {
-            let z = typed_mm(&app.machine.jog.goto_z, inches).unwrap_or(0.0);
-            go(
-                app,
-                "machine.move_to",
-                json!({ "z": z, "feed": app.machine.jog.z_speed * 60.0, "machine_coords": app.machine.jog.from_machine_zero }),
-            );
+        // A DSP controller runs its own focus routine; the others move Z to the height typed in.
+        let z = typed_mm(&app.machine.jog.goto_z, inches);
+        let (tip, can) = if family == Family::Ruida {
+            ("Run the controller's focus routine (it stops at the focus distance in its Z settings)", free)
+        } else {
+            ("Move only the Z axis to the Z value above", free && z.is_some())
+        };
+        if btn(ui, "Focus Z", tip, can) {
+            let mut a = json!({ "feed": app.machine.jog.z_speed * 60.0, "machine_coords": app.machine.jog.from_machine_zero });
+            if let Some(z) = z {
+                a["z"] = json!(z);
+            }
+            go(app, "machine.focus_z", a);
         }
     });
 
@@ -493,7 +512,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             set_finish_here(app);
         }
         if app.machine.jog.finish.is_some() && btn(ui, "Clear finish", "Leave the head where the job ends", true) {
-            app.machine.jog.finish = None;
+            go(app, "machine.clear_finish", json!({}));
         }
     });
     if family == Family::Ruida {
@@ -579,9 +598,8 @@ pub fn position_text(pos: Option<[f64; 4]>, inches: bool) -> String {
 /// "Set finish position": jobs end where the head is now. Kept as a place on the bed (machine
 /// coordinates), so setting or clearing the origin later does not move it.
 pub fn set_finish_here(app: &mut DarkBurn) {
-    let snap = app.machine.handle.snapshot();
-    if snap.has_position {
-        app.machine.jog.finish = Some((snap.machine_pos[0], snap.machine_pos[1]));
+    if app.machine.handle.snapshot().has_position {
+        go(app, "machine.set_finish", json!({}));
     }
 }
 

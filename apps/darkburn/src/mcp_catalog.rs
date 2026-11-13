@@ -58,6 +58,8 @@ const CONFIG: &[&str] = &[
     "machine.file_upload",
     "machine.file_overwrite",
     "machine.overrides",
+    "machine.set_finish",
+    "machine.clear_finish",
     "edit.device_settings",
     "edit.machine_settings",
 ];
@@ -72,6 +74,9 @@ const MOTION: &[&str] = &[
     "machine.move_to",
     "machine.set_origin",
     "machine.clear_origin",
+    "machine.focus_z",
+    "machine.jog_rotary",
+    "machine.rotary_test",
     "machine.frame",
     "job.frame",
     "job.frame_rubber",

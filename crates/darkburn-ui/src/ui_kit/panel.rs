@@ -1491,7 +1491,7 @@ impl Window<'_> {
             .actions(&texts.close_apply, &texts.close_keep_open, Some(&texts.close_discard))
             .secondary_left()
             .show(ctx, valid, |ui| {
-                ui.label(&texts.close_question);
+                ui.add(egui::Label::new(texts.close_question.as_str()).wrap());
             });
         let answer = match action {
             super::Action::Ok => Some(super::Action::Ok),

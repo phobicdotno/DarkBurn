@@ -135,6 +135,8 @@ fn the_close_question_over_the_docked_cut_settings_editor() {
     for label in ["Apply", "Discard", "Keep open"] {
         assert!(!g.find_a11y(Some("Button"), label).is_empty(), "{label}: {:?}", g.visible_texts());
     }
+    let question = g.painted().into_iter().find(|p| p.text == QUESTION).expect("the question is painted");
+    assert!(!question.elided && !question.broken_word, "the whole question is readable");
     let shot = g.screenshot("close-ask-cut-settings-docked");
     assert!(shot.exists());
     assert!(g.layout_problems().iter().all(|p| !p.contains("dialog")), "{:?}", g.layout_problems());

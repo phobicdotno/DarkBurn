@@ -93,7 +93,9 @@ fn the_docked_cut_settings_editor_asks_before_its_tab_closes_it() {
         g.app().editor.doc.layer_mut(1).main_mut().speed = before + 77.0;
         g.frames(2);
         close_tab_and_answer(&mut g, CUT_SETTINGS, answer, &what);
-        let (open, now, steps_now) = (g.app().cut_settings_open, speed(&g), g.app().editor.history.len());
+        let open = g.app().cut_settings_open;
+        let now = speed(&g);
+        let steps_now = g.app().editor.history.len();
         match answer {
             Answer::Apply => {
                 assert_eq!(open, None, "{what}: closed");
@@ -153,7 +155,7 @@ fn esc_still_cancels_and_every_close_button_asks() {
         let before = speed(&g);
         g.app().editor.doc.layer_mut(1).main_mut().speed = before + 5.0;
         g.frames(2);
-        g.click_id("dialog:close");
+        g.click_a11y(Some("Button"), "Close");
         g.frames(2);
         assert!(asking(&g, CUT_SETTINGS), "{place}: the header's X asks");
         assert!(g.has_text(QUESTION), "{place}: {:?}", g.visible_texts());
@@ -307,7 +309,9 @@ fn the_docked_adjust_image_window_asks_before_its_tab_closes_it() {
         g.frames(2);
         assert_eq!(brightness(&g), 25.0, "{what}: the edit shows live");
         close_tab_and_answer(&mut g, "db_adjust_image", answer, &what);
-        let (open, now, steps_now) = (g.app().images.adjust.is_some(), brightness(&g), g.app().editor.history.len());
+        let open = g.app().images.adjust.is_some();
+        let now = brightness(&g);
+        let steps_now = g.app().editor.history.len();
         match answer {
             Answer::Apply => {
                 assert!(!open, "{what}: closed");
@@ -347,11 +351,14 @@ fn windows_holding_a_projects_draft_close_when_another_project_comes() {
     g.frames(2);
     crate::files::new_project(&mut g.app());
     with_image(&mut g);
-    let (steps, modified) = (g.app().editor.history.len(), g.app().editor.is_modified());
+    let steps = g.app().editor.history.len();
+    let modified = g.app().editor.is_modified();
     g.frames(3);
     assert!(g.app().images.adjust.is_none(), "Adjust Image closed");
     assert_eq!(brightness(&g), 0.0, "the new project's image is as it came");
-    assert_eq!((g.app().editor.history.len(), g.app().editor.is_modified()), (steps, modified), "and gets no undo step");
+    let steps_now = g.app().editor.history.len();
+    let modified_now = g.app().editor.is_modified();
+    assert_eq!((steps_now, modified_now), (steps, modified), "and gets no undo step");
 
     let planner = |g: &Gui| crate::job_cmds::current_settings(&g.app()).planner;
     g.run_command("job.optimization_settings");

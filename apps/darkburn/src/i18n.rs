@@ -598,7 +598,9 @@ mod tests {
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru", "ja", "ko"] {
+        for code in
+            ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru", "ja", "ko", "zh-CN", "zh-TW"]
+        {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -648,6 +650,8 @@ mod tests {
             ("ru", "Выкл"),
             ("ja", "オフ"),
             ("ko", "끔"),
+            ("zh-CN", "关"),
+            ("zh-TW", "關"),
             ("en", "Off"),
         ];
         for (code, word) in off {
@@ -814,6 +818,121 @@ mod tests {
         assert_eq!(ko["settings.cut_selected"], "기본적으로 선택한 그래픽 절단");
         assert_eq!(ko["settings.save_job_origin"], "작업 원점과 선택한 그래픽 절단 여부를 프로젝트에 저장");
         assert_eq!(ko["cmd.tools.path_to_text"], "텍스트에 경로 적용");
+    }
+
+    /// Simplified (mainland) and Traditional (Taiwan) Chinese translate the English texts, and
+    /// the Language menu offers both [I18N-04].
+    #[test]
+    fn chinese_is_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("zh-CN", "文件"), ("zh-TW", "檔案")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
+    /// Taiwan Chinese is not Simplified Chinese with converted characters: it uses Taiwan's own
+    /// software words (檔案, 儲存, 雷射, 復原 ...), and neither file mixes in characters of the
+    /// other script.
+    #[test]
+    fn traditional_chinese_uses_taiwan_words_not_converted_mainland_ones() {
+        let (cn, tw) = (locale("zh-CN"), locale("zh-TW"));
+        for (key, mainland, taiwan) in [
+            ("menu.File", "文件", "檔案"),
+            ("cmd.file.save", "保存", "儲存"),
+            ("panel.laser", "激光", "雷射"),
+            ("cmd.edit.undo", "撤销", "復原"),
+            ("cmd.edit.paste", "粘贴", "貼上"),
+            ("cmd.edit.cut", "剪切", "剪下"),
+            ("help.title", "帮助", "說明"),
+            ("menu.Window", "窗口", "視窗"),
+            ("menu.toolbars", "工具栏", "工具列"),
+            ("cmd.file.hotkeys", "快捷键", "快速鍵"),
+            ("panel.camera", "摄像头", "攝影機"),
+            ("cmd.file.prefs_import", "导入", "匯入"),
+            ("library.material", "材料", "材質"),
+            ("settings.page.general", "常规", "一般"),
+        ] {
+            assert!(cn[key].contains(mainland), "zh-CN {key}: {:?} lacks {mainland}", cn[key]);
+            assert!(tw[key].contains(taiwan), "zh-TW {key}: {:?} lacks {taiwan}", tw[key]);
+        }
+        let simplified_only = "们个这设图选删开关软档轮钮单贴导择编辑键";
+        let traditional_only = "們個這設圖選刪開關軟檔輪鈕單貼導擇編輯鍵";
+        let mut bad = Vec::new();
+        for (code, t, foreign) in [("zh-CN", &cn, traditional_only), ("zh-TW", &tw, simplified_only)] {
+            for (key, text) in t.iter() {
+                if text.chars().any(|c| foreign.contains(c)) {
+                    bad.push(format!("{code} {key}: {text:?}"));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        let differ = cn.iter().filter(|(k, v)| tw.get(*k) != Some(v)).count();
+        assert!(differ * 10 >= cn.len() * 8, "only {differ} of {} texts differ", cn.len());
+    }
+
+    /// Simplified Chinese quotes the English labels the help names with “ ” and Traditional
+    /// Chinese with 「」, never straight double quotes; the Start button keeps its English name.
+    #[test]
+    fn chinese_keeps_its_own_punctuation() {
+        for (lang, open, close) in [("zh-CN", "\u{201c}", "\u{201d}"), ("zh-TW", "\u{300c}", "\u{300d}")] {
+            for (key, text) in locale(lang) {
+                if key != "library.thickness_hint" {
+                    assert!(!text.contains('"'), "{lang} {key}: {text:?}");
+                    assert!(!text.contains('(') && !text.contains(')'), "{lang} {key}: half-width brackets in {text:?}");
+                }
+            }
+            let help = &locale(lang)["help.camera_selection.p1"];
+            for label in ["Allow live camera", "Find cameras", "Camera", "Start"] {
+                assert!(help.contains(&format!("{open}{label}{close}")), "{lang}: {help:?}");
+            }
+        }
+    }
+
+    /// Chinese writes no spaces between words, so its terms are found anywhere in the text.
+    #[test]
+    fn chinese_uses_one_word_per_term() {
+        assert_terms(
+            &[("zh-CN", ["宽度", "高度", "重置", "备份", "备用路径"]), ("zh-TW", ["寬度", "高度", "重設", "備份", "備用路徑"])],
+            |text, w| text.contains(w),
+        );
+    }
+
+    /// Every text that names the selection says 选区 in Simplified and 選取範圍 in Traditional
+    /// Chinese. Invert Selection keeps the usual idiom 反选 / 反向選取, and choosing a camera,
+    /// "Clear Selection" and "No selection" are other senses [I18N-04].
+    #[test]
+    fn chinese_names_the_selection_with_one_word() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        let other_sense = ["cmd.help.camera", "cmd.selection.clear", "status.no_selection", "cmd.edit.invert_selection"];
+        let keys: Vec<&String> = en
+            .iter()
+            .filter(|(k, _)| !other_sense.contains(&k.as_str()) && !k.starts_with("help.camera_selection."))
+            .filter(|(_, v)| v.to_lowercase().split(|c: char| !c.is_alphabetic()).any(|w| w == "selection"))
+            .map(|(k, _)| k)
+            .collect();
+        assert!(keys.len() >= 15, "{keys:?}");
+        let mut bad = Vec::new();
+        for (code, word) in [("zh-CN", "选区"), ("zh-TW", "選取範圍")] {
+            let t = locale(code);
+            bad.extend(keys.iter().filter(|k| !t[**k].contains(word)).map(|k| format!("{code} {k}: {:?} lacks {word}", t[*k])));
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// The job origin setting names the option "Cut selected graphics" in both Chinese files, as
+    /// Japanese and Korean do.
+    #[test]
+    fn chinese_names_the_cut_selected_option_as_it_reads() {
+        let (cn, tw) = (locale("zh-CN"), locale("zh-TW"));
+        assert_eq!(cn["settings.cut_selected"], "默认仅切割所选图形");
+        assert_eq!(cn["settings.save_job_origin"], "在项目中保存作业原点和\u{201c}仅切割所选图形\u{201d}");
+        assert_eq!(tw["settings.cut_selected"], "預設僅切割選取的圖形");
+        assert_eq!(tw["settings.save_job_origin"], "在專案中儲存工作原點與\u{300c}僅切割選取的圖形\u{300d}");
     }
 
     /// The stem check finds a term in any of its forms, and only at the start of words.

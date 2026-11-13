@@ -1,6 +1,6 @@
 //! The interface in German, French, Italian, Spanish (Spain and Latin America), Portuguese,
 //! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian, Turkish, Greek,
-//! Russian, Japanese and Korean: with every panel open, in the settings and in a long help topic, the translated text fits
+//! Russian, Japanese, Korean and Chinese (Simplified and Traditional): with every panel open, in the settings and in a long help topic, the translated text fits
 //! where the English text fits [I18N-04].
 use crate::ui_harness::Gui;
 
@@ -193,14 +193,24 @@ fn korean_fits_the_window() {
     fits_like_english("ko", "편집", "일반", "카메라 선택");
 }
 
-/// The Editing page of the settings holds the job options. The setting that saves the job origin
-/// and "Cut selected graphics" with the project reads longer in Japanese and Korean since the
-/// review; it still shows whole, with the other job options, and nothing on the page clips
-/// [review of I18N-04].
 #[test]
-fn the_job_options_in_the_settings_fit_in_japanese_and_korean() {
+fn simplified_chinese_fits_the_window() {
+    fits_like_english("zh-CN", "编辑", "常规", "选择摄像头");
+}
+
+#[test]
+fn traditional_chinese_fits_the_window() {
+    fits_like_english("zh-TW", "編輯", "一般", "選擇攝影機");
+}
+
+/// The Editing page of the settings holds the job options. The setting that saves the job origin
+/// and "Cut selected graphics" with the project reads longer in Japanese, Korean and Chinese
+/// since the review; it still shows whole, with the other job options, and nothing on the page
+/// clips [review of I18N-04].
+#[test]
+fn the_job_options_in_the_settings_fit_in_japanese_korean_and_chinese() {
     let mut problems = Vec::new();
-    for code in ["en", "ja", "ko"] {
+    for code in ["en", "ja", "ko", "zh-CN", "zh-TW"] {
         let mut g = Gui::standard();
         g.run_command(&format!("lang.{code}"));
         g.settle();
@@ -230,7 +240,7 @@ fn the_job_options_in_the_settings_fit_in_japanese_and_korean() {
 /// U+10FFFD is a private-use character no ordinary font draws.
 #[test]
 fn a_text_no_font_on_the_computer_draws_is_skipped_at_once() {
-    for code in ["ja", "ko"] {
+    for code in ["ja", "ko", "zh-CN", "zh-TW"] {
         let mut g = Gui::standard();
         g.run_command(&format!("lang.{code}"));
         g.settle();
@@ -244,8 +254,8 @@ fn a_text_no_font_on_the_computer_draws_is_skipped_at_once() {
     assert!(wait_for_glyphs(&mut g, "en", "Edit"), "English is drawn by the bundled font");
 }
 
-/// A row may end between two Japanese characters, or next to one, without splitting a word;
-/// between two letters of a Latin or Korean word it splits the word.
+/// A row may end between two Japanese or Chinese characters, or next to one, without splitting
+/// a word; between two letters of a Latin or Korean word it splits the word.
 #[test]
 fn a_line_break_between_japanese_characters_splits_no_word() {
     use crate::ui_harness::splits_a_word;
@@ -255,6 +265,9 @@ fn a_line_break_between_japanese_characters_splits_no_word() {
     assert!(!splits_a_word('\u{5b57}', 'a'), "kanji 字|a");
     assert!(!splits_a_word('a', '\u{3092}'), "a|hiragana を");
     assert!(!splits_a_word('a', ' '));
+    assert!(!splits_a_word('\u{4e2d}', '\u{6587}'), "Simplified Chinese 中|文");
+    assert!(!splits_a_word('\u{6a94}', '\u{6848}'), "Traditional Chinese 檔|案");
+    assert!(!splits_a_word('\u{5b57}', '\u{ff0c}'), "字|full-width comma");
 }
 
 /// The cut table's column headers in `code`, left to right as painted, with the overlaps
@@ -308,11 +321,13 @@ fn cut_header_overlaps(code: &str) -> Vec<String> {
 /// next column's header begins [I18N-04].
 #[test]
 fn cut_table_headers_fit_their_columns_in_every_language() {
-    let bad: Vec<String> =
-        ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru", "ja", "ko"]
-            .iter()
-            .flat_map(|c| cut_header_overlaps(c))
-            .collect();
+    let bad: Vec<String> = [
+        "en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr", "el", "ru", "ja", "ko", "zh-CN",
+        "zh-TW",
+    ]
+    .iter()
+    .flat_map(|c| cut_header_overlaps(c))
+    .collect();
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 

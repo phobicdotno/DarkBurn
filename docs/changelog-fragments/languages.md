@@ -10,3 +10,4 @@
 - New: Greek and Russian (machine-translated; corrections are welcome)
 - Fix: Greek headings in capitals drop the accents, and the hotkey search finds Greek words typed with or without them
 - New: Japanese and Korean (machine-translated; corrections are welcome)
+- New: Simplified and Traditional Chinese (machine-translated; corrections are welcome)

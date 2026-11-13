@@ -867,3 +867,104 @@ followed by 키 ("Ctrl 키와 Shift 키를") so it stays a word of its own.
   Take the key: 키 가져오기.
 - Choices agree with their label: Toolbar icons are 작게 / 중간 / 크게; Curve quality is 낮음 /
   보통 / 높음; Theme is 어둡게 / 밝게. Nudge rows: 기본 / Shift 누름 / Ctrl 누름.
+
+## Simplified Chinese (zh-CN)
+
+Chinese as written in mainland China, with the words mainland laser and drawing programs use
+("文件", "保存", "激光", "撤销"). Commands are short verb or noun phrases; help texts are plain
+and polite (您). English labels that are not translated yet are quoted “like this”. Chinese
+writes no spaces between words, so the one-word check looks for the term anywhere in the text,
+and a line may break between any two characters. A space stays on each side of a Latin name, a
+number or a key name ("按 Esc 取消", "按住 Ctrl 和 Shift"), so the key names remain words of
+their own. Brackets, commas and colons are full-width （），：; ellipses stay "...".
+
+- Job: 作业 (作业原点, 作业日志). Cut (laser): 切割, as in 切割设置, 切割库, 切割方向, 切割色板.
+  Cut (clipboard): 剪切. Cut shapes: 分割图形.
+- Layer: 图层. Line / Fill / Image: 线条 / 填充 / 图像. Engrave: 雕刻.
+- Power: 功率. Speed: 速度. Passes: 次数. Interval: 间隔. Thickness: 厚度.
+- Air assist: 吹气. Frame: 走边框. Frame Selection (the view): 缩放到选区.
+- Jog: 点动. Home (the machine): 回原点; ribbon tab Home: 开始 (as in mainland office programs).
+  Origin: 原点. Start point: 起点.
+- Tab: 微连. Focus test: 焦距测试. Material: 材料 (材料测试, 材料库). Rotary: 旋转轴.
+  Galvo: 振镜. Print and cut: 打印并切割; its targets: 定位点. Wizard: 向导.
+- Device / Machine / Controller: 设备 / 机器 / 控制器. Console: 控制台. Preview: 预览.
+  Nudge: 微移. Camera: 摄像头. Capture: 采集.
+- Shape / Object: 图形 / 对象. Selection: 选区 (also the art library buttons 添加选区,
+  用选区替换); the usual idioms stay for 反选 (Invert Selection), 取消选择 and 未选择. Selected
+  shapes: 所选图形. Path: 路径. Node: 节点. Weld: 焊接.
+- Boolean union / difference / intersection: 布尔并集 / 布尔差集 / 布尔交集; the group: 布尔运算.
+- Offset: 偏移. Trace: 描摹. Bitmap: 位图.
+- Group / Ungroup: 组合 / 取消组合. Break apart: 拆分. Auto-join: 自动连接. Duplicate: 创建副本.
+- Array: 阵列 (网格阵列, 环形阵列, 虚拟阵列).
+- Align: 对齐; text Alignment (ribbon group): 对齐方式. Distribute: 分布. Dock: 靠拢.
+  Nest: 排样. Flip: 翻转 (水平翻转, 垂直翻转). Mirror: 镜像.
+- Snap: 吸附. Grid: 网格. Lock: 锁定. Crop: 裁剪. Mask: 蒙版. Variable text: 可变文本.
+  Text: 文本.
+- Page: 页面. Canvas: 画布. Work area: 工作区域. Bed: 工作台. Panel: 面板.
+- Toolbar: 工具栏. Hotkeys: 快捷键. Settings: 设置. Preferences: 首选项. Setup (ribbon
+  group with the settings buttons): 配置.
+- Edit: 编辑. Modify (ribbon tab): 修改. Arrange: 排列. Move: 移动. Theme: 主题.
+- Art library: 素材库; art item: 素材. Library entry: 条目. Link / Unlink: 关联 / 取消关联.
+  Feeder: 送料器.
+- Output: 输出. Cut table columns: 图层, 模式, 速度/功率, 输出, 显示, 吹气. Off would be 关.
+- Status bar count: 个 (one word for object and objects).
+- Width / Height: 宽度 / 高度. Reset: 重置. Backup (a saved copy of a file): 备份.
+  Backup path (the outline an image keeps after a crop): 备用路径.
+- Debug log: 调试日志. Laser: 激光. File menu: 文件. Help: 帮助. Window: 窗口.
+- Start (the laser panel button, not translated yet): “Start” in help, Start in the setting.
+- Cut selected graphics (the job option): 默认仅切割所选图形; the setting that saves it with
+  the project quotes it: 在项目中保存作业原点和“仅切割所选图形”.
+- Hotkey conflicts: "已被以下命令使用"; "被多个命令使用"; Take the key: 接管按键.
+- Choices: Small / Medium / Large: 小 / 中 / 大. Coarse / Normal / Fine: 粗略 / 标准 / 精细.
+  Dark / Light: 深色 / 浅色.
+
+## Traditional Chinese (zh-TW)
+
+Chinese as written in Taiwan, with Taiwan's own software words, not Simplified Chinese
+converted character by character: 檔案 (File), 儲存 (Save), 雷射 (Laser), 復原 (Undo), 剪下 /
+貼上 (Cut / Paste), 說明 (Help), 視窗 (Window), 資料夾 (folder), 預設 (default), 設定
+(Settings), 程式, 軟體, 資訊, 介面, 游標, 滑鼠, 字型, 序列埠, 伺服器, 對話方塊, 核取方塊. English
+labels that are not translated yet are quoted 「like this」. Spaces and punctuation follow the
+Simplified Chinese rules above.
+
+- Job: 工作 (工作原點, 工作記錄). Cut (laser): 切割, as in 切割設定, 切割庫, 切割方向, 切割色盤.
+  Cut (clipboard): 剪下. Cut shapes: 分割圖形.
+- Layer: 圖層. Line / Fill / Image: 線條 / 填滿 / 影像. Engrave: 雕刻.
+- Power: 功率. Speed: 速度. Passes: 次數. Interval: 間距. Thickness: 厚度.
+- Air assist: 吹氣. Frame: 走邊框. Frame Selection (the view): 縮放至選取範圍.
+- Jog: 寸動. Home (the machine): 回原點; ribbon tab Home: 常用 (as in Taiwan office programs).
+  Origin: 原點. Start point: 起點.
+- Tab: 微連. Focus test: 焦距測試. Material: 材質 (材質測試, 材質庫). Rotary: 旋轉軸.
+  Galvo: 振鏡. Print and cut: 列印並切割; its targets: 定位點. Wizard: 精靈.
+- Device / Machine / Controller: 裝置 / 機器 / 控制器. Console: 主控台. Preview: 預覽.
+  Nudge: 微移. Camera: 攝影機. Capture: 擷取.
+- Shape / Object: 圖形 / 物件. Selection: 選取範圍 (also the art library buttons 新增選取範圍,
+  以選取範圍取代); the usual idioms stay for 反向選取 (Invert Selection), 取消選取 and 未選取.
+  Selected shapes: 選取的圖形. Path: 路徑. Node: 節點. Weld: 焊接.
+- Boolean union / difference / intersection: 布林聯集 / 布林差集 / 布林交集; the group: 布林運算.
+- Offset: 偏移. Trace: 描圖 (影像描圖). Bitmap: 點陣圖.
+- Group / Ungroup: 群組 / 取消群組. Break apart: 打散. Auto-join: 自動連接. Duplicate: 建立副本.
+- Array: 陣列 (網格陣列, 環形陣列, 虛擬陣列).
+- Align: 對齊 (靠左對齊, 置中對齊); text Alignment (ribbon group): 對齊方式. Distribute: 分佈.
+  Dock: 靠攏. Nest: 排版. Flip: 翻轉 (水平翻轉, 垂直翻轉). Mirror: 鏡像.
+- Snap: 貼齊. Grid: 格線. Lock: 鎖定. Crop: 裁切. Mask: 遮罩. Variable text: 變數文字.
+  Text: 文字.
+- Page: 頁面. Canvas: 畫布. Work area: 工作區域. Bed: 工作台. Panel: 面板.
+- Toolbar: 工具列. Hotkeys: 快速鍵. Settings: 設定. Preferences: 偏好設定. Setup (ribbon group
+  with the settings buttons): 配置.
+- Edit: 編輯. Modify (ribbon tab): 修改. Arrange: 排列. Move: 移動. Theme: 主題.
+- Project: 專案. Apply: 套用. Replace: 取代. Refresh: 重新整理. Optimize: 最佳化. Add / New: 新增.
+- Art library: 素材庫; art item: 素材. Library entry: 項目. Link / Unlink: 連結 / 取消連結.
+  Feeder: 送料機.
+- Output: 輸出. Cut table columns: 圖層, 模式, 速度/功率, 輸出, 顯示, 吹氣. Off would be 關.
+- Status bar count: 個 (one word for object and objects).
+- Width / Height: 寬度 / 高度. Reset: 重設. Backup (a saved copy of a file): 備份.
+  Backup path (the outline an image keeps after a crop): 備用路徑.
+- Debug log: 偵錯記錄. Laser: 雷射. File menu: 檔案. Help: 說明. Window: 視窗.
+- Units: Millimetres / Inches: 公釐 / 英吋.
+- Start (the laser panel button, not translated yet): 「Start」 in help, Start in the setting.
+- Cut selected graphics (the job option): 預設僅切割選取的圖形; the setting that saves it with
+  the project quotes it: 在專案中儲存工作原點與「僅切割選取的圖形」.
+- Hotkey conflicts: "已被下列指令使用"; "有多個指令使用"; Take the key: 接手按鍵.
+- Choices: Small / Medium / Large: 小 / 中 / 大. Coarse / Normal / Fine: 粗略 / 標準 / 精細.
+  Dark / Light: 深色 / 淺色.

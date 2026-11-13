@@ -83,7 +83,7 @@ fn picking_two_edges_shows_the_candidates_and_adds_the_chosen_circle() {
 }
 
 #[test]
-fn three_edges_and_add_all_from_the_window() {
+fn three_edges_give_the_circle_touching_all_three_from_the_window() {
     let mut g = Gui::standard();
     g.frames(2);
     let page = g.app().prefs.page();
@@ -105,4 +105,30 @@ fn three_edges_and_add_all_from_the_window() {
     assert!(st.message.is_some());
     g.click_label("Add Circle").frames(2);
     assert_eq!(circle_count(&g), 1);
+}
+
+#[test]
+fn add_all_puts_every_candidate_in_as_one_undo_step() {
+    let mut g = Gui::standard();
+    g.frames(2);
+    let page = g.app().prefs.page();
+    let (x0, y0) = (page.x as f64 * 0.5, page.y as f64 * 0.3);
+    g.exec("shape.add_rect", json!({ "x": x0, "y": y0, "width": 100, "height": 80, "layer": 0 }));
+    g.exec("selection.set", json!({ "ids": [] }));
+    g.run_command(TOOL);
+    g.click_label("Only on the edges").frames(2);
+    for p in [Point::new(x0, y0 + 30.0), Point::new(x0 + 40.0, y0)] {
+        let s = at(&g, p);
+        g.click_pos(s).frames(2);
+    }
+    assert_eq!(tangent_tool::state(&g.ctx()).candidates().unwrap().len(), 4);
+    let undo = g.app().editor.history.len();
+    g.click_label("Add All").frames(2);
+    assert_eq!(circle_count(&g), 4);
+    assert_eq!(g.app().editor.history.len(), undo + 1, "all four are one undo step");
+    assert_eq!(g.app().editor.selected().len(), 4);
+    assert!(tangent_tool::state(&g.ctx()).picks.is_empty());
+    g.exec("edit.undo", json!({}));
+    g.frames(2);
+    assert_eq!(circle_count(&g), 0, "one undo takes all four away");
 }

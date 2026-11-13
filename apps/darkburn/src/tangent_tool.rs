@@ -54,7 +54,9 @@ pub fn handles(id: &str) -> bool {
 // ================================================================ pure parts
 
 /// The lines, arcs and circles of the shapes `ids` (every shape when `None`). With `near`, only
-/// shapes whose box comes within the distance of the point are read.
+/// shapes whose box comes within the distance of the point are read. Parts on hidden layers are
+/// left out, as nobody can see what they would touch; locked shapes count, since they are only
+/// read here.
 pub fn elements_of(doc: &Document, ids: Option<&[ShapeId]>, near: Option<(Point, f64)>) -> Vec<Element> {
     let mut out = Vec::new();
     for s in doc.iter() {
@@ -67,6 +69,9 @@ pub fn elements_of(doc: &Document, ids: Option<&[ShapeId]>, near: Option<(Point,
             continue;
         }
         for part in crate::shape_ops::parts_of(doc, s.id) {
+            if !doc.layer(part.layer).show {
+                continue;
+            }
             out.extend(tangent::elements(&part.path, FIT_TOL));
         }
     }
@@ -447,14 +452,8 @@ fn body(ui: &mut egui::Ui, st: &mut State, cands: &Result<Vec<Solution>, String>
     ui_kit::checkbox(ui, &tr("tangent.on_edges", "Only on the edges"), &mut st.on_edges);
     match cands {
         Ok(list) => {
-            let name = tr("tangent.candidate", "Circle");
-            let off = tr("tangent.on_extension", "touches an extension");
             for (i, s) in list.iter().enumerate() {
-                let mut text = format!("{name} {}: R {:.2} mm at {:.2}, {:.2}", i + 1, s.circle.radius, s.circle.center.x, s.circle.center.y);
-                if !s.on_elements {
-                    text = format!("{text} ({off})");
-                }
-                if ui.selectable_label(i == st.chosen, text).clicked() {
+                if ui.selectable_label(i == st.chosen, row_text(i, s)).clicked() {
                     st.chosen = i;
                 }
             }
@@ -466,6 +465,19 @@ fn body(ui: &mut egui::Ui, st: &mut State, cands: &Result<Vec<Solution>, String>
     if let Some(m) = &st.message {
         ui.add(egui::Label::new(m.as_str()).wrap());
     }
+}
+
+/// The text of candidate `i` in the window's list, in the interface language.
+pub fn row_text(i: usize, s: &Solution) -> String {
+    let mut text = tr("tangent.row", "Circle {n}: R {r} mm at {x}, {y}")
+        .replace("{n}", &(i + 1).to_string())
+        .replace("{r}", &format!("{:.2}", s.circle.radius))
+        .replace("{x}", &format!("{:.2}", s.circle.center.x))
+        .replace("{y}", &format!("{:.2}", s.circle.center.y));
+    if !s.on_elements {
+        text = format!("{text} ({})", tr("tangent.on_extension", "touches an extension"));
+    }
+    text
 }
 
 /// The preview on the canvas: the picks drawn thick, every candidate dashed, the chosen one
@@ -560,9 +572,75 @@ mod tests {
         // Nearest the clicks first: the one inside the corner.
         assert_eq!((list[0]["x"].as_f64().unwrap().round(), list[0]["y"].as_f64().unwrap().round()), (15.0, 15.0));
         assert!(circles(&a).is_empty(), "a preview adds nothing");
+        let undo_before = a.editor.history.len();
         let out = run(&mut a, ADD, json!({ "points": [[10, 20], [20, 10]], "radius": 5, "on_edges": false, "pick": "all", "layer": 3 })).unwrap();
         assert_eq!(out["added"].as_array().unwrap().len(), 4);
         assert!(a.editor.doc.iter().filter(|s| s.layer == 3).count() == 4);
+        assert_eq!(a.editor.history.len(), undo_before + 1, "all four circles are one undo step");
+        run(&mut a, "edit.undo", json!({})).unwrap();
+        assert!(circles(&a).is_empty(), "one undo takes all four away");
+    }
+
+    #[test]
+    fn shapes_on_hidden_layers_are_not_picked() {
+        // A rectangle on layer 1, then layer 1 hidden; a visible line on layer 0 farther away.
+        let mut a = DarkBurn::new(Prefs::default());
+        run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 40, "height": 30, "layer": 1 })).unwrap();
+        let mut line = BezPath::new();
+        line.move_to((0.0, 60.0));
+        line.line_to((100.0, 60.0));
+        a.editor.doc.add(Shape::path(line, 0));
+        a.editor.selection.clear();
+        assert_eq!(elements_of(&a.editor.doc, None, None).len(), 5);
+        a.editor.doc.layer_mut(1).show = false;
+        let els = elements_of(&a.editor.doc, None, None);
+        assert_eq!(els.len(), 1, "only the visible line is left: {els:?}");
+        let Element::Segment(l) = els[0] else { panic!("{els:?}") };
+        assert!(l.p0.distance(Point::new(0.0, 60.0)) < 1e-9 && l.p1.distance(Point::new(100.0, 60.0)) < 1e-9, "{l:?}");
+
+        // On the canvas: a click on the hidden rectangle's edge picks nothing.
+        let mut st = State { radius: 5.0, ..State::default() };
+        st.click(&a.editor.doc, Point::new(10.0, 20.0), 0.5);
+        assert!(st.picks.is_empty() && st.message.is_some(), "{st:?}");
+
+        // Through the command: points on the hidden edges fall to the visible line, which
+        // cannot give a pair; nothing is added.
+        let out = run(&mut a, ADD, json!({ "points": [[10, 20], [20, 10]], "radius": 5 }));
+        assert!(out.is_err(), "{out:?}");
+        assert!(circles(&a).is_empty());
+
+        // Shown again, the same command works.
+        a.editor.doc.layer_mut(1).show = true;
+        assert!(run(&mut a, ADD, json!({ "points": [[10, 20], [20, 10]], "radius": 5 })).is_ok());
+    }
+
+    #[test]
+    fn a_large_circle_from_an_svg_file_can_be_picked() {
+        // An SVG drawn in mm: usvg writes the circle as one cubic per quarter.
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="600mm" height="600mm" viewBox="0 0 600 600"><circle cx="300" cy="300" r="200" fill="none" stroke="black"/></svg>"#;
+        let imported = crate::import::svg(svg, &crate::import::Options::default()).unwrap();
+        let mut a = DarkBurn::new(Prefs::default());
+        for s in imported.shapes {
+            a.editor.doc.add(s);
+        }
+        let els = elements_of(&a.editor.doc, None, None);
+        assert_eq!(els.len(), 1, "{els:?}");
+        let Element::Circle(c) = els[0] else { panic!("{els:?}") };
+        assert!((c.radius - 200.0).abs() < 0.01, "{c:?}");
+        let mut st = State::default();
+        st.click(&a.editor.doc, c.center + darkburn_core::kurbo::Vec2::new(200.2, 0.0), 0.5);
+        assert_eq!(st.picks.len(), 1, "{st:?}");
+    }
+
+    #[test]
+    fn candidate_rows_are_translated_whole() {
+        let s = Solution { circle: Circle::new((15.0, 15.0), 10.0), touches: Vec::new(), on_elements: false };
+        assert_eq!(row_text(0, &s), "Circle 1: R 10.00 mm at 15.00, 15.00 (touches an extension)");
+        crate::i18n::set_language("nb");
+        let nb = row_text(0, &s);
+        crate::i18n::set_language("en");
+        assert!(nb.starts_with("Sirkel 1: R 10.00 mm") && nb.contains("15.00, 15.00"), "{nb}");
+        assert!(!nb.contains(" at ") && !nb.contains("touches"), "{nb}");
     }
 
     #[test]

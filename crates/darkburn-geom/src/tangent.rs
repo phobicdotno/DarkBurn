@@ -566,6 +566,17 @@ fn dist_to_line(p: Point, a: Point, b: Point) -> f64 {
     if len <= 0.0 { p.distance(a) } else { (p - a).cross(d).abs() / len }
 }
 
+/// How far a curve may stray from a circle of radius `r` and still count as part of it: `tol`,
+/// or a thousandth of the radius when that is more. One cubic per quarter circle (as SVG
+/// import and many drawing programs write circles) strays by about 0.03 % of the radius, so a
+/// fixed tolerance alone would refuse large circles.
+fn round_tol(tol: f64, r: f64) -> f64 {
+    if r.is_finite() { tol.max(ROUND_REL * r) } else { tol }
+}
+
+/// The share of the radius [`round_tol`] allows.
+const ROUND_REL: f64 = 1e-3;
+
 fn piece(seg: PathSeg, tol: f64) -> Option<Piece> {
     let (p0, p1) = (seg.start(), seg.end());
     if let PathSeg::Line(l) = seg {
@@ -577,7 +588,8 @@ fn piece(seg: PathSeg, tol: f64) -> Option<Piece> {
     }
     let pm = seg.eval(0.5);
     let c = circle_through(p0, pm, p1)?;
-    if !samples.iter().all(|p| (p.distance(c.center) - c.radius).abs() <= tol) {
+    let round = round_tol(tol, c.radius);
+    if !samples.iter().all(|p| (p.distance(c.center) - c.radius).abs() <= round) {
         return None;
     }
     let (a0, am, a1) = ((p0 - c.center).atan2(), (pm - c.center).atan2(), (p1 - c.center).atan2());
@@ -592,8 +604,8 @@ fn join(a: &Piece, b: &Piece, tol: f64) -> Option<Piece> {
             Piece::Arc { center: c1, radius: r1, sweep: s1, from, to: t1, ends: e1, mids: m1 },
             Piece::Arc { center: c2, radius: r2, sweep: s2, from: f2, to, ends: e2, mids: m2 },
         ) if t1.distance(*f2) <= tol
-            && c1.distance(*c2) <= tol
-            && (r1 - r2).abs() <= tol
+            && c1.distance(*c2) <= round_tol(tol, r1.max(*r2))
+            && (r1 - r2).abs() <= round_tol(tol, r1.max(*r2))
             && s1.signum() == s2.signum()
             && (s1 + s2).abs() <= TAU + 1e-6 =>
         {
@@ -635,7 +647,8 @@ fn to_element(p: Piece, tol: f64) -> Element {
 }
 
 /// The straight segments, arcs and circles a path is made of. A curve counts as an arc when
-/// it stays within `tol` (mm) of a circle, consecutive pieces of one arc are joined, and a
+/// it stays within `tol` (mm) of a circle, or within a thousandth of the radius for large
+/// circles, consecutive pieces of one arc are joined, and a
 /// closed run of arcs becomes a circle. Curves that are neither straight nor round are left
 /// out, as are zero-length pieces.
 pub fn elements(path: &BezPath, tol: f64) -> Vec<Element> {
@@ -948,6 +961,43 @@ mod tests {
         p.curve_to((5.0, 20.0), (5.0, 0.0), (10.0, 10.0));
         let els = elements(&p, 0.05);
         assert_eq!(els, vec![seg(0.0, 0.0, 3.0, 0.0)]);
+    }
+
+    /// A circle of four cubics, one per quarter, with the usual control arm (0.5523 of the
+    /// radius), as SVG import and many drawing programs write it.
+    fn four_cubic_circle(c: Point, r: f64, quarters: usize) -> BezPath {
+        let k = 4.0 / 3.0 * (2f64.sqrt() - 1.0) * r;
+        let mut p = BezPath::new();
+        let at = |a: f64| c + Vec2::new(a.cos(), a.sin()) * r;
+        let dir = |a: f64| Vec2::new(-a.sin(), a.cos());
+        p.move_to(at(0.0));
+        for q in 0..quarters {
+            let (a0, a1) = (q as f64 * PI / 2.0, (q + 1) as f64 * PI / 2.0);
+            p.curve_to(at(a0) + dir(a0) * k, at(a1) - dir(a1) * k, at(a1));
+        }
+        if quarters == 4 {
+            p.close_path();
+        }
+        p
+    }
+
+    #[test]
+    fn large_circles_and_arcs_made_of_quarter_cubics_are_recognised() {
+        for r in [5.0, 50.0, 200.0, 300.0, 2000.0] {
+            let els = elements(&four_cubic_circle(Point::new(10.0, -20.0), r, 4), 0.05);
+            assert_eq!(els.len(), 1, "radius {r}: {els:?}");
+            let Element::Circle(c) = els[0] else { panic!("radius {r}: {els:?}") };
+            assert!(c.center.distance(Point::new(10.0, -20.0)) < 1e-6 && (c.radius - r).abs() < 1e-6, "radius {r}: {c:?}");
+            // Half of it is one arc of half a turn.
+            let els = elements(&four_cubic_circle(Point::new(10.0, -20.0), r, 2), 0.05);
+            assert_eq!(els.len(), 1, "radius {r}: {els:?}");
+            let Element::Arc { center, radius, sweep, .. } = els[0] else { panic!("radius {r}: {els:?}") };
+            assert!(center.distance(Point::new(10.0, -20.0)) < 1e-6 && (radius - r).abs() < 1e-6 && (sweep - PI).abs() < 1e-6);
+        }
+        // A large ellipse that is clearly not round is still left out.
+        let ellipse = kurbo::Ellipse::new((0.0, 0.0), (300.0, 290.0), 0.0).to_path(0.01);
+        let els = elements(&ellipse, 0.05);
+        assert!(els.iter().all(|e| !matches!(e, Element::Circle(_))), "{els:?}");
     }
 
     #[test]

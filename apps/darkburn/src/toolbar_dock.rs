@@ -328,6 +328,16 @@ pub fn grip(ui: &mut Ui, bar: &'static str, salt: &str, rect: Rect, now: Dock) {
     Menu::context(&resp, |ui| menu(ui, bar, now));
 }
 
+/// A row "Move Toolbar" with the right-click menu of ribbon toolbar `bar` beside it, for the
+/// ribbon's overflow list: a group in that list has no caption to take hold of or right-click.
+pub fn move_submenu(ui: &mut Ui, bar: &'static str) {
+    let text = crate::i18n::tr("bar.move", "Move Toolbar");
+    let id = format!("bar_move:{bar}");
+    let mut item = MenuItem::new(&id, &text, "");
+    item.submenu = true;
+    Menu::button_with(ui, |ui, _| item.show(ui), |ui| menu(ui, bar, Dock::Home));
+}
+
 /// The right-click menu of toolbar `bar`, now at `now`.
 fn menu(ui: &mut Ui, bar: &'static str, now: Dock) {
     ui.set_min_width(210.0);
@@ -480,6 +490,18 @@ pub fn edge(ui: &mut Ui, app: &mut DarkBurn, dock: Dock, clicked: &mut Option<St
     }
 }
 
+/// The layer floating toolbar `bar` is drawn on.
+fn float_id(bar: &str) -> Id {
+    Id::unique(("db_bar_float", bar))
+}
+
+/// The layer with this id is a floating toolbar. It is drawn over the window like a window, but
+/// it is not one: it never takes Escape, the plain keys or the Tab walk from the canvas or from a
+/// window that is open (`escape.rs`, `tab_focus.rs`).
+pub fn is_floating_toolbar(id: Id) -> bool {
+    TOOLBARS.iter().any(|(t, _)| float_id(t) == id)
+}
+
 /// The floating toolbars, each a small card over the window.
 pub fn floating(ui: &mut Ui, app: &mut DarkBurn, clicked: &mut Option<String>) {
     let ctx = ui.ctx().clone();
@@ -497,7 +519,7 @@ pub fn floating(ui: &mut Ui, app: &mut DarkBurn, clicked: &mut Option<String>) {
             pos.x.clamp(screen.left(), (screen.right() - 3.0 * GRIP).max(screen.left())),
             pos.y.clamp(screen.top(), (screen.bottom() - size.y).max(screen.top())),
         );
-        egui::Area::new(Id::unique(("db_bar_float", bar))).order(Order::Middle).fixed_pos(pos).constrain(false).show(&ctx, |ui| {
+        egui::Area::new(float_id(bar)).order(Order::Middle).fixed_pos(pos).constrain(false).show(&ctx, |ui| {
             let (r, _) = ui.allocate_exact_size(size, Sense::hover());
             ui.painter().rect(r, t.radius_md, t.toolbar, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             draw(ui, app, bar, Dock::Floating, r, &pieces, &rects, clicked);

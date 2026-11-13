@@ -334,6 +334,7 @@ fn overflow_menu(ui: &mut Ui, row: Rect, hidden: &[&Group], clicked: &mut Option
         },
         |ui| {
             ui.set_min_width(ui_kit::LIST_W);
+            let mut movers: Vec<&str> = Vec::new();
             for g in hidden {
                 Menu::heading(ui, &crate::i18n::tr(&format!("ribbon.group.{}", g.caption), g.caption));
                 for item in g.items {
@@ -347,6 +348,11 @@ fn overflow_menu(ui: &mut Ui, row: Rect, hidden: &[&Group], clicked: &mut Option
                             *clicked = Some(cid.to_string());
                         }
                     }
+                }
+                // The toolbar's own menu, as on its caption, which is out of sight here [TB-25].
+                if !movers.contains(&g.toolbar) {
+                    movers.push(g.toolbar);
+                    crate::toolbar_dock::move_submenu(ui, g.toolbar);
                 }
             }
         },

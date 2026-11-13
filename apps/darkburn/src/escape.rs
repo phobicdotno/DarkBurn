@@ -9,10 +9,15 @@ use egui::{Context, Id, Key, LayerId, Modifiers, Order};
 /// The status toast is drawn above the windows but is not one: it never takes the key.
 pub const TOAST: &str = "shape_status_toast";
 
+/// The layer with this id is drawn over the windows or among them but is not a window: the
+/// status toast, and a floating toolbar [TB-25]. It never takes the key.
+pub fn not_a_window(id: Id) -> bool {
+    id == Id::unique(TOAST) || crate::toolbar_dock::is_floating_toolbar(id)
+}
+
 fn window_layers(ctx: &Context) -> Vec<LayerId> {
-    let toast = Id::unique(TOAST);
     ctx.memory(|m| {
-        m.areas().visible_layer_ids().into_iter().filter(|l| matches!(l.order, Order::Middle | Order::Foreground) && l.id != toast).collect()
+        m.areas().visible_layer_ids().into_iter().filter(|l| matches!(l.order, Order::Middle | Order::Foreground) && !not_a_window(l.id)).collect()
     })
 }
 

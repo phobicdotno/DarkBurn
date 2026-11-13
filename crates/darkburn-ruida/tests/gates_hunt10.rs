@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use darkburn_ruida::emulator::RunState;
+use darkburn_ruida::emulator::{MotionKind, RunState};
 use darkburn_ruida::*;
 use kurbo::{Point, Rect};
 
@@ -184,8 +184,7 @@ fn a_key_press_or_frame_asked_before_a_stop_is_not_done_after_it() {
     m.send_job("GATE", &square_job((10.0, 10.0), 50.0, 20.0), &SendOptions::default(), &mut never).unwrap();
     let mut h = RuidaHandle::spawn(m, WorkerConfig { status_interval: None });
     // The name is taken, so the send waits for an answer while the rest is asked.
-    let send =
-        h.request(Request::SendJob { name: "GATE".into(), job: Box::new(square_job((1.0, 1.0), 5.0, 20.0)), options: SendOptions::default() });
+    let send = h.request(Request::SendJob { name: "GATE".into(), job: Box::new(square_job((1.0, 1.0), 5.0, 20.0)), options: SendOptions::default() });
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
     'prompt: loop {
         assert!(std::time::Instant::now() < end, "no overwrite prompt");
@@ -210,4 +209,31 @@ fn a_key_press_or_frame_asked_before_a_stop_is_not_done_after_it() {
     assert_eq!(lock(&emu).motion.len(), moves, "a frame ran after the Stop: {:?}", of(frame));
     assert_eq!(lock(&emu).files().len(), 1);
     h.shutdown();
+}
+
+// ----- continuous jog on the data channel, and a disconnect during a job -----
+
+#[test]
+fn a_continuous_jog_is_refused_during_a_job_and_let_go_by_stop() {
+    let (mut m, emu) = rig();
+    m.jog_start(Axis::X, true).unwrap();
+    m.stop().unwrap();
+    assert!(lock(&emu).motion.iter().any(|r| r.kind == MotionKind::Jog), "Stop did not let the jog key go");
+    running(&mut m, &emu);
+    assert!(m.jog_start(Axis::Y, true).is_err(), "a continuous jog started on top of a running job");
+    assert!(m.panel_key(PanelKey::Pulse, true).is_err(), "the Pulse key was pressed during a running job");
+    assert!(!key_is_down(&emu, PanelKey::Pulse));
+    // Releasing is never refused.
+    m.jog_stop(Axis::Y, true).unwrap();
+    m.panel_key(PanelKey::Pulse, false).unwrap();
+}
+
+#[test]
+fn after_a_disconnect_during_a_job_nothing_claims_the_link() {
+    let (mut m, emu) = rig();
+    running(&mut m, &emu);
+    m.disconnect();
+    assert!(!m.is_connected());
+    assert!(m.info().is_none());
+    assert_eq!(lock(&emu).state(), RunState::Running, "a disconnect is not a stop: the controller keeps its job");
 }

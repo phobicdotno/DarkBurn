@@ -18,7 +18,9 @@ use crate::encoding::{decode_cstring, mm_to_um, um_to_mm};
 use crate::error::{Result, RuidaError};
 use crate::packet::{chunks, frame};
 use crate::rd::RdJob;
-use crate::settings::{ControllerInfo, Laser2Settings, MachineSettings, MachineState, MachineStatus, StatusWord, UAxisSettings, addr, board_name, writable};
+use crate::settings::{
+    ControllerInfo, Laser2Settings, MachineSettings, MachineState, MachineStatus, StatusWord, UAxisSettings, addr, board_name, writable,
+};
 use crate::swizzle::{Magic, Swizzler};
 use crate::transport::{Channel, Framing, Transport};
 

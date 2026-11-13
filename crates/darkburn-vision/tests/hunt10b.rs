@@ -68,3 +68,19 @@ fn settings_with_a_nan_focal_scale_still_load() {
     assert_eq!(back.camera_name, "Bed cam");
     assert_eq!(back.focal_scale, 1.0);
 }
+
+/// An infinite size or step count squashes every move to zero (and back-conversion to NaN): refuse it.
+#[test]
+fn rotary_setup_with_infinite_values_is_refused() {
+    use darkburn_vision::rotary::{ObjectSize, RotaryKind};
+    let ok = RotaryParams { enabled: true, ..RotaryParams::default() };
+    assert!(ok.y_to_axis(10.0).is_ok());
+    let bad_steps = RotaryParams { axis_steps_per_mm: f64::INFINITY, ..ok };
+    assert_eq!(bad_steps.axis_to_y(0.0).unwrap_err(), RotaryError::InvalidStepsPerRotation);
+    let bad_spr = RotaryParams { steps_per_rotation: f64::INFINITY, ..ok };
+    assert_eq!(bad_spr.y_to_axis(10.0).unwrap_err(), RotaryError::InvalidStepsPerRotation);
+    let bad_object = RotaryParams { object: ObjectSize::Diameter(f64::INFINITY), ..ok };
+    assert_eq!(bad_object.y_to_axis(10.0).unwrap_err(), RotaryError::InvalidObjectSize);
+    let bad_roller = RotaryParams { kind: RotaryKind::Roller, roller_diameter: f64::INFINITY, ..ok };
+    assert_eq!(bad_roller.y_to_axis(10.0).unwrap_err(), RotaryError::InvalidRollerDiameter);
+}

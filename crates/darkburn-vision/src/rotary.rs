@@ -109,13 +109,14 @@ impl RotaryParams {
         if !self.enabled {
             return Err(RotaryError::Disabled);
         }
-        if !(self.steps_per_rotation > 0.0) || !(self.axis_steps_per_mm > 0.0) {
+        let positive = |v: f64| v > 0.0 && v.is_finite();
+        if !positive(self.steps_per_rotation) || !positive(self.axis_steps_per_mm) {
             return Err(RotaryError::InvalidStepsPerRotation);
         }
-        if !(self.object_circumference() > 0.0) {
+        if !positive(self.object_circumference()) {
             return Err(RotaryError::InvalidObjectSize);
         }
-        if self.kind == RotaryKind::Roller && !(self.roller_diameter > 0.0) {
+        if self.kind == RotaryKind::Roller && !positive(self.roller_diameter) {
             return Err(RotaryError::InvalidRollerDiameter);
         }
         Ok(())

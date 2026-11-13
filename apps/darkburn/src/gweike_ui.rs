@@ -157,6 +157,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     let msg = app.machine.ext.gweike_message.clone();
     let plan = app.machine.ext.gweike_plan.clone();
     let card = app.machine.ext.gweike_card.clone();
+    let mut shelf = std::mem::take(&mut app.machine.ext.gweike_recipes);
     let doc_layers: Vec<(usize, String)> =
         used.iter().filter(|l| **l < darkburn_core::layer::COLOUR_LAYERS).map(|l| (*l, app.editor.doc.layer(*l).name.clone())).collect();
     let defaults: Vec<(usize, crate::gweike_workflow::LayerMap)> = doc_layers.iter().map(|(l, _)| (*l, s.map_of(*l, &app.editor.doc))).collect();
@@ -196,6 +197,11 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                 ui_kit::number_field(ui, &mut slot, 0..=10, 1.0, "");
             });
             note(ui, "The slot is the layer number a contour in the craft file carries.");
+            ui_kit::section_heading(ui, &tr("gweike.recipes", "Recipes from the Gweike software"));
+            if let Some(c) = crate::gweike_recipes::section(ui, &mut shelf, head, slot) {
+                cmd = Some(c);
+            }
+            ui_kit::section_heading(ui, &tr("gweike.craft_values", "Craft values"));
             match head {
                 Head::Fibre => fibre_editor(ui, &mut s.crafts.fibre[slot]),
                 _ => co2_editor(ui, &mut s.crafts.co2[slot]),
@@ -255,6 +261,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         });
     app.machine.ext.gweike_craft_head = head;
     app.machine.ext.gweike_craft_slot = slot;
+    app.machine.ext.gweike_recipes = shelf;
     if s != app.machine.active().settings.gweike
         && let Some(d) = app.machine.devices.get_mut(id)
     {
@@ -267,6 +274,17 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
             return;
         }
         match crate::api::execute_headless(app, c, &args) {
+            Ok(v) if c.starts_with("gweike.recipe") => {
+                if c == "gweike.recipes_scan" {
+                    app.machine.ext.gweike_message = None;
+                }
+                let warnings: Vec<&str> =
+                    v.get("warnings").and_then(|w| w.as_array()).map(|w| w.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+                if !warnings.is_empty() {
+                    app.machine.ext.gweike_message =
+                        Some(format!("{} (check: {})", app.machine.ext.gweike_message.clone().unwrap_or_default(), warnings.join("; ")));
+                }
+            }
             Ok(v) => {
                 app.machine.ext.gweike_message =
                     Some(v.get("path").and_then(|p| p.as_str()).map_or_else(|| "Done.".to_owned(), |p| format!("Wrote {p}")))

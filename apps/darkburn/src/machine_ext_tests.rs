@@ -1054,7 +1054,11 @@ fn no_app_code_reaches_a_real_transport_for_gweike() {
         "open_adapter",
         "open_real",
     ];
-    for (name, src) in [("gweike_workflow.rs", include_str!("gweike_workflow.rs")), ("gweike_ui.rs", include_str!("gweike_ui.rs"))] {
+    for (name, src) in [
+        ("gweike_workflow.rs", include_str!("gweike_workflow.rs")),
+        ("gweike_ui.rs", include_str!("gweike_ui.rs")),
+        ("gweike_recipes.rs", include_str!("gweike_recipes.rs")),
+    ] {
         for (i, line) in src.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
             for f in forbidden {

@@ -1,1 +1,2 @@
 - New: Reads the laser's own cutting recipes and machine settings, ready for quick switching
+- New: Pick a recipe from the laser's own settings folder and put it on a craft slot with one click

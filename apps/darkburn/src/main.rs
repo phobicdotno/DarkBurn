@@ -71,6 +71,8 @@ mod job_field_tests;
 mod job_hunt5_tests;
 #[cfg(test)]
 mod job_plan_tests;
+#[cfg(test)]
+mod jobs_hunt10_tests;
 mod job_ui;
 mod key_cmds;
 mod keymap;

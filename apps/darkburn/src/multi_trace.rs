@@ -1173,8 +1173,11 @@ mod tests {
             g.run_command("tools.trace_files");
             g.frames(2);
             g.app().images.multi.as_mut().expect("the window").tracer = held_tracer(&gate, &calls);
+            // The preview arrives from a worker and resizes the window: click once it is in.
+            wait_gui(&mut g, "the preview", &|g| g.app().images.multi.as_ref().is_some_and(|d| d.preview_ready() && d.preview_outlines() > 0));
+            g.frames(2);
             g.click_label("Trace Files");
-            wait_gui(&mut g, "the run to start", &|_| calls.load(Ordering::Relaxed) == 1);
+            wait_gui(&mut g, &format!("the run to start ({how})"), &|_| calls.load(Ordering::Relaxed) == 1);
             g.frames(2);
             assert!(g.has_text("Tracing"), "{how}: the progress row shows: {:?}", g.visible_texts());
             g.click_label(how);

@@ -669,7 +669,7 @@ mod tests {
         assert!(c.center.distance(Point::new(20.0, 20.0)) < 0.01 && (c.radius - 20.0).abs() < 0.01, "{c:?}");
         let near = nearest(&els, Point::new(41.0, 20.0)).unwrap();
         assert!((near.1 - 1.0).abs() < 0.01);
-        let line = Element::Segment(Line::new((0.0, -10.0), (40.0, -10.0)));
+        let line = Element::Segment(Line::new((0.0, -5.0), (40.0, -5.0)));
         assert_eq!(solve(&[els[0], line], 5.0).unwrap().len(), 2, "two circles of radius 5 rest on the line against the circle");
         assert_eq!(solve(&[els[0]], 5.0), Err(TangentError::BadInput));
     }
@@ -684,7 +684,8 @@ mod tests {
         st.click(&a.editor.doc, Point::new(10.0, 20.0), 0.5);
         store(&ctx, st);
         a.set_tool(Tool::Select);
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| window(ui.ctx(), &mut a));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| window(ui.ctx(), &mut a));
+        out.textures_delta.clear();
         assert!(state(&ctx).picks.is_empty());
     }
 

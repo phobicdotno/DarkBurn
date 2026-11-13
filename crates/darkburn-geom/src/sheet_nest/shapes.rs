@@ -6,10 +6,10 @@
 //! left, then down again, until it settles. The settled spot with the lowest top edge (then
 //! the leftmost) wins. Every spot is checked with the full fit test before it is taken.
 
-use super::prep::{Oriented, Outline, orient, outline};
+use super::prep::{Oriented, Outline, PART_BUDGET, orient, outline};
 use super::space::{Dir, Space};
 use super::{NestPart, NestProgress, Placed, Run, SheetNestResult, Ticker, finish, orders};
-use kurbo::{Affine, Vec2};
+use kurbo::{Affine, Rect, Vec2};
 
 /// Bodies (most recent first) used for start positions next to them.
 const NEAR_BODIES: usize = 48;
@@ -103,10 +103,14 @@ fn better(a: (f64, f64), b: (f64, f64)) -> bool {
 }
 
 impl Nester<'_> {
+    /// Sheet `k` with the obstacles that reach into it.
     fn space(&self, k: usize) -> Space {
-        let mut s = Space::new(self.run.usable(k), self.run.gap);
-        if k == 0 {
-            for (o, off) in &self.obstacles {
+        let u = self.run.usable(k);
+        let mut s = Space::new(u, self.run.gap);
+        for (o, off) in &self.obstacles {
+            let reach = self.run.gap + o.slack + 1e-6;
+            let b = Rect::new(off.x, off.y, off.x + o.size.x, off.y + o.size.y).inflate(reach, reach);
+            if b.overlaps(u) {
                 s.add(o, *off);
             }
         }
@@ -149,8 +153,9 @@ impl Nester<'_> {
                 spaces[k].add(&orients[oi], pos);
                 return Some((k, oi, pos));
             }
-            // A part that does not fit an empty sheet never fits a new one either.
-            if fresh && k > 0 {
+            // A part that does not fit an empty sheet never fits a new one either (a sheet with
+            // obstacles on it is not empty, so the next one is still tried).
+            if fresh && k > 0 && spaces[k].bodies.is_empty() {
                 spaces.pop();
                 return None;
             }
@@ -191,16 +196,26 @@ fn key_better(a: &Key, b: &Key) -> bool {
 }
 
 pub(super) fn nest(input: &[NestPart], obstacles: &[NestPart], run: &Run, report: &mut dyn FnMut(NestProgress) -> bool) -> SheetNestResult {
-    let parts: Vec<Option<Outline>> = input.iter().map(|p| outline(&p.cuts, &p.marks, run.tol, run.allow_holes, None)).collect();
-    let obstacles: Vec<(Oriented, Vec2)> = obstacles
-        .iter()
-        .filter_map(|p| outline(&p.cuts, &p.marks, run.tol, run.allow_holes, Some(run.usable)))
-        .map(|o| {
+    let mut tick = Ticker { done: 0, total: input.len() * 4, deadline: run.deadline, report, stopped: false };
+    let nothing = |stopped| finish(vec![None; input.len()], &vec![0.0; input.len()], run.usable, stopped);
+    // Every obstacle must be known before anything is placed: a run stopped while reading them
+    // places nothing.
+    let surround: Vec<Rect> = (0..run.max_sheets).map(|k| run.usable(k)).collect();
+    let mut obs: Vec<(Oriented, Vec2)> = Vec::new();
+    for p in obstacles {
+        if tick.stop() {
+            return nothing(true);
+        }
+        if let Some(o) = outline(&p.cuts, &p.marks, run.tol, run.allow_holes, &surround, PART_BUDGET) {
             let or = orient(&o, 0.0);
             let off = -or.xf.translation();
-            (or, off)
-        })
-        .collect();
+            obs.push((or, off));
+        }
+    }
+    let obstacles = obs;
+    // Parts left when the run stops here are simply not placed.
+    let parts: Vec<Option<Outline>> =
+        input.iter().map(|p| if tick.stop() { None } else { outline(&p.cuts, &p.marks, run.tol, run.allow_holes, &[], PART_BUDGET) }).collect();
     let nester = Nester { run, parts, obstacles };
     let sizes: Vec<(f64, f64, f64)> = nester
         .parts
@@ -214,7 +229,7 @@ pub(super) fn nest(input: &[NestPart], obstacles: &[NestPart], run: &Run, report
         })
         .collect();
     let orders = orders(input.len(), |i| sizes[i]);
-    let mut tick = Ticker { done: 0, total: input.len() * orders.len(), deadline: run.deadline, report, stopped: false };
+    tick.total = input.len() * orders.len();
     let mut best: Option<(Vec<Placed>, Key)> = None;
     for order in &orders {
         if tick.stop() {

@@ -102,16 +102,18 @@ fn check_layout(parts: &[NestPart], obstacles: &[NestPart], sheet: Rect, o: &She
         );
         placed.push((k, w));
     }
-    let around = sheet.inset(-o.margin).inflate(-o.tolerance, -o.tolerance);
+    let around: Vec<Rect> =
+        (0..o.max_sheets.max(1)).map(|k| sheet_rect(sheet, o.sheet_spacing, k).inset(-o.margin).inflate(-o.tolerance, -o.tolerance)).collect();
     for ob in obstacles {
-        let mut w = world(ob, Affine::IDENTITY);
-        // A contour around the whole sheet counts by its line.
+        let mut w = world(&NestPart::cut(ob.cuts.clone()), Affine::IDENTITY);
+        // A cut contour around the whole usable area of a sheet counts by its line.
         for c in &mut w {
             let b = bounds(std::slice::from_ref(c));
-            if b.x0 <= around.x0 && b.y0 <= around.y0 && b.x1 >= around.x1 && b.y1 >= around.y1 {
+            if around.iter().any(|a| b.x0 <= a.x0 && b.y0 <= a.y0 && b.x1 >= a.x1 && b.y1 >= a.y1) {
                 c.1 = false;
             }
         }
+        w.extend(world(&NestPart { cuts: vec![], marks: ob.marks.clone() }, Affine::IDENTITY));
         if !w.is_empty() {
             placed.push((usize::MAX, w));
         }
@@ -121,7 +123,8 @@ fn check_layout(parts: &[NestPart], obstacles: &[NestPart], sheet: Rect, o: &She
         for j in i + 1..placed.len() {
             let (ka, a) = &placed[i];
             let (kb, b) = &placed[j];
-            let same = ka == kb || (*kb == usize::MAX && *ka == 0);
+            // Obstacles count on every sheet.
+            let same = ka == kb || *kb == usize::MAX;
             if !same {
                 continue;
             }
@@ -279,6 +282,93 @@ fn true_nest_puts_small_parts_in_holes_when_allowed() {
     let r = shaped(&parts, &[], sheet, &off);
     assert!(r.placements[0].is_some());
     assert_eq!(r.unplaced, 4);
+}
+
+/// A 100 mm square frame with a round hole of radius 30, and a 20 mm square.
+fn holed(marks: Vec<BezPath>) -> Vec<NestPart> {
+    vec![NestPart { cuts: vec![rect(0.0, 0.0, 100.0, 100.0), circle(50.0, 50.0, 30.0)], marks }, part(rect(0.0, 0.0, 20.0, 20.0))]
+}
+
+#[test]
+fn a_hole_under_a_fill_or_image_is_not_free() {
+    let sheet = Rect::new(0.0, 0.0, 104.0, 104.0);
+    let o = opts(2.0);
+    // Nothing over the hole: the square goes in.
+    let parts = holed(vec![]);
+    let r = shaped(&parts, &[], sheet, &o);
+    assert_eq!(r.unplaced, 0);
+    check_layout(&parts, &[], sheet, &o, &r);
+    // A fill (or an image's box) over the whole part: the hole would burn the square.
+    let parts = holed(vec![rect(0.0, 0.0, 100.0, 100.0)]);
+    let r = shaped(&parts, &[], sheet, &o);
+    assert!(r.placements[0].is_some());
+    assert_eq!(r.unplaced, 1);
+    // A fill with a window cut out around the hole leaves it free.
+    let mut window = rect(0.0, 0.0, 100.0, 100.0);
+    window.extend(circle(50.0, 50.0, 35.0));
+    let parts = holed(vec![window]);
+    let r = shaped(&parts, &[], sheet, &o);
+    assert_eq!(r.unplaced, 0);
+    check_layout(&parts, &[], sheet, &o, &r);
+}
+
+#[test]
+fn obstacles_count_on_every_sheet() {
+    let sheet = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let o = SheetNestOptions { max_sheets: 3, sheet_spacing: 10.0, ..opts(2.0) };
+    // Sheet 1 runs from x 110 to 210; the obstacle leaves only a 28 mm strip of it.
+    let obstacles = vec![part(rect(110.0, 0.0, 70.0, 100.0))];
+    let parts: Vec<NestPart> = (0..3).map(|_| part(rect(0.0, 0.0, 60.0, 60.0))).collect();
+    for nest in [quick_nest, true_nest] {
+        let r = nest(&parts, &obstacles, sheet, &o, &mut all_true).unwrap();
+        check_layout(&parts, &obstacles, sheet, &o, &r);
+        let mut used: Vec<usize> = r.sheets.iter().flatten().copied().collect();
+        used.sort();
+        assert_eq!(used, vec![0, 2]);
+        assert_eq!(r.unplaced, 1);
+    }
+}
+
+#[test]
+fn a_fill_or_image_over_the_sheet_keeps_it_all() {
+    let parts: Vec<NestPart> = (0..4).map(|_| part(rect(0.0, 0.0, 20.0, 20.0))).collect();
+    let sheet = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let cover = vec![NestPart { cuts: vec![], marks: vec![rect(-1.0, -1.0, 102.0, 102.0)] }];
+    for nest in [quick_nest, true_nest] {
+        let r = nest(&parts, &cover, sheet, &opts(2.0), &mut all_true).unwrap();
+        assert_eq!(r.unplaced, 4);
+    }
+}
+
+/// One part of `rings` concentric 100-point rings.
+fn rings(rings: usize) -> NestPart {
+    let paths = (0..rings)
+        .map(|i| {
+            let r = 10.0 + i as f64 * 0.5;
+            let pts: Vec<(f64, f64)> = (0..100).map(|k| (k as f64 * std::f64::consts::TAU / 100.0).sin_cos()).map(|(s, c)| (r * c, r * s)).collect();
+            poly(&pts)
+        })
+        .collect();
+    NestPart::cut(paths)
+}
+
+#[test]
+fn preparing_a_huge_part_is_bounded_and_cancels() {
+    let parts = vec![rings(2000)];
+    let sheet = Rect::new(0.0, 0.0, 2100.0, 2100.0);
+    let o = SheetNestOptions { time_limit: Duration::from_secs(1), ..opts(2.0) };
+    for nest in [quick_nest, true_nest] {
+        let t0 = Instant::now();
+        let r = nest(&parts, &[], sheet, &o, &mut all_true).unwrap();
+        assert!(t0.elapsed() < Duration::from_secs(15), "took {:?}", t0.elapsed());
+        check_layout(&parts, &[], sheet, &o, &r);
+        let t0 = Instant::now();
+        let mut stop_now = |_: NestProgress| false;
+        let r = nest(&parts, &parts, sheet, &o, &mut stop_now).unwrap();
+        assert!(t0.elapsed() < Duration::from_secs(2), "cancel took {:?}", t0.elapsed());
+        assert!(r.stopped);
+        assert_eq!(r.unplaced, 1);
+    }
 }
 
 #[test]

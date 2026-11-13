@@ -13,9 +13,15 @@
 //! not enough and more are allowed, further sheets of the same size are laid out side by side
 //! in +x, [`SheetNestOptions::sheet_spacing`] apart; see [`sheet_rect`].
 //!
-//! Obstacles (shapes that must stay where they are) count on the first sheet only. A closed
-//! obstacle contour that surrounds the whole usable sheet (a drawn material outline) counts by
-//! its line only, so the parts can go inside it.
+//! Obstacles (shapes that must stay where they are) count on every sheet they reach into. A
+//! closed obstacle cut that surrounds the whole usable area of a sheet (a drawn material
+//! outline) counts by its line only, so the parts can go inside it; a fill or an image that
+//! covers the sheet keeps it all. A run stopped before every obstacle is read places nothing.
+//!
+//! A run that finishes every pass is repeatable: the same input gives the same layout. A run
+//! cut short by its time limit returns the best pass so far, so how far it got (and the
+//! layout) depends on how fast the computer is; [`SheetNestResult::stopped`] says when that
+//! happened.
 //!
 //! Every result is checked before it is returned: placed parts keep the gap (within the
 //! tolerance) from each other and from obstacles, stay inside the sheet margin, and never sit

@@ -88,14 +88,16 @@ impl Bin {
     }
 }
 
-/// Bounding boxes the parts must keep clear of: one per obstacle contour. A closed contour
-/// around the whole usable sheet counts by its line, one box per flattened edge.
+/// Bounding boxes the parts must keep clear of: one per obstacle contour. A closed cut contour
+/// around the whole usable area of a sheet counts by its line, one box per flattened edge; a
+/// mark (a fill or an image) never does, since it burns what it covers.
 fn obstacle_boxes(obstacles: &[NestPart], run: &Run) -> Vec<Rect> {
-    let around = run.usable.inflate(-run.tol, -run.tol);
+    let around: Vec<Rect> = (0..run.max_sheets).map(|k| run.usable(k).inflate(-run.tol, -run.tol)).collect();
     let mut out = Vec::new();
-    for c in obstacles.iter().flat_map(NestPart::all).flat_map(contours) {
+    let all = obstacles.iter().flat_map(|p| p.cuts.iter().map(|c| (c, true)).chain(p.marks.iter().map(|m| (m, false))));
+    for (c, cut) in all.flat_map(|(p, cut)| contours(p).into_iter().map(move |c| (c, cut))) {
         let Some(b) = c.bounding_box() else { continue };
-        if c.is_closed_within(run.tol) && contains(&b, &around) {
+        if cut && c.is_closed_within(run.tol) && around.iter().any(|a| contains(&b, a)) {
             let pl = flatten_contour(&c, run.tol);
             let n = pl.points.len();
             for i in 0..n {
@@ -149,12 +151,10 @@ fn pass(parts: &[Part], order: &[usize], obstacles: &[Rect], run: &Run, tick: &m
                     break;
                 }
                 let mut bin = Bin::new(domain(k));
-                if k == 0 {
-                    for o in obstacles {
-                        let r = Rect::new(o.x0, o.y0, o.x1 + g, o.y1 + g);
-                        if overlaps(&r, &domain(0)) {
-                            bin.occupy(r);
-                        }
+                for o in obstacles {
+                    let r = Rect::new(o.x0, o.y0, o.x1 + g, o.y1 + g);
+                    if overlaps(&r, &domain(k)) {
+                        bin.occupy(r);
                     }
                 }
                 bins.push(bin);

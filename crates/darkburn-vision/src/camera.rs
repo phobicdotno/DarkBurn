@@ -197,7 +197,14 @@ impl CameraAlignment {
         let homography = if targets.len() >= 4 {
             fit_homography(&src, &dst).map_err(|_| AlignError::Degenerate)?
         } else {
-            Homography::from_affine(fit_affine(&src, &dst).ok_or(AlignError::Degenerate)?)
+            let a = fit_affine(&src, &dst).ok_or(AlignError::Degenerate)?;
+            // Bed points on one line squash the picture onto that line: it could never be turned round.
+            let c = a.as_coeffs();
+            let size = c[..4].iter().map(|v| v * v).sum::<f64>();
+            if !(a.determinant().abs() > 1e-9 * size) {
+                return Err(AlignError::Degenerate);
+            }
+            Homography::from_affine(a)
         };
         let rms = homography.rms_error(&src, &dst);
         if !rms.is_finite() {

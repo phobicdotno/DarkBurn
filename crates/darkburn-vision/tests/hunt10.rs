@@ -1,0 +1,43 @@
+//! Bug hunt 10: regressions for the vision crate.
+
+use darkburn_vision::camera::{AlignError, AlignmentTarget, CameraAlignment, ImageOrientation};
+use darkburn_vision::imageops::sample_bilinear;
+use image::GrayImage;
+use kurbo::Point;
+
+/// A picture with no pixels has nothing to sample, wherever you ask; it used to panic at the very edge.
+#[test]
+fn sampling_an_empty_image_gives_nothing_instead_of_panicking() {
+    for (w, h) in [(0, 0), (0, 5), (5, 0)] {
+        let img = GrayImage::new(w, h);
+        for (x, y) in [(-0.5, -0.5), (0.0, 0.0), (-0.5, 2.0), (2.0, -0.5)] {
+            assert_eq!(sample_bilinear(&img, x, y), None, "{w}x{h} at ({x}, {y})");
+        }
+    }
+}
+
+/// Three targets whose bed positions sit on one line squash the bed onto that line: the camera
+/// image could never be drawn on the bed, so the alignment must be refused, as it is with four.
+#[test]
+fn three_target_alignment_with_bed_points_on_one_line_is_refused() {
+    let targets = [
+        AlignmentTarget { image: Point::new(100.0, 100.0), bed: Point::new(10.0, 10.0) },
+        AlignmentTarget { image: Point::new(500.0, 120.0), bed: Point::new(50.0, 10.0) },
+        AlignmentTarget { image: Point::new(300.0, 400.0), bed: Point::new(90.0, 10.0) },
+    ];
+    let r = CameraAlignment::solve(&targets, ImageOrientation::default(), (640, 480));
+    assert_eq!(r.err(), Some(AlignError::Degenerate));
+}
+
+/// A good three-target alignment still works (Y flips between picture and bed, which is normal).
+#[test]
+fn three_target_alignment_still_accepts_a_good_fit() {
+    let targets = [
+        AlignmentTarget { image: Point::new(0.0, 0.0), bed: Point::new(0.0, 100.0) },
+        AlignmentTarget { image: Point::new(100.0, 0.0), bed: Point::new(50.0, 100.0) },
+        AlignmentTarget { image: Point::new(0.0, 100.0), bed: Point::new(0.0, 50.0) },
+    ];
+    let a = CameraAlignment::solve(&targets, ImageOrientation::default(), (200, 200)).unwrap();
+    let p = a.bed_to_image(Point::new(25.0, 75.0)).unwrap();
+    assert!((p - Point::new(50.0, 50.0)).hypot() < 1e-9, "{p:?}");
+}

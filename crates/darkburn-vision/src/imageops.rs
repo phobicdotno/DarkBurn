@@ -7,7 +7,7 @@ use image::{ImageBuffer, Pixel};
 /// Bilinear sample with edge clamping. `None` when more than half a pixel outside the image.
 pub fn sample_bilinear<P: Pixel<Subpixel = u8>>(src: &ImageBuffer<P, Vec<u8>>, x: f64, y: f64) -> Option<[u8; 4]> {
     let (w, h) = (src.width() as f64, src.height() as f64);
-    if !(x.is_finite() && y.is_finite()) || x < -0.5 || y < -0.5 || x > w - 0.5 || y > h - 0.5 {
+    if src.width() == 0 || src.height() == 0 || !(x.is_finite() && y.is_finite()) || x < -0.5 || y < -0.5 || x > w - 0.5 || y > h - 0.5 {
         return None;
     }
     let xc = x.clamp(0.0, w - 1.0);

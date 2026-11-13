@@ -1,0 +1,1 @@
+- Fix: Another program on the computer can no longer keep AI agents from connecting

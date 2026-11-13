@@ -77,6 +77,10 @@ it). The human owns the policy (`McpPolicy`, Preferences > AI agents):
 * Every call is in the audit log (timestamp, tool, command, args hash, outcome), read via `events`.
 * The control server binds 127.0.0.1 only, drops non-loopback peers, checks the token in constant
   time and accepts only a 4 KiB frame before login.
+* A connection that has not logged in must send its whole hello within 5 s, and such connections
+  have their own small limit (4): a newer one pushes out the oldest that is still in the handshake.
+  Only clients with the token take one of the 8 logged-in places, and a logged-in client is never
+  pushed out, so a program without the token cannot keep the agent out by holding connections.
 
 ## Integrating it into the app
 

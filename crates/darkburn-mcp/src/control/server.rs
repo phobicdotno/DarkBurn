@@ -19,8 +19,26 @@ use crate::util::{ct_eq, random_hex};
 /// window is idle.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
-/// Open connections by id, so the server can close them all and a finished one can leave.
-type Streams = Arc<Mutex<Vec<(u64, TcpStream)>>>;
+/// One open connection: its id (they only grow, so the smallest is the oldest), a second handle
+/// to its socket, and whether it has logged in ([`HELLO_PENDING`], [`LOGGED_IN`] or [`EVICTED`]).
+struct Conn {
+    id: u64,
+    stream: TcpStream,
+    login: Arc<AtomicU8>,
+}
+
+/// Open connections, so the server can close them all, count them by login state, drop the oldest
+/// one that has not logged in, and let a finished one leave.
+type Streams = Arc<Mutex<Vec<Conn>>>;
+
+/// Still in the handshake: has not sent a hello with the right token yet.
+const HELLO_PENDING: u8 = 0;
+/// Sent the right token and holds one of the `max_connections` places.
+const LOGGED_IN: u8 = 1;
+/// Dropped by the server before it logged in, to make room for a newer connection.
+const EVICTED: u8 = 2;
+/// How many dropped connections may still be finishing before new ones are refused outright.
+const DROPPED_STILL_CLOSING: usize = 64;
 
 #[derive(Clone)]
 pub struct ControlConfig {
@@ -31,7 +49,14 @@ pub struct ControlConfig {
     /// Session token; `None` makes a random one.
     pub token: Option<String>,
     pub max_frame: usize,
+    /// Logged-in connections served at once. Only a client with the token can take one.
     pub max_connections: usize,
+    /// Connections that have not logged in yet, held apart from `max_connections`. When a new
+    /// connection would pass this limit the oldest one still in the handshake is dropped, so a
+    /// program without the token cannot keep the real agent out by holding connections open.
+    pub max_unauthenticated: usize,
+    /// The whole hello must arrive within this time, however slowly its bytes come.
+    pub hello_timeout: Duration,
     /// How long a connection waits for the UI thread to answer one request.
     pub request_timeout: Duration,
     pub waker: Option<Waker>,
@@ -48,6 +73,8 @@ impl Default for ControlConfig {
             token: None,
             max_frame: DEFAULT_MAX_FRAME,
             max_connections: 8,
+            max_unauthenticated: 4,
+            hello_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(600),
             waker: None,
             discovery_file: None,
@@ -160,8 +187,8 @@ impl ControlServer {
 impl Drop for ControlServer {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
-        for (_, s) in self.streams.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
-            let _ = s.shutdown(std::net::Shutdown::Both);
+        for c in self.streams.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+            let _ = c.stream.shutdown(std::net::Shutdown::Both);
         }
         if let Some(p) = &self.discovery
             && let Ok(d) = super::read_discovery(p)
@@ -184,38 +211,63 @@ fn accept_loop(
     cfg: ControlConfig,
 ) {
     let mut conn_id = 0u64;
+    let unauth_limit = cfg.max_unauthenticated.max(1);
+    // Room for the logged-in connections, the ones in the handshake, and some that were just
+    // dropped and are still finishing; past that a new connection is refused at the door, so a
+    // flood of connections cannot start threads without end.
+    let thread_limit = cfg.max_connections + unauth_limit + DROPPED_STILL_CLOSING;
     while !shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                if !is_allowed_peer(peer.ip()) || active.load(Ordering::SeqCst) >= cfg.max_connections {
+                if !is_allowed_peer(peer.ip()) {
                     refused.fetch_add(1, Ordering::Relaxed);
                     let _ = stream.shutdown(std::net::Shutdown::Both);
                     continue;
                 }
                 let _ = stream.set_nonblocking(false);
                 let _ = stream.set_nodelay(true);
-                conn_id += 1;
-                if let Ok(c) = stream.try_clone() {
-                    streams.lock().unwrap_or_else(|e| e.into_inner()).push((conn_id, c));
+                let Ok(second) = stream.try_clone() else {
+                    refused.fetch_add(1, Ordering::Relaxed);
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    continue;
+                };
+                let login = Arc::new(AtomicU8::new(HELLO_PENDING));
+                {
+                    let mut list = streams.lock().unwrap_or_else(|e| e.into_inner());
+                    make_room_for_a_hello(&list, unauth_limit);
+                    if list.len() >= thread_limit {
+                        drop(list);
+                        refused.fetch_add(1, Ordering::Relaxed);
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        continue;
+                    }
+                    conn_id += 1;
+                    list.push(Conn { id: conn_id, stream: second, login: login.clone() });
                 }
                 let (my_id, my_streams) = (conn_id, streams.clone());
                 active.fetch_add(1, Ordering::SeqCst);
                 let (tx, token, refused, cfg) = (tx.clone(), token.clone(), refused.clone(), cfg.clone());
                 let active = active.clone();
                 let a2 = active.clone();
+                let s2 = streams.clone();
                 let spawned = std::thread::Builder::new().name("darkburn-control-conn".into()).spawn(move || {
-                    connection(stream, tx, &token, &refused, &cfg);
+                    connection(stream, tx, &token, &refused, &cfg, &login, &my_streams);
                     // The connection has ended and closed its side in an orderly way; drop the
                     // server's second handle to the socket so it is really closed.
                     let mut list = my_streams.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(i) = list.iter().position(|(id, _)| *id == my_id) {
-                        let (_, s) = list.swap_remove(i);
-                        let _ = s.shutdown(std::net::Shutdown::Both);
+                    if let Some(i) = list.iter().position(|c| c.id == my_id) {
+                        let c = list.swap_remove(i);
+                        let _ = c.stream.shutdown(std::net::Shutdown::Both);
                     }
                     active.fetch_sub(1, Ordering::SeqCst);
                 });
                 if spawned.is_err() {
                     a2.fetch_sub(1, Ordering::SeqCst);
+                    let mut list = s2.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(i) = list.iter().position(|c| c.id == my_id) {
+                        let c = list.swap_remove(i);
+                        let _ = c.stream.shutdown(std::net::Shutdown::Both);
+                    }
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(15)),
@@ -224,14 +276,53 @@ fn accept_loop(
     }
 }
 
+/// Drops the oldest connections still in the handshake until a new one fits under `limit`.
+/// Logged-in connections are never touched.
+fn make_room_for_a_hello(list: &[Conn], limit: usize) {
+    loop {
+        let waiting = list.iter().filter(|c| c.login.load(Ordering::SeqCst) == HELLO_PENDING);
+        if waiting.clone().count() < limit {
+            return;
+        }
+        let Some(oldest) = waiting.min_by_key(|c| c.id) else { return };
+        // It may have logged in a moment ago; then it stays, and the next oldest is looked at.
+        if oldest.login.compare_exchange(HELLO_PENDING, EVICTED, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            let _ = oldest.stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// Reads from a socket, but never past `end`: the time limit is for everything read through it,
+/// not for each read, so a client that sends one byte now and then still runs out of time.
+struct UntilDeadline<'a> {
+    stream: &'a TcpStream,
+    end: Instant,
+}
+
+impl std::io::Read for UntilDeadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "the hello did not arrive in time"));
+        }
+        use std::io::Read;
+        self.stream.set_read_timeout(Some(left))?;
+        let mut s = self.stream;
+        s.read(buf)
+    }
+}
+
 /// How long a closing connection may stay quiet before the server stops waiting for the client.
 const LINGER_IDLE: Duration = Duration::from_millis(250);
 /// The longest a closing connection is kept, however busy the client still is.
 const LINGER_MAX: Duration = Duration::from_secs(2);
 
-fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
-    serve(&mut stream, tx, token, refused, cfg);
-    linger_close(stream);
+fn connection(mut stream: TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig, login: &AtomicU8, streams: &Streams) {
+    serve(&mut stream, tx, token, refused, cfg, login, streams);
+    // A connection the server dropped is already shut in both directions: nothing to wait for.
+    if login.load(Ordering::SeqCst) != EVICTED {
+        linger_close(stream);
+    }
 }
 
 /// Closes a connection so that the last reply arrives.
@@ -270,14 +361,19 @@ fn peer_gone(stream: &TcpStream) -> bool {
     gone
 }
 
-fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
-    // Handshake: the first frame is a small hello with the token, within five seconds.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let hello = read_frame(stream, HELLO_MAX);
+fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig, login: &AtomicU8, streams: &Streams) {
+    // Handshake: the first frame is a small hello with the token, all of it within
+    // `hello_timeout`.
+    let hello = read_frame(&mut UntilDeadline { stream: &*stream, end: Instant::now() + cfg.hello_timeout }, HELLO_MAX);
     let ok = match hello {
         Ok(Some(v)) => v["hello"]["token"].as_str().is_some_and(|t| ct_eq(t.as_bytes(), token.as_bytes())),
         _ => false,
     };
+    if login.load(Ordering::SeqCst) == EVICTED {
+        // Dropped for a newer connection while it was still in the handshake.
+        refused.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if !ok {
         refused.fetch_add(1, Ordering::Relaxed);
         // A pause makes guessing slow; the reply says nothing about which part was wrong.
@@ -286,6 +382,23 @@ fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicU
             stream,
             &json!({"ok": false, "error": "authentication failed: missing or wrong token (read it from DarkBurn's control.json)"}),
         );
+        return;
+    }
+    // Take a logged-in place, if one is free. Counted under the list's lock, so two clients that
+    // log in at the same moment cannot both take the last place.
+    let admitted = {
+        let list = streams.lock().unwrap_or_else(|e| e.into_inner());
+        let logged_in = list.iter().filter(|c| c.login.load(Ordering::SeqCst) == LOGGED_IN).count();
+        logged_in < cfg.max_connections && login.compare_exchange(HELLO_PENDING, LOGGED_IN, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+    };
+    if !admitted {
+        refused.fetch_add(1, Ordering::Relaxed);
+        if login.load(Ordering::SeqCst) != EVICTED {
+            let _ = write_frame(
+                stream,
+                &json!({"ok": false, "error": format!("DarkBurn already serves {} agents at once; close one of them and try again", cfg.max_connections)}),
+            );
+        }
         return;
     }
     if write_frame(stream, &json!({"ok": true, "server": "DarkBurn", "version": PROTOCOL})).is_err() {

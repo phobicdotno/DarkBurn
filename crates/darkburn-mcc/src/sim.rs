@@ -1167,6 +1167,27 @@ mod tests {
         assert!(log.iter().any(|o| matches!(o, Outcome::Dropped(_))));
     }
 
+    /// The card took a frame that switches the CO2 tube on, but its reply was lost. Once the
+    /// water alarm is up, that queue does not start.
+    #[test]
+    fn a_co2_frame_whose_reply_was_lost_is_not_started_without_water() {
+        let mut l = link();
+        l.sim.set_inputs(1 << 10);
+        l.gate.arming.arm_motion().unwrap();
+        let t = l.gate.arming.begin_job().unwrap();
+        l.gate.arming.arm_laser(true, Some(&t)).unwrap();
+        l.poll_status().unwrap();
+        assert!(l.gate.co2_water_ok);
+        let co2_frame =
+            command::SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        l.sim.drop_replies(1);
+        assert_eq!(l.write(&co2_frame), Err(LinkError::Timeout));
+        l.sim.set_inputs(0);
+        l.poll_status().unwrap();
+        assert!(!l.gate.co2_water_ok);
+        assert_eq!(l.write(&command::fifo_start().unwrap()), Err(LinkError::Refused(GateRefusal::Co2WaterAlarm)));
+    }
+
     #[test]
     fn delayed_replies_arrive_late() {
         let mut sim = CardSimulator::new(SimConfig::default());

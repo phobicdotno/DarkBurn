@@ -266,7 +266,9 @@ impl Default for GateConfig {
 }
 
 /// PC-side gate. Call [`check_write`](Self::check_write) before sending and
-/// [`after_send`](Self::after_send) once the card acknowledged.
+/// [`after_send`](Self::after_send) once the card acknowledged. A write the gate lets through
+/// counts as queued from that moment: a reply that never came does not mean the card did not
+/// take it.
 #[derive(Clone, Debug)]
 pub struct SafetyGate {
     /// Configuration.
@@ -488,7 +490,25 @@ impl SafetyGate {
         if w.register() == REG_FIFO_CONTROL && words == [2] && self.card_fifo_has_laser && self.arming.state() != ArmState::LaserArmed {
             return Err(GateRefusal::LaserFramesQueued);
         }
+        self.note_what_may_be_queued(w);
         Ok(())
+    }
+
+    /// What `w` may have put on the card, recorded when it is let through and again when it is
+    /// acknowledged. Only an acknowledged FIFO clear forgets queued content.
+    fn note_what_may_be_queued(&mut self, w: &SafeWrite) {
+        match w.register() {
+            REG_FIFO_DATA => {
+                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
+                    self.card_fifo_has_laser = true;
+                }
+                if self.turns_co2_on(w) {
+                    self.card_fifo_has_co2 = true;
+                }
+            }
+            REG_COMMAND if self.turns_co2_on(w) => self.co2_output_on = Some(true),
+            _ => {}
+        }
     }
 
     /// Update tracking after the card acknowledged `w`.
@@ -504,15 +524,8 @@ impl SafetyGate {
             }
             _ => {}
         }
+        self.note_what_may_be_queued(w);
         match w.register() {
-            REG_FIFO_DATA => {
-                if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
-                    self.card_fifo_has_laser = true;
-                }
-                if self.turns_co2_on(w) {
-                    self.card_fifo_has_co2 = true;
-                }
-            }
             REG_FIFO_CONTROL => match words.first() {
                 Some(2) => self.fifo_running = true,
                 Some(3) => self.fifo_running = false,
@@ -945,6 +958,31 @@ mod tests {
         // clearing the FIFO forgets the CO2 content
         g.after_send(&command::fifo_clear().unwrap(), 5);
         assert!(!g.card_fifo_has_co2);
+    }
+
+    /// The card took a frame but its reply was lost, so `after_send` never ran: what the frame
+    /// holds is still remembered from the moment the gate let it through.
+    #[test]
+    fn a_frame_let_through_counts_as_queued_without_its_reply() {
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_frame, 0).is_ok());
+        assert!(g.card_fifo_has_co2 && g.card_fifo_has_laser);
+        // the water alarm comes up with DO9 still off: the queue holding DO9 does not start
+        g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // a refused write is not counted
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_frame, 0), Err(GateRefusal::Co2WaterAlarm));
+        assert!(!g.card_fifo_has_co2 && !g.card_fifo_has_laser);
+        // DO9 switched on directly with no reply: the gate takes it as on until a status says
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_on(), 1).is_ok());
+        assert_eq!(g.co2_output_on, Some(true));
     }
 
     /// A running stream with CO2 output in it is stopped because of what the FIFO holds. The

@@ -6,3 +6,9 @@
 - Fix: Print and Cut "Head" no longer gets the position wrong on GRBL with an origin set
 - Fix: The rotary test turn comes back to where it started on Ruida machines
 - Fix: A finish position off the bed is refused
+- New: Snapmaker laser power in percent, with speed, power and time in the file header
+- New: Gweike G-code can be saved as .cnc, .g or .txt
+- New: Find, start and stop cameras from the Camera panel, with a simulated camera to try it out
+- New: Capture system, picture size and black and white view in Settings now work
+- New: Trace from the camera takes a fresh picture, and Cancel leaves nothing behind
+- New: Head camera reads where the laser head is for marks and captures

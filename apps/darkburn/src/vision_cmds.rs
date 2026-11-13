@@ -341,10 +341,6 @@ fn num(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(Value::as_f64).filter(|v| v.is_finite())
 }
 
-fn req(a: &Value, k: &str) -> Result<f64, String> {
-    num(a, k).ok_or_else(|| format!("argument {k} must be a number"))
-}
-
 fn flag(a: &Value, k: &str) -> Option<bool> {
     a.get(k).and_then(Value::as_bool)
 }

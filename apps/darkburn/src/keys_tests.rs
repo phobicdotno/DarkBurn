@@ -98,6 +98,67 @@ fn shortcuts_are_ignored_while_a_text_field_has_focus() {
     assert_eq!(got, None);
 }
 
+type Keys = std::rc::Rc<std::cell::RefCell<Vec<Event>>>;
+
+/// A context whose detached windows open as native windows, run the way the desktop backend runs
+/// them: in a pass of their own, with their own input, which here is what `keys` holds.
+fn with_native_windows(keys: &Keys) -> egui::Context {
+    let keys = keys.clone();
+    egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+        let events = std::mem::take(&mut *keys.borrow_mut());
+        let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 500.0)));
+        let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+        let viewports = std::iter::once((viewport.ids.this, info)).collect();
+        let input = RawInput { viewport_id: viewport.ids.this, viewports, screen_rect, events, ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+        out.textures_delta.clear();
+    });
+    let ctx = egui::Context::default();
+    darkburn_ui::fonts::setup_bundled_fonts(&ctx);
+    ctx.set_embed_viewports(false);
+    ctx
+}
+
+/// One frame with Settings open in a window of its own, `key` with `mods` pressed in it. The
+/// main window's own shortcut check runs too: it must not see the key.
+fn press_in_own_window(app: &mut DarkBurn, keys: &Keys, ctx: &egui::Context, key: Key, mods: Modifiers) {
+    darkburn_ui::ui_kit::window_host::update(ctx, "settings", |p| p.detach());
+    for pressed in [true, false] {
+        keys.borrow_mut().push(Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: mods });
+    }
+    let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)));
+    let mut root = None;
+    let mut out = ctx.run_ui(RawInput { screen_rect, ..Default::default() }, |ui| {
+        darkburn_ui::ui_kit::Window::new(egui::Id::unique("settings"), "settings", "Settings").dockable("settings").show(ui.ctx(), true, |_| {});
+        root = app.shortcut_command(ui.ctx());
+    });
+    out.textures_delta.clear();
+    assert_eq!(root, None, "the main window did not get the key itself");
+}
+
+/// The system gives the keyboard to the window that has the focus: Pause and Ctrl+Pause still
+/// pause and stop the job while Settings has it in a window of its own.
+#[test]
+fn shortcuts_work_while_a_window_of_its_own_has_the_keyboard() {
+    let keys = Keys::default();
+    let ctx = with_native_windows(&keys);
+    let mut a = app();
+    let pressed = |a: &mut DarkBurn, key, mods| {
+        press_in_own_window(a, &keys, &ctx, key, mods);
+        a.window_shortcut_commands(&ctx)
+    };
+    assert_eq!(pressed(&mut a, Key::Pause, Modifiers::COMMAND), vec!["job.stop"]);
+    assert_eq!(pressed(&mut a, Key::Pause, Modifiers::NONE), vec!["job.pause"]);
+    assert_eq!(pressed(&mut a, Key::S, Modifiers::ALT), vec!["job.start"]);
+    assert_eq!(pressed(&mut a, Key::L, Modifiers::NONE), Vec::<&str>::new(), "a plain key was meant for the window");
+    // The command runs.
+    execute_headless(&mut a, "shape.add_rect", &json!({ "x": 10, "y": 10, "width": 10, "height": 10, "layer": 0 })).unwrap();
+    assert_eq!(a.editor.doc.len(), 1);
+    press_in_own_window(&mut a, &keys, &ctx, Key::Z, Modifiers::COMMAND);
+    a.window_shortcuts(&ctx);
+    assert_eq!(a.editor.doc.len(), 0, "Ctrl+Z in the window undid the drawing");
+}
+
 // ----- KEY-02 laser keys -------------------------------------------------------------------------
 
 #[test]

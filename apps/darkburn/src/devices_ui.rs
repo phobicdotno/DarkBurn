@@ -52,8 +52,11 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
     if !app.machine.dlg.devices {
         return;
     }
-    let (closed, action) =
-        ui_kit::Window::new(Id::unique("db_devices"), "settings", "Devices").cards(3.0).actions("", "Close", None).show(ctx, true, |ui| {
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_devices"), "settings", "Devices")
+        .dockable("db_devices")
+        .cards(3.0)
+        .actions("", "Close", None)
+        .show(ctx, true, |ui| {
             let t = Tokens::get();
             ui.horizontal_wrapped(|ui| {
                 if small(ui, "New", "Add a device with the wizard", true) {
@@ -138,6 +141,7 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                     && let Some(d) = sel.and_then(|id| app.machine.devices.get(id).cloned())
                 {
                     app.machine.dlg.settings = Some((d, 0));
+                    ui_kit::window_host::raise(ui.ctx(), "db_device_settings");
                 }
                 if small(ui, "Duplicate", "Make a copy", has)
                     && let Some(id) = sel
@@ -380,10 +384,13 @@ const PAGES: [&str; 5] = ["Basic", "GCode", "DSP", "Additional", "Galvo"];
 fn settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     let Some((mut d, mut page)) = app.machine.dlg.settings.take() else { return };
     let errs = d.validate();
+    let unsaved = app.machine.devices.get(d.id).is_some_and(|stored| *stored != d);
     let (closed, action) = ui_kit::Window::new(Id::unique("db_device_settings"), "settings", &format!("Device Settings: {}", d.name))
+        .dockable("db_device_settings")
         .cards(4.0)
         .fields()
         .actions("OK", "Cancel", None)
+        .unsaved(unsaved)
         .show(ctx, errs.is_empty(), |ui| {
             ui.horizontal(|ui| {
                 for (i, p) in PAGES.iter().enumerate() {
@@ -611,10 +618,15 @@ fn gcode_firmware_fields(ui: &mut Ui, d: &mut Device) {
         ui_kit::number_field(ui, &mut e.max_fire_seconds, 0.1..=600.0, 0.5, " s");
     });
     if matches!(kind, Some(DeviceKind::Marlin | DeviceKind::Snapmaker)) {
-        let modes = [MarlinPowerMode::M3, MarlinPowerMode::M4, MarlinPowerMode::Inline, MarlinPowerMode::Fan];
+        let modes = [MarlinPowerMode::M3, MarlinPowerMode::M4, MarlinPowerMode::Inline, MarlinPowerMode::Fan, MarlinPowerMode::Percent];
         let mut mi = modes.iter().position(|m| *m == e.marlin_power).unwrap_or(0);
         ui_kit::row(ui, "Laser power", |ui| {
-            ui_kit::dropdown(ui, "ds_marlin_mode", &mut mi, &["M3 S (constant)", "M4 S (dynamic)", "Inline (M3 I)", "Fan output (M106)"]);
+            ui_kit::dropdown(
+                ui,
+                "ds_marlin_mode",
+                &mut mi,
+                &["M3 S (constant)", "M4 S (dynamic)", "Inline (M3 I)", "Fan output (M106)", "Percent (M3 P, Snapmaker)"],
+            );
         });
         e.marlin_power = modes[mi];
         ui_kit::row(ui, "Fan or tool number", |ui| {
@@ -738,6 +750,7 @@ fn machine_settings_dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     let family = machine_ui::family_of(&app.machine);
     let (closed, action) = ui_kit::Window::new(Id::unique("db_machine_settings"), "settings", "Machine Settings")
+        .dockable("db_machine_settings")
         .cards(5.0)
         .fields()
         .actions("", "Close", None)
@@ -904,6 +917,8 @@ fn risky_confirm(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_risky_settings"), "settings", "Change protection settings?")
         .tone(Tone::Danger)
         .actions("Write anyway", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label("You are changing settings that limit the laser's power or motion (laser mode, power range, limits or homing).");
             ui.label("Switching these off or loosening them can stop the machine from holding its safety class, for example an enclosed machine that is safe by design. Check the machine's manual and your lid and interlock first.");
@@ -1122,6 +1137,8 @@ fn restore_confirm(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_restore_settings"), "settings", "Write these settings to the laser?")
         .tone(Tone::Warning)
         .actions("Write", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label(format!("{} values will be written to the controller. This replaces what it has now.", b.len()));
         });
@@ -1145,6 +1162,7 @@ fn controller_info_dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     let snap = app.machine.handle.snapshot().clone();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_controller_info"), "settings", "Controller info")
+        .dockable("db_controller_info")
         .cards(3.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {
@@ -1186,6 +1204,8 @@ fn confirm_connect_dialog(ctx: &Context, app: &mut DarkBurn) {
     let (_, action) = Confirm::new(Id::unique("db_confirm_connect"), "settings", "Connect to a real machine?")
         .tone(Tone::Danger)
         .actions("Connect", "Cancel", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             let t = Tokens::get();
             ui.label(RichText::new("REAL MACHINE").strong().color(t.error));
@@ -1206,6 +1226,8 @@ fn confirm_close_dialog(ctx: &Context, app: &mut DarkBurn) {
     let (closed, action) = Confirm::new(Id::unique("db_confirm_close"), "settings", "A job is running")
         .tone(Tone::Warning)
         .actions("Stop and close", "Keep running", None)
+        // A one-key answer may only say no to a box that changes the machine.
+        .answer_keys(ui_kit::AnswerKeys::NoOnly)
         .show(ctx, true, |ui| {
             ui.label("Closing DarkBurn now stops the job and turns the laser off. Do you want to stop and close?");
         });

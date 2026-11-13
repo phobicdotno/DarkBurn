@@ -6,13 +6,11 @@
 //! two directions are apart; [`shift_plans`] moves the lines of a [`darkburn_raster::ScanPlan`]
 //! by half the offset each way. Fast blank-skip lets long gaps of blank image be rapided over.
 //!
-//! These are device-level settings, so they live here, process-wide, until the device settings
-//! window arrives: [`current`] and [`set`] read and write them, [`load_from`] and [`save_to`]
-//! keep them in `scan_offsets.dbso` in the settings folder, and `images::scan_plans_for_layer`
-//! applies them. The sign of the shift (forward lines go back by half the offset, reverse lines
-//! forward by half) still has to be confirmed on a real machine.
-
-#![allow(dead_code, reason = "the job builder reads the tuning through scan_plans_for_layer once it lands")]
+//! These are device-level settings: the selected device profile holds them, and
+//! `machine_ui::sync_job_state` keeps [`current`] (what the job builder and the preview read) and
+//! the profile the same. [`load_from`] and [`save_to`] keep a copy in `scan_offsets.dbso` in the
+//! settings folder. The sign of the shift (forward lines go back by half the offset, reverse
+//! lines forward by half) still has to be confirmed on a real machine.
 
 use std::path::Path;
 #[cfg(not(test))]
@@ -74,10 +72,6 @@ impl ScanOffsetTable {
         if index < self.entries.len() {
             self.entries.remove(index);
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     /// The offset at `speed`: linear between the neighbouring rows, the end rows' value beyond

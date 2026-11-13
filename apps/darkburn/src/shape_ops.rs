@@ -790,7 +790,7 @@ fn warp(e: &mut Editor, a: &Value) -> R {
             let mut pts = [Point::ZERO; 4];
             for (i, v) in c.iter().enumerate() {
                 let arr = v.as_array().filter(|x| x.len() == 2).ok_or("corners must be four [x, y] points")?;
-                pts[i] = Point::new(arr[0].as_f64().ok_or("bad corner")?, arr[1].as_f64().ok_or("bad corner")?);
+                pts[i] = reachable(Point::new(arr[0].as_f64().ok_or("bad corner")?, arr[1].as_f64().ok_or("bad corner")?))?;
             }
             pts
         }
@@ -812,6 +812,13 @@ fn warp(e: &mut Editor, a: &Value) -> R {
     ok(done, &ids)
 }
 
+/// A warp or deform point the shapes may be stretched to: one further out than the document allows
+/// would be refused anyway, after a long time spent bending the shapes towards it.
+fn reachable(p: Point) -> Result<Point, String> {
+    let max = darkburn_core::editor::MAX_COORD;
+    if p.x.abs() <= max && p.y.abs() <= max { Ok(p) } else { Err("the points must lie within the work area's reach".into()) }
+}
+
 fn deform(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
     let src = bbox_of_ids(&e.doc, &ids).ok_or("nothing to deform")?;
@@ -822,7 +829,7 @@ fn deform(e: &mut Editor, a: &Value) -> R {
     let mut grid = [[Point::ZERO; 4]; 4];
     for (i, v) in pts.iter().enumerate() {
         let arr = v.as_array().filter(|x| x.len() == 2).ok_or("grid points are [x, y]")?;
-        grid[i / 4][i % 4] = Point::new(arr[0].as_f64().ok_or("bad point")?, arr[1].as_f64().ok_or("bad point")?);
+        grid[i / 4][i % 4] = reachable(Point::new(arr[0].as_f64().ok_or("bad point")?, arr[1].as_f64().ok_or("bad point")?))?;
     }
     let done = e.edit("Deform", |d, _| map_shapes(d, &ids, &mut |s| gxf::deform_grid(&s.outline(), src, grid, TOL)) > 0);
     ok(done, &ids)
@@ -1413,6 +1420,13 @@ pub(crate) mod tests {
         }
         run(&mut app, "tools.deform", json!({ "grid": grid })).unwrap();
         assert!(app.editor.doc.get(small).unwrap().bbox().y0 > 0.5);
+        // Points far out of reach are refused at once instead of bending the shapes towards them.
+        let steps = app.editor.history.len();
+        let mut far = grid.clone();
+        far[8] = json!([1e150, 1e300]);
+        assert!(run(&mut app, "tools.deform", json!({ "grid": far })).is_err());
+        assert!(run(&mut app, "tools.warp", json!({ "corners": [[60, 0], [1e12, 0], [75, 10], [60, 10]] })).is_err());
+        assert_eq!(app.editor.history.len(), steps);
     }
 
     #[test]

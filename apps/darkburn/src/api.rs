@@ -37,6 +37,15 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if let Some(result) = crate::misc_cmds::execute(app, id, args) {
         return result;
     }
+    if let Some(result) = crate::nest_cmds::execute(app, id, args) {
+        return result;
+    }
+    if let Some(result) = crate::tangent_tool::execute(app, id, args) {
+        return result;
+    }
+    if let Some(result) = crate::taper_warp::execute(app, id, args) {
+        return result;
+    }
     if commands::hardware(id) {
         return Err(format!("{id} operates the machine and is not available"));
     }
@@ -127,6 +136,7 @@ fn changed(done: bool) -> Result<Value, String> {
 /// The commands that take arguments; None when `id` is not one of them.
 fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     Some(match id {
+        "window.toolbar_place" => crate::toolbar_dock::place_command(app, a),
         "window.toolbar_move" => (|| {
             let tb = text(a, "toolbar")?;
             if !crate::prefs::TOOLBARS.iter().any(|(t, _)| *t == tb) {

@@ -45,6 +45,8 @@ pub enum Tool {
     Text,
     /// Click to move the laser head there (laser_position.rs).
     PositionLaser,
+    /// Pick lines, arcs and circles for the circles touching them (tangent_tool.rs).
+    TangentCircle,
 }
 
 impl Tool {
@@ -67,6 +69,7 @@ impl Tool {
             Tool::TwoPoint => "arrange.two_point",
             Tool::Text => "tools.text",
             Tool::PositionLaser => "tools.position_laser",
+            Tool::TangentCircle => crate::tangent_tool::TOOL,
         }
     }
 
@@ -82,6 +85,7 @@ impl Tool {
             Tool::Polygon => "Drag a polygon from its centre. Shift keeps a corner on top.",
             Tool::Text => crate::text_ui::HINT,
             Tool::PositionLaser => "Click to move the laser head to that point. Needs a connected laser.",
+            Tool::TangentCircle => crate::tangent_tool::HINT,
             other => crate::node_tool::hint(other),
         }
     }

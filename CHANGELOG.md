@@ -1,5 +1,88 @@
 # Changelog
 
+## v0.0.609 (build 7)
+- Fix: disconnecting a Ruida while firing always lets go of its Pulse key
+- Fix: holding the Fire button never fires twice when the machine is slow to answer
+- Fix: the new windows, tools and texts are translated into every language
+- New: wireless handheld pendant support (turn it on in Settings)
+- New: settings windows can be resized, popped out into their own window or docked as tabs
+- New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
+- New: Help, Project Notes, Material Test and Edit Text Shapes can be docked as tabs too
+- New: docked tabs keep their order the next time the program starts
+- Fix: a window moved to the bottom of the screen can be resized from its bottom corner again
+- Fix: a window saved off the screen (an unplugged monitor) opens where you can see it
+- Fix: Reset to Default Layout puts every docked or popped-out window back where it first opened
+- Fix: closing a popped-out window with its own close button, Esc or Close works as it does inside the main window
+- Fix: clicking a button in a window that sits over a panel no longer docks the window, even when the button is held down a while
+- Fix: the Preview docks again when dragged onto a panel by its title bar, and right-clicking its title bar opens the dock menu
+- New: every toolbar can be docked at any edge of the window or floated over it, by dragging it or from its right-click menu
+- New: F2 starts the job too
+- New: every command can have a second key in the hotkey editor
+- New: keys to jog Z and diagonally
+- New: number pad jogs the laser (with NumLock off)
+- New: Y and N answer yes/no questions
+- Fix: keys you picked yourself keep working when a new default key would take them
+- New: Focus Z runs the controller's own focus routine on Ruida machines
+- New: Turn the rotary from the Move panel, measured along the object's surface
+- New: Run a rotary test turn from Rotary Setup
+- New: Set First/Second Target takes the spot where the laser head stands
+- New: Print and Cut can add the red dot offset when you line up with the pointer
+- Fix: Print and Cut "Head" no longer gets the position wrong on GRBL with an origin set
+- Fix: The rotary test turn comes back to where it started on Ruida machines
+- Fix: A finish position off the bed is refused
+- New: Snapmaker laser power in percent, with speed, power and time in the file header
+- New: Gweike G-code can be saved as .cnc, .g or .txt
+- New: Find, start and stop cameras from the Camera panel, with a simulated camera to try it out
+- New: Capture system, picture size and black and white view in Settings now work
+- New: Trace from the camera takes a fresh picture, and Cancel leaves nothing behind
+- New: Head camera reads where the laser head is for marks and captures
+- Fix: Trace from a head camera uses the stitched picture
+- Fix: Pressing Trace twice no longer leaves an extra picture behind
+- Fix: Cancelling a camera trace keeps what you could redo
+- Fix: Capture again keeps the old picture when no new one can be taken
+- New: Quick Nest packs the selected shapes onto a sheet by their bounding boxes, with optional quarter turns and a gap
+- New: True Nest packs the selected shapes by their real outlines, can turn them in any step and put small parts inside holes
+- New: Nesting can use a typed sheet size or the work area, and spill onto more sheets side by side
+- New: Cancel a running True Nest to keep the best layout found so far
+- New: Locked shapes and shapes on layers with output off stay put while nesting, and parts keep clear of them
+- Fix: A nest that finishes after you open another project leaves that project alone
+- Fix: Nesting no longer drops parts into holes that sit under a fill or an image
+- Fix: Shapes to keep clear of now count on every sheet, not just the first
+- Fix: Cancel and the time limit now also work while a big selection is being sorted out
+- Fix: Nesting again no longer glues a part sitting in a hole to the frame around it
+- Fix: A fill or image over the whole sheet no longer counts as the material outline
+- Fix: Very fine rotation steps now try the whole turn
+- New: Tangent circles: pick two or three lines, arcs or circles and get the circles that touch them
+- New: Taper warp: squeeze or unroll artwork so it fits tapered cups and cones
+- New: Trace Image Files traces a whole batch of pictures with the same settings and lays them out side by side
+- New: Import STL and OBJ 3D models as a grey height picture for 3D engraving
+- Fix: The pendant's Pause key only pauses now, and its Start key goes on with a paused job
+- Fix: The pendant's help text in Settings shows in full
+- Fix: The pendant's Pause pressed right after going on with a job pauses it again
+- New: Closing a settings window with changes you haven't applied asks whether to apply them, throw them away or keep it open
+- Fix: Adjust Image and Optimization close when you open another project, so nothing carries over into it
+- New: the Language menu is ready for 22 more languages and shows each one as soon as its translation is there; a text not yet translated shows in English
+- New: Japanese, Korean and Chinese will be drawn with the fonts already on your computer
+- Fix: the Language menu no longer lists languages that cannot be picked yet
+- New: German, French and Italian (machine-translated; corrections are welcome)
+- New: Spanish (Spain), Spanish (Latin America) and Portuguese (machine-translated; corrections are welcome)
+- New: Dutch, Danish and Swedish (machine-translated; corrections are welcome)
+- New: Finnish, Polish and Czech (machine-translated; corrections are welcome)
+- New: Hungarian, Slovenian and Turkish (machine-translated; corrections are welcome)
+- Fix: Turkish headings in capitals keep the dot on the İ, and the hotkey search finds Turkish words typed with or without ı
+- New: Greek and Russian (machine-translated; corrections are welcome)
+- Fix: Greek headings in capitals drop the accents, and the hotkey search finds Greek words typed with or without them
+- New: Japanese and Korean (machine-translated; corrections are welcome)
+- New: Simplified and Traditional Chinese (machine-translated; corrections are welcome)
+- Fix: Another program on the computer can no longer keep AI agents from connecting
+- Fix: AI agents can no longer change where files, logs or update checks go; they ask you instead
+- Fix: AI agents can no longer save files into DarkBurn's own settings folder
+- Fix: AI agents no longer leave a file window waiting for you; they are asked for the file name
+- Fix: the licence list in the Mac download now has the licence of the code that talks to the wireless pendant
+- New: First groundwork for K40 lasers with the stock board
+- New: Reads the laser's own cutting recipes and machine settings, ready for quick switching
+- New: Pick a recipe from the laser's own settings folder and put it on a craft slot with one click
+
 ## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)

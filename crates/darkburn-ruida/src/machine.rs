@@ -646,6 +646,13 @@ impl<T: Transport> RuidaMachine<T> {
         }])
     }
 
+    /// Focus Z (`D8 2E`): the controller runs its own focus routine on the Z axis and stops at
+    /// the focus distance set in its Z settings. What the routine does is the controller's own
+    /// (a probe, a sensor, or a plain move); this only asks for it.
+    pub fn focus_z(&mut self) -> Result<()> {
+        self.send_commands(&[Command::FocusZ])
+    }
+
     /// Rapid move to the job origin. UNCERTAIN: sent as `D9 10 00 0 0` (rapid XY with the
     /// "origin" option); a real controller may need the panel Origin key instead.
     pub fn go_to_origin(&mut self) -> Result<()> {
@@ -695,23 +702,39 @@ impl<T: Transport> RuidaMachine<T> {
 
     /// Jog one axis by `distance_mm` (relative, rapid).
     pub fn jog_step(&mut self, axis: Axis, distance_mm: f64) -> Result<()> {
+        self.jog_steps(&[(axis, distance_mm)])
+    }
+
+    /// Jog by each `(axis, distance_mm)` in turn (relative, rapid). The position is read once and
+    /// every move goes out as an absolute target worked out from it, in one send. A rapid move
+    /// takes time on a real controller, so a position read between two moves can still be the
+    /// one from before the first: a jog there and back worked out from such a read would not end
+    /// where it started. Every XY target is checked against the bed before anything is sent.
+    pub fn jog_steps(&mut self, steps: &[(Axis, f64)]) -> Result<()> {
+        if steps.is_empty() {
+            return Ok(());
+        }
+        if let Some((_, d)) = steps.iter().find(|(_, d)| !d.is_finite()) {
+            return Err(RuidaError::Encode(format!("the jog distance {d} is not a number")));
+        }
         let s = self.status()?;
-        let cur = match axis {
-            Axis::X => s.x,
-            Axis::Y => s.y,
-            Axis::Z => s.z,
-            Axis::U => s.u,
-        };
-        if !distance_mm.is_finite() {
-            return Err(RuidaError::Encode("the jog distance is not a number".into()));
+        let mut pos = [s.x, s.y, s.z, s.u];
+        let mut cmds = Vec::with_capacity(steps.len());
+        for &(axis, distance_mm) in steps {
+            let i = match axis {
+                Axis::X => 0,
+                Axis::Y => 1,
+                Axis::Z => 2,
+                Axis::U => 3,
+            };
+            pos[i] =
+                pos[i].checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
+            if matches!(axis, Axis::X | Axis::Y) {
+                self.check_bounds(Point::new(um_to_mm(pos[0]), um_to_mm(pos[1])))?;
+            }
+            cmds.push(Command::RapidAxis { axis, option: RapidOption::None, pos: pos[i] });
         }
-        let target =
-            cur.checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
-        if matches!(axis, Axis::X | Axis::Y) {
-            let p = if axis == Axis::X { Point::new(um_to_mm(target), um_to_mm(s.y)) } else { Point::new(um_to_mm(s.x), um_to_mm(target)) };
-            self.check_bounds(p)?;
-        }
-        self.send_commands(&[Command::RapidAxis { axis, option: RapidOption::None, pos: target }])
+        self.send_commands(&cmds)
     }
 
     /// Start continuous jog (key down). Call [`jog_stop`](Self::jog_stop) to end it.

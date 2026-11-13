@@ -54,6 +54,14 @@ pub struct FileIo {
     held: Option<Box<Loaded>>,
 }
 
+#[cfg(test)]
+impl FileIo {
+    /// Files are being read on the worker.
+    pub fn reading(&self) -> bool {
+        self.job.is_some()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Pick {
     Import,
@@ -161,6 +169,10 @@ pub fn start_import(app: &mut DarkBurn, paths: Vec<PathBuf>, at: Option<Point>) 
 /// Opens a file that is not a DarkBurn project: a LightBurn project becomes the open project,
 /// artwork starts a new project holding it. On a worker thread.
 pub fn start_open(app: &mut DarkBurn, path: PathBuf) {
+    if crate::model_import::is_model(&path) {
+        crate::model_import::open_files(app, vec![path], None);
+        return;
+    }
     if formats::is_device_profile(&path) {
         device_profile_hook(app, &path);
         return;
@@ -173,6 +185,11 @@ fn start_job(app: &mut DarkBurn, paths: Vec<PathBuf>, at: Option<Point>, open: b
     let (devices, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| formats::is_device_profile(p));
     for d in devices {
         device_profile_hook(app, &d);
+    }
+    // 3D models go to the Import 3D Model window [IMG-25].
+    let (models, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| crate::model_import::is_model(p));
+    if !models.is_empty() {
+        crate::model_import::open_files(app, models, at);
     }
     if paths.is_empty() {
         return;
@@ -451,6 +468,20 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
     true
 }
 
+impl FileIo {
+    /// Whether a file window (a picker, the export window or the print window) waits to open.
+    pub fn file_window_waiting(&self) -> bool {
+        self.pick.is_some() || self.export.is_some() || self.print.is_some()
+    }
+
+    /// Forget a file window that is waiting to open.
+    pub fn drop_file_window(&mut self) {
+        self.pick = None;
+        self.export = None;
+        self.print = None;
+    }
+}
+
 /// File > Import: pick files and read them in the background.
 pub fn request_import_dialog(app: &mut DarkBurn) {
     app.fio.pick = Some(Pick::Import);
@@ -536,13 +567,16 @@ pub(crate) fn instance_tick(ctx: &egui::Context, app: &mut DarkBurn) {
 fn run_pick(app: &mut DarkBurn, pick: Pick) {
     match pick {
         Pick::Import => {
-            let all: Vec<&str> = import::import_extensions().into_iter().chain(formats::LIBRARY_EXTENSIONS.iter().copied()).collect();
+            let models = darkburn_import::mesh::MESH_EXTENSIONS;
+            let all: Vec<&str> =
+                import::import_extensions().into_iter().chain(formats::LIBRARY_EXTENSIONS.iter().copied()).chain(models.iter().copied()).collect();
             let mut dialog = rfd::FileDialog::new()
                 .add_filter("All artwork and images", &all)
                 .add_filter("SVG", import::VECTOR_EXTENSIONS)
                 .add_filter("DXF, PDF, Illustrator, PLT, RD", &["dxf", "pdf", "ai", "plt", "hpgl", "hgl", "hpg", "rd"])
                 .add_filter("LightBurn projects", &["lbrn", "lbrn2"])
-                .add_filter("Images", import::BITMAP_EXTENSIONS);
+                .add_filter("Images", import::BITMAP_EXTENSIONS)
+                .add_filter("3D models (STL, OBJ)", &models);
             if let Some(dir) = app.project_path.as_deref().and_then(Path::parent) {
                 dialog = dialog.set_directory(dir);
             }
@@ -585,7 +619,7 @@ fn run_pick(app: &mut DarkBurn, pick: Pick) {
             let format = r.format_ext.as_str();
             let ext = ExportFormat::from_name(format).unwrap_or(ExportFormat::Svg);
             let (dir, name) = export_start(app, ext.ext());
-            let mut d = rfd::FileDialog::new().add_filter(ext.label(), &[ext.ext()]).set_file_name(name);
+            let mut d = rfd::FileDialog::new().add_filter(ext.label(), ext.extensions()).set_file_name(name);
             if let Some(dir) = dir {
                 d = d.set_directory(dir);
             }
@@ -700,6 +734,12 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
                 req.materials = m.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect();
             }
             req.default_material = a.get("default_material").and_then(Value::as_str).map(str::to_string);
+            // The Gweike G-code's contour start and end codes (MCC-03).
+            for (key, field) in [("nc_on", &mut req.nc_on), ("nc_off", &mut req.nc_off)] {
+                if let Some(code) = a.get(key).and_then(Value::as_str) {
+                    *field = code.trim().to_owned();
+                }
+            }
             if format.is_gweike() && req.materials.is_empty() {
                 // The layer to material mapping of the Gweike window.
                 req.materials = app.machine.active().settings.gweike.materials(&app.editor.doc).into_iter().collect();
@@ -839,11 +879,11 @@ fn options_window(ctx: &egui::Context, app: &mut DarkBurn) {
     }
     let (closed, action) = {
         let prefs = &mut app.prefs;
-        ui_kit::Window::new(egui::Id::unique("db_import_options"), "import", "Import options").fields().actions("", "Close", None).show(
-            ctx,
-            true,
-            |ui| import_options_body(ui, prefs),
-        )
+        ui_kit::Window::new(egui::Id::unique("db_import_options"), "import", "Import options")
+            .dockable("db_import_options")
+            .fields()
+            .actions("", "Close", None)
+            .show(ctx, true, |ui| import_options_body(ui, prefs))
     };
     if closed || action != ui_kit::Action::None {
         app.fio.options_open = false;
@@ -1035,8 +1075,10 @@ fn print_window(ctx: &egui::Context, app: &mut DarkBurn) {
 fn backups_window(ctx: &egui::Context, app: &mut DarkBurn) {
     let Some(list) = app.fio.backups.clone() else { return };
     let mut load: Option<PathBuf> = None;
-    let (closed, action) =
-        ui_kit::Window::new(egui::Id::unique("db_prefs_backups"), "folder", "Preferences backups").actions("", "Close", None).show(ctx, true, |ui| {
+    let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_prefs_backups"), "folder", "Preferences backups")
+        .dockable("db_prefs_backups")
+        .actions("", "Close", None)
+        .show(ctx, true, |ui| {
             if list.is_empty() {
                 ui.label("There are no backups yet. One is made when DarkBurn starts with changed settings.");
             }

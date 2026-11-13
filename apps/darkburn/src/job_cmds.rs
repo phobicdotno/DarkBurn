@@ -103,6 +103,8 @@ pub const COMMANDS: &[Cmd] = &[
     ),
     // Machine commands: registered now, connected by the machine side.
     cmd("job.start", "Start", "Alt+S", ""),
+    // Takes `only_pause` (the pendant's Pause key) but lists no arguments: a command that lists
+    // some gets no hotkey, and Pause is on the keyboard's Pause key.
     cmd("job.pause", "Pause", "", ""),
     cmd("job.stop", "Stop", "", ""),
     cmd("job.frame", "Frame", "Alt+R", ""),
@@ -222,6 +224,9 @@ pub struct PreviewUi {
     pub pan: egui::Vec2,
     pub fitted: bool,
     pub error: Option<String>,
+    /// Counts layout resets: the floating Preview is a new window to egui after one, so it opens
+    /// at its first place and size again.
+    pub layout: u32,
 }
 
 impl Default for PreviewUi {
@@ -238,6 +243,7 @@ impl Default for PreviewUi {
             pan: egui::Vec2::ZERO,
             fitted: false,
             error: None,
+            layout: 0,
         }
     }
 }
@@ -270,6 +276,8 @@ pub struct JobState {
     pub message: Option<Message>,
     pub optimization_open: bool,
     pub optimization_draft: Option<PlannerSettings>,
+    /// The project the draft was made from ([`darkburn_core::Editor::project`]).
+    pub optimization_project: u64,
     pub gcode_open: bool,
     pub gcode_draft: Option<(DeviceGcodeSettings, AdditionalSettings)>,
     pub material_open: bool,
@@ -432,7 +440,7 @@ pub fn open_preview(app: &mut DarkBurn) {
 /// Write the G-code of `job` to `path`. `from_op` starts part-way (Save from here).
 pub fn write_gcode(app: &mut DarkBurn, job: &Arc<BuiltJob>, path: &Path, from_op: Option<usize>) -> Result<usize, String> {
     let text = crate::gcode_machines::job_text(app.machine.active(), job, from_op, &app.job.gcode);
-    let text = crate::gcode_machines::with_finish_move(app.machine.active(), text, app.machine.jog.finish);
+    let text = crate::gcode_machines::with_finish_move(app.machine.active(), text, crate::motion_cmds::finish_for_job(app)?);
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }

@@ -68,25 +68,46 @@ pub struct Painted {
     pub full: Rect,
     /// A word was broken across rows (a label squeezed into too narrow a space).
     pub broken_word: bool,
+    /// The text was cut short with an ellipsis to fit its room.
+    pub elided: bool,
+}
+
+/// Whether a row that ends with `last` and a row that starts with `first` split a word. Japanese
+/// and Chinese write no spaces between words, and a line may break between any two of their
+/// characters (egui breaks them so), so a break next to one splits nothing. Korean puts spaces
+/// between words like English does.
+pub fn splits_a_word(last: char, first: char) -> bool {
+    let breaks_anywhere = |c: char| {
+        matches!(c as u32,
+            0x3040..=0x30FF // hiragana and katakana
+            | 0x31F0..=0x31FF // katakana extensions
+            | 0x3400..=0x4DBF // CJK ideographs, extension A
+            | 0x4E00..=0x9FFF // CJK ideographs
+            | 0xF900..=0xFAFF // CJK compatibility ideographs
+            | 0xFF66..=0xFF9F) // half-width katakana
+    };
+    last.is_alphanumeric() && first.is_alphanumeric() && !breaks_anywhere(last) && !breaks_anywhere(first)
 }
 
 /// One lock for everything that makes the software rasteriser work: making a GPU device,
-/// destroying one, and drawing a picture.
+/// destroying one, and drawing a picture take it alone; ordinary frames share it.
 ///
 /// Tests run in parallel threads, each with its own device, and all of them end up on the one
 /// software adapter the harness prefers (WARP on Windows). The process crashed now and then
 /// with an access violation inside `d3d10warp.dll`, on one of its own worker threads. The
 /// crash dumps showed some tests drawing a screenshot while others made or destroyed their
 /// device; serialising only creation and teardown did not stop it. So drawing takes the lock
-/// too. Ordinary frames do not: they draw nothing, they only make textures and queue the
-/// uploads, which run with the next picture.
+/// too. Ordinary frames draw nothing, but they make textures and upload them; on Linux the
+/// Vulkan loader crashed naming such an upload buffer while another test made or destroyed its
+/// device. So frames take the lock shared: side by side with each other, never beside a device
+/// being made, destroyed or drawn.
 ///
 /// Everything that owns a piece of the device lives inside the harness (the renderer and the
 /// copies of its render state that eframe keeps), and the harness only ever exists inside a
 /// [`Guarded`]: [`Guarded::build`] makes it under the lock and `Drop` destroys it under the
 /// lock, also when a test panics or the app fails to start. The app itself holds nothing of
 /// the GPU, so it may outlive the harness.
-static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static GPU: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 struct Guarded(Option<Harness<'static, crate::App>>);
 
@@ -94,13 +115,19 @@ impl Guarded {
     /// Runs `make` (which creates the device) under the GPU lock. If `make` panics, what it
     /// had built so far is dropped while the lock is still held.
     fn build(make: impl FnOnce() -> Harness<'static, crate::App>) -> Guarded {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         Guarded(Some(make()))
+    }
+
+    /// One ordinary frame, under the shared side of the GPU lock.
+    fn step(&mut self) {
+        let _gpu = GPU.read().unwrap_or_else(|e| e.into_inner());
+        self.0.as_mut().expect("the harness is alive").step();
     }
 
     /// Draws the last frame offscreen, under the GPU lock.
     fn render(&mut self) -> Result<image::RgbaImage, String> {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         self.0.as_mut().expect("the harness is alive").render()
     }
 }
@@ -120,7 +147,7 @@ impl std::ops::DerefMut for Guarded {
 
 impl Drop for Guarded {
     fn drop(&mut self) {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         self.0 = None;
     }
 }
@@ -285,12 +312,10 @@ impl Gui {
                     let rows = &t.galley.rows;
                     let broken_word = rows.windows(2).any(|w| {
                         let (a, b) = (&w[0], &w[1]);
-                        !a.ends_with_newline
-                            && a.glyphs.last().is_some_and(|g| g.chr.is_alphanumeric())
-                            && b.glyphs.first().is_some_and(|g| g.chr.is_alphanumeric())
+                        !a.ends_with_newline && a.glyphs.last().zip(b.glyphs.first()).is_some_and(|(last, first)| splits_a_word(last.chr, first.chr))
                     });
                     if !text.trim().is_empty() && rect.is_positive() {
-                        out.push(Painted { text, rect, full, broken_word });
+                        out.push(Painted { text, rect, full, broken_word, elided: t.galley.elided });
                     }
                 }
                 egui::epaint::Shape::Vec(v) => v.iter().for_each(|x| walk(x, clip, out)),
@@ -540,6 +565,19 @@ impl Gui {
         }
         if m != Modifiers::NONE {
             self.modifiers_for(Modifiers::NONE);
+        }
+        self.h.step();
+        self.after_frame();
+        self.frames(2)
+    }
+
+    /// Press and release a key whose place on the keyboard (`physical`) differs from what it
+    /// means (`key`): number pad 8 with NumLock off is `ArrowUp` on `Num8`, Shift+1 on a US
+    /// keyboard is `Exclamationmark` on `Num1`.
+    pub fn key_at(&mut self, key: Key, physical: Key, modifiers: Modifiers) -> &mut Self {
+        self.last = format!("key_at({key:?}, {physical:?}, {modifiers:?})");
+        for pressed in [true, false] {
+            self.h.event(Event::Key { key, physical_key: Some(physical), pressed, repeat: false, modifiers });
         }
         self.h.step();
         self.after_frame();

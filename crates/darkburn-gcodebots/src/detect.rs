@@ -57,7 +57,9 @@ pub fn baud_candidates(fw: FirmwareGuess) -> Vec<u32> {
         FirmwareGuess::Grbl | FirmwareGuess::GrblHal | FirmwareGuess::FluidNc => vec![115_200, 230_400, 250_000, 57_600, 19_200, 9_600],
         // Smoothieware talks over USB CDC, where the rate is ignored; UART builds use 115200.
         FirmwareGuess::Smoothie => vec![115_200, 250_000, 57_600, 9_600],
-        FirmwareGuess::Marlin | FirmwareGuess::Snapmaker => vec![115_200, 250_000, 500_000, 57_600, 38_400, 19_200, 9_600],
+        FirmwareGuess::Marlin => vec![115_200, 250_000, 500_000, 57_600, 38_400, 19_200, 9_600],
+        // Snapmaker 2.0 serial runs at 115200 or 460800 (vendor SACP docs).
+        FirmwareGuess::Snapmaker => vec![115_200, 460_800, 250_000, 500_000, 57_600],
         FirmwareGuess::Unknown => vec![115_200, 250_000, 57_600, 230_400, 38_400, 19_200, 9_600, 500_000],
     }
 }

@@ -304,6 +304,10 @@ pub fn set_setting(app: &mut DarkBurn, key: &str, value: &Value) -> Result<Value
     if key == "mcp" || key.starts_with("mcp.") {
         return Err("the AI-agent settings can only be changed by the user in DarkBurn's Settings window".into());
     }
+    // The pendant opens a USB device and makes its keys live: that is the user's switch too.
+    if key == "pendant" || key == "opts.pendant" {
+        return Err(crate::extras::PENDANT_ONLY_BY_THE_USER.into());
+    }
     let mut all: Value = serde_json::from_str(&app.prefs.to_json()).map_err(|e| e.to_string())?;
     let candidates = [key.to_string(), format!("opts.{key}")];
     let mut done = None;
@@ -323,6 +327,8 @@ pub fn set_setting(app: &mut DarkBurn, key: &str, value: &Value) -> Result<Value
     let Some(k) = done else { return Err(format!("no setting `{key}`: list_settings shows the keys")) };
     let mut new: crate::prefs::Prefs = serde_json::from_value(all).map_err(|e| format!("`{k}`: {e}"))?;
     new.sanitise();
+    // Whatever name it came under, no command changes the pendant switch.
+    new.opts.pendant = app.prefs.opts.pendant;
     app.prefs = new;
     Ok(json!({"key": k, "value": value}))
 }
@@ -453,7 +459,7 @@ pub fn ui_json(app: &DarkBurn, ctx: Option<&egui::Context>) -> Value {
     let shortcuts: Vec<Value> = crate::keymap::effective(&app.prefs.hotkeys)
         .into_iter()
         .filter(|(_, k)| !k.is_empty())
-        .map(|(id, k)| json!({"command": id, "key": k}))
+        .map(|(id, k)| json!({"command": crate::keymap::command_of(id), "key": k}))
         .collect();
     json!({
         "window": ctx.map(|c| {

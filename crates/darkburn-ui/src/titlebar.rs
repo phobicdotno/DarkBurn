@@ -138,6 +138,22 @@ pub fn corner_size(edge: f32) -> f32 {
     2.0 * edge
 }
 
+/// How far a window floating inside the main window keeps from its edges, in points: a corner
+/// zone of the main window's resize border, so none of the floating window's own edges and
+/// corners is under that border (the border takes the pointer first, and on Windows the system
+/// takes it before the app sees it). Nothing when the main window is maximised or full screen,
+/// where it has no border.
+pub fn keep_clear_of_border(ctx: &egui::Context) -> f32 {
+    if maximized(ctx) || ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+        return 0.0;
+    }
+    let ppp = ctx.pixels_per_point();
+    if !(ppp.is_finite() && ppp > 0.0) {
+        return 0.0;
+    }
+    corner_size(resize_border_px(ctx.input(|i| i.viewport().native_pixels_per_point).unwrap_or(ppp)) / ppp)
+}
+
 /// The edge and corner zones of a window with rect `w`, edges `edge` wide: (zone, direction,
 /// cursor). Corners come last so they win where they overlap the edges.
 pub fn zones(w: Rect, edge: f32) -> [(Rect, ResizeDirection, CursorIcon); 8] {

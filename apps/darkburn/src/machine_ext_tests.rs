@@ -356,7 +356,8 @@ fn each_dialect_writes_its_own_start_end_scripts_and_power_style() {
     let smoothie = text(DeviceType::Smoothie);
     assert!(smoothie.contains("S0.5"), "Smoothieware power runs 0 to 1: {smoothie}");
     let snap = text(DeviceType::Snapmaker);
-    assert!(snap.contains("M106 P0"), "{snap}");
+    // Snapmaker's laser takes its power in percent (GCODE-04).
+    assert!(snap.contains("M3 P50") && !snap.contains("M106"), "{snap}");
     let lcnc = text(DeviceType::LinuxCnc);
     assert!(lcnc.contains("M67 E0 Q") && lcnc.trim_end().ends_with("M2"), "{lcnc}");
     let custom = text(DeviceType::CustomGcode);
@@ -390,6 +391,47 @@ fn gcode_export_writes_each_dialect_to_a_file() {
     let s = run(&mut a, "gcode.scripts", json!({ "device_type": "Smoothie" })).unwrap();
     assert_eq!(s["start"], json!(["G21", "G90"]));
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn snapmaker_file_header_tells_the_speed_power_and_time() {
+    let dir = std::env::temp_dir().join(format!("darkburn_snap_header_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut a = app();
+    square(&mut a);
+    let path = dir.join("job.gcode");
+    run(&mut a, "gcode.export", json!({ "path": path.display().to_string(), "device_type": "Snapmaker" })).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let field = |name: &str| -> f64 {
+        let l = text.lines().find(|l| l.starts_with(&format!(";{name}:"))).unwrap_or_else(|| panic!("{name}: {text}"));
+        l.split(':').nth(1).unwrap().trim().parse().unwrap()
+    };
+    let layer = &a.editor.doc.layers[0].settings[0];
+    assert_eq!(field("work_speed"), (layer.speed * 60.0).round(), "{text}");
+    assert_eq!(field("power(%)"), layer.max_power.round(), "{text}");
+    assert!(field("estimated_time(s)") >= 1.0, "{text}");
+    assert_eq!(field("max_x(mm)"), 30.0);
+    assert!(text.contains(&format!("M3 P{}", layer.max_power.round())), "{text}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn snapmaker_emulator_takes_percent_power() {
+    let dev = Device::new(DeviceType::SimulatorSnapmaker);
+    assert_eq!(dev.settings.gcode_ext.marlin_power, darkburn_gcodebots::profile::MarlinPowerMode::Percent);
+    let cfg = ConnectConfig { sim_time_scale: 200.0, gcode: Some(Arc::new(gcm::to_profile(&dev))), ..Default::default() };
+    let (adapter, emu) = gcm::simulator_adapter(SimGcode::Snapmaker, &cfg);
+    let mut h = MachineHandle::new();
+    h.attach_simulator(Box::new(adapter), Link::SimulatorGcode(SimGcode::Snapmaker));
+    assert!(h.wait_for(T, |s, _| s.connected()));
+    ready(&mut h);
+    let lines = gcm::simulator_square_lines(&dev, 20.0);
+    assert!(lines.iter().any(|l| l.starts_with("M3 P")), "{lines:?}");
+    assert!(!lines.iter().any(|l| l.starts_with("M106")), "{lines:?}");
+    h.start_job(JobRequest::gcode(lines)).unwrap();
+    assert!(h.wait_for(T, |_, ev| ev.iter().any(|e| matches!(e, MachineEvent::JobFinished(_)))));
+    let seen = emu.unwrap().with(|e| e.stats().lines.clone());
+    assert!(seen.iter().any(|l| l.starts_with("M3 P")), "the emulator saw the percent power: {seen:?}");
 }
 
 #[test]
@@ -1054,7 +1096,11 @@ fn no_app_code_reaches_a_real_transport_for_gweike() {
         "open_adapter",
         "open_real",
     ];
-    for (name, src) in [("gweike_workflow.rs", include_str!("gweike_workflow.rs")), ("gweike_ui.rs", include_str!("gweike_ui.rs"))] {
+    for (name, src) in [
+        ("gweike_workflow.rs", include_str!("gweike_workflow.rs")),
+        ("gweike_ui.rs", include_str!("gweike_ui.rs")),
+        ("gweike_recipes.rs", include_str!("gweike_recipes.rs")),
+    ] {
         for (i, line) in src.lines().enumerate() {
             let code = line.split("//").next().unwrap_or("");
             for f in forbidden {

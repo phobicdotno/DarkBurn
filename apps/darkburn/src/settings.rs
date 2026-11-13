@@ -121,6 +121,11 @@ pub const CHOICES: &[&str] = &[
     "mm/min",
     "Automatic",
     "Default camera",
+    "Default for this computer",
+    "Media Foundation (Windows)",
+    "Video4Linux (Linux)",
+    "AVFoundation (macOS)",
+    "Simulated camera",
 ];
 
 fn choice(label: &str) -> String {
@@ -429,9 +434,13 @@ fn devices(ui: &mut Ui, prefs: &mut Prefs) {
     ui.add_space(t.space_12);
     ui_kit::section_heading(ui, &tr("settings.capture", "Camera capture"));
     ui_kit::row(ui, &tr("settings.capture_system", "Capture system"), |ui| {
-        let mut v = prefs.opts.capture_system.clone();
-        if ui_kit::field(ui, &mut v) {
-            prefs.opts.capture_system = v;
+        // The capture system camera_devices.rs opens cameras through [SET-37].
+        use darkburn_vision::capture::CaptureSystem;
+        let before = CaptureSystem::from_key(&prefs.opts.capture_system);
+        let mut v = before;
+        pick_enum(ui, "capture_system", &mut v, &CaptureSystem::ALL, CaptureSystem::label);
+        if v != before {
+            prefs.opts.capture_system = v.key().to_string();
         }
     });
     ui_kit::row(ui, &tr("settings.capture_width", "Width"), |ui| {
@@ -441,6 +450,50 @@ fn devices(ui: &mut Ui, prefs: &mut Prefs) {
         ui_kit::number_field(ui, &mut prefs.opts.capture_height, 120..=4320, 10.0, " px");
     });
     ui_kit::checkbox(ui, &tr("settings.capture_colour", "Show the camera view in colour"), &mut prefs.opts.capture_colour);
+    ui.add_space(t.space_12);
+    pendant(ui, prefs);
+}
+
+/// The wireless handheld pendant: off until ticked here (pendant_ui.rs).
+fn pendant(ui: &mut Ui, prefs: &mut Prefs) {
+    let t = Tokens::get();
+    ui_kit::section_heading(ui, &tr("settings.pendant", "Pendant"));
+    ui_kit::checkbox(ui, &tr("settings.pendant_on", "Use wireless pendant"), &mut prefs.opts.pendant);
+    // Wrapped, not cut short as the form's rows are: every sentence says what a key does.
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(tr(
+                "settings.pendant_text",
+                "The XHC wireless handheld pendant. Its keys do what the matching buttons do, and only when those buttons are enabled. Pause only pauses; Start goes on with a paused job. The Laser key does nothing.",
+            ))
+            .size(t.font_small)
+            .color(t.text_dim),
+        )
+        .wrap(),
+    );
+    if !darkburn_pendant::HID_SUPPORTED {
+        ui.label(egui::RichText::new(tr("settings.pendant_unsupported", "This build has no pendant support.")).size(t.font_small).color(t.text_dim));
+        return;
+    }
+    if !prefs.opts.pendant {
+        return;
+    }
+    let status = crate::pendant_ui::status();
+    ui.label(egui::RichText::new(status.text()).size(t.font_small).color(t.text_dim));
+    if cfg!(target_os = "linux") {
+        let denied = matches!(status, crate::pendant_ui::PendantStatus::Unavailable(darkburn_pendant::PendantError::PermissionDenied { .. }));
+        if denied {
+            ui.label(
+                egui::RichText::new(tr("settings.pendant_udev", "Install the udev rule once, then unplug and replug the receiver:"))
+                    .size(t.font_small)
+                    .color(t.text_dim),
+            );
+        }
+        ui.label(egui::RichText::new(darkburn_pendant::linux_install_command()).monospace().size(t.font_small));
+        if ui_kit::button(ui, tr("settings.pendant_copy", "Copy the install command"), ui_kit::Button::Small).clicked() {
+            ui.ctx().copy_text(darkburn_pendant::linux_install_command());
+        }
+    }
 }
 
 fn defaults(ui: &mut Ui, prefs: &mut Prefs) {

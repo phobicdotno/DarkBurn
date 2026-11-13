@@ -488,7 +488,7 @@ pub fn reveal(ui: &mut Ui) {
         ui.label(RichText::new(page).strong().size(t.font_label).color(t.form_ink));
     }
     if draw_section {
-        let response = ui.label(RichText::new(section.to_uppercase()).size(t.font_small).color(t.text_dim));
+        let response = ui.label(RichText::new(crate::casing::upper(&section)).size(t.font_small).color(t.text_dim));
         // A setting with the section's name owns its search stop and reveal target.
         let setting_owns_label = with(ui, |state| state.key.rsplit('\n').next() == Some(section.as_str())).unwrap_or(false);
         if !setting_owns_label {

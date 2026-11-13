@@ -876,6 +876,32 @@ fn open_cut_settings(width: f32, height: f32) -> Gui {
     g
 }
 
+/// Opening another project, or making a new one, while the Cut Settings Editor is open closes
+/// the editor and leaves the new project as it came. Cancel (or the tab's X) used to write the
+/// old project's layers into the new one, and closing it from elsewhere left an undo step there.
+#[test]
+fn the_cut_settings_editor_closes_when_another_project_takes_the_place_of_its_own() {
+    for closed_from_elsewhere in [false, true] {
+        let mut g = open_cut_settings(1440.0, 960.0);
+        g.app().editor.doc.layer_mut(1).main_mut().speed = 123.0;
+        g.frames(2);
+        crate::files::new_project(&mut g.app());
+        let (layers, steps, modified) = {
+            let app = g.app();
+            (app.editor.doc.layers.clone(), app.editor.history.len(), app.editor.is_modified())
+        };
+        if closed_from_elsewhere {
+            g.app().cut_settings_open = None;
+        }
+        g.frames(3);
+        assert_eq!(g.app().cut_settings_open, None, "closed from elsewhere: {closed_from_elsewhere}");
+        assert!(!g.window_titles().iter().any(|t| t == "Cut Settings Editor"), "{:?}", g.window_titles());
+        let app = g.app();
+        assert!(app.editor.doc.layers == layers, "the new project keeps its own layers");
+        assert_eq!((app.editor.history.len(), app.editor.is_modified()), (steps, modified), "and gets no undo step");
+    }
+}
+
 /// The hint under the layer list is whole. It was cut off after "severa", on one row.
 #[test]
 fn the_hint_under_the_cut_settings_layer_list_is_not_cut_off() {

@@ -533,6 +533,10 @@ pub enum MachineCommand {
     /// Ruida: frame the stored job on the controller.
     FrameOnController,
     JogStep(JogSpec),
+    /// Jogs one after another. A DSP controller gets them as absolute moves worked out from one
+    /// position reading, so a later jog does not start from a position read while an earlier one
+    /// is still moving (a turn there and back ends where it started).
+    JogSequence(Vec<JogSpec>),
     /// Continuous jog: direction per axis (-1, 0, 1) for X, Y, Z, U.
     JogStart {
         dir: [i8; 4],
@@ -540,6 +544,9 @@ pub enum MachineCommand {
     },
     JogStop,
     Home,
+    /// Ruida: the controller's own Focus Z routine (`D8 2E`). Other controllers have none;
+    /// `machine.focus_z` moves their Z axis to a typed height instead.
+    FocusZ,
     Unlock,
     GoToOrigin,
     MoveTo(MoveSpec),
@@ -662,12 +669,19 @@ pub trait DriverAdapter {
 
 const CONSOLE_LIMIT: usize = 2000;
 
+/// How long after a resume the machine may still show the job as paused: until its next status
+/// report, which comes every 200 to 500 ms (Ruida is the slowest), with room for one late answer.
+pub const RESUME_SETTLE: Duration = Duration::from_millis(1500);
+
 /// The one machine connection of the app.
 pub struct MachineHandle {
     adapter: Option<Box<dyn DriverAdapter>>,
     snapshot: Snapshot,
     console: VecDeque<ConsoleEntry>,
     last_link: Option<Link>,
+    /// When the last resume was sent, until the machine shows the job going (see
+    /// [`MachineHandle::resume_pending`]).
+    resume_sent: Option<Instant>,
 }
 
 impl Default for MachineHandle {
@@ -678,7 +692,7 @@ impl Default for MachineHandle {
 
 impl MachineHandle {
     pub fn new() -> Self {
-        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None }
+        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None, resume_sent: None }
     }
 
     /// A handle already connected to a simulator (tests, demos). Returns once the connection is
@@ -746,6 +760,7 @@ impl MachineHandle {
         }
         let (family, bed) = (self.snapshot.family, self.snapshot.bed);
         self.snapshot = Snapshot { family, bed, ..Default::default() };
+        self.resume_sent = None;
     }
 
     /// Drop the connection and open the same link again (right-click on Devices) [LASER-17].
@@ -760,6 +775,10 @@ impl MachineHandle {
         let Some(a) = self.adapter.as_mut() else { return Vec::new() };
         let events = a.poll();
         self.snapshot = a.snapshot();
+        if self.snapshot.state != LaserState::Paused {
+            // The machine shows the resume (or the job ended): the snapshot is up to date.
+            self.resume_sent = None;
+        }
         let mut gone = false;
         for e in &events {
             match e {
@@ -822,13 +841,24 @@ impl MachineHandle {
     }
     /// Always sent while connected.
     pub fn pause(&mut self) -> Result<(), MachineError> {
+        self.resume_sent = None;
         self.command(MachineCommand::Pause)
     }
     pub fn resume(&mut self) -> Result<(), MachineError> {
-        self.command(MachineCommand::Resume)
+        let r = self.command(MachineCommand::Resume);
+        if r.is_ok() {
+            self.resume_sent = Some(Instant::now());
+        }
+        r
+    }
+    /// A resume went out less than [`RESUME_SETTLE`] ago and the machine has not reported since
+    /// that the job goes on: the snapshot says paused, but the job is most likely running again.
+    pub fn resume_pending(&self) -> bool {
+        self.snapshot.state == LaserState::Paused && self.resume_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
     }
     /// Always sent while connected.
     pub fn stop(&mut self) -> Result<(), MachineError> {
+        self.resume_sent = None;
         self.command(MachineCommand::Stop)
     }
     pub fn frame_rect(&mut self, r: Rect, spec: FrameSpec) -> Result<(), MachineError> {
@@ -839,6 +869,9 @@ impl MachineHandle {
     }
     pub fn jog_step(&mut self, s: JogSpec) -> Result<(), MachineError> {
         self.command(MachineCommand::JogStep(s))
+    }
+    pub fn jog_sequence(&mut self, s: Vec<JogSpec>) -> Result<(), MachineError> {
+        self.command(MachineCommand::JogSequence(s))
     }
     pub fn jog_start(&mut self, dir: [i8; 4], feed: f64) -> Result<(), MachineError> {
         self.command(MachineCommand::JogStart { dir, feed })
@@ -1287,9 +1320,20 @@ impl DriverAdapter for GrblAdapter {
                 }
                 Ok(m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed })?)
             }
+            // GRBL queues jogs and works each out from where the one before ends.
+            C::JogSequence(v) => {
+                if v.iter().any(|j| j.du != 0.0) {
+                    return Err(MachineError::Unsupported("this GRBL machine has no rotary axis".into()));
+                }
+                for j in v {
+                    m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed })?;
+                }
+                Ok(())
+            }
             C::JogStart { dir, feed } => Ok(m.jog_continuous(grbl::JogDirection { x: dir[0], y: dir[1], z: dir[2] }, feed)?),
             C::JogStop => Ok(m.jog_cancel()?),
             C::Home => Ok(m.home()?),
+            C::FocusZ => unsupported("A focus routine"),
             C::Unlock => Ok(m.unlock()?),
             C::GoToOrigin => Ok(m.go_to_origin()?),
             C::MoveTo(t) => Ok(m.move_to(grbl::MoveTarget {
@@ -1813,6 +1857,17 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 Ok(())
             }
+            // One request: the driver reads the position once and sends absolute targets.
+            C::JogSequence(v) => {
+                busy(working)?;
+                self.release_fire();
+                let steps: Vec<(Axis, f64)> =
+                    v.iter().flat_map(|j| [(Axis::X, j.dx), (Axis::Y, j.dy), (Axis::Z, j.dz), (Axis::U, j.du)]).filter(|&(_, d)| d != 0.0).collect();
+                if steps.is_empty() {
+                    return Ok(());
+                }
+                self.req(R::JogSteps(steps), Op::Other("jog"))
+            }
             C::JogStart { dir, .. } => {
                 busy(working)?;
                 self.release_fire();
@@ -1834,6 +1889,11 @@ impl DriverAdapter for RuidaAdapter {
                 busy(working)?;
                 self.release_fire();
                 self.req(R::Home(ruida::HomeAxes::XY), Op::Other("home"))
+            }
+            C::FocusZ => {
+                busy(working)?;
+                self.release_fire();
+                self.req(R::Raw(vec![ruida::Command::FocusZ]), Op::Other("focus"))
             }
             C::Unlock => Ok(()),
             C::GoToOrigin => {

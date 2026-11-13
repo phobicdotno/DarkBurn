@@ -242,6 +242,7 @@ The MSI and the portable zip are described under [Windows: the MSI](#windows-the
 - **Building needs** git, a C compiler, libclang (the camera crate generates its bindings while building) and Rust 1.95 or newer. When something is missing, the script prints the line that installs it (for apt, dnf, pacman, zypper or apk) and stops. It installs no system packages itself. On Debian and Ubuntu the line is `sudo apt install git curl build-essential libclang-dev`.
 - **Running needs** a desktop session (X11 or Wayland), a Vulkan or OpenGL ES graphics driver, and libxkbcommon with its X11 part. An ordinary desktop install has all of these. A minimal system may not: on Debian and Ubuntu `sudo apt install libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers` covers it (`libegl1` in place of the Vulkan pair for OpenGL ES).
 - Without libxkbcommon-x11, DarkBurn stops at start in an X11 session with `Library libxkbcommon-x11.so could not be loaded`. The installer warns when it does not find that library. Under Wayland it is not needed.
+- **The wireless pendant** (optional, off until you turn it on in Settings) needs a udev rule, installed once with root rights, before your user may open its USB receiver. The installer does not do this for you. Run `sh install-pendant-rule.sh` from the Linux download (or from `packaging/linux` in the source), or the command that Settings shows, then unplug the receiver and plug it in again. The rule gives the user at the desktop access through systemd-logind or elogind; on a system with neither, add `GROUP="plugdev"` (or another group you are in) to the rule. Windows and macOS need nothing for the pendant.
 
 ## Where each platform stands
 
@@ -369,6 +370,7 @@ target/release/darkburn
 ```
 
 - `cargo test --workspace` runs the tests. The UI tests draw the real app offscreen and need a graphics adapter; a software Vulkan driver such as lavapipe will do. See [UI-TESTING.md](UI-TESTING.md).
+- Japanese, Korean and Chinese are drawn with the computer's own fonts, and a test checks that every character of their translations has one. On Linux install a font for them first, on Debian and Ubuntu `sudo apt install fonts-noto-cjk`; Windows and macOS have them. Without one that test fails, and the layout tests for those languages are skipped.
 - `darkburn --safe-mode` starts without your saved settings.
 - The Windows packages are made by `scripts/build-installer.ps1` and `scripts/build-portable.ps1`, and the Linux and macOS archives by `scripts/package-unix.sh`, with output in `dist/`. The tools they need, the release steps and the version rules are in [RELEASING.md](RELEASING.md).
 - Rules for anyone who writes code here: [BUILD-RULES.md](BUILD-RULES.md).

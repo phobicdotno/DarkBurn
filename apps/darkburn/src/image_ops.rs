@@ -441,6 +441,16 @@ pub fn trace(e: &mut Editor, ids: &[ShapeId], args: &TraceArgs) -> Result<TraceR
     })
 }
 
+/// Adds paths traced already as one path shape, in one undo step `label`, and selects it.
+pub fn add_traced_step(e: &mut Editor, label: &str, paths: Vec<BezPath>, layer: usize) -> Result<TraceReport, String> {
+    let nodes = node_count(&paths);
+    try_edit(e, label, |d, sel| {
+        let shapes: Vec<ShapeId> = add_traced(d, paths, layer).into_iter().collect();
+        sel.set(shapes.iter().copied());
+        Ok(TraceReport { shapes, nodes })
+    })
+}
+
 /// Traces a camera capture: `capture` placed by `pixel_to_mm` (document millimetres, Y up) into
 /// a path shape. This is the hook the camera feature calls with a frame it has already
 /// corrected; it touches no hardware itself [IMG-20].

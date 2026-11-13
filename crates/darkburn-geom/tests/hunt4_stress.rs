@@ -245,6 +245,18 @@ fn ops() -> Vec<Op> {
         ("nest", |p| {
             let _ = nest::nest(&[p.clone(), p.clone()], Rect::new(0.0, 0.0, 100.0, 100.0), &nest::NestOptions::default());
         }),
+        ("sheet nest", |p| {
+            let sq = Rect::new(2.0, 2.0, 8.0, 8.0).to_path(0.1);
+            let parts = [
+                sheet_nest::NestPart::cut(vec![p.clone()]),
+                sheet_nest::NestPart { cuts: vec![], marks: vec![p.clone()] },
+                sheet_nest::NestPart::cut(vec![p.clone(), sq]),
+            ];
+            let o = sheet_nest::SheetNestOptions { time_limit: Duration::from_secs(5), max_sheets: 2, ..Default::default() };
+            let sheet = Rect::new(0.0, 0.0, 100.0, 100.0);
+            let _ = sheet_nest::quick_nest(&parts, &parts[..1], sheet, &o, &mut |_| true);
+            let _ = sheet_nest::true_nest(&parts, &parts[..1], sheet, &o, &mut |_| true);
+        }),
         ("queries", |p| {
             let sq = Rect::new(2.0, 2.0, 8.0, 8.0).to_path(0.1);
             let _ = query::point_in_shape(p, Point::new(5.0, 5.0), FillRule::EvenOdd);

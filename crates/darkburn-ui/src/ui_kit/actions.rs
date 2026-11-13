@@ -229,6 +229,9 @@ pub struct Footer<'a> {
     /// Nothing to apply yet (nothing changed since the dialog opened or since the last Apply):
     /// Apply is drawn and reported disabled, and clicking it does nothing (#8561).
     pub nothing_to_apply: bool,
+    /// Enter and Esc do not press the buttons (a window docked as a tab: the keys belong to
+    /// the main window).
+    pub keys_off: bool,
 }
 
 pub fn footer(ui: &mut Ui, ok_label: &str, cancel_label: &str, ok_enabled: bool, options: Footer<'_>) -> Action {
@@ -243,7 +246,7 @@ pub fn footer_with_left(
     options: Footer<'_>,
     left: impl FnOnce(&mut Ui),
 ) -> Action {
-    let Footer { apply: apply_label, status, selected, danger, confirm, corners, secondary_left, nothing_to_apply } = options;
+    let Footer { apply: apply_label, status, selected, danger, confirm, corners, secondary_left, nothing_to_apply, keys_off } = options;
     let t = Tokens::get();
     let ok_enabled = ok_enabled && !ok_label.is_empty();
     // The footer is a full-width band (the card has no margin of its own): its own fill, a rule
@@ -263,7 +266,7 @@ pub fn footer_with_left(
     solidcraft_ui_registry::publish_count("dialog:ok:enabled", f64::from(ok_enabled && ui.is_enabled()));
     let inner = band.shrink2(vec2(t.space_12, t.space_10));
     solidcraft_ui_registry::publish_rect("dialog:footer:actions", inner);
-    let mut action = if ui.is_enabled() { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
+    let mut action = if ui.is_enabled() && !keys_off { keyboard(ui.ctx(), ok_enabled) } else { Action::None };
     let look = ActionLook::new(ok_enabled, !nothing_to_apply, selected, danger);
     if apply_label.is_some() {
         let live = if confirm { !nothing_to_apply } else { look.live(Action::Apply) };

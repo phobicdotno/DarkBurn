@@ -466,7 +466,7 @@ pub fn figure_rows(ui: &mut Ui, id: &str, fields: &mut [(&str, &mut String)], pa
 pub fn section_heading(ui: &mut Ui, title: &str) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), t.space_16), egui::Sense::hover());
-    paint_text(ui, rect, &solidcraft_ui_text::tr_label(title).to_uppercase(), crate::fonts::semibold(t.font_caption), t.form_dim, true);
+    paint_text(ui, rect, &crate::casing::upper(solidcraft_ui_text::tr_label(title)), crate::fonts::semibold(t.font_caption), t.form_dim, true);
     solidcraft_ui_registry::publish_rect(&format!("dialog:heading:{title}"), rect);
 }
 
@@ -566,7 +566,7 @@ fn section_with_badge<R>(
     );
     super::disclosure(ui.painter(), icon_rect.center(), open, t.form_dim);
     let text_rect = egui::Rect::from_min_max(egui::pos2((icon_rect.right() + t.form_gap_y).min(rect.right()), rect.top()), rect.max);
-    let caption = solidcraft_ui_text::tr_label(title).to_uppercase();
+    let caption = crate::casing::upper(solidcraft_ui_text::tr_label(title));
     let badge_value = count;
     let badge_width = badge_value.as_ref().map_or(0.0, |value| label_width(ui, value) + t.space_12);
     let reserved = if badge_value.is_some() { badge_width + t.space_12 } else { 0.0 };
@@ -649,7 +649,7 @@ pub fn search_fold<R>(ui: &mut Ui, title: &str, count: usize, add: impl FnOnce(&
     );
     super::disclosure(ui.painter(), icon_rect.center(), open, t.form_dim);
     let text_rect = egui::Rect::from_min_max(egui::pos2((icon_rect.right() + t.form_gap_y).min(rect.right()), rect.top()), rect.max);
-    let caption = title.to_uppercase();
+    let caption = crate::casing::upper(title);
     let badge_value = count.to_string();
     let badge_width = label_width(ui, &badge_value) + t.space_12;
     let reserved = badge_width + t.space_12;

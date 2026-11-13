@@ -117,7 +117,8 @@ passes the credit on.
 ## Ported from other projects
 
 The Rust code is new. Constants, tables, names and the order of steps come from the sources. The
-MeerK40t and ruida-pa commits that were read were not recorded.
+MeerK40t and ruida-pa commits that were read were not recorded, except for `crates/darkburn-lihuiyu`:
+its MeerK40t files were read at commit `d511944e08788e88077727f682957759884ff5ca` (25 September 2026).
 `docs/research/other-controllers.md`, dated 8 November 2026, records the two repositories as it
 found them: MeerK40t's `main` last pushed on 25 September 2026 (latest release 0.9.8100, of
 15 August 2025), and ruida-pa last pushed on 31 October 2026.
@@ -136,6 +137,7 @@ found them: MeerK40t's `main` last pushed on 25 September 2026 (latest release 0
 | `crates/darkburn-ruida/src/{command,encoding,swizzle,rd,settings,emulator,machine,packet,transport}.rs` | MeerK40t `meerk40t/ruida/` (`rdjob.py`, `emulator.py`, `ruidasession.py`, `README.md`). The research notes also name `controller.py`, `udp_transport.py`, `usb_transport.py`, `serial_connection.py`, `loader.py` and `device.py` of that folder as read | Opcode constants and their parameter layouts; the rule that a byte of 0x80 or more starts a command; swizzle with any magic value; magic detection by byte histogram and by card-ID probe; the `.rd` header, layer and trailer layout and the file sum; the choice between relative and absolute moves; the controller memory address table; the emulator's answers; file commands `E8 00` to `E8 04`; jog key codes | Written again in Rust |
 | `crates/darkburn-ruida/src/command.rs` (`OverscanMode`, reference point bytes), `encoding.rs` (power scale), `settings.rs` (`KNOWN_BOARDS`, `StatusWord`) | ruida-pa `ruida_pa/protocols/ruida/ruida_protocol.py`, `ruida_pa/rpalib/ruida_transcoder.py`. The research notes also name its changelog, `docs/api/RdDriver-interface.md` and an older design document as read | The 14-bit power scale (0x4000 is 100 %); the names of the overscan modes `CA 01 00` to `CA 01 05`; the card ID of the RDC8445S; status bits 0, 1 and 24; the reference point bytes `D8 10`, `D8 11`, `D8 12`; times in microseconds; the firmware name `RDLC-V8.01.70`, which the notes quote from the changelog as a real controller's answer and which a test in `apps/darkburn/src/ruida_tests.rs` uses | Constants and names only |
 | `crates/darkburn-galvo/src/{codec,cor,settings,machine,transport,emulator}.rs` | MeerK40t `meerk40t/balormk/` (`controller.py`, `usb_connection.py`, `mock_connection.py`, `device.py`) | Opcode numbers and names; the 12-byte command and the 3072-byte list packet; status bits; the USB IDs 0x9588:0x9899 and the endpoints; the bring-up order and default words; the power and frequency formulas; delay encoding; port bits; the job sequence; the two `.cor` layouts and the lens table upload | Written again in Rust. MeerK40t's `balormk/README.md` says its driver began as a plugin for Balor by Bryce Schroeder and still uses many of the original names. See the note on Balor under this table |
+| `crates/darkburn-lihuiyu/src/{distance,speed,egv,emulator,packet,transport,egv_file}.rs`, `crates/darkburn-lihuiyu/tests/{speed_codes.rs,data/speedcodes.txt}` | MeerK40t `meerk40t/lihuiyu/` (`driver.py`, `laserspeed.py`, `parser.py`, `controller.py`, `device.py`, `loader.py`), `meerk40t/ch341/` (`libusb.py`, `mock.py`, `__init__.py`), `meerk40t/core/plotplanner.py` (`grouped`), `test/test_laser_speeds.py`, `test/test_drivers_lihuiyu.py`, at commit `d511944e` | EGV distance encoding; direction and laser letters; rapid, program and raster mode sequences; speed codes and the period equations of every board; the EGV reader; 30-byte packets, the CH341 EPP framing (`0xA6` before every 31 bytes), CRC-8, meta characters and status bytes; the send loop; the `.egv` header; the USB ID `1a86:5512` (comments only); 3064 speed codes and their comparison rules from `test_laser_speeds.py`; the golden rectangle from `test_drivers_lihuiyu.py` | Written again in Rust. In program mode the writer always uses acceleration 1 with the `C` suffix (MeerK40t computes the value with the speed's own acceleration). The toolpath conversion, the in-memory board and the round-trip tests are DarkBurn's own. No real USB transport |
 | `crates/darkburn-import/src/lbrn.rs` | MeerK40t `meerk40t/extra/lbrn.py` | How `VertList` and `PrimList` are split into tokens; the `LineClosed` and empty `PrimList` forms; XForm composition; polygon vertex placement; bitmap placement | Written again in Rust. MeerK40t's file only reads; the `.lbrn2` writer is DarkBurn's own. The element names, attribute names and cut setting fields that the reader and the writer use come from `docs/research/laser-protocols-and-devices.md`, part 2e; its sources are in the next table |
 | `crates/darkburn-mcc/src/{frame,crc,registers,command,fifo,gate,sim,chf,craft,planner}.rs` | phobicMlaserLinux: `docs/analysis/`, `src/nexcut/mcc/`, `src/nexcut/io/chf.py`, `src/nexcut/model/` | Frame layout, CRC and byte orders; register blocks, status and alarm bits; command vectors; the FIFO item grammar; the safety gate; the card simulator; the `.chf` grammar, reader and writer; the craft parameter model; a few message frames recorded in the control program's log files, used as test vectors in `frame.rs`, `crc.rs` and `command.rs`; the values and sizes of two sample `.chf` files shipped with the control program (`File/Temp/tempGraph.chf`, 500 bytes, and `Work1/3.chf`, 718 bytes): two tests in `chf.rs` build these files again and compare them with text kept in the test module (`CIRCLE_V5`, `STADIUM_V4`); the settings of the owner's machine, which `command.rs` says are from the program's parameter files `BkManuPara.xml` and `BkHardPara.xml`, used as default values in `command.rs` and `planner.rs` and as limits in `craft.rs` | Ported from Python to Rust. `apps/darkburn/src/{gweike_workflow,gweike_ui}.rs` show and write the craft parameters through this crate |
 
@@ -145,8 +147,8 @@ Public License, version 1. `crates/darkburn-galvo/ATTRIBUTION.md` records that B
 for code and not ported. The opcode names in `crates/darkburn-galvo` are the ones in MeerK40t's
 MIT files.
 
-Twelve crates keep their own file with more detail:
-`crates/darkburn-{galvo,gcodebots,geom,grbl,import,job,mcc,mcp,raster,ruida,text,vision}/ATTRIBUTION.md`.
+Thirteen crates keep their own file with more detail:
+`crates/darkburn-{galvo,gcodebots,geom,grbl,import,job,lihuiyu,mcc,mcp,raster,ruida,text,vision}/ATTRIBUTION.md`.
 This file is the newer one. Where they differ, this file holds. The known differences:
 
 - `crates/darkburn-{grbl,job}/ATTRIBUTION.md` say that no GRBL, grblHAL or FluidNC source was
@@ -359,6 +361,9 @@ cargo about generate --locked --workspace --config packaging/about.toml packagin
 - The list leaves out libraries that are used only to build or to test.
 - `packaging/about.toml` also lists the licences a library may have; packaging stops at any
   other.
+- For hidapi, `packaging/about.toml` adds the BSD text of the HIDAPI C library that it builds
+  into the macOS program (see the wireless pendant row below). The list carries it on every
+  target.
 
 The licence texts for the fonts inside egui are kept in `licenses/` (see "Fonts and data inside
 the libraries").
@@ -385,6 +390,7 @@ the libraries").
 | Variable text | chrono (MIT OR Apache-2.0), csv (Unlicense OR MIT) | As named |
 | Serial ports | serialport | MPL-2.0 |
 | USB | nusb | Apache-2.0 OR MIT |
+| Wireless pendant (HID) | hidapi (MIT), with basic-udev (MIT OR Apache-2.0) and nix (MIT) on Linux. On macOS hidapi compiles the HIDAPI C library 0.15.0 (libusb/hidapi, `mac/hid.c`) into the program; that library is offered under GPL v3, a BSD-style licence or the original HIDAPI licence, at the user's choice, and DarkBurn uses it under the BSD-style licence (BSD-3-Clause; never GPL v3). `packaging/about.toml` puts that BSD text (`etc/hidapi/LICENSE-bsd.txt` in the hidapi crate) in `THIRD-PARTY-LICENSES.txt` | As named |
 | Camera | nokhwa | Apache-2.0 |
 | File dialogs | rfd | MIT |
 | Clipboard | arboard | MIT OR Apache-2.0 |

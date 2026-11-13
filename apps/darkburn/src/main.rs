@@ -3,16 +3,23 @@
 
 mod a11y;
 mod actions;
+mod agent_limits;
 mod api;
 #[cfg(test)]
 mod arrange_hunt_tests;
 #[cfg(test)]
 mod arrange_origin_tests;
 mod art_library;
+mod camera_devices;
+#[cfg(test)]
+mod camera_devices_tests;
 mod canvas;
 mod canvas_input;
 #[cfg(test)]
 mod canvas_tests;
+mod capture_trace;
+#[cfg(test)]
+mod close_ask_tests;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;
@@ -45,6 +52,9 @@ mod galvo_machine;
 mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
+mod gweike_recipes;
+#[cfg(test)]
+mod gweike_recipes_tests;
 mod gweike_ui;
 mod gweike_workflow;
 mod help;
@@ -70,6 +80,8 @@ mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
+mod language_fonts;
+mod languages;
 mod laser_panel;
 mod laser_position;
 mod layer_defaults;
@@ -94,11 +106,20 @@ mod mcp_inspect;
 mod mcp_tests;
 mod mcp_ui;
 mod misc_cmds;
+mod model_import;
 #[cfg(test)]
 mod monkey_tests;
+mod motion_cmds;
+#[cfg(test)]
+mod motion_cmds_tests;
 mod motion_read;
+#[cfg(test)]
+mod motion_ui_tests;
+mod multi_trace;
 #[cfg(target_os = "windows")]
 mod native_frame;
+mod nest_cmds;
+mod nest_ui;
 mod node_tool;
 mod numeric;
 mod numeric_edits;
@@ -107,6 +128,9 @@ mod palette;
 mod panels;
 #[cfg(test)]
 mod paths_hunt4_tests;
+mod pendant_ui;
+#[cfg(test)]
+mod pendant_ui_tests;
 #[cfg(test)]
 mod polish_tests;
 mod prefs;
@@ -132,20 +156,33 @@ mod shape_ops;
 mod shape_props;
 mod shape_ui;
 mod shell;
+#[cfg(test)]
+mod shortcut_keys_tests;
 mod sounds;
 mod startup;
 #[cfg(test)]
 mod store_hunt6_tests;
 mod tab_focus;
+mod tangent_tool;
+#[cfg(test)]
+mod tangent_tool_tests;
+mod taper_warp;
+#[cfg(test)]
+mod taper_warp_tests;
 mod text_cmds;
 mod text_render;
 #[cfg(test)]
 mod text_tests;
 mod text_ui;
 mod thumbnail;
+mod toolbar_dock;
+#[cfg(test)]
+mod toolbar_dock_tests;
 mod tools;
 #[cfg(test)]
 mod ui_bug_tests;
+#[cfg(test)]
+mod ui_dock_tests;
 #[cfg(test)]
 mod ui_harness;
 #[cfg(test)]
@@ -154,6 +191,8 @@ mod ui_hunt2_tests;
 mod ui_hunt3_tests;
 #[cfg(test)]
 mod ui_hunt_tests;
+#[cfg(test)]
+mod ui_language_tests;
 #[cfg(test)]
 mod ui_smoke_tests;
 mod updates;
@@ -277,17 +316,17 @@ fn stored_prefs(dir: &std::path::Path) -> Option<String> {
     ron::from_str::<std::collections::HashMap<String, String>>(&text).ok()?.remove(STORAGE_KEY)
 }
 
-/// Input that can change a setting: a click, a key, typed text, a wheel or a pinch.
-fn changes_settings(event: &egui::Event) -> bool {
-    matches!(
-        event,
-        egui::Event::PointerButton { .. }
-            | egui::Event::Key { .. }
-            | egui::Event::Text(_)
-            | egui::Event::Paste(_)
-            | egui::Event::MouseWheel { .. }
-            | egui::Event::Zoom(_)
-    )
+/// Whether this frame had input that can change a setting, or a window of its own had some
+/// since the last frame (the main window's input never shows that).
+fn settings_input(ctx: &egui::Context) -> bool {
+    use darkburn_ui::ui_kit::window_host;
+    if window_host::take_native_input(ctx) {
+        // What it changed reaches the settings in this frame's `ui` (a window's place only
+        // then): the next frame writes that.
+        ctx.request_repaint();
+        return true;
+    }
+    ctx.input(|i| i.events.iter().any(window_host::changes_settings))
 }
 
 struct App {
@@ -304,6 +343,9 @@ impl eframe::App for App {
         self.mcp.frame(ctx);
         let mut app = self.app.borrow_mut();
         let app = &mut *app;
+        // The pendant's Stop and Pause keys work whether or not the window is drawn: a
+        // minimised or covered window runs this and no `ui`.
+        pendant_ui::logic(ctx, app);
         if self.frames < 2 {
             self.frames += 1;
             #[cfg(target_os = "windows")]
@@ -320,11 +362,13 @@ impl eframe::App for App {
         }
         app.apply_theme(ctx);
         app.shortcuts(ctx);
+        // Keys pressed while a window of its own had the focus (they never reach this one).
+        app.window_shortcuts(ctx);
         text_ui::tick(app, ctx);
         if app.safe_mode {
             return;
         }
-        let input = ctx.input(|i| i.events.iter().any(changes_settings));
+        let input = settings_input(ctx);
         let now = std::time::Instant::now();
         if self.writer.due(input, now)
             && let Some(storage) = frame.storage_mut()
@@ -544,6 +588,55 @@ mod tests {
         a.store_beside(&mut disk, pa.to_json(), later, || on_disk);
         let end = Prefs::from_json(&stored(&disk).unwrap());
         assert_eq!((end.theme.as_str(), end.opts.nudge, end.invert_wheel), ("light", 2.0, true));
+    }
+
+    /// A click in a window of its own, which the main window's input never shows, has the
+    /// settings written as a click in the main window does.
+    #[test]
+    fn input_in_a_window_of_its_own_has_the_settings_written() {
+        let click = std::rc::Rc::new(std::cell::Cell::new(false));
+        let feed = click.clone();
+        egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let mut events = Vec::new();
+            if feed.take() {
+                let pos = egui::pos2(20.0, 20.0);
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let viewports = std::iter::once((viewport.ids.this, info)).collect();
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 500.0)));
+            let input = egui::RawInput { viewport_id: viewport.ids.this, viewports, screen_rect, events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+            out.textures_delta.clear();
+        });
+        let ctx = egui::Context::default();
+        darkburn_ui::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        darkburn_ui::ui_kit::window_host::update(&ctx, "w", |p| p.detach());
+        // One frame: what the app's `logic` sees at its start, then the window drawn.
+        let frame = |clicked: bool| {
+            click.set(clicked);
+            let mut input = None;
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)));
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect, ..Default::default() }, |ui| {
+                input = Some(settings_input(ui.ctx()));
+                darkburn_ui::ui_kit::Window::new(egui::Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
+                    ui.label("w");
+                });
+            });
+            out.textures_delta.clear();
+            input.unwrap()
+        };
+        frame(false);
+        assert!(!frame(false), "nothing done");
+        assert!(!frame(true), "the click comes in this frame's window, after the check");
+        assert!(frame(false), "the next frame writes what it changed");
+        assert!(!frame(false), "once");
     }
 
     #[test]

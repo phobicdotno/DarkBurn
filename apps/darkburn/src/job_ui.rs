@@ -77,6 +77,11 @@ const SPEED_LIST_WIDTH: f32 = 84.0;
 const PREVIEW_SIZE: egui::Vec2 = vec2(760.0, 600.0);
 /// The gap round a maximised Preview, and the least a Preview that opens leaves free.
 const PREVIEW_MARGIN: f32 = 8.0;
+/// The Preview's key in the stored window layout.
+pub const PREVIEW_KEY: &str = "db_preview";
+
+/// Frames the job is fitted to the picture again after the Preview moved to another place.
+const PREVIEW_REFIT_FRAMES: u8 = 3;
 /// The picture in the Preview is never less tall than this. (It was 120 points: in the smallest
 /// main window with the interface at 200 % the window was then taller than the screen.)
 const PICTURE_MIN_HEIGHT: f32 = 40.0;
@@ -155,28 +160,86 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
             ctx.request_repaint();
         }
     }
+    let mut command: Option<(&'static str, serde_json::Value)> = None;
+    // Moved to a tab, a window of its own or back to floating, the picture has another size:
+    // the job is fitted to it again, as it was where it came from. Over a few frames: the
+    // buttons under the picture find their rows at the new width first, which sets its height.
+    let placement = ui_kit::window_host::place(ctx, PREVIEW_KEY).placement;
+    let placed_id = Id::unique("db_preview_placement");
+    let (was, refits) = ctx.data(|d| d.get_temp::<(ui_kit::window_host::Placement, u8)>(placed_id)).unzip();
+    let refits = if was.is_some_and(|was| was != placement) { PREVIEW_REFIT_FRAMES } else { refits.unwrap_or(0) };
+    if refits > 0 {
+        app.job.preview.fitted = false;
+    }
+    ctx.data_mut(|d| d.insert_temp(placed_id, (placement, refits.saturating_sub(1))));
+    // Docked as a tab or in a window of its own, the Preview fills what it is given (Maximise
+    // has nothing to do there); floating, it is its own window, sized and maximised as before.
+    let hosted_id = Id::unique("db_preview_window_hosted");
+    let hosted = ui_kit::Window::new(hosted_id, "db_app", "Preview")
+        .dockable(PREVIEW_KEY)
+        .width(PREVIEW_SIZE.x)
+        .fill_body()
+        .escape_here(crate::escape::only_window(ctx, hosted_id))
+        .show_unless_floating(ctx, |ui| preview_body(ui, app, hosted_id, &mut command));
+    let open = match hosted {
+        Some(closed) => !closed,
+        None => floating_preview(ctx, app, &mut command),
+    };
+    if !open {
+        app.job.preview.open = false;
+        app.job.preview.playing = false;
+    }
+    if let Some((id, args)) = command {
+        run_command(ctx, app, id, &args);
+    }
+}
+
+/// The Preview floating in the main window: its own window, which the user moves, sizes and
+/// maximises. Returns false when it was closed.
+fn floating_preview(ctx: &egui::Context, app: &mut DarkBurn, command: &mut Option<(&'static str, serde_json::Value)>) -> bool {
     // The maximised Preview is another window to egui than the one the user places and sizes. As
     // one window, the placed one took the place and the size of the maximised one, and Restore
     // had nothing to go back to.
     let maximised = app.job.preview.maximised;
-    let window_id = |maximised: bool| Id::unique(if maximised { "db_preview_window_max" } else { "db_preview_window" });
+    let layout = app.job.preview.layout;
+    let window_id = |maximised: bool| Id::unique((if maximised { "db_preview_window_max" } else { "db_preview_window" }, layout));
     let id = window_id(maximised);
     // The Preview keeps to the room under the application bar. Over the bar it hid the menus and
     // the main window's own minimise, maximise and close buttons.
     let screen = ctx.content_rect();
     let room = crate::shell::room_under_the_bar(ctx);
     let inside = room.shrink(PREVIEW_MARGIN);
-    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true).constrain_to(room);
+    let mut window = egui::Window::new("Preview").id(id).collapsible(false).resizable(true);
     window = if maximised {
-        window.fixed_pos(inside.min).fixed_size(inside.size().max(egui::Vec2::ZERO))
+        window.constrain_to(room).fixed_pos(inside.min).fixed_size(inside.size().max(egui::Vec2::ZERO))
     } else {
+        // Its edges and corner stay clear of the main window's resize border, which takes the
+        // pointer first: at the bottom of the screen the corner could not be taken hold of.
+        let keep = darkburn_ui::titlebar::keep_clear_of_border(ctx).max(PREVIEW_MARGIN);
+        let free = Rect::from_min_max(pos2(room.left() + keep, room.top()), room.max - vec2(keep, keep));
         // As big as it likes where there is the room, 80 points in and 60 down as before.
-        let size = PREVIEW_SIZE.min(inside.size()).max(egui::Vec2::ZERO);
-        window.default_size(size).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
+        let size = PREVIEW_SIZE.min(free.size() - vec2(0.0, PREVIEW_MARGIN)).max(egui::Vec2::ZERO);
+        window.constrain_to(free).default_size(size).default_pos(pos2(screen.left() + 80.0, screen.top() + 60.0))
     };
     let mut open = true;
-    let mut command: Option<(&'static str, serde_json::Value)> = None;
-    window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, &mut command));
+    let shown = window.open(&mut open).show(ctx, |ui| preview_body(ui, app, id, command));
+    if let Some(shown) = &shown {
+        // From its title bar it can be docked as a tab (dragged onto a panel area, or from the
+        // title bar's menu) or put in a window of its own. egui moves the window by its title bar
+        // only: the window's own response is dragged from its body too, where the window stays
+        // put, so the drop follows the title bar's drag.
+        if let Some(title_drag) = ctx.read_response(id.with("__title_click")) {
+            ui_kit::window_host::dock_on_drop(ctx, PREVIEW_KEY, &title_drag);
+        }
+        // The title bar less its close button, which keeps its click; not a stop for the Tab key.
+        let r = shown.response.rect;
+        let height = ctx.global_style().spacing.interact_size.y + 8.0;
+        let title = Rect::from_min_size(r.min, vec2((r.width() - 2.0 * height).max(0.0), height));
+        // The Ui has an id of its own: egui keeps a Ui's id for the room it took up (none here),
+        // which under the same id as the title bar's took the title bar's room away.
+        let ui = egui::Ui::new(ctx.clone(), id.with("title_bar"), egui::UiBuilder::new().layer_id(shown.response.layer_id).max_rect(title));
+        ui.interact(title, id.with("title_menu"), Sense::CLICK).context_menu(|ui| ui_kit::window_host::place_menu(ui, PREVIEW_KEY));
+    }
     // Escape closes the Preview, unless a dialog on top of it wants the key.
     if crate::escape::closes(ctx, id) {
         open = false;
@@ -185,13 +248,7 @@ fn preview_window(ctx: &egui::Context, app: &mut DarkBurn) {
         // Maximise or Restore was clicked: the other window comes up where this one was, in front.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id(app.job.preview.maximised)));
     }
-    if !open {
-        app.job.preview.open = false;
-        app.job.preview.playing = false;
-    }
-    if let Some((id, args)) = command {
-        run_command(ctx, app, id, &args);
-    }
+    open
 }
 
 /// Run a command from a button; errors show in a message window.
@@ -323,6 +380,7 @@ fn preview_body(ui: &mut Ui, app: &mut DarkBurn, window: Id, command: &mut Optio
         None => 40.0,
     };
     let (rect, response) = ui.allocate_exact_size(vec2(avail.x.max(100.0), (avail.y - reserve).max(PICTURE_MIN_HEIGHT)), Sense::click_and_drag());
+    solidcraft_ui_registry::publish_rect("preview:picture", rect);
     draw_preview(ui, app, rect, &response, bed);
 
     let sizes: std::cell::RefCell<Vec<egui::Vec2>> = Default::default();
@@ -568,12 +626,24 @@ fn optimization_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     if !app.job.optimization_open {
         return;
     }
-    let mut draft = app.job.optimization_draft.take().unwrap_or_else(|| job_cmds::current_settings(app).planner);
+    let project = app.editor.project();
+    if app.job.optimization_draft.is_some() && app.job.optimization_project != project {
+        // Another project was opened, or a new one made: the draft holds the settings of the one
+        // that is gone, and OK would write them into this one. The window closes.
+        app.job.optimization_draft = None;
+        app.job.optimization_open = false;
+        return;
+    }
+    app.job.optimization_project = project;
+    let saved = job_cmds::current_settings(app).planner;
+    let mut draft = app.job.optimization_draft.take().unwrap_or_else(|| saved.clone());
     let mut set_default = false;
     let mut reset = false;
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_optimization"), "settings", "Optimization Settings")
+        .dockable("db_job_optimization")
         .fields()
         .actions("OK", "Cancel", None)
+        .unsaved(draft != saved)
         .show(ctx, true, |ui| {
             planner_editor(ui, &mut draft);
             ui.add_space(Tokens::get().space_6);
@@ -677,9 +747,11 @@ fn gcode_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     }
     let (mut g, mut a) = app.job.gcode_draft.take().unwrap_or_else(|| (app.job.gcode.clone(), app.job.additional));
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_gcode"), "settings", "G-code and Simulation Settings")
+        .dockable("db_job_gcode")
         .fields()
         .cards(3.2)
         .actions("OK", "Cancel", None)
+        .unsaved(g != app.job.gcode || a != app.job.additional)
         .show(ctx, true, |ui| {
             ui_kit::status_line(ui, "G-code device settings", ui_kit::StatusTone::Dim);
             gcode_settings_editor(ui, &mut g);
@@ -719,6 +791,7 @@ fn material_dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     let names: Vec<String> = app.job.presets.iter().map(|q| q.name.clone()).collect();
     let mut name = app.job.preset_name.clone();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_job_material"), "db_material_test", "Material Test")
+        .dockable("db_material_test")
         .fields()
         .cards(3.4)
         .actions("Generate", "Close", None)

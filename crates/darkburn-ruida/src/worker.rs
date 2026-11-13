@@ -72,6 +72,9 @@ pub enum Request {
         axis: Axis,
         distance_mm: f64,
     },
+    /// Jogs one after another, sent as absolute moves from one position reading
+    /// ([`RuidaMachine::jog_steps`](crate::machine::RuidaMachine::jog_steps)).
+    JogSteps(Vec<(Axis, f64)>),
     JogStart {
         axis: Axis,
         positive: bool,
@@ -270,7 +273,7 @@ struct Worker<T: Transport> {
 impl<T: Transport> Worker<T> {
     fn run(mut self) {
         let mut last_poll = Instant::now();
-        'run: loop {
+        loop {
             if self.shutdown {
                 break;
             }
@@ -279,9 +282,15 @@ impl<T: Transport> Worker<T> {
                 match self.rx.try_recv() {
                     Ok(Msg::Req(id, r)) => self.queued.push_back((id, r)),
                     Ok(Msg::Overwrite(..)) => {}
-                    Ok(Msg::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => break 'run,
+                    Ok(Msg::Shutdown) | Err(mpsc::TryRecvError::Disconnected) => {
+                        self.shutdown = true;
+                        break;
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                 }
+            }
+            if self.shutdown {
+                break;
             }
             let stop = self.queued.iter().position(|(_, r)| matches!(r, Request::Stop));
             let next = if let Some(q) = stop.and_then(|i| self.queued.remove(i)) {
@@ -318,7 +327,27 @@ impl<T: Transport> Worker<T> {
                 }
             }
         }
+        self.leave_safe();
         let _ = self.tx.send(Event::Stopped);
+    }
+
+    /// On the way out: a key let go, a stop and a disconnect asked for before the shutdown are
+    /// still sent, so the controller is never left with a key held down. Everything else that
+    /// was waiting is dropped.
+    fn leave_safe(&mut self) {
+        while let Ok(m) = self.rx.try_recv() {
+            if let Msg::Req(id, r) = m {
+                self.queued.push_back((id, r));
+            }
+        }
+        let safe: Vec<(RequestId, Request)> = std::mem::take(&mut self.queued)
+            .into_iter()
+            .filter(|(_, r)| matches!(r, Request::PanelKey { down: false, .. } | Request::Stop | Request::Disconnect))
+            .collect();
+        for (id, r) in safe {
+            let result = self.handle(id, r);
+            let _ = self.tx.send(Event::Reply { id, result });
+        }
     }
 
     fn handle(&mut self, id: RequestId, r: Request) -> Result<Response> {
@@ -346,6 +375,7 @@ impl<T: Transport> Worker<T> {
             R::FrameOutline { points, light } => m.frame_outline(&points, light).map(|_| Done)?,
             R::FrameOnController => m.frame_on_controller().map(|_| Done)?,
             R::JogStep { axis, distance_mm } => m.jog_step(axis, distance_mm).map(|_| Done)?,
+            R::JogSteps(steps) => m.jog_steps(&steps).map(|_| Done)?,
             R::JogStart { axis, positive } => m.jog_start(axis, positive).map(|_| Done)?,
             R::JogStop { axis, positive } => m.jog_stop(axis, positive).map(|_| Done)?,
             R::PanelKey { key, down } => m.panel_key(key, down).map(|_| Done)?,

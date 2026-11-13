@@ -40,7 +40,7 @@ is always denied there), `--version`.
 | `list_commands`, `describe_command` | The catalog (filter, prefix, panel, compact, limit) and one command's schemas |
 | `execute`, `batch` | Run any command / several in order, checked first, optionally all-or-nothing |
 | `inspect_design`, `inspect_ui` | Shapes (stable ids), layers (index or name), selection, cut settings; panels, dialogs |
-| `get_setting`, `set_setting`, `list_settings` | Settings |
+| `get_setting`, `set_setting`, `list_settings` | Settings. The AI-agent switches (`mcp.*`) and the pendant switch (`opts.pendant`) can be read but not set: only the user changes them, in the Settings window |
 | `new_design`, `open`, `save`, `import`, `export`, `undo`, `redo` | Shortcuts for `file.*` / `edit.*` commands |
 | `screenshot` | PNG of the window or a region |
 | `measure` | Bounding boxes, lengths, areas, estimated job time |
@@ -77,6 +77,11 @@ it). The human owns the policy (`McpPolicy`, Preferences > AI agents):
 * Every call is in the audit log (timestamp, tool, command, args hash, outcome), read via `events`.
 * The control server binds 127.0.0.1 only, drops non-loopback peers, checks the token in constant
   time and accepts only a 4 KiB frame before login.
+* A connection that has not logged in must send its whole hello within 5 s, and such connections
+  have their own small limit (4): a newer one pushes out the oldest that is still in the handshake
+  once that one has had a quarter of a second to send its hello.
+  Only clients with the token take one of the 8 logged-in places, and a logged-in client is never
+  pushed out, so a program without the token cannot keep the agent out by holding connections.
 
 ## Integrating it into the app
 

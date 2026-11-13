@@ -882,24 +882,28 @@ fn show_error(ui: &mut Ui, app: &DarkBurn) {
     }
 }
 
-/// A non-modal window; returns false when its close button was pressed.
+/// A non-modal window the user can keep open while working, so it can also be docked as a tab
+/// or put in a window of its own (its OK, Apply and Cancel are in the body); returns false when
+/// it was closed (its close button, Escape, or its tab).
 fn window(ctx: &Context, title: &str, add: impl FnOnce(&mut Ui)) -> bool {
-    let mut open = true;
     let screen = ctx.content_rect();
     let id = Id::unique(("shape_dialog", title));
-    egui::Window::new(title)
-        .id(id)
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .default_pos(pos2((screen.right() - 340.0).max(0.0), 120.0))
-        .default_width(300.0)
-        .show(ctx, add);
-    // Escape closes the dialog, as it does for every other window in the app.
-    if crate::escape::closes(ctx, id) {
-        open = false;
-    }
-    open
+    let key = dock_key(title);
+    let (closed, _) = ui_kit::Window::new(id, "db_app", title)
+        .dockable(&key)
+        .body_width(300.0)
+        .placed(egui::Align2::LEFT_TOP, pos2((screen.right() - 340.0).max(0.0), 120.0))
+        .actions("", "", None)
+        // Escape closes the dialog, as it does for every other window in the app.
+        .escape_here(crate::escape::only_window(ctx, id))
+        .show(ctx, true, add);
+    !closed
+}
+
+/// The stored-layout key of the shape dialog titled `title`.
+pub fn dock_key(title: &str) -> String {
+    let slug: String = title.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
+    format!("db_shape_{slug}")
 }
 
 fn selected_count(app: &DarkBurn) -> usize {

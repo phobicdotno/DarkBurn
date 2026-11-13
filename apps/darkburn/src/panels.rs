@@ -19,12 +19,24 @@ pub enum Area {
 impl Area {
     pub const ALL: [Area; 4] = [Area::Left, Area::RightTop, Area::RightBottom, Area::Bottom];
 
+    /// The area's English name, as agents see it.
     pub fn label(self) -> &'static str {
         match self {
             Area::Left => "Left",
             Area::RightTop => "Right, top",
             Area::RightBottom => "Right, bottom",
             Area::Bottom => "Bottom",
+        }
+    }
+
+    /// The area's name in the interface language, for menus.
+    pub fn title(self) -> String {
+        use crate::i18n::tr;
+        match self {
+            Area::Left => tr("area.left", "Left"),
+            Area::RightTop => tr("area.right_top", "Right, top"),
+            Area::RightBottom => tr("area.right_bottom", "Right, bottom"),
+            Area::Bottom => tr("area.bottom", "Bottom"),
         }
     }
 }

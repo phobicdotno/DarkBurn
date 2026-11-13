@@ -1057,6 +1057,7 @@ pub fn devices_toolbar(ui: &mut Ui, app: &mut DarkBurn) {
     }
     if small(ui, "Automation", "Let another program start jobs and ask for the status", true) {
         app.machine.conn.automation_open = true;
+        ui_kit::window_host::raise(ui.ctx(), "db_automation");
     }
 }
 
@@ -1212,7 +1213,7 @@ fn automation_dialog(ctx: &Context, app: &mut DarkBurn) {
         return;
     }
     let (closed, action) =
-        ui_kit::Window::new(Id::unique("db_automation"), "settings", "Automation socket").cards(3.0).fields().actions("", "Close", None).show(
+        ui_kit::Window::new(Id::unique("db_automation"), "settings", "Automation socket").dockable("db_automation").cards(3.0).fields().actions("", "Close", None).show(
             ctx,
             true,
             |ui| {

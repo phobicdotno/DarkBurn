@@ -95,6 +95,12 @@ pub const COMMANDS: &[Cmd] = &[
     c("text.edit_dialog", "Edit Text Shapes", "", ""),
     c("tools.position_laser", "Position Laser", "Alt+L", "db_position_laser"),
     c("tools.measure", "Measure", "Alt+M", "measure"),
+    c("tools.tangent_circle", "Tangent Circle", "", ""),
+    a(
+        "shape.tangent_circle",
+        "Add Tangent Circles",
+        r#"{"type":"object","properties":{"points":{"type":"array","items":{"type":"array","items":{"type":"number"}},"description":"two or three [x, y] points in mm; each picks the nearest line, arc or circle (among the selection, or every shape when nothing is selected). Without points the selection must hold two or three"},"radius":{"type":"number","description":"mm; needed for two objects"},"pick":{"type":["integer","string"],"description":"index of the circle to add (0, nearest the points, is the default) or \"all\""},"on_edges":{"type":"boolean","description":"only circles touching the segments and arcs themselves (default true)"},"preview":{"type":"boolean","description":"list the circles without adding any"},"layer":{"type":"integer"}}}"#,
+    ),
     c("tools.qr", "Create QR Code", "", "db_qr"),
     c("tools.offset", "Offset Shapes", "Alt+O", "offset"),
     c("tools.weld", "Weld Shapes", "Ctrl+W", "db_weld"),
@@ -105,12 +111,14 @@ pub const COMMANDS: &[Cmd] = &[
     c("tools.cut_shapes", "Cut Shapes", "Alt+Shift+C", "cut"),
     c("tools.adjust_image", "Adjust Image", "Alt+I", ""),
     c("tools.trace_image", "Trace Image", "Alt+T", "trace"),
+    c("tools.trace_files", "Trace Image Files...", "", "trace"),
     c("tools.path_to_text", "Apply Path to Text", "", ""),
     c("tools.mask_image", "Apply Mask to Image", "", ""),
     c("tools.resize_slots", "Resize Slots in Selection", "", ""),
     c("tools.select_smaller", "Select Shapes Smaller than Selected", "", ""),
     c("tools.warp", "Warp Selection (4 points)", "", ""),
     c("tools.deform", "Deform Selection (16 points)", "", ""),
+    c("tools.taper_warp", "Taper Warp", "", ""),
     c("tools.start_points", "Start Points", "", "db_start_points"),
     c("tools.round_corners", "Round Corners", "", "db_round_corners"),
     // Arrange
@@ -148,6 +156,8 @@ pub const COMMANDS: &[Cmd] = &[
     c("arrange.same_height", "Make Same Height", "", "db_same_height"),
     c("arrange.move_selection", "Move Selection", "", "move"),
     c("arrange.nest", "Nest Selected", "", ""),
+    c("arrange.quick_nest", "Quick Nest", "", ""),
+    c("arrange.true_nest", "True Nest", "", ""),
     c("arrange.dock_left", "Dock Left", "", "db_dock_left"),
     c("arrange.dock_right", "Dock Right", "", "db_dock_right"),
     c("arrange.dock_up", "Dock Up", "", "db_dock_up"),
@@ -218,6 +228,11 @@ pub const COMMANDS: &[Cmd] = &[
         "window.toolbar_move",
         "Move a Toolbar",
         r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id, for example arrange"},"delta":{"type":"integer","description":"places to move: negative is earlier"}},"required":["toolbar"]}"#,
+    ),
+    a(
+        "window.toolbar_place",
+        "Dock or Float a Toolbar",
+        r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id: main, arrange, modifiers, numeric, text, modes, docking, tools or palette"},"place":{"type":"string","enum":["home","top","bottom","left","right","floating"],"description":"home is its usual place (the ribbon, the tools at the left, the palette at the bottom)"},"x":{"type":"number","description":"floating: left edge in points"},"y":{"type":"number","description":"floating: top edge in points"}},"required":["toolbar","place"]}"#,
     ),
     c("window.preview", "Preview", "Alt+P", "db_preview"),
     c("view.zoom_page", "Zoom to Page", "Ctrl+0", "db_zoom_page"),
@@ -354,6 +369,16 @@ pub const COMMANDS: &[Cmd] = &[
         r#"{"type":"object","properties":{"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"clip":{"type":"array","items":{"type":"number"},"description":"[left, top, right, bottom] as fractions of the picture"},"sketch":{"type":"boolean"},"delete_image":{"type":"boolean"},"layer":{"type":"integer"}}}"#,
     ),
     a(
+        "image.trace_files",
+        "Trace Picture Files",
+        r#"{"type":"object","properties":{"paths":{"type":"array","items":{"type":"string"},"description":"picture files, traced with the same settings"},"threshold":{"type":"integer","minimum":0,"maximum":255},"lower_cutoff":{"type":"integer"},"ignore_smaller":{"type":"integer"},"smoothness":{"type":"number"},"optimize":{"type":"number"},"sketch":{"type":"boolean"},"layer":{"type":"integer"},"gap":{"type":"number","description":"mm between the files"},"columns":{"type":"integer","description":"files per row; 0 picks"}},"required":["paths"]}"#,
+    ),
+    a(
+        "image.depth_map",
+        "Import a 3D Model as a Height Picture",
+        r#"{"type":"object","properties":{"path":{"type":"string","description":"STL or OBJ file"},"view":{"enum":["top","front","side"]},"flip":{"type":"boolean","description":"look from the opposite side"},"width":{"type":"number","description":"mm; the height follows the model"},"dpi":{"type":"number"},"near_white":{"type":"boolean","description":"near surfaces white (default) or black"},"depth_from":{"type":"number","description":"mm below the nearest point that gets the near tone"},"depth_to":{"type":"number","description":"mm below the nearest point that gets the far tone"},"layer":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"required":["path"]}"#,
+    ),
+    a(
         "image.trace_capture",
         "Trace a Captured Picture",
         r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"dpi":{"type":"number"},"threshold":{"type":"integer"},"sketch":{"type":"boolean"},"layer":{"type":"integer"}},"required":["path"]}"#,
@@ -466,7 +491,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "project.export",
         "Export to a File",
-        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"}},"required":["path"]}"#,
+        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"},"nc_on":{"type":"string","description":"Gweike G-code: code before each contour (default M07)"},"nc_off":{"type":"string","description":"Gweike G-code: code after each contour (default M08)"}},"required":["path"]}"#,
     ),
     a(
         "project.print_pdf",
@@ -530,6 +555,7 @@ pub fn works(id: &str) -> bool {
             | "edit.image_remove_backup"
             | "tools.adjust_image"
             | "tools.trace_image"
+            | "tools.trace_files"
             | "tools.mask_image"
             | "file.save_bitmap"
             | "tools.select"
@@ -553,6 +579,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.unlock"
             | "window.reset_layout"
             | "window.toolbar_move"
+            | "window.toolbar_place"
             | "view.zoom_page"
             | "view.zoom_in"
             | "view.zoom_out"
@@ -579,9 +606,12 @@ pub fn works(id: &str) -> bool {
         || id.starts_with("support.")
         || id.starts_with("help.topic")
         || crate::laser_position::handles(id)
+        || crate::tangent_tool::handles(id)
+        || crate::taper_warp::handles(id)
         || crate::job_cmds::works(id)
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
+        || crate::nest_cmds::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -659,7 +689,13 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).chain(crate::connections::COMMANDS).find(|c| c.id == id)
+    COMMANDS
+        .iter()
+        .chain(crate::machine_ui::COMMANDS)
+        .chain(crate::machine_ext::COMMANDS)
+        .chain(crate::motion_cmds::COMMANDS)
+        .chain(crate::connections::COMMANDS)
+        .find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
@@ -669,7 +705,8 @@ pub fn hardware(id: &str) -> bool {
         || id.starts_with("laser.")
         || id.starts_with("arrange.laser_")
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
-        || crate::job_cmds::hardware(id))
+        || crate::job_cmds::hardware(id)
+        || crate::vision_cmds::hardware(id))
         && !crate::job_cmds::not_hardware(id)
         && !crate::machine_ext::not_hardware(id)
         && !crate::vision_cmds::not_hardware(id)
@@ -679,6 +716,7 @@ pub fn hardware(id: &str) -> bool {
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "file.new" => &["FILE-01"],
+        "window.toolbar_place" => &["TB-25"],
         "file.open" | "project.open" => &["FILE-04"],
         "file.import" | "project.import" => &["FILE-05", "IMP-03", "IMP-04", "IMP-05", "IMP-06", "IMP-13", "PROJ-02", "PROJ-03"],
         "file.notes" => &["FILE-06"],
@@ -715,6 +753,8 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         }
         "tools.trace_image" | "image.trace" => &["TOOLS-20", "IMG-18", "IMG-19"],
         "image.trace_capture" => &["IMG-20"],
+        "tools.trace_files" | "image.trace_files" => &["IMG-21"],
+        "image.depth_map" => &["IMG-25"],
         "edit.convert_bitmap" | "image.convert_bitmap" => &["EDIT-12", "SHAPE-02"],
         "edit.image_replace" | "image.replace" => &["EDIT-22"],
         "edit.image_replace_fit" => &["EDIT-23"],
@@ -757,6 +797,8 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "arrange.front" => &["ARR-37"],
         "arrange.back" => &["ARR-38"],
         "tools.position_laser" => &["TOOLS-09", "DRAW-20"],
+        "tools.tangent_circle" | "shape.tangent_circle" => &["DRAW-22"],
+        "tools.taper_warp" => &["OTHER-10"],
         "arrange.to_laser" => &["ARR-28"],
         id if id.starts_with("arrange.laser_") => &["ARR-29"],
         "arrange.lock" => &["ARR-39", "SHAPE-30"],
@@ -777,6 +819,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "view.zoom_page" => &["WIN-03"],
         _ if crate::machine_ui::handles(id) => crate::machine_ui::checklist(id),
         _ if crate::misc_cmds::works(id) => crate::misc_cmds::checklist(id),
+        _ if crate::nest_cmds::works(id) => crate::nest_cmds::checklist(id),
         "help.about" => &["HELP-01"],
         "help.quick" | "help.topic" => &["HELP-02", "KEY-07"],
         "help.docs" => &["HELP-03"],
@@ -824,6 +867,7 @@ pub fn registry() -> &'static [Cmd] {
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::machine_ext::COMMANDS);
+        v.extend_from_slice(crate::motion_cmds::COMMANDS);
         v.extend_from_slice(crate::connections::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
@@ -834,6 +878,8 @@ pub fn registry() -> &'static [Cmd] {
         for c in &mut v {
             if c.args.is_empty()
                 && let Some(args) = crate::shape_ops::args_schema(c.id)
+                    .or_else(|| crate::nest_cmds::args_schema(c.id))
+                    .or_else(|| crate::taper_warp::args_schema(c.id))
             {
                 c.args = args;
             }
@@ -844,8 +890,8 @@ pub fn registry() -> &'static [Cmd] {
         for (id, label) in crate::prefs::TOOLBARS.iter().copied().chain([("status", "Status Bar")]) {
             v.push(c(leak(format!("toolbar.{id}")), leak(format!("Show or Hide {label}")), "", ""));
         }
-        for (code, name) in LANGUAGES {
-            v.push(c(leak(format!("lang.{code}")), name, "", ""));
+        for l in crate::languages::offered() {
+            v.push(c(leak(format!("lang.{}", l.code)), l.name, "", ""));
         }
         for i in 0..24 {
             v.push(c(leak(format!("file.recent.{i}")), leak(format!("Open Recent Project {}", i + 1)), "", ""));
@@ -937,7 +983,7 @@ pub fn ui_action_ids() -> Vec<String> {
     out.extend(crate::panels::PANELS.iter().map(|p| format!("panel.{}", p.id)));
     out.extend(crate::prefs::TOOLBARS.iter().map(|(id, _)| format!("toolbar.{id}")));
     out.push("toolbar.status".into());
-    out.extend(LANGUAGES.iter().map(|(code, _)| format!("lang.{code}")));
+    out.extend(crate::languages::offered().map(|l| format!("lang.{}", l.code)));
     out.extend((0..24).map(|i| format!("file.recent.{i}")));
     out.sort();
     out.dedup();
@@ -1056,6 +1102,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("text.edit_dialog"),
             C("tools.position_laser"),
             C("tools.measure"),
+            C("tools.tangent_circle"),
             C("tools.qr"),
             S,
             C("tools.offset"),
@@ -1068,6 +1115,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.cut_shapes"),
             C("tools.adjust_image"),
             C("tools.trace_image"),
+            C("tools.trace_files"),
             S,
             C("tools.path_to_text"),
             C("tools.mask_image"),
@@ -1075,6 +1123,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("tools.select_smaller"),
             C("tools.warp"),
             C("tools.deform"),
+            C("tools.taper_warp"),
             C("tools.start_points"),
             C("tools.round_corners"),
         ],
@@ -1121,6 +1170,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             ),
             S,
             C("arrange.nest"),
+            C("arrange.quick_nest"),
+            C("arrange.true_nest"),
             Sub("Dock", &[C("arrange.dock_left"), C("arrange.dock_right"), C("arrange.dock_up"), C("arrange.dock_down")]),
             Sub(
                 "Move Selected Objects",
@@ -1256,34 +1307,6 @@ pub const MENUS: &[(&str, &[Entry])] = &[
     ),
 ];
 
-/// Interface languages, each named in its own language. Only English has text so far.
-pub const LANGUAGES: &[(&str, &str)] = &[
-    ("en", "English"),
-    ("de", "Deutsch"),
-    ("es", "Español"),
-    ("fr", "Français"),
-    ("it", "Italiano"),
-    ("nl", "Nederlands"),
-    ("nb", "Norsk bokmål"),
-    ("pl", "Polski"),
-    ("pt", "Português"),
-    ("sv", "Svenska"),
-    ("da", "Dansk"),
-    ("fi", "Suomi"),
-    ("cs", "Čeština"),
-    ("hu", "Magyar"),
-    ("tr", "Türkçe"),
-    ("el", "Ελληνικά"),
-    ("ru", "Русский"),
-    ("uk", "Українська"),
-    ("ja", "日本語"),
-    ("zh", "简体中文"),
-    ("zh-TW", "繁體中文"),
-    ("ko", "한국어"),
-    ("he", "עברית"),
-    ("ar", "العربية"),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1333,7 +1356,10 @@ mod tests {
                 !info.implemented
                     || crate::machine_ui::handles(&info.id)
                     || crate::key_cmds::works(&info.id)
-                    || crate::laser_position::handles(&info.id),
+                    || crate::laser_position::handles(&info.id)
+                    // The camera commands run too: a real camera opens only after Allow live
+                    // camera, behind the agent gate, and never under `cargo test` (camera_devices.rs).
+                    || crate::vision_cmds::hardware(&info.id),
                 "{} touches hardware and must not run yet",
                 info.id
             );

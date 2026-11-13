@@ -459,7 +459,9 @@ fn non_default_prefs() -> crate::prefs::Prefs {
             "svg_dpi": 72.0,
             "theme": "light",
             "toolbar_order": order,
-            "view": { "offset": { "x": 12.0, "y": -7.0 }, "zoom": 2.0 }
+            "toolbar_places": { "tools": { "dock": "top", "pos": null } },
+            "view": { "offset": { "x": 12.0, "y": -7.0 }, "zoom": 2.0 },
+            "windows": { "settings": { "placement": { "docked": "RightTop" }, "pos": [120.0, 80.0], "size": [640.0, 480.0], "native_pos": [40.0, 30.0], "native_size": [700.0, 520.0] } }
         }),
     );
     Prefs::from_json(&v.to_string())
@@ -512,10 +514,20 @@ fn every_preference_survives_a_restart_and_is_in_force() {
     let _ = std::fs::remove_file(&file);
     // Import keeps what AI agents may do as it was here; a file never changes that.
     assert_eq!(imported.mcp, crate::mcp_ui::McpPrefs::default(), "import changed what AI agents may do");
+    // So does the pendant switch.
+    assert!(!imported.opts.pendant, "import switched the pendant on");
+    imported.opts.pendant = p.opts.pendant;
+    // And where a window of its own sits on this computer's screens: a place from another
+    // computer can be off every screen here.
+    for (key, place) in &mut imported.windows {
+        assert_eq!((place.native_pos, place.native_size), (None, None), "import brought where {key} sits in a window of its own");
+        let theirs = &p.windows[key];
+        (place.native_pos, place.native_size) = (theirs.native_pos, theirs.native_size);
+    }
     assert_eq!(
         Prefs { recent: p.recent.clone(), mcp: p.mcp.clone(), ..imported },
         p,
-        "import does not bring every setting (the recent projects and the AI agent access aside)"
+        "import does not bring every setting (the recent projects, the AI agent access, the pendant and the places of windows of their own aside)"
     );
 
     // A restart with them.

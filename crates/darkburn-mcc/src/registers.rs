@@ -242,10 +242,17 @@ impl StatusBlock {
     /// Raw level of digital input `port` (1..=12 in word 4, 13..=28 in word 21). Whether the card
     /// already applies the input-type inversion is unconfirmed.
     pub fn di_level(&self, port: u32) -> bool {
+        self.di_level_of(port).unwrap_or(false)
+    }
+
+    /// [`Self::di_level`], or `None` for a port number the card does not have. A caller that
+    /// compares the level with "what low means" must use this one: a port that does not exist
+    /// reads low for ever, and that must not pass for a real input at its low level.
+    pub fn di_level_of(&self, port: u32) -> Option<bool> {
         match port {
-            1..=12 => (self.word(Status::Di) >> (port - 1)) & 1 == 1,
-            13..=28 => (self.word(Status::ExtDi) >> (port - 13)) & 1 == 1,
-            _ => false,
+            1..=12 => Some((self.word(Status::Di) >> (port - 1)) & 1 == 1),
+            13..=28 => Some((self.word(Status::ExtDi) >> (port - 13)) & 1 == 1),
+            _ => None,
         }
     }
 }

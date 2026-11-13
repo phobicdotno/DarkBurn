@@ -15,7 +15,8 @@ use crate::commands;
 use crate::shell::DarkBurn;
 
 /// Always allowed, whatever the policy says: they stop things.
-const STOP: &[&str] = &["machine.pause", "machine.stop", "machine.emergency_stop", "job.pause", "job.stop", "machine.fire_off", "machine.jog_stop"];
+const STOP: &[&str] =
+    &["machine.pause", "machine.stop", "machine.emergency_stop", "job.pause", "job.stop", "machine.fire_off", "machine.jog_stop", "camera.stop"];
 
 /// Start a job, resume it, run a file or raw lines, or fire the laser.
 const FIRE_OR_JOB: &[&str] = &[
@@ -34,6 +35,8 @@ const FIRE_OR_JOB: &[&str] = &[
 
 /// Open, close, scan or read a device (no motion, nothing written to it).
 const CONNECT: &[&str] = &[
+    "camera.find",
+    "camera.start",
     "machine.connect",
     "machine.disconnect",
     "machine.reset_connection",
@@ -58,6 +61,8 @@ const CONFIG: &[&str] = &[
     "machine.file_upload",
     "machine.file_overwrite",
     "machine.overrides",
+    "machine.set_finish",
+    "machine.clear_finish",
     "edit.device_settings",
     "edit.machine_settings",
 ];
@@ -72,6 +77,9 @@ const MOTION: &[&str] = &[
     "machine.move_to",
     "machine.set_origin",
     "machine.clear_origin",
+    "machine.focus_z",
+    "machine.jog_rotary",
+    "machine.rotary_test",
     "machine.frame",
     "job.frame",
     "job.frame_rubber",
@@ -232,6 +240,8 @@ pub const REDIRECTS: &[Redirect] = &[
     Redirect { id: "file.prefs_export", target: "project.prefs_export", fixed: None },
     Redirect { id: "file.prefs_import", target: "project.prefs_import", fixed: None },
     Redirect { id: "file.save_bitmap", target: "image.save_bitmap", fixed: None },
+    Redirect { id: "tools.trace_files", target: "image.trace_files", fixed: None },
+    Redirect { id: "help.support_data", target: "support.write", fixed: None },
 ];
 
 /// Commands that stay out of reach of agents, with the reason.

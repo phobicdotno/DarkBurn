@@ -11,6 +11,7 @@ Read this before writing code. These rules are not optional.
 
 ## Hardware safety
 - Never open a real serial port, USB device or network connection to a machine. That means no COM ports, no USB laser devices, no UDP or TCP to 10.1.1.x, 192.168.x.x lasers or any controller.
+  - Exception (owner approved 2026-11-12): the `darkburn-pendant` crate may open the XHC wireless pendant receiver (USB 10ce:eba0, HID) when the user turns the pendant on. It only reads keys and sets LEDs; all actions go through the normal gated app paths.
 - Every driver talks through a transport trait. Tests and demos use an in-memory emulator or loopback.
 - Real-hardware tests are done by the owner by hand. Leave the TARGET-* and MCC-06 items for that.
 - The Gweike M3 Ultra is a 1200 W fibre cutter. No code may ever bypass its height follower, piercing or gas logic.

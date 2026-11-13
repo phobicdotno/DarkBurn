@@ -22,13 +22,16 @@ neg_cmp_op_on_partial_ord = "allow"
 # Live webcam capture only opens after the user turns it on, picks a camera and presses Start.
 # Real USB serial ports for GRBL machines: listing ports, and opening one only when the user clicks Connect.
 # Raw USB for G-code controllers with no serial driver: devices are listed, and one is opened only when the user clicks Connect.
-default = ["live-camera", "serial", "rawusb"]
+default = ["live-camera", "serial", "rawusb", "pendant"]
 live-camera = ["darkburn-vision/capture"]
 # The same feature opens a Ruida controller's USB port (its FTDI chip shows up as a serial port).
 serial = ["darkburn-grbl/serial", "darkburn-ruida/serial"]
 # Ruida over raw FTDI USB, for systems where the FTDI chip has no serial driver. Not built by default.
 rawusb = ["darkburn-grbl/rawusb"]
 usb = ["darkburn-ruida/usb"]
+# The XHC wireless handheld pendant over HID. The receiver is opened only after the user turns
+# the pendant on in Settings; without this feature the setting says the build has no support.
+pendant = ["darkburn-pendant/hid"]
 
 [dependencies]
 darkburn-grbl = { path = "../../crates/darkburn-grbl" }
@@ -45,6 +48,7 @@ darkburn-mcp = { path = "../../crates/darkburn-mcp" }
 darkburn-gcodebots = { path = "../../crates/darkburn-gcodebots" }
 darkburn-galvo = { path = "../../crates/darkburn-galvo" }
 darkburn-mcc = { path = "../../crates/darkburn-mcc" }
+darkburn-pendant = { path = "../../crates/darkburn-pendant" }
 kurbo = { workspace = true }
 image = { workspace = true }
 usvg = { workspace = true }

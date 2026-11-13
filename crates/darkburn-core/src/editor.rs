@@ -94,6 +94,21 @@ struct Snapshot {
     revision: u64,
 }
 
+/// Redo steps taken out of the history with [`History::take_redo`], to be put back with
+/// [`History::put_back_redo`] when the change that would have cleared them is taken back.
+#[derive(Clone, Debug, Default)]
+pub struct RedoSteps(Vec<Snapshot>);
+
+impl RedoSteps {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// Unlimited undo and redo.
 #[derive(Clone, Debug, Default)]
 pub struct History {
@@ -141,10 +156,21 @@ impl History {
         self.undo.clear();
         self.redo.clear();
     }
+
+    /// Take the redo steps out, before a change that may be taken back as if it never came
+    /// (a change clears them).
+    pub fn take_redo(&mut self) -> RedoSteps {
+        RedoSteps(std::mem::take(&mut self.redo))
+    }
+
+    /// Put redo steps from [`History::take_redo`] back, in place of any there are now.
+    pub fn put_back_redo(&mut self, steps: RedoSteps) {
+        self.redo = steps.0;
+    }
 }
 
 /// The editing session for one open project.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Editor {
     pub doc: Document,
     pub selection: Selection,
@@ -155,11 +181,36 @@ pub struct Editor {
     /// Bumped on every change; renderers and auto-save compare it.
     revision: u64,
     saved_revision: u64,
+    /// Which project this is: see [`Editor::project`].
+    project: u64,
+}
+
+impl Default for Editor {
+    fn default() -> Editor {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Editor {
+            doc: Document::default(),
+            selection: Selection::default(),
+            history: History::default(),
+            clipboard: Clipboard::default(),
+            current_layer: 0,
+            revision: 0,
+            saved_revision: 0,
+            project: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
 }
 
 impl Editor {
     pub fn new() -> Editor {
         Editor::default()
+    }
+
+    /// A number of its own for every editor made (a new or an opened project); a copy keeps it.
+    /// Something that holds on to the project between frames (a window's draft) compares it to
+    /// learn that another project took this one's place.
+    pub fn project(&self) -> u64 {
+        self.project
     }
 
     /// An editor on an opened document, unmodified.
@@ -318,6 +369,17 @@ mod tests {
     }
 
     #[test]
+    fn every_new_or_opened_project_is_another_project() {
+        let a = Editor::new();
+        let b = Editor::with_document(a.doc.clone());
+        let mut c = a.clone();
+        c.touch();
+        assert_ne!(a.project(), b.project());
+        assert_ne!(a.project(), Editor::default().project());
+        assert_eq!(a.project(), c.project(), "a copy, changed or not, is the same project");
+    }
+
+    #[test]
     fn a_change_that_changes_nothing_is_not_an_undo_step() {
         // Found by the monkey: commands that report success without changing anything (a 1 x 1
         // grid array, "move to the lower left" when already there) each left an undo step that
@@ -340,6 +402,30 @@ mod tests {
         assert!(!e.is_modified(), "the document is as it was saved");
         assert_eq!(e.selection.ids(), &[id], "the selection the change made is kept");
         assert!(e.redo(), "and what could be redone still can");
+    }
+
+    /// A change that is taken back with drop_checkpoint can leave redo as it was.
+    #[test]
+    fn redo_steps_can_be_kept_across_a_change_that_is_taken_back() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.undo();
+        assert_eq!(e.history.redo_label(), Some("Add"));
+        let kept = e.history.take_redo();
+        assert_eq!(kept.len(), 1);
+        e.edit("Picture", |d, _| {
+            d.add(square(5.0));
+            true
+        });
+        assert!(!e.history.can_redo());
+        e.drop_checkpoint();
+        e.history.put_back_redo(kept);
+        assert_eq!(e.doc.len(), 0);
+        assert!(e.redo(), "redo brings the first change back");
+        assert_eq!(e.doc.len(), 1);
     }
 
     #[test]

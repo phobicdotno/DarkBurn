@@ -306,7 +306,7 @@ impl Menu {
         let t = Tokens::get();
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space_24), Sense::hover());
         let mut job = egui::text::LayoutJob::simple_singleline(
-            solidcraft_ui_text::tr_label(label).to_uppercase(),
+            crate::casing::upper(solidcraft_ui_text::tr_label(label)),
             crate::fonts::semibold(t.font_small),
             t.form_dim,
         );
@@ -480,7 +480,7 @@ pub fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<usize>,
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(t.space_4);
         ui.label(
-            egui::RichText::new(solidcraft_ui_text::tr("ui.ribbon_workspace").to_uppercase())
+            egui::RichText::new(crate::casing::upper(solidcraft_ui_text::tr("ui.ribbon_workspace")))
                 .size(solidcraft_theme::Tokens::get().font_small)
                 .semibold()
                 .color(t.text_dim),

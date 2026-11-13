@@ -90,7 +90,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     // Start, pause, stop [LASER-03]; stop and pause are never disabled.
     let connected = snap.connected();
     let ready = snap.state.can_start();
-    let start_ok = ready && !(family == Family::Ruida && dev.settings.dsp.disable_start) && !design_only;
+    let start_ok = start_allowed(app);
     ui.horizontal_wrapped(|ui| {
         if btn(ui, "Start", "Run the job on the laser", start_ok) {
             go(app, "job.start", json!({}));
@@ -225,11 +225,28 @@ fn fire_button(ui: &mut Ui, app: &mut DarkBurn, enabled: bool) {
         .inner;
     let down = r.is_pointer_button_down_on();
     let on = app.machine.handle.snapshot().fire_on;
-    if down && !on && enabled {
-        let (p, s) = (app.machine.fire_percent, app.machine.fire_secs.clamp(1.0, 10.0));
-        go(app, "machine.fire", json!({ "percent": p, "secs": s }));
-    } else if !down && on {
-        go(app, "machine.fire_off", json!({}));
+    // This press: when fire was last sent, and whether the laser has been on. The machine reports
+    // the laser on a little later, so a held button waits for it before asking again, and once
+    // the laser was on it never fires again in the same press.
+    let now = ui.input(|i| i.time);
+    let (sent_at, was_on) = ui.data(|d| d.get_temp::<(Option<f64>, bool)>(r.id)).unwrap_or((None, false));
+    if down {
+        let was_on = was_on || on;
+        let waiting = sent_at.is_some_and(|t| now - t < 0.5);
+        let mut sent_at = sent_at;
+        if !on && !was_on && !waiting && enabled {
+            let (p, s) = (app.machine.fire_percent, app.machine.fire_secs.clamp(1.0, 10.0));
+            go(app, "machine.fire", json!({ "percent": p, "secs": s }));
+            sent_at = Some(now);
+        }
+        ui.data_mut(|d| d.insert_temp(r.id, (sent_at, was_on)));
+    } else {
+        if sent_at.is_some() || was_on {
+            ui.data_mut(|d| d.remove::<(Option<f64>, bool)>(r.id));
+        }
+        if on {
+            go(app, "machine.fire_off", json!({}));
+        }
     }
     ui_kit::row(ui, "Fire power", |ui| {
         let max = app.machine.active().settings.fire_max_percent.max(0.1);
@@ -288,7 +305,8 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     let snap = app.machine.handle.snapshot().clone();
     let family = machine_ui::family_of(&app.machine);
     let dev = app.machine.active().clone();
-    let free = snap.connected() && snap.state == LaserState::Ready;
+    // The jog keys are refused exactly when these buttons are disabled (key_cmds).
+    let free = crate::key_cmds::jog_free(&snap);
     if !snap.connected() {
         ui.label(RichText::new("Connect a laser to jog it. The simulator needs no hardware.").size(t.font_small).color(t.text_dim));
     }
@@ -340,7 +358,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
 
     // Z and rotary [MOVE-02, MOVE-03]
-    if dev.settings.z_enabled || family == Family::Ruida {
+    if crate::key_cmds::has_z(&app.machine) {
         ui.horizontal(|ui| {
             ui.label("Z");
             let rev = if dev.settings.z_reverse { -1.0 } else { 1.0 };
@@ -362,6 +380,19 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
                 if btn(ui, label, "Turn the rotary axis by the distance", free) {
                     let feed = app.machine.jog.speed * 60.0;
                     go(app, "machine.jog", json!({ "du": dir * app.machine.jog.distance * mult, "feed": feed }));
+                }
+            }
+        });
+    }
+    // With the project's rotary on, the object turns by the distance along its surface.
+    let rotary = crate::vision_state::VisionState::from_doc(&app.editor.doc).rotary;
+    if rotary.enabled {
+        ui.horizontal(|ui| {
+            ui.label(format!("Rotary ({})", rotary.axis.letter()));
+            for (label, dir) in [("Turn \u{2212}", -1.0), ("Turn +", 1.0)] {
+                if btn(ui, label, "Turn the object by the distance, measured along its surface", free) {
+                    let feed = app.machine.jog.speed * 60.0;
+                    go(app, "machine.jog_rotary", json!({ "distance": dir * app.machine.jog.distance * mult, "feed": feed }));
                 }
             }
         });
@@ -416,13 +447,19 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             }
             go(app, "machine.move_to", a);
         }
-        if btn(ui, "Focus Z", "Move only the Z axis to the Z value above", free && typed_mm(&app.machine.jog.goto_z, inches).is_some()) {
-            let z = typed_mm(&app.machine.jog.goto_z, inches).unwrap_or(0.0);
-            go(
-                app,
-                "machine.move_to",
-                json!({ "z": z, "feed": app.machine.jog.z_speed * 60.0, "machine_coords": app.machine.jog.from_machine_zero }),
-            );
+        // A DSP controller runs its own focus routine; the others move Z to the height typed in.
+        let z = typed_mm(&app.machine.jog.goto_z, inches);
+        let (tip, can) = if family == Family::Ruida {
+            ("Run the controller's focus routine (it stops at the focus distance in its Z settings)", free)
+        } else {
+            ("Move only the Z axis to the Z value above", free && z.is_some())
+        };
+        if btn(ui, "Focus Z", tip, can) {
+            let mut a = json!({ "feed": app.machine.jog.z_speed * 60.0, "machine_coords": app.machine.jog.from_machine_zero });
+            if let Some(z) = z {
+                a["z"] = json!(z);
+            }
+            go(app, "machine.focus_z", a);
         }
     });
 
@@ -493,7 +530,7 @@ fn move_panel(ui: &mut Ui, app: &mut DarkBurn) {
             set_finish_here(app);
         }
         if app.machine.jog.finish.is_some() && btn(ui, "Clear finish", "Leave the head where the job ends", true) {
-            app.machine.jog.finish = None;
+            go(app, "machine.clear_finish", json!({}));
         }
     });
     if family == Family::Ruida {
@@ -579,13 +616,26 @@ pub fn position_text(pos: Option<[f64; 4]>, inches: bool) -> String {
 /// "Set finish position": jobs end where the head is now. Kept as a place on the bed (machine
 /// coordinates), so setting or clearing the origin later does not move it.
 pub fn set_finish_here(app: &mut DarkBurn) {
-    let snap = app.machine.handle.snapshot();
-    if snap.has_position {
-        app.machine.jog.finish = Some((snap.machine_pos[0], snap.machine_pos[1]));
+    if app.machine.handle.snapshot().has_position {
+        go(app, "machine.set_finish", json!({}));
     }
 }
 
 /// Click on an arrow: a step, or the start of a continuous jog.
+/// Whether Start may be pressed now: the Start button and the pendant's Start key both ask this.
+pub fn start_allowed(app: &DarkBurn) -> bool {
+    let snap = app.machine.handle.snapshot();
+    let dev = app.machine.active();
+    let family = machine_ui::family_of(&app.machine);
+    snap.state.can_start() && !(family == Family::Ruida && dev.settings.dsp.disable_start) && !dev.is_design_only()
+}
+
+/// Whether the head may be jogged now: the Move panel's arrows and the pendant both ask this.
+pub fn jog_free(app: &DarkBurn) -> bool {
+    let snap = app.machine.handle.snapshot();
+    snap.connected() && snap.state == LaserState::Ready
+}
+
 fn jog_arrow(app: &mut DarkBurn, dx: i8, dy: i8, mult: f64) {
     let (ax, ay) = machine_ui::arrow_to_machine(dx, dy, app.machine.active(), app.machine.jog.invert_keypad);
     let feed = app.machine.jog.speed * 60.0;

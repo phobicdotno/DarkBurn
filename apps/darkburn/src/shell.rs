@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use darkburn_ui::ui_kit::{self, BackingTooltipExt as _, Container, Edge, Menu, MenuItem, Surface};
+use darkburn_ui::ui_kit::{self, BackingTooltipExt as _, Container, Edge, Menu, MenuItem, Surface, window_host};
 use darkburn_ui::{fonts, icons, titlebar};
 use egui::{Align2, FontId, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use solidcraft_theme::Tokens;
@@ -78,12 +78,16 @@ pub struct DarkBurn {
     pub machine: crate::machine_ui::MachineUi,
     /// Libraries, hotkey editor, help (extras.rs).
     pub extras: crate::extras::Extras,
+    /// The wireless handheld pendant, when the user turned it on (pendant_ui.rs).
+    pub pendant: crate::pendant_ui::PendantUi,
     /// Job, preview, G-code and material test state (job_cmds.rs).
     pub job: crate::job_cmds::JobState,
     /// Image windows and presets (image_ui.rs).
     pub images: crate::image_ui::ImageUi,
     /// Dialogs and ribbon fields of the shape-editing commands (shape_ui.rs).
     pub shape_ui: crate::shape_ui::ShapeUi,
+    /// The Quick Nest and True Nest dialog (nest_ui.rs).
+    pub nest_ui: crate::nest_ui::NestUi,
     /// Opening, importing and exporting other file types (file_io.rs).
     pub fio: crate::file_io::FileIo,
     /// The text tool, text dialogs and the Variable Text panel (text_ui.rs).
@@ -92,7 +96,28 @@ pub struct DarkBurn {
     pub vision: crate::vision_cmds::Vision,
     /// The job under way, for the job log (settings_wiring.rs).
     pub job_run: crate::settings_wiring::JobRun,
+    /// Per area, the panel that was in front when a docked window's tab came forward: back in
+    /// front when that window closes or moves away.
+    panel_before_window: std::collections::BTreeMap<Area, String>,
 }
+
+/// The commands that open a dockable window, and its key. Run while the window is open, they
+/// bring it into view.
+pub(crate) const WINDOW_COMMANDS: [(&str, &str); 13] = [
+    ("edit.settings", "settings"),
+    ("file.hotkeys", "db_hotkeys"),
+    ("file.import_options", "db_import_options"),
+    ("file.prefs_backup", "db_prefs_backups"),
+    ("laser.devices", "db_devices"),
+    ("edit.device_settings", "db_device_settings"),
+    ("edit.machine_settings", "db_machine_settings"),
+    ("laser.controller_info", "db_controller_info"),
+    ("tools.adjust_image", "db_adjust_image"),
+    ("job.optimization_settings", "db_job_optimization"),
+    ("job.gcode_settings", "db_job_gcode"),
+    ("gweike.open", "db_gweike"),
+    ("device.automation_open", "db_automation"),
+];
 
 impl DarkBurn {
     pub fn new(prefs: Prefs) -> Self {
@@ -124,13 +149,16 @@ impl DarkBurn {
             files: Default::default(),
             machine: Default::default(),
             extras: Default::default(),
+            pendant: Default::default(),
             job: Default::default(),
             images: Default::default(),
             shape_ui: Default::default(),
+            nest_ui: Default::default(),
             fio: Default::default(),
             text: Default::default(),
             vision: Default::default(),
             job_run: Default::default(),
+            panel_before_window: Default::default(),
         }
     }
 
@@ -169,6 +197,7 @@ impl DarkBurn {
             | "edit.select_contained"
             | "arrange.ungroup" => sel > 0,
             "arrange.group" | "arrange.same_width" | "arrange.same_height" => sel > 1,
+            "arrange.quick_nest" | "arrange.true_nest" => sel > 0,
             "edit.paste" | "edit.paste_in_place" => true,
             _ if crate::image_ui::handles(id) => crate::image_ui::can_run(self, id),
             _ if id.starts_with("arrange.align_") || id.starts_with("arrange.distribute_") || id.starts_with("arrange.move_") => sel > 1,
@@ -209,13 +238,20 @@ impl DarkBurn {
 
     /// Run command `id` (menus, ribbon, shortcuts). Commands of later phases do nothing.
     pub fn run(&mut self, ctx: &egui::Context, id: &str) {
+        if let Some((_, key)) = WINDOW_COMMANDS.iter().find(|(c, _)| *c == id) {
+            // Open already, behind a tab or another window: setting its flag again shows nothing.
+            window_host::raise(ctx, key);
+        }
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)
             || crate::laser_position::run(self, ctx, id)
+            || crate::tangent_tool::run(self, ctx, id)
+            || crate::taper_warp::run(self, ctx, id)
             || crate::job_cmds::run(self, ctx, id)
             || crate::key_cmds::run(self, ctx, id)
             || crate::misc_cmds::run(self, ctx, id)
+            || crate::nest_ui::run(self, ctx, id)
             || crate::layer_defaults::run(self, ctx, id)
             || crate::image_ui::run(self, ctx, id)
             || crate::shape_ops::run(self, ctx, id)
@@ -243,6 +279,9 @@ impl DarkBurn {
             "window.reset_layout" => {
                 self.prefs.reset_layout();
                 ctx.memory_mut(|m| m.reset_areas());
+                // The Preview floats again at its first place and size.
+                self.job.preview.layout = self.job.preview.layout.wrapping_add(1);
+                self.job.preview.maximised = false;
                 self.view_cmd = Some(ViewCmd::ZoomPage);
             }
             other => {
@@ -272,6 +311,9 @@ impl DarkBurn {
         if ctx.memory(|m| m.focused().is_some()) || self.extras.capturing() {
             return None;
         }
+        if let Some(id) = crate::key_cmds::numpad_command(self, ctx) {
+            return Some(id);
+        }
         let over_window = crate::escape::window_open(ctx);
         for (shortcut, id) in crate::keymap::table(&self.prefs.hotkeys) {
             // A plain key pressed over a dialog or a menu is the dialog's: Delete or a letter must
@@ -283,19 +325,7 @@ impl DarkBurn {
             if self.tool == Tool::Nodes && crate::node_tool::owns_shortcut(&shortcut) {
                 continue;
             }
-            // egui matches a plain L when Alt+L is pressed; the keys must match exactly (a Shift
-            // that only types the symbol, like the one in "+", is allowed).
-            let m = shortcut.modifiers;
-            let exact = ctx.input(|i| {
-                i.events.iter().any(|e| {
-                    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
-                        if *key == shortcut.logical_key
-                            && modifiers.alt == m.alt
-                            && modifiers.command == m.command
-                            && (modifiers.shift == m.shift || *key == egui::Key::Plus))
-                })
-            });
-            if !exact {
+            if !ctx.input(|i| i.events.iter().any(|e| pressed_exactly(e, &shortcut))) {
                 continue;
             }
             if commands::works(id) && ctx.input_mut(|i| i.consume_shortcut(&shortcut)) {
@@ -303,6 +333,33 @@ impl DarkBurn {
             }
         }
         None
+    }
+
+    /// The commands whose shortcuts were pressed while a window of its own (a detached window)
+    /// had the keyboard, in the order pressed. The system gives the keys to that window, not to
+    /// this one. They count as pressed over a window: a plain key was meant for the window.
+    pub fn window_shortcut_commands(&self, ctx: &egui::Context) -> Vec<&'static str> {
+        let keys = window_host::take_window_keys(ctx);
+        if keys.is_empty() || self.extras.capturing() {
+            return Vec::new();
+        }
+        let table = crate::keymap::table(&self.prefs.hotkeys);
+        let nodes = self.tool == Tool::Nodes;
+        keys.iter()
+            .filter_map(|key| {
+                table.iter().find_map(|(shortcut, id)| {
+                    let mine = !plain_key(shortcut) && !(nodes && crate::node_tool::owns_shortcut(shortcut));
+                    (mine && pressed_exactly(key, shortcut) && commands::works(id)).then_some(*id)
+                })
+            })
+            .collect()
+    }
+
+    /// Run the shortcuts pressed in the app's windows of their own.
+    pub fn window_shortcuts(&mut self, ctx: &egui::Context) {
+        for id in self.window_shortcut_commands(ctx) {
+            self.run(ctx, id);
+        }
     }
 
     /// Keyboard shortcuts of the commands that work (from the keys their menu items show).
@@ -332,27 +389,40 @@ impl DarkBurn {
         let mut clicked: Option<String> = None;
         // Forget last frame's published widget rectangles (else the registry grows every frame).
         solidcraft_ui_registry::clear_handles();
+        // Where the dockable windows are: the stored places in, the user's moves out.
+        window_host::sync(ui.ctx(), &mut self.prefs.windows);
         keep_tab_for_the_canvas(ui.ctx());
         crate::tab_focus::keep_tab_in_the_top_window(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
+        // The areas and texts the window kit shows, in the language just set.
+        let areas: Vec<(String, String)> = Area::ALL.into_iter().map(|a| (area_key(a), a.title())).collect();
+        window_host::dock_areas(ui.ctx(), &areas.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect::<Vec<_>>());
+        window_host::set_texts(ui.ctx(), window_texts());
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
         crate::machine_ui::frame(ui.ctx(), self);
+        crate::pendant_ui::frame(self);
         crate::file_io::frame(ui.ctx(), self);
         self.app_bar(ui, &mut clicked);
         ribbon::show(ui, self, &mut clicked);
+        // Toolbars moved out of their usual places [TB-25].
+        use crate::toolbar_dock::{self as bars, Dock as BarDock};
+        bars::edge(ui, self, BarDock::Top, &mut clicked);
         if self.prefs.status_bar {
             self.status_bar(ui);
         }
-        if self.prefs.toolbar("palette") {
+        if self.prefs.toolbar("palette") && bars::at_home(&self.prefs, "palette") {
             crate::palette::show(ui, self);
         }
+        bars::edge(ui, self, BarDock::Bottom, &mut clicked);
         self.dock(ui, Area::Bottom);
-        if self.prefs.toolbar("tools") {
+        if self.prefs.toolbar("tools") && bars::at_home(&self.prefs, "tools") {
             tools_column(ui, self.pan_tool, self.tool, &mut self.hint, &mut clicked);
         }
+        bars::edge(ui, self, BarDock::Left, &mut clicked);
         self.dock(ui, Area::Left);
+        bars::edge(ui, self, BarDock::Right, &mut clicked);
         self.right_docks(ui);
         let cmd = self.view_cmd.take();
         let frame = egui::Frame::NONE.fill(Tokens::get().viewport_bottom);
@@ -361,20 +431,25 @@ impl DarkBurn {
             cursor = canvas::show(ui, self, cmd).cursor;
         });
         self.cursor = cursor;
+        bars::floating(ui, self, &mut clicked);
         self.dialogs(ui.ctx());
         crate::extras::dialogs(ui.ctx(), self);
+        crate::tangent_tool::window(ui.ctx(), self);
+        crate::taper_warp::window(ui.ctx(), self);
         crate::cut_settings::dialog(ui.ctx(), self);
         crate::files::dialogs(ui.ctx(), self);
         crate::devices_ui::dialogs(ui.ctx(), self);
         crate::job_ui::frame(ui.ctx(), self);
         crate::image_ui::dialogs(ui.ctx(), self);
         crate::shape_ui::show(ui.ctx(), self);
+        crate::nest_ui::show(ui.ctx(), self);
         crate::text_ui::show(ui.ctx(), self);
         crate::file_io::dialogs(ui.ctx(), self);
         crate::vision_ui::frame(ui.ctx(), self);
         if self.custom_titlebar && !self.native_resize_border {
             titlebar::resize_zones(ui);
         }
+        bars::apply_requests(ui.ctx(), self);
         if let Some(id) = clicked {
             self.run(&ui.ctx().clone(), &id);
         }
@@ -557,12 +632,13 @@ impl DarkBurn {
                     }
                 }
                 Entry::Dynamic("languages") => {
-                    for (code, name) in commands::LANGUAGES {
-                        let id = format!("lang.{code}");
-                        let mut item = MenuItem::new(&id, name, "");
-                        item.checked = Some(self.prefs.language == *code);
-                        item.enabled = crate::i18n::available(code);
-                        if item.show(ui).clicked() && item.enabled {
+                    // Only languages with text; their names may need system fonts [I18N-04].
+                    crate::language_fonts::want_language_names(ui.ctx());
+                    for l in crate::languages::offered() {
+                        let id = format!("lang.{}", l.code);
+                        let mut item = MenuItem::new(&id, l.name, "");
+                        item.checked = Some(self.prefs.language == l.code);
+                        if item.show(ui).clicked() {
                             *clicked = Some(id.clone());
                         }
                     }
@@ -681,7 +757,7 @@ impl DarkBurn {
     }
 
     fn dock(&mut self, ui: &mut Ui, area: Area) {
-        if self.visible_in(area).is_empty() {
+        if !self.area_used(ui.ctx(), area) {
             return;
         }
         let t = Tokens::get();
@@ -691,7 +767,7 @@ impl DarkBurn {
             Area::Bottom => (Edge::Bottom, "db_dock_bottom", Dock::Bottom),
             _ => (Edge::Right, "db_dock_right", Dock::Right),
         };
-        let right_follows = dock == Dock::Left && !(self.visible_in(Area::RightTop).is_empty() && self.visible_in(Area::RightBottom).is_empty());
+        let right_follows = dock == Dock::Left && (self.area_used(ui.ctx(), Area::RightTop) || self.area_used(ui.ctx(), Area::RightBottom));
         let (size, dragging) = self.dock_size(ui, dock, right_follows);
         let range = dragging.clone().unwrap_or(size..=size);
         let panel = host.edge(salt, edge).resizable(true).default_size(size).size_range(range);
@@ -725,8 +801,8 @@ impl DarkBurn {
     }
 
     fn right_docks(&mut self, ui: &mut Ui) {
-        let top = !self.visible_in(Area::RightTop).is_empty();
-        let bottom = !self.visible_in(Area::RightBottom).is_empty();
+        let top = self.area_used(ui.ctx(), Area::RightTop);
+        let bottom = self.area_used(ui.ctx(), Area::RightBottom);
         if !top && !bottom {
             return;
         }
@@ -756,37 +832,93 @@ impl DarkBurn {
         self.dock_shown(Dock::Right, size, dragging.is_some(), shown.response.rect);
     }
 
-    /// One area's tabs and the active panel's contents.
+    /// The tab of `area` in front: the one brought forward; when that was a window's, now closed
+    /// or moved away, the panel that was in front before it; else the first.
+    fn front_tab(&mut self, area: Area, tabs: &[Tab]) -> String {
+        let here = |id: &String| tabs.iter().any(|p| &p.id == id);
+        let stored = self.prefs.active_tab.get(&area).cloned();
+        match stored {
+            Some(id) if here(&id) => id,
+            Some(id) if window_host::window_of_tab(&id).is_some() => {
+                let back = self.panel_before_window.remove(&area).filter(here).unwrap_or(tabs[0].id.clone());
+                // Not left naming a window that is gone, in the stored settings either.
+                self.prefs.active_tab.insert(area, back.clone());
+                back
+            }
+            _ => tabs[0].id.clone(),
+        }
+    }
+
+    /// Tab `id` of `area` comes to the front, in place of `front`. A window's tab remembers the
+    /// panel it covers.
+    fn bring_forward(&mut self, area: Area, front: &str, id: String) {
+        if window_host::window_of_tab(&id).is_some() {
+            if window_host::window_of_tab(front).is_none() {
+                self.panel_before_window.insert(area, front.to_string());
+            }
+        } else {
+            self.panel_before_window.remove(&area);
+        }
+        self.prefs.active_tab.insert(area, id);
+    }
+
+    /// Whether area `area` has anything to show: a visible panel or a window docked there.
+    fn area_used(&self, ctx: &egui::Context, area: Area) -> bool {
+        !self.visible_in(area).is_empty() || !window_host::docked_tabs(ctx, &area_key(area)).is_empty()
+    }
+
+    /// One area's tabs (its panels, then the windows docked there) and the active one's contents.
     fn tab_group(&mut self, ui: &mut Ui, area: Area) {
         let t = Tokens::get();
-        let shown = self.visible_in(area);
-        let Some(first) = shown.first() else { return };
-        let active = self.prefs.active_tab.get(&area).filter(|id| shown.iter().any(|p| p.id == id.as_str())).cloned().unwrap_or(first.id.to_string());
+        let key = area_key(area);
+        let mut tabs: Vec<Tab> = self
+            .visible_in(area)
+            .iter()
+            .map(|p| Tab { id: p.id.to_string(), title: crate::i18n::panel_title(p.id, p.title), window: None })
+            .collect();
+        tabs.extend(window_host::docked_tabs(ui.ctx(), &key).into_iter().map(|w| Tab {
+            id: window_host::tab_id(&w.key),
+            title: w.title,
+            window: Some(w.key),
+        }));
+        if tabs.is_empty() {
+            return;
+        }
+        // A window just docked here, or opened while docked here, comes to the front.
+        if let Some(w) = window_host::take_activation(ui.ctx(), &key) {
+            let front = self.front_tab(area, &tabs);
+            self.bring_forward(area, &front, window_host::tab_id(&w));
+        }
+        let active = self.front_tab(area, &tabs);
+        let active_window = window_host::window_of_tab(&active).map(str::to_string);
         let r = ui.max_rect();
         solidcraft_ui_registry::publish_rect(&format!("panel:area:{area:?}"), r);
+        window_host::dock_target(ui.ctx(), &key, r);
         let header = Rect::from_min_size(r.min, vec2(r.width(), PANEL_HEADER));
         ui.painter().rect_filled(header, 0.0, t.panel_header);
         ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));
         let mut x = header.left() + 4.0;
-        let mut pick = None;
+        let mut pick: Option<String> = None;
         let mut action: Option<(String, Option<Area>)> = None;
+        let mut window_action: Option<(String, WindowMove)> = None;
         let close = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
         let mut tabs_clip = Rect::from_min_max(header.min, pos2(close.left() - 2.0, header.bottom()));
-        if ui.rect_contains_pointer(r) {
+        if ui.rect_contains_pointer(r) && active_window.is_none() {
             self.extras.hover_topic = Some(crate::help::topic_id_for(&active));
         }
         // Tabs that do not fit go behind a chevron; the active one always stays visible.
-        let titles: Vec<String> = shown.iter().map(|p| crate::i18n::panel_title(p.id, p.title)).collect();
         let widths: Vec<f32> =
-            titles.iter().map(|s| ui.painter().layout_no_wrap(s.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();
-        let mut keep = vec![true; shown.len()];
+            tabs.iter().map(|p| ui.painter().layout_no_wrap(p.title.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();
+        let mut keep = vec![true; tabs.len()];
         let overflow_w = 26.0;
         if 4.0 + widths.iter().sum::<f32>() > tabs_clip.width() {
             let room = tabs_clip.width() - 4.0 - overflow_w;
-            keep = vec![false; shown.len()];
-            let at = shown.iter().position(|p| p.id == active).unwrap_or(0);
-            let mut used = 0.0;
-            for i in std::iter::once(at).chain((0..shown.len()).filter(|i| *i != at)) {
+            keep = vec![false; tabs.len()];
+            let at = tabs.iter().position(|p| p.id == active).unwrap_or(0);
+            // The active tab stays also when it alone is wider than the room: it is cut short.
+            keep[at] = true;
+            let mut used = widths[at];
+            for i in (0..tabs.len()).filter(|i| *i != at) {
                 if used + widths[i] <= room {
                     keep[i] = true;
                     used += widths[i];
@@ -794,8 +926,8 @@ impl DarkBurn {
             }
             tabs_clip = Rect::from_min_max(tabs_clip.min, pos2(tabs_clip.right() - overflow_w, tabs_clip.bottom()));
             let ovf = Rect::from_center_size(pos2(tabs_clip.right() + overflow_w / 2.0, header.center().y), vec2(22.0, 22.0));
-            let hidden: Vec<(&'static str, String)> =
-                shown.iter().zip(&titles).enumerate().filter(|(i, _)| !keep[*i]).map(|(_, (p, s))| (p.id, s.clone())).collect();
+            let hidden: Vec<(String, String)> =
+                tabs.iter().enumerate().filter(|(i, _)| !keep[*i]).map(|(_, p)| (p.id.clone(), p.title.clone())).collect();
             let id = ui.scope_id().with(("tab_overflow", area));
             Menu::button_with(
                 ui,
@@ -812,23 +944,25 @@ impl DarkBurn {
                     ui.set_min_width(180.0);
                     for (pid, title) in &hidden {
                         if MenuItem::new(pid, title, "").show(ui).clicked() {
-                            pick = Some(*pid);
+                            pick = Some(pid.clone());
                         }
                     }
                 },
             );
         }
-        for (pi, p) in shown.iter().enumerate() {
+        for (pi, p) in tabs.iter().enumerate() {
             if !keep[pi] {
                 continue;
             }
             let on = p.id == active;
             let font = if on { fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
             let ink = if on { t.text } else { t.text_dim };
-            let g = ui.painter().layout_no_wrap(titles[pi].clone(), font, ink);
+            let g = ui.painter().layout_no_wrap(p.title.clone(), font, ink);
             let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(g.size().x + 16.0, PANEL_HEADER - 6.0));
             x = tr.right() + 2.0;
-            let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("tab", p.id)), Sense::click());
+            // A window's tab can be dragged out: onto another area, or anywhere else to float.
+            let sense = if p.window.is_some() { Sense::click_and_drag() } else { Sense::click() };
+            let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("tab", p.id.as_str())), sense);
             let painter = ui.painter().with_clip_rect(tabs_clip);
             if on {
                 painter.rect_filled(tr, t.radius_sm, t.accent_soft);
@@ -836,37 +970,78 @@ impl DarkBurn {
                 painter.rect_filled(tr, t.radius_sm, t.hover);
             }
             painter.galley(pos2(tr.left() + 8.0, tr.center().y - g.size().y / 2.0), g, if on { t.selected_ink } else { ink });
-            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr);
+            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr.intersect(tabs_clip));
             if resp.clicked() {
-                pick = Some(p.id);
+                pick = Some(p.id.clone());
             }
-            Menu::context(&resp, |ui| {
-                ui.set_min_width(200.0);
-                for to in Area::ALL.into_iter().filter(|a| *a != area) {
-                    let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.label().to_lowercase());
-                    if MenuItem::new("move", &text, "").show(ui).clicked() {
-                        action = Some((p.id.to_string(), Some(to)));
+            if let Some(w) = &p.window {
+                if let Some(to) = tab_dragged_out(ui.ctx(), &resp, &key, r) {
+                    window_action = Some((w.clone(), to));
+                }
+                Menu::context(&resp, |ui| {
+                    ui.set_min_width(220.0);
+                    for to in Area::ALL.into_iter().filter(|a| *a != area) {
+                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
+                        if MenuItem::new("move", &text, "").show(ui).clicked() {
+                            window_action = Some((w.clone(), WindowMove::Dock(area_key(to))));
+                        }
                     }
-                }
-                Menu::separator(ui);
-                if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
-                    action = Some((p.id.to_string(), None));
-                }
-            });
+                    Menu::separator(ui);
+                    if MenuItem::new("float", &crate::i18n::tr("ui.window_float", "Float in the main window"), "").show(ui).clicked() {
+                        window_action = Some((w.clone(), WindowMove::Float(None)));
+                    }
+                    if MenuItem::new("detach", &crate::i18n::tr("ui.window_detach", "Open in its own window"), "").show(ui).clicked() {
+                        window_action = Some((w.clone(), WindowMove::Detach));
+                    }
+                    Menu::separator(ui);
+                    if MenuItem::new("close", &crate::i18n::tr("ui.close", "Close"), "close").show(ui).clicked() {
+                        window_action = Some((w.clone(), WindowMove::Close));
+                    }
+                });
+            } else {
+                Menu::context(&resp, |ui| {
+                    ui.set_min_width(200.0);
+                    for to in Area::ALL.into_iter().filter(|a| *a != area) {
+                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
+                        if MenuItem::new("move", &text, "").show(ui).clicked() {
+                            action = Some((p.id.clone(), Some(to)));
+                        }
+                    }
+                    Menu::separator(ui);
+                    if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
+                        action = Some((p.id.clone(), None));
+                    }
+                });
+            }
         }
-        if ui_kit::quiet_icon_button_at(ui, close, "close", "Hide this panel").clicked() {
-            action = Some((active.clone(), None));
+        let close_label = if active_window.is_some() {
+            crate::i18n::tr("ui.close_window", "Close this window")
+        } else {
+            crate::i18n::tr("ui.hide_panel", "Hide this panel")
+        };
+        if ui_kit::quiet_icon_button_at(ui, close, "close", &close_label).clicked() {
+            match &active_window {
+                Some(w) => window_action = Some((w.clone(), WindowMove::Close)),
+                None => action = Some((active.clone(), None)),
+            }
         }
         if let Some(id) = pick {
-            self.prefs.active_tab.insert(area, id.to_string());
+            self.bring_forward(area, &active, id);
         }
         let body = Rect::from_min_max(pos2(r.left(), header.bottom()), r.max);
-        let id = active.clone();
-        ui.scope_builder(egui::UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))), |ui| {
-            egui::ScrollArea::vertical().id_salt(("panel_body", area)).auto_shrink([false, false]).show(ui, |ui| {
-                panels::contents(ui, &id, self);
-            });
-        });
+        match &active_window {
+            // The window draws itself into the body when its turn comes, after the docks.
+            Some(w) => window_host::set_front(ui.ctx(), &key, Some(w), body, ui.layer_id()),
+            None => {
+                window_host::set_front(ui.ctx(), &key, None, body, ui.layer_id());
+                let id = active.clone();
+                ui.scope_builder(egui::UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))), |ui| {
+                    egui::ScrollArea::vertical().id_salt(("panel_body", area)).auto_shrink([false, false]).show(ui, |ui| {
+                        panels::contents(ui, &id, self);
+                    });
+                });
+            }
+        }
         if let Some((id, to)) = action
             && let Some(state) = self.prefs.panels.get_mut(&id)
         {
@@ -876,6 +1051,14 @@ impl DarkBurn {
                     self.prefs.active_tab.insert(to, id.clone());
                 }
                 None => state.visible = false,
+            }
+        }
+        if let Some((w, to)) = window_action {
+            match to {
+                WindowMove::Dock(to) => window_host::update(ui.ctx(), &w, |p| p.dock(&to)),
+                WindowMove::Float(at) => window_host::update(ui.ctx(), &w, |p| p.float(at)),
+                WindowMove::Detach => window_host::update(ui.ctx(), &w, |p| p.detach()),
+                WindowMove::Close => window_host::request_close(ui.ctx(), &w),
             }
         }
     }
@@ -906,6 +1089,7 @@ impl DarkBurn {
             let prefs = &mut self.prefs;
             let work_area = (prefs.page_width, prefs.page_height, prefs.origin);
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("settings"), "settings", &crate::i18n::tr("cmd.edit.settings", "Settings"))
+                .dockable("settings")
                 .cards(2.0)
                 .fields()
                 .actions("", &crate::i18n::tr("ui.close", "Close"), None)
@@ -921,6 +1105,17 @@ impl DarkBurn {
             }
         }
     }
+}
+
+/// Key press `e` is `shortcut`. egui matches a plain L when Alt+L is pressed; here the keys must
+/// match exactly (a Shift that only types the symbol, like the one in "+", is allowed).
+fn pressed_exactly(e: &egui::Event, shortcut: &egui::KeyboardShortcut) -> bool {
+    let m = shortcut.modifiers;
+    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
+        if *key == shortcut.logical_key
+            && modifiers.alt == m.alt
+            && modifiers.command == m.command
+            && (modifiers.shift == m.shift || *key == egui::Key::Plus))
 }
 
 /// A shortcut without Ctrl or Alt that is not a function key or Pause: a key a dialog may want
@@ -997,6 +1192,8 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
     let frame = host.edge_frame(t.toolbar);
     host.show_edge(ui, panel, frame, |ui| {
         let r = ui.max_rect();
+        // Dragging the column moves it [TB-25].
+        crate::toolbar_dock::grip(ui, "tools", "column", r, crate::toolbar_dock::Dock::Home);
         let mut y = r.top() + 6.0;
         for id in TOOLS {
             let Some(c) = commands::find(id) else {
@@ -1025,9 +1222,85 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
     });
 }
 
+/// The kit's key for panel area `area` (its name).
+fn area_key(area: Area) -> String {
+    format!("{area:?}")
+}
+
+/// The window kit's texts for moving windows, in the interface language.
+fn window_texts() -> window_host::WindowTexts {
+    use crate::i18n::tr;
+    window_host::WindowTexts {
+        move_window: tr("ui.window_move", "Move this window"),
+        float: tr("ui.window_float", "Float in the main window"),
+        detach: tr("ui.window_detach", "Open in its own window"),
+        dock_as_tab: tr("ui.window_dock", "Dock as tab"),
+        close_question: tr("ui.window_close_question", "This window has changes you have not applied. Apply them before it closes?"),
+        close_apply: tr("ui.window_close_apply", "Apply"),
+        close_discard: tr("ui.window_close_discard", "Discard"),
+        close_keep_open: tr("ui.window_close_keep_open", "Keep open"),
+    }
+}
+
+/// A tab in a panel area: a panel, or a window docked there.
+struct Tab {
+    id: String,
+    title: String,
+    window: Option<String>,
+}
+
+/// What the user did with a docked window's tab.
+enum WindowMove {
+    Dock(String),
+    Float(Option<egui::Pos2>),
+    Detach,
+    Close,
+}
+
+/// A window's tab being dragged: show where it will go; dropped on another area it docks there,
+/// dropped outside its own area it floats where it was let go.
+fn tab_dragged_out(ctx: &egui::Context, resp: &egui::Response, area: &str, own: Rect) -> Option<WindowMove> {
+    if !(resp.dragged() || resp.drag_stopped()) {
+        return None;
+    }
+    let pos = ctx.input(|i| i.pointer.latest_pos())?;
+    let target = window_host::target_at(ctx, pos).filter(|a| a != area);
+    if resp.dragged() {
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        if let Some(rect) = target.as_deref().and_then(|a| window_host::target_rect(ctx, a)) {
+            window_host::paint_drop_hint(ctx, rect);
+        }
+        return None;
+    }
+    match target {
+        Some(to) => Some(WindowMove::Dock(to)),
+        None if !own.contains(pos) => Some(WindowMove::Float(Some(pos - egui::vec2(40.0, 12.0)))),
+        None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_command_that_raises_a_window_names_a_command_and_a_dockable_window() {
+        let sources = [
+            include_str!("shell.rs"),
+            include_str!("extras.rs"),
+            include_str!("file_io.rs"),
+            include_str!("devices_ui.rs"),
+            include_str!("image_ui.rs"),
+            include_str!("job_ui.rs"),
+            include_str!("gweike_ui.rs"),
+            include_str!("connections.rs"),
+        ]
+        .concat();
+        for (id, key) in WINDOW_COMMANDS {
+            assert!(commands::lookup(id).is_some(), "{id} is a command");
+            assert!(sources.contains(&format!(".dockable(\"{key}\")")), "{key} is a dockable window");
+        }
+    }
 
     #[test]
     fn every_button_of_the_tools_column_works_and_picks_its_tool() {

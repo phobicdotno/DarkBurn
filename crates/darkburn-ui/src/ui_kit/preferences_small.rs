@@ -73,7 +73,7 @@ pub fn settings_profile_button(ui: &mut Ui, label: &str, name: &str, edited: boo
         let text_right = (chevron.left() - t.space_6 - if edited { t.space_8 + t.space_6 } else { 0.0 }).max(text_left);
         let overline = Rect::from_min_max(pos2(text_left, rect.center().y - t.space_16), pos2(text_right, rect.center().y - t.space_2));
         let value = Rect::from_min_max(pos2(text_left, overline.bottom()), pos2(text_right, rect.center().y + t.space_16));
-        super::text::paint_text(ui, overline, &label.to_uppercase(), crate::fonts::semibold(t.font_panel), t.form_dim, true);
+        super::text::paint_text(ui, overline, &crate::casing::upper(label), crate::fonts::semibold(t.font_panel), t.form_dim, true);
         super::text::paint_text(ui, value, name, crate::fonts::semibold(t.font_label), t.form_ink, false);
         solidcraft_ui_registry::publish_rect("prefs:profile:icon", icon);
         solidcraft_ui_registry::publish_rect("prefs:profile:label", overline);

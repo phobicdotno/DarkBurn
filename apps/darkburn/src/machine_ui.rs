@@ -137,6 +137,7 @@ pub const COMMANDS: &[Cmd] = &[
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
     crate::machine_ext::handles(id)
+        || crate::motion_cmds::handles(id)
         || crate::connections::handles(id)
         || crate::machine_job::handles(id)
         || id.starts_with("machine.")
@@ -156,6 +157,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     let ext = crate::machine_ext::checklist(id);
     if !ext.is_empty() {
         return ext;
+    }
+    let motion = crate::motion_cmds::checklist(id);
+    if !motion.is_empty() {
+        return motion;
     }
     let conn = crate::connections::checklist(id);
     if !conn.is_empty() {
@@ -526,8 +531,13 @@ impl MachineUi {
     /// The device list changed (a device was added and made the active one, or the active one was
     /// removed): when the active device is no longer `was`, an open connection belongs to another
     /// device than the one the panels and the job builder now work for, so it is ended.
+    /// A Connect question still waiting named the device that was active then, so it goes too.
     pub fn end_link_if_device_changed(&mut self, was: Option<u64>) {
-        if self.devices.active != was && (self.handle.is_connected() || self.handle.is_real_machine()) {
+        if self.devices.active == was {
+            return;
+        }
+        self.dlg.confirm_connect = None;
+        if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }
     }
@@ -540,11 +550,13 @@ impl MachineUi {
         removed
     }
 
-    /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
+    /// Switch device: remember the old one's state, adopt the new one's [DEV-07]. A Connect
+    /// question still waiting was about the device active before, so it goes.
     pub fn select_device(&mut self, id: u64) -> bool {
         if !self.devices.select(id) {
             return false;
         }
+        self.dlg.confirm_connect = None;
         if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }
@@ -622,6 +634,16 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     // Keep the state fresh before acting on it.
     app.machine.tick();
     crate::machine_job::update_head(app);
+    // A Stop also ends a start that has not reached the machine yet: without this the job
+    // being planned would start a moment after Stop was pressed.
+    let start_dropped = STOPS_A_PENDING_START.contains(&id) && crate::machine_job::cancel_pending_start(app);
+    if start_dropped {
+        app.machine.say("Stopped: the job that was being prepared was not started.");
+        if !app.machine.handle.is_connected() {
+            // The link went while the job was planned: there is no machine to send a Stop to.
+            return Some(Ok(json!({ "ok": true, "start_cancelled": true })));
+        }
+    }
     if src == Source::Api && app.machine.handle.is_real_machine() {
         if AGENT_STOPS.contains(&id) {
             return Some(agent_stop(app, id));
@@ -641,8 +663,15 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
     if let Some(r) = crate::machine_ext::run(app, id, a, src) {
         return Some(r);
     }
+    if let Some(r) = crate::motion_cmds::run(app, id, a, src) {
+        return Some(r);
+    }
     Some(run_command(app, id, a, src))
 }
+
+/// The commands that mean Stop. Each of them also drops a start that is still on its way to the
+/// machine (`machine_job::cancel_pending_start`).
+const STOPS_A_PENDING_START: &[&str] = &["job.stop", "machine.stop", "machine.emergency_stop"];
 
 /// What an agent may do on a real machine too: stop it, switch the laser off and end a jog.
 /// Nothing here ever starts, moves, fires or resumes anything.
@@ -719,12 +748,18 @@ fn run_job_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Opti
             None => Err("argument op_index must be a whole number".into()),
         },
         "job.pause" => {
-            if app.machine.handle.snapshot().state == LaserState::Paused {
+            let only_pause = a.get("only_pause").and_then(Value::as_bool).unwrap_or(false);
+            // `only_pause` just after a resume, before the machine shows the job going again:
+            // the job runs, so pause it.
+            let resumed = only_pause && app.machine.handle.resume_pending();
+            if app.machine.handle.snapshot().state == LaserState::Paused && !resumed {
                 // The button in the window toggles. For an agent, pause only ever pauses: it is
                 // one of the commands that are always allowed, and going on is machine.resume.
+                // `only_pause` asks the same in the window: the pendant's Pause key never
+                // sets a paused job going, since a press can arrive twice or late.
                 match src {
-                    Source::Ui => mach(app.machine.handle.resume()),
-                    Source::Api => Ok(json!({ "ok": true, "paused": true })),
+                    Source::Ui if !only_pause => mach(app.machine.handle.resume()),
+                    _ => Ok(json!({ "ok": true, "paused": true })),
                 }
             } else {
                 mach(app.machine.handle.pause())
@@ -1190,6 +1225,11 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
             }
         }
     }
+    if let Some(layout) = dev.state.toolbar_layout.as_deref()
+        && let Ok(places) = serde_json::from_str::<crate::toolbar_dock::ToolbarPlaces>(layout)
+    {
+        p.toolbar_places = places;
+    }
     p.sanitise();
     // Each device keeps its own material and cut library [LIB-09, LAYER-10].
     app.extras.library.switch_device(&dev.name, &app.prefs);
@@ -1206,6 +1246,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
+    let toolbars = serde_json::to_string(&app.prefs.toolbar_places).ok();
     let (saved, finish) = (app.machine.jog.saved.clone(), app.machine.jog.finish);
     if let Some(d) = app.machine.devices.get_mut(id) {
         d.state.saved_positions = saved;
@@ -1215,6 +1256,7 @@ pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.
         d.state.grid_spacing = (spacing * 1000.0).round() / 1000.0;
         d.state.panel_layout = layout;
+        d.state.toolbar_layout = toolbars;
     }
 }
 

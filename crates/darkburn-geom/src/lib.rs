@@ -10,7 +10,9 @@
 //! - [`node`]: node-level edits; [`fillet`]: round corners and chamfers
 //! - [`tabs`]: tabs/bridges, perforation, lead-in/out; [`slots`]: slot resizing; [`hull`]: rubber-band outline
 //! - [`transform`]: warp, deform, mirror, two-point rotate/scale; [`array`]: grid, circular, along path
-//! - [`nest`]: simple strip nesting
+//! - [`nest`]: simple strip nesting; [`sheet_nest`]: quick nest by boxes and true nest by outlines, over several sheets
+//! - [`tangent`]: tangent circles to two or three lines, arcs or circles
+//! - [`taper`]: taper warp for artwork wrapped round tapered cups and cones
 
 pub use kurbo;
 
@@ -25,8 +27,11 @@ pub mod node;
 pub mod offset;
 pub mod path;
 pub mod query;
+pub mod sheet_nest;
 pub mod slots;
 pub mod tabs;
+pub mod tangent;
+pub mod taper;
 pub mod transform;
 pub mod unfillet;
 

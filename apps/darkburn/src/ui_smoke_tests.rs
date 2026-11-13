@@ -137,12 +137,10 @@ fn leaves(entries: &[Entry], prefix: &[String], out: &mut Vec<(Vec<String>, Stri
                 }
             }
             Entry::Dynamic("languages") => {
-                for (code, name) in commands::LANGUAGES {
-                    if crate::i18n::available(code) {
-                        let mut p = prefix.to_vec();
-                        p.push(name.to_string());
-                        out.push((p, format!("lang.{code}")));
-                    }
+                for l in crate::languages::offered() {
+                    let mut p = prefix.to_vec();
+                    p.push(l.name.to_string());
+                    out.push((p, format!("lang.{}", l.code)));
                 }
             }
             Entry::Dynamic(_) | Entry::Sep => {}
@@ -429,6 +427,8 @@ pub(crate) fn state_dialog_cases() -> Vec<OpenDialog> {
         ("job message", Box::new(|a| a.job.message = Some(crate::job_cmds::Message { title: "No job".into(), text: "Nothing to run.".into() }))),
         ("file message", Box::new(|a| crate::files::show_message(a, "Could not open", "x.dbrn: the file is damaged".into()))),
         ("import warnings", Box::new(|a| a.fio.warnings = Some(vec![("a.dxf".into(), vec!["Spline approximated".into(); 12])]))),
+        ("trace image files", Box::new(|a| a.images.multi = Some(crate::multi_trace::state_case_dialog()))),
+        ("import 3d model", Box::new(|a| a.images.depth.dialog = Some(crate::model_import::state_case_dialog()))),
         ("devices", Box::new(|a| a.machine.dlg.devices = true)),
         ("macro", Box::new(|a| a.machine.dlg.macro_edit = Some((0, "G0 X0 Y0".into())))),
         ("controller info", Box::new(|a| a.machine.dlg.controller_info = true)),
@@ -645,4 +645,349 @@ fn a_language_switch_in_one_test_does_not_reach_another() {
     // Another test is another thread with its own app.
     let other = std::thread::spawn(crate::i18n::language).join().unwrap();
     assert_eq!(other, "en");
+}
+
+// A settings window docks as a tab when dropped on a panel area, floats again when its tab is
+// dragged out, resizes from its corner and opens in a window of its own from the header menu.
+#[test]
+fn a_settings_window_docks_floats_resizes_and_detaches() {
+    use darkburn_ui::ui_kit::window_host::Placement;
+    let placement = |g: &Gui| g.app().prefs.windows.get("settings").map(|p| p.placement.clone()).unwrap_or_default();
+    let mut g = Gui::standard();
+    g.app().settings_open = true;
+    g.frames(3);
+    let label = "Play a sound on errors";
+    assert!(g.has_text(label), "{:?}", g.visible_texts());
+    let win = g.rect_of("dialog:window").expect("the Settings window");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+
+    // Drag it by its header onto the right panel area: it becomes a tab there.
+    g.drag(egui::pos2(win.left() + 120.0, win.top() + 12.0), area.center());
+    assert_eq!(placement(&g), Placement::Docked("RightTop".into()));
+    g.frames(3);
+    assert!(g.rect_of("panel:tab:window:settings").is_some(), "{:?}", g.rects("panel:tab:"));
+    let area = g.rect_of("panel:area:RightTop").unwrap();
+    // The tab is shorter than the window was: its first rows show, the rest scroll.
+    let at = g.find_text("Lengths").unwrap_or_else(|| panic!("the settings show in the tab: {:?}", g.visible_texts()));
+    assert!(area.contains(at.center()), "{at:?} in {area:?}");
+    assert!(!g.window_titles().iter().any(|t| t == "Settings"), "no floating window while docked");
+    g.screenshot("settings-docked");
+
+    // Drag the tab onto the canvas: it floats there.
+    let tab = g.rect_of("panel:tab:window:settings").unwrap();
+    let to = g.canvas_rect().center();
+    g.drag(tab.center(), to);
+    assert_eq!(placement(&g), Placement::Floating);
+    g.frames(3);
+    let before = g.rect_of("dialog:window").expect("floating again");
+    assert!(g.rect_of("panel:tab:window:settings").is_none());
+
+    // Drag the right edge: the window grows and remembers its size. (The bottom corner, kept
+    // clear of the main window's resize border, is tried in `ui_dock_tests`.)
+    assert!(g.rect_of("dialog:resize:corner").is_some(), "a resize corner");
+    let edge = g.rect_of("dialog:resize:right").expect("a resize edge");
+    g.drag(edge.center(), edge.center() + egui::vec2(80.0, 0.0));
+    g.frames(2);
+    let after = g.rect_of("dialog:window").unwrap();
+    assert!(after.width() > before.width() + 40.0, "{before:?} -> {after:?}");
+    assert!(g.app().prefs.windows["settings"].size.is_some());
+    assert!(g.has_text("Lengths"));
+
+    // The header menu opens it in a window of its own (the test harness shows that inside).
+    g.click_id("dialog:place");
+    g.click_label("Open in its own window");
+    assert_eq!(placement(&g), Placement::Detached);
+    g.frames(3);
+    assert!(g.has_text("Lengths"), "{:?}", g.visible_texts());
+    g.screenshot("settings-detached-fallback");
+
+    // Closed and opened again, it comes back where it was left.
+    g.click_label("Close");
+    assert!(!g.app().settings_open);
+    g.app().settings_open = true;
+    g.frames(3);
+    assert_eq!(placement(&g), Placement::Detached);
+}
+
+/// Edit Hotkeys as a tab, waiting for a key, and another tab clicked in front of it: the wait
+/// ends. It went on unseen and took the next key pressed anywhere.
+#[test]
+fn a_hidden_hotkey_tab_stops_waiting_for_a_key() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("db_hotkeys".into(), place);
+    g.app().extras.hotkeys.open = true;
+    g.frames(3);
+    g.click_id("panel:tab:window:db_hotkeys");
+    g.app().extras.hotkeys.capturing = Some("tools.rect".into());
+    g.frames(2);
+    assert!(g.app().extras.hotkeys.capturing.is_some(), "in front, it waits");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    let other = g
+        .rects("panel:tab:")
+        .into_iter()
+        .find(|(name, r)| name != "panel:tab:window:db_hotkeys" && area.contains(r.center()))
+        .unwrap_or_else(|| panic!("another tab in the area: {:?}", g.rects("panel:tab:")));
+    g.click_pos(other.1.center());
+    g.frames(2);
+    assert_eq!(g.app().extras.hotkeys.capturing, None, "behind {}, it waits no more", other.0);
+    assert!(g.app().extras.hotkeys.open, "the window is still open");
+}
+
+/// A docked window open behind another tab comes to the front when it is opened again: Settings
+/// from its command, the Cut Settings Editor from the Cuts panel's button. Their open flag was set
+/// already, so nothing could be seen to happen.
+#[test]
+fn opening_a_docked_window_that_is_open_brings_its_tab_to_the_front() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    g.sample_design();
+    for key in ["settings", crate::cut_settings::WINDOW_KEY] {
+        let mut place = WindowPlace::default();
+        place.dock("RightTop");
+        g.app().prefs.windows.insert(key.into(), place);
+    }
+    let front = |g: &Gui| g.app().prefs.active_tab.get(&Area::RightTop).cloned().unwrap_or_default();
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"), "Settings, open behind the Cuts / Layers tab");
+
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    g.click_label("Edit cut settings");
+    g.frames(2);
+    assert_eq!(front(&g), tab_id(crate::cut_settings::WINDOW_KEY));
+    g.app().prefs.active_tab.insert(Area::RightTop, "cuts".into());
+    g.frames(2);
+    assert!(g.app().cut_settings_open.is_some(), "the editor stays open behind the tab");
+    g.click_label("Edit cut settings");
+    g.frames(2);
+    assert_eq!(front(&g), tab_id(crate::cut_settings::WINDOW_KEY), "the editor, open behind the Cuts / Layers tab");
+}
+
+/// Closing a docked window brings back the tab it covered, not the area's first one: with the
+/// panels moved, that can be the Laser panel with its Stop button.
+// Every window a command opens, docked in each panel area in turn (the left and bottom areas hold
+// no panel by default) and then in a window of its own (the harness shows that inside): it shows
+// with no widget id clash (the harness fails on one), its footer and buttons inside the area, and
+// the close button of its tab closes it.
+#[test]
+fn every_dockable_window_docks_in_each_area_detaches_and_closes() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    // Adjust Image needs a picture selected.
+    let file = g.temp("ramp.png");
+    image::GrayImage::from_fn(90, 60, |x, y| image::Luma([((x * 2 + y * 3) % 256) as u8])).save(&file).expect("write the picture");
+    let r = g.exec("project.import", serde_json::json!({ "paths": [file.to_string_lossy()], "x": 100, "y": 100 }));
+    assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
+    let mut footers = 0;
+    for (cmd, key) in crate::shell::WINDOW_COMMANDS {
+        let tab = format!("panel:tab:{}", tab_id(key));
+        for area in Area::ALL {
+            let what = format!("{key} docked {area:?}");
+            let mut place = WindowPlace::default();
+            place.dock(&format!("{area:?}"));
+            g.app().prefs.windows.insert(key.to_string(), place);
+            g.run_command(cmd);
+            let dock = g.rect_of(&format!("panel:area:{area:?}")).unwrap_or_else(|| panic!("{what}: the area shows: {:?}", g.rects("panel:area:")));
+            assert!(g.rect_of(&tab).is_some(), "{what}: its tab: {:?}", g.rects("panel:tab:"));
+            let window = g.rect_of("dialog:window").unwrap_or_else(|| panic!("{what}: it shows"));
+            let inside = dock.expand(1.5);
+            assert!(inside.contains_rect(window), "{what}: {window:?} in {dock:?}");
+            for (name, r) in g
+                .rects("dialog:footer")
+                .into_iter()
+                .chain(["dialog:ok", "dialog:cancel"].into_iter().filter_map(|n| g.rect_of(n).map(|r| (n.to_string(), r))))
+            {
+                assert!(inside.contains_rect(r), "{what}: {name} {r:?} outside {dock:?}");
+                footers += 1;
+            }
+            g.click_a11y(Some("Button"), "Close this window");
+            g.frames(3);
+            assert!(g.rect_of(&tab).is_none(), "{what}: the tab's close button closed it");
+            assert!(g.rect_of("dialog:window").is_none(), "{what}: closed");
+        }
+        let mut place = WindowPlace::default();
+        place.detach();
+        g.app().prefs.windows.insert(key.to_string(), place);
+        assert!(g.window_titles().is_empty(), "{:?}", g.window_titles());
+        g.run_command(cmd);
+        assert!(!g.window_titles().is_empty(), "{key} in a window of its own");
+        assert!(g.rect_of(&tab).is_none(), "{key}: no tab while in a window of its own");
+        g.close_dialogs();
+        assert!(g.window_titles().is_empty(), "{key}: closed: {:?}", g.window_titles());
+    }
+    assert!(footers > 0, "no window showed a footer");
+}
+
+// A window docked alone in the narrow left area, its title (Device Settings and the device's
+// name) wider than the area: its tab stays in the strip, cut short. It went behind the chevron,
+// and the strip was empty.
+#[test]
+fn a_tab_wider_than_its_area_stays_in_the_strip() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("Left");
+    g.app().prefs.windows.insert("db_device_settings".into(), place);
+    g.run_command("edit.device_settings");
+    let area = g.rect_of("panel:area:Left").expect("the left area, for the window");
+    let tab = g.rect_of("panel:tab:window:db_device_settings").unwrap_or_else(|| panic!("its tab: {:?}", g.rects("panel:tab:")));
+    assert!(area.contains_rect(tab), "{tab:?} in {area:?}");
+    assert!(tab.width() > 40.0, "{tab:?}");
+}
+
+// Two windows docked in one area are two tabs, and closing one leaves the other. A window stored
+// as docked in an area this version does not have opens floating instead.
+#[test]
+fn two_windows_share_an_area_and_an_unknown_area_floats() {
+    use darkburn_ui::ui_kit::window_host::{Placement, WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    for key in ["settings", "db_hotkeys"] {
+        let mut place = WindowPlace::default();
+        place.dock("Bottom");
+        g.app().prefs.windows.insert(key.into(), place);
+    }
+    g.run_command("edit.settings");
+    g.run_command("file.hotkeys");
+    let tabs = |g: &Gui| g.rects("panel:tab:window:").into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    let both = tabs(&g);
+    assert!(both.contains(&format!("panel:tab:{}", tab_id("settings"))) && both.contains(&format!("panel:tab:{}", tab_id("db_hotkeys"))), "{both:?}");
+    let area = g.rect_of("panel:area:Bottom").expect("the bottom area, for its two windows");
+    for (name, r) in g.rects("panel:tab:window:") {
+        assert!(area.expand(1.5).contains_rect(r), "{name} {r:?} in {area:?}");
+    }
+    // Edit Hotkeys came last, so it is in front: its tab's close button closes it alone.
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(3);
+    assert!(!g.app().extras.hotkeys.open, "Edit Hotkeys closed");
+    assert!(g.app().settings_open, "Settings stays open");
+    assert_eq!(tabs(&g), vec![format!("panel:tab:{}", tab_id("settings"))]);
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(3);
+    assert!(!g.app().settings_open);
+
+    let place: WindowPlace = serde_json::from_value(serde_json::json!({ "placement": { "docked": "Middle" } })).expect("a stored place");
+    assert_eq!(place.placement, Placement::Docked("Middle".into()));
+    g.app().prefs.windows.insert("settings".into(), place);
+    g.run_command("edit.settings");
+    assert!(tabs(&g).is_empty(), "{:?}", tabs(&g));
+    assert!(g.window_titles().iter().any(|t| t == "Settings"), "floating: {:?}", g.window_titles());
+}
+
+// In Norwegian the window header menu, the panel areas in it and the close button of a docked
+// window's tab are in Norwegian too.
+#[test]
+fn the_window_menus_follow_the_interface_language() {
+    use darkburn_ui::ui_kit::window_host::Placement;
+    let mut g = Gui::standard();
+    g.app().prefs.language = "nb".into();
+    g.app().settings_open = true;
+    g.frames(3);
+    g.click_id("dialog:place");
+    g.frames(1);
+    // (The menu heading over the areas is in capitals.)
+    for text in ["Åpne i eget vindu", "FEST SOM FANE", "Venstre", "Høyre, øverst", "Høyre, nederst", "Nederst"] {
+        assert!(g.has_text(text), "{text}: {:?}", g.visible_texts());
+    }
+    for text in ["Open in its own window", "DOCK AS TAB", "Right, top"] {
+        assert!(!g.has_text(text), "{text} in English: {:?}", g.visible_texts());
+    }
+    g.click_label("Høyre, øverst");
+    assert_eq!(g.app().prefs.windows.get("settings").map(|p| p.placement.clone()), Some(Placement::Docked("RightTop".into())));
+    g.frames(3);
+    g.click_a11y(Some("Button"), "Lukk dette vinduet");
+    g.frames(2);
+    assert!(!g.app().settings_open, "the window closed");
+}
+
+#[test]
+fn closing_a_docked_window_brings_back_the_tab_it_covered() {
+    use crate::panels::Area;
+    use darkburn_ui::ui_kit::window_host::{WindowPlace, tab_id};
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("settings".into(), place);
+    let front = |g: &Gui| g.app().prefs.active_tab.get(&Area::RightTop).cloned().unwrap_or_default();
+    g.app().prefs.active_tab.insert(Area::RightTop, "console".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(2);
+    assert!(!g.app().settings_open, "the window closed");
+    assert_eq!(front(&g), "console", "the Console tab it covered is in front again, and stored so");
+
+    // The Laser panel moved up here, behind the first tab (the area holds only these three tabs,
+    // so none goes behind its chevron); the window's tab picked by hand.
+    for (id, visible) in [("laser", true), ("console", false), ("camera", false), ("variable_text", false), ("shape_properties", false)] {
+        let mut app = g.app();
+        let panel = app.prefs.panels.get_mut(id).expect(id);
+        (panel.area, panel.visible) = (Area::RightTop, visible);
+    }
+    g.app().prefs.active_tab.insert(Area::RightTop, "laser".into());
+    g.frames(2);
+    g.run_command("edit.settings");
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_id("panel:tab:cuts");
+    g.click_id("panel:tab:laser");
+    g.click_id(&format!("panel:tab:{}", tab_id("settings")));
+    assert_eq!(front(&g), tab_id("settings"));
+    g.click_a11y(Some("Button"), "Close this window");
+    g.frames(2);
+    assert!(!g.app().settings_open);
+    assert_eq!(front(&g), "laser", "the Laser panel it covered is in front again");
+}
+
+#[test]
+fn a_docked_window_wider_than_its_tab_keeps_its_buttons_in_the_tab() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("RightTop");
+    g.app().prefs.windows.insert("db_hotkeys".into(), place);
+    // Edit Hotkeys asks for more width than the right panel area has at first.
+    g.app().extras.hotkeys.open = true;
+    g.frames(3);
+    g.click_id("panel:tab:window:db_hotkeys");
+    let area = g.rect_of("panel:area:RightTop").expect("the right panel area");
+    assert!(area.width() < 560.0, "the area is narrower than the page: {area:?}");
+    let close = g.rect_of("dialog:cancel").unwrap_or_else(|| panic!("the Close button: {:?}", g.rects("dialog:")));
+    assert!(area.contains_rect(close), "Close {close:?} lies in the tab {area:?}");
+    g.click_id("dialog:cancel");
+    assert!(!g.app().extras.hotkeys.open, "and it closes the window");
+}
+
+/// The Language menu lists the languages that have text and no others, and picking one switches
+/// the interface and back [I18N-04].
+#[test]
+fn the_language_menu_lists_only_languages_with_text_and_switches_between_them() {
+    let mut g = Gui::standard();
+    g.open_menu_only("Language");
+    g.frames(2);
+    for l in crate::languages::LANGUAGES {
+        let shown = !g.find_texts(l.name).is_empty();
+        assert_eq!(shown, crate::languages::is_offered(l.code), "{} ({}) in the menu", l.name, l.code);
+    }
+    g.screenshot("language-menu");
+    g.click_label("Norsk bokm\u{e5}l");
+    g.frames(3);
+    assert_eq!(g.app().prefs.language, "nb");
+    assert_eq!(crate::i18n::language(), "nb");
+    assert!(!g.find_texts("Fil").is_empty(), "the File menu is now Fil: {:?}", g.visible_texts());
+    g.open_menu_only("Language");
+    g.frames(2);
+    g.screenshot("language-menu-nb");
+    g.click_label("English");
+    g.frames(3);
+    assert_eq!(g.app().prefs.language, "en");
+    assert!(!g.find_texts("File").is_empty());
 }

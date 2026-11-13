@@ -37,11 +37,12 @@ owner's reading of static analysis; **simulator choice** = a value the simulator
 | C14 | Resume after pause: no primitive known. | n/a (not implemented) | open |
 | C15 | Pause equals stop: no resume path is modelled. | `gate.rs` | open |
 | C16 | `MinHardwareVer`: 20152 in 0.0.0.52, 20177 in 0.0.1.51 SP1 (firmware V201.77). The simulator reports 20152. | `SimConfig::program_version` | observed, both values |
-| C17 | Whether register 1004 is the raw input level or already inverted by the card's own input-type register 5000. | `StatusBlock::di_level` | open |
+| C17 | Whether register 1004 is the raw input level or already inverted by the card's own input-type register 5000. | `StatusBlock::di_level` | open; for IN11 see C22 |
 | C18 | Whether the card accepts a request with a CRC in the other byte order. The simulator only accepts the PC order and drops anything else. | `frame.rs`, simulator | simulator choice |
 | C19 | Gas pressure unit: values behave like bar through a calibration table; the vendor descriptor says volts. | `craft.rs` | inferred, high |
 | C20 | Gas codes 0 to 5 and process type codes 0 to 4; codes above 4 for `ManuType` are not established. | `craft.rs` | inferred |
 | C21 | Soft limits X 1371 mm, Y 950 mm, lower bound 0; K = 1000 (register 50017). | `SafetyConfig::soft_limits_word` | inferred (config file) |
+| C22 | CO2 water interlock: IN11 (register 1004, bit 10) is the CO2 chiller's water input and high means water OK; DO9 fires the CO2 tube. Owner's Mlaser `BkHardPara.xml` has `CO2WaterWarning="11" CO2WaterWarningType="1"`. Owner's note 2026-11-12: IN11 read 0 with the chiller off and 1 after it was powered on. Not recorded yet: the capture itself, the level during a real flow or temperature alarm with the chiller running, and what `CO2WaterWarningType="1"` means. | `SafetyConfig::co2_water_input`, `co2_water_ok_level`, `co2_do_ports`, `gate.rs` | observed 2026-11-12 (chiller off and on only); alarm level open |
 
 ## 3. Simulator choices (not card behaviour)
 

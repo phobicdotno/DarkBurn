@@ -827,7 +827,7 @@ fn search_group_row(ui: &mut Ui, name: &str, count: usize, open: bool) -> Respon
     let y = rect.center().y;
     super::disclosure(painter, egui::pos2(rect.left() + t.form_inset + t.space_8 * 0.5, y), open, t.text_dim);
     let small = egui::FontId::proportional(t.font_small);
-    let title = painter.layout_no_wrap(compact(&name.to_uppercase(), SEARCH_LABEL_CAP), small.clone(), t.text);
+    let title = painter.layout_no_wrap(compact(&crate::casing::upper(name), SEARCH_LABEL_CAP), small.clone(), t.text);
     let title_pos = egui::pos2(rect.left() + t.form_inset + t.space_16, y - title.size().y / 2.0);
     let title_width = title.size().x;
     painter.galley(title_pos, title, t.text);

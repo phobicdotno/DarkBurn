@@ -54,9 +54,14 @@ pub struct Prefs {
     pub active_tab: BTreeMap<Area, String>,
     /// The size the user dragged each dock to ("left", "right", "bottom"); none: the default.
     pub dock_sizes: BTreeMap<String, f32>,
+    /// Where each dockable window was left (floating, its own window or a tab) and its size.
+    #[serde(deserialize_with = "darkburn_ui::ui_kit::window_host::lenient")]
+    pub windows: darkburn_ui::ui_kit::window_host::WindowPlaces,
     pub toolbars: BTreeMap<String, bool>,
     /// The order the toolbars appear in within a ribbon tab (ids; empty: the default order).
     pub toolbar_order: Vec<String>,
+    /// Where each toolbar was moved to (an edge or floating); none: its usual place [TB-25].
+    pub toolbar_places: crate::toolbar_dock::ToolbarPlaces,
     pub ribbon_tab: String,
     pub status_bar: bool,
     pub view: View,
@@ -123,8 +128,10 @@ impl Default for Prefs {
             panels,
             active_tab,
             dock_sizes: BTreeMap::new(),
+            windows: Default::default(),
             toolbars,
             toolbar_order: Vec::new(),
+            toolbar_places: BTreeMap::new(),
             ribbon_tab: "home".into(),
             status_bar: true,
             view: View::default(),
@@ -240,9 +247,7 @@ impl Prefs {
         }
         self.autosave_minutes = self.autosave_minutes.clamp(0.0, 240.0);
         self.opts.sanitise();
-        self.hotkeys.retain(|id, key| {
-            crate::keymap::bindable().iter().any(|(i, _, _)| i == id) && (key.is_empty() || crate::commands::parse_key(key).is_some())
-        });
+        self.hotkeys.retain(|id, key| crate::keymap::slot(id).is_some() && (key.is_empty() || crate::keymap::parse_binding(key).is_some()));
         self.recent.truncate(crate::files::RECENT_MAX);
         self.files.sanitise();
         for (id, state) in d.panels {
@@ -250,12 +255,14 @@ impl Prefs {
         }
         self.panels.retain(|id, _| PANELS.iter().any(|p| p.id == id));
         self.dock_sizes.retain(|_, size| size.is_finite() && *size > 0.0);
+        darkburn_ui::ui_kit::window_host::sanitise(&mut self.windows);
         for (id, on) in d.toolbars {
             self.toolbars.entry(id).or_insert(on);
         }
         if !self.toolbar_order.is_empty() {
             self.toolbar_order = self.full_toolbar_order();
         }
+        crate::toolbar_dock::sanitise(&mut self.toolbar_places);
         if !(self.view.zoom.is_finite() && self.view.zoom > 0.0 && self.view.offset.is_finite()) {
             self.view = View::default();
         }
@@ -267,8 +274,10 @@ impl Prefs {
         self.panels = d.panels;
         self.active_tab = d.active_tab;
         self.dock_sizes = d.dock_sizes;
+        self.windows = d.windows;
         self.toolbars = d.toolbars;
         self.toolbar_order = Vec::new();
+        self.toolbar_places = d.toolbar_places;
         self.ribbon_tab = d.ribbon_tab;
         self.status_bar = true;
     }
@@ -344,6 +353,21 @@ mod tests {
         let mut p = Prefs { theme: "nord".into(), invert_wheel: true, ..Default::default() };
         p.panels.get_mut("move").unwrap().visible = true;
         assert_eq!(Prefs::from_json(&p.to_json()), p);
+        let mut docked = Prefs::default();
+        docked.windows.entry("settings".into()).or_default().dock("RightTop");
+        docked.windows.entry("db_hotkeys".into()).or_default().resize(egui::vec2(640.0, 480.0));
+        assert_eq!(Prefs::from_json(&docked.to_json()), docked, "window places survive a restart");
+        // One entry this version cannot read costs that window its place, not the others theirs.
+        let odd = Prefs::from_json(
+            r#"{"windows": {"settings": {"placement": "docked"}, "x": 5, "y": {"size": [1e9, -1]},
+                "db_devices": {"placement": {"docked": "Left"}, "size": [500, 400]}}}"#,
+        );
+        let windows: Vec<&str> = odd.windows.keys().map(String::as_str).collect();
+        assert_eq!(windows, ["db_devices", "settings", "x", "y"]);
+        assert_eq!(odd.windows["settings"], Default::default(), "a placement it cannot read: a floating card");
+        assert_eq!(odd.windows["x"], Default::default());
+        assert_eq!(odd.windows["y"].size, Some([8192.0, 180.0]), "a size is held to the limits");
+        assert_eq!((odd.windows["db_devices"].area(), odd.windows["db_devices"].size), (Some("Left"), Some([500.0, 400.0])));
         assert_eq!(Prefs::from_json("not json"), Prefs::default());
         let odd = Prefs::from_json(r#"{"grid_contrast": 7, "page_width": -3, "panels": {"gone": {"area": "Left", "visible": true}}}"#);
         assert_eq!(odd.grid_contrast, 1.0);

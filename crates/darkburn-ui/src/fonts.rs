@@ -104,6 +104,27 @@ pub fn setup_bundled_fonts(ctx: &egui::Context) {
     install(ctx, base_font_definitions());
 }
 
+/// `fonts` with `extra` faces right after the interface face of every family: system fonts for a
+/// script the bundled faces cannot draw (Japanese, Korean, Chinese). Ahead of egui's own
+/// fallbacks, whose emoji font has a few CJK characters that would otherwise win.
+pub fn with_fallbacks(mut fonts: FontDefinitions, extra: Vec<(String, egui::FontData)>) -> FontDefinitions {
+    for (i, (name, data)) in extra.into_iter().enumerate() {
+        fonts.font_data.insert(name.clone(), Arc::new(data));
+        for family in all_families() {
+            let list = fonts.families.entry(family).or_default();
+            list.retain(|n| *n != name);
+            list.insert((1 + i).min(list.len()), name.clone());
+        }
+    }
+    fonts
+}
+
+/// Install the bundled definitions with `extra` faces as in [`with_fallbacks`]. An empty list
+/// gives the bundled definitions again.
+pub fn setup_fonts_with_fallbacks(ctx: &egui::Context, extra: Vec<(String, egui::FontData)>) {
+    install(ctx, with_fallbacks(base_font_definitions(), extra));
+}
+
 /// egui's built-in monospace face, also the last fallback of every sans family (#2955).
 pub const SYMBOL_FALLBACK: &str = "Hack";
 
@@ -119,4 +140,26 @@ pub fn with_symbol_fallback(mut fonts: egui::FontDefinitions) -> egui::FontDefin
         }
     }
     fonts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_faces_come_right_after_the_interface_face_in_every_family() {
+        let extra = vec![("a".to_string(), egui::FontData::from_static(PLEX_MONO)), ("b".to_string(), egui::FontData::from_static(PLEX_MONO))];
+        let fonts = with_fallbacks(base_font_definitions(), extra);
+        for family in all_families() {
+            let list = &fonts.families[&family];
+            assert_eq!(&list[1..3], &["a".to_string(), "b".to_string()], "{family:?}: {list:?}");
+            if family != FontFamily::Monospace {
+                assert_eq!(list.last().map(String::as_str), Some(SYMBOL_FALLBACK), "{family:?}: {list:?}");
+            }
+        }
+        assert!(fonts.font_data.contains_key("a") && fonts.font_data.contains_key("b"));
+        // No extra faces: the bundled definitions as they were.
+        let plain = with_fallbacks(base_font_definitions(), Vec::new());
+        assert_eq!(plain.families, base_font_definitions().families);
+    }
 }

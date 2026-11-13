@@ -7,11 +7,22 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+/// The id of one face in a [`FontLibrary`].
+pub type FaceId = ID;
+
 /// Raw bytes and collection index of one face.
 #[derive(Debug)]
 pub struct FaceData {
     pub data: Vec<u8>,
     pub index: u32,
+}
+
+/// The bytes of the face, so a face can be handed on without copying them (the interface
+/// fonts take shared bytes).
+impl AsRef<[u8]> for FaceData {
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 /// A face picked for a family + bold/italic request.
@@ -197,6 +208,30 @@ impl FontLibrary {
         let r = best.map(|b| b.1);
         self.fallback_cache.lock().unwrap().insert(ch, r);
         r
+    }
+
+    /// How many of `chars` face `id` has a glyph for (0 for an unknown or unreadable face).
+    pub fn glyph_count(&self, id: ID, chars: &[char]) -> usize {
+        self.db
+            .with_face_data(id, |d, i| {
+                ttf_parser::Face::parse(d, i).map(|f| chars.iter().filter(|c| f.glyph_index(**c).is_some()).count()).unwrap_or(0)
+            })
+            .unwrap_or(0)
+    }
+
+    /// For each of `chars`, whether face `id` has a glyph for it (all false for an unknown or
+    /// unreadable face). The face is read once for all of them.
+    pub fn glyphs(&self, id: ID, chars: &[char]) -> Vec<bool> {
+        self.db
+            .with_face_data(id, |d, i| ttf_parser::Face::parse(d, i).ok().map(|f| chars.iter().map(|c| f.glyph_index(*c).is_some()).collect()))
+            .flatten()
+            .unwrap_or_else(|| vec![false; chars.len()])
+    }
+
+    /// Bytes of a face, read now and not kept by the library (unlike [`Self::face_data`]), so
+    /// they are freed when the caller lets go of them.
+    pub fn read_face_data(&self, id: ID) -> Option<FaceData> {
+        self.db.with_face_data(id, |d, i| FaceData { data: d.to_vec(), index: i })
     }
 
     /// Family name of a face id.

@@ -369,7 +369,7 @@ pub fn rd_file_bytes(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>) -> 
     // The finish position of the Move panel, as in a started job: one last move with the laser
     // off. It is a bed position, so a file that is measured from the head cannot hold it.
     if tp.space != CoordSpace::RelativeToStart
-        && let (Some((x, y)), Some(last)) = (app.machine.jog.finish, rd.layers.last_mut())
+        && let (Some((x, y)), Some(last)) = (crate::motion_cmds::finish_for_job(app)?, rd.layers.last_mut())
     {
         last.ops.push(ruida::RdOp::Move(Point::new(x, y)));
     }
@@ -412,7 +412,7 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
             let mut rd = toolpath_to_rd_with(&tp, shift, RdOptions::of(app.machine.active()))?;
             // The finish position of the Move panel: one last move with the laser off (the
             // job's coordinates are bed positions here).
-            if let (Some((x, y)), Some(last)) = (app.machine.jog.finish, rd.layers.last_mut()) {
+            if let (Some((x, y)), Some(last)) = (crate::motion_cmds::finish_for_job(app)?, rd.layers.last_mut()) {
                 last.ops.push(ruida::RdOp::Move(Point::new(x, y)));
             }
             if send_only {
@@ -436,7 +436,9 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
         }
     };
     // The finish position of the Move panel, for the machines that take it with the job.
-    if let (Family::Grbl, Some((x, y))) = (family, app.machine.jog.finish) {
+    if family == Family::Grbl
+        && let Some((x, y)) = crate::motion_cmds::finish_for_job(app)?
+    {
         req.finish = crate::machine_api::Finish::Machine(Point::new(x, y));
     }
     req.name = name;
@@ -500,6 +502,28 @@ fn start_switch_ok(app: &DarkBurn, action: &Action) -> Result<(), String> {
         return Err("Start is off for this device. Send the job and start it from the controller.".into());
     }
     Ok(())
+}
+
+/// Stop was asked for: a start or a send that is still on its way is dropped, so nothing
+/// starts after a Stop. On its way means the job is still being planned, or it waits for the
+/// answer to the out-of-bounds question or for the checklist. True when there was one.
+pub fn cancel_pending_start(app: &mut DarkBurn) -> bool {
+    let mut any = false;
+    if matches!(app.job.pending, Some((_, After::Machine(_)))) {
+        if let Some((task, _)) = app.job.pending.take() {
+            task.cancel();
+        }
+        app.job.pending_started = None;
+        any = true;
+    }
+    if app.job.bounds_prompt.as_ref().is_some_and(|p| matches!(p.then, After::Machine(_))) {
+        app.job.bounds_prompt = None;
+        any = true;
+    }
+    if app.machine.dlg.checklist.take().is_some() {
+        any = true;
+    }
+    any
 }
 
 /// Window flow: build in the background, then act (progress and cancel come with the build).

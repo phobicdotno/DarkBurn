@@ -14,7 +14,8 @@
 #
 # The archive holds one folder, darkburn-<version>-<os>-<arch>, with the programs `darkburn`
 # and `darkburn-mcp`, the icon darkburn-256.png, README.txt, the licences (LICENSE-MIT,
-# LICENSE-APACHE, ATTRIBUTION.md, licenses/) and THIRD-PARTY-LICENSES.txt. The version is
+# LICENSE-APACHE, ATTRIBUTION.md, licenses/) and THIRD-PARTY-LICENSES.txt; on Linux also the
+# wireless pendant's udev rule and the script that installs it. The version is
 # [workspace.package] version in the root Cargo.toml. The same input gives the same archive:
 # the files are packed in sorted order, owned by root, with the time of the last commit.
 # Before it finishes the script unpacks the archive again and starts both programs from it,
@@ -385,6 +386,10 @@ cp "$BIN_DIR/darkburn" "$BIN_DIR/darkburn-mcp" "$STAGE/"
 cp "$ROOT/assets/icons/app/darkburn-256.png" "$STAGE/"
 cp "$ROOT/LICENSE-MIT" "$ROOT/LICENSE-APACHE" "$ROOT/ATTRIBUTION.md" "$STAGE/"
 cp "$ROOT/licenses/"* "$STAGE/licenses/"
+if [ "$OS" = linux ]; then
+    # Without the rule only root may open the pendant receiver (docs/INSTALL.md).
+    cp "$ROOT/packaging/linux/70-darkburn-pendant.rules" "$ROOT/packaging/linux/install-pendant-rule.sh" "$STAGE/"
+fi
 
 # The release profile keeps line tables in the programs (debug = "line-tables-only") and does
 # not strip them. Here they are taken out of the packed copies; the names of the functions
@@ -459,6 +464,18 @@ if [ "$OS" = linux ]; then
   libxkbcommon-x11-0). The install line above tells you when it is missing."
     install_text='  It puts both programs in ~/.local/bin and adds a menu entry and an icon.'
     status_extra=
+    folder_extra='
+  70-darkburn-pendant.rules,   the udev rule that lets you use the wireless pendant, and
+  install-pendant-rule.sh      the script that installs it: sh install-pendant-rule.sh
+                               (asks for the root password once, see Pendant below)'
+    pendant_text='
+
+Pendant
+  The wireless handheld pendant (USB receiver 10ce:eba0) is off until you turn it on in
+  Settings. On Linux only root may open its receiver until the udev rule in this folder is
+  installed: sh install-pendant-rule.sh, then unplug the receiver and plug it in again. The
+  rule gives the user at the desktop access through systemd-logind or elogind. On a system
+  with neither, add GROUP="plugdev" (or another group you are in) to the rule.'
 else
     needs_version=$(macos_needed "$STAGE/darkburn")
     if [ -n "$needs_version" ]; then
@@ -474,6 +491,9 @@ else
     install_text='  It makes DarkBurn.app in ~/Applications, with links to both programs in ~/.local/bin.'
     status_extra='
 On macOS DarkBurn has been built and tested on a build server only: nobody has used it on a Mac yet.'
+    # macOS lets the user open the pendant receiver without a rule.
+    folder_extra=
+    pendant_text=
 fi
 
 cat >"$STAGE/README.txt" <<EOF
@@ -488,7 +508,7 @@ In this folder
                                or Claude Desktop, to the running DarkBurn window
   darkburn-256.png             the icon
   LICENSE-MIT, LICENSE-APACHE  DarkBurn's licence: MIT or Apache-2.0, as you choose
-  ATTRIBUTION.md, licenses/    credit for the code DarkBurn reuses
+  ATTRIBUTION.md, licenses/    credit for the code DarkBurn reuses$folder_extra
 $licence_line
 
 Run
@@ -504,7 +524,7 @@ $install_text
   To remove it again, put this at the end of the same line:  -s -- --uninstall
 
 Needs
-$needs_text
+$needs_text$pendant_text
 
 The full README, with pictures: https://github.com/phobicdotno/DarkBurn#readme
 EOF
@@ -582,6 +602,11 @@ for program in darkburn darkburn-mcp; do
     fi
 done
 [ -f "$CHECK/$NAME/darkburn-256.png" ] || die "darkburn-256.png is missing from the unpacked archive."
+if [ "$OS" = linux ]; then
+    for file in 70-darkburn-pendant.rules install-pendant-rule.sh; do
+        [ -f "$CHECK/$NAME/$file" ] || die "$file is missing from the unpacked archive."
+    done
+fi
 
 if can_run_here; then
     same_version "$CHECK/$NAME/darkburn-mcp" 'the packed darkburn-mcp'

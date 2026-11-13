@@ -213,6 +213,10 @@ pub enum GateRefusal {
     LaserFramesQueued,
     /// The read is not allowed.
     ReadNotAllowed(String),
+    /// HARD block, while the CO2 water cooling is not reported OK: the write would switch a CO2
+    /// port on or start a FIFO holding CO2 output, or it is a laser write or a stream start
+    /// while a CO2 port is on (or no status has shown it to be off). No arming level lifts this.
+    Co2WaterAlarm,
 }
 
 impl std::fmt::Display for GateRefusal {
@@ -228,6 +232,7 @@ impl std::fmt::Display for GateRefusal {
             GateRefusal::StreamRunning => write!(f, "a job is streaming: stop it first"),
             GateRefusal::LaserFramesQueued => write!(f, "card FIFO holds frames queued while laser armed: clear it first"),
             GateRefusal::ReadNotAllowed(s) => write!(f, "{s}"),
+            GateRefusal::Co2WaterAlarm => write!(f, "Water Cooling System alarm: CO2 laser blocked"),
         }
     }
 }
@@ -261,7 +266,9 @@ impl Default for GateConfig {
 }
 
 /// PC-side gate. Call [`check_write`](Self::check_write) before sending and
-/// [`after_send`](Self::after_send) once the card acknowledged.
+/// [`after_send`](Self::after_send) once the card acknowledged. A write the gate lets through
+/// counts as queued from that moment: a reply that never came does not mean the card did not
+/// take it.
 #[derive(Clone, Debug)]
 pub struct SafetyGate {
     /// Configuration.
@@ -282,6 +289,12 @@ pub struct SafetyGate {
     pub last_status_ms: Option<u64>,
     /// Active card alarm or restart-required condition.
     pub machine_fault: Option<String>,
+    /// The CO2 chiller input reads OK in the last status. False until a status says otherwise.
+    pub co2_water_ok: bool,
+    /// Frames that switch a CO2 port on went into the FIFO and it was not cleared since.
+    pub card_fifo_has_co2: bool,
+    /// Whether a CO2 port was on in the last status. `None` until a status was read.
+    pub co2_output_on: Option<bool>,
     last_alarm: (u32, u32),
     leases: BTreeMap<u32, u64>,
 }
@@ -305,6 +318,9 @@ impl SafetyGate {
             last_do_word: None,
             last_status_ms: None,
             machine_fault: None,
+            co2_water_ok: false,
+            card_fifo_has_co2: false,
+            co2_output_on: None,
             last_alarm: (0, 0),
             leases: BTreeMap::new(),
         }
@@ -357,7 +373,46 @@ impl SafetyGate {
             actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;
+        // An input number the card does not have is like no input at all: never OK. (It would
+        // read low for ever, which must not pass for "OK" on a machine where low means OK.)
+        self.co2_water_ok = self.config.safety.co2_water_input.and_then(|p| status.di_level_of(p)) == Some(self.config.safety.co2_water_ok_level);
+        let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
+        self.co2_output_on = Some(co2_on);
+        if !self.co2_water_ok {
+            // The alarm stops what uses the CO2 tube: a CO2 port that is on, or a running stream
+            // with CO2 output in it. It does not stop a job that has no CO2 output anywhere (a
+            // fibre cut with the CO2 chiller switched off). Whatever would bring the CO2 tube on
+            // after this is refused by `check_write`.
+            let co2_queued = self.card_fifo_has_co2 && self.fifo_running;
+            if (co2_on || co2_queued) && !actions.iter().any(|a| matches!(a, GateAction::Estop)) {
+                self.arming.disarm("Water Cooling System alarm");
+                if !actions.iter().any(|a| matches!(a, GateAction::Stop(_))) {
+                    actions.push(GateAction::Stop("Water Cooling System alarm: CO2 laser blocked".into()));
+                }
+            }
+        }
         actions
+    }
+
+    /// True if `w` switches a CO2 port on, directly or from inside a FIFO frame.
+    fn turns_co2_on(&self, w: &SafeWrite) -> bool {
+        let mask = SafetyConfig::port_mask(&self.config.safety.co2_do_ports);
+        let words = w.words();
+        match w.register() {
+            REG_COMMAND => {
+                words.len() >= 4 && words[0] == crate::command::CMD_9999 && words[1] == crate::command::MISC_DO && words[2] & words[3] & mask != 0
+            }
+            REG_FIFO_DATA => match crate::fifo::parse_fifo_words(words) {
+                Ok(f) => f.items.iter().any(|i| {
+                    i.opcode() == crate::fifo::OP_MISC
+                        && i.payload().first() == Some(&crate::command::MISC_DO)
+                        && i.payload().get(2).is_some_and(|v| v & mask != 0)
+                }),
+                // A frame the gate cannot read is not one it can vouch for.
+                Err(_) => true,
+            },
+            _ => false,
+        }
     }
 
     fn comm_ok(&self, now_ms: u64) -> bool {
@@ -366,7 +421,24 @@ impl SafetyGate {
 
     /// Decide whether `w` may be sent now.
     pub fn check_write(&mut self, w: &SafeWrite, now_ms: u64) -> Result<(), GateRefusal> {
+        // HARD block first, ahead of every arming and fault check: the CO2 tube never fires
+        // without its cooling water. Nothing (arming, operator confirmation) overrides this.
         let policy = w.policy();
+        if !self.co2_water_ok {
+            let fifo_start = w.register() == REG_FIFO_CONTROL && w.words() == [crate::command::FIFO_START];
+            // Switching a CO2 port on, directly or from the queue.
+            if self.turns_co2_on(w) || (fifo_start && self.card_fifo_has_co2) {
+                return Err(GateRefusal::Co2WaterAlarm);
+            }
+            // A CO2 port that is already on (its off write was lost, or nobody sent one), or
+            // that no status has shown to be off: then every laser write (power, duty, laser
+            // records) and every stream start could fire the tube, so none goes out. With the
+            // CO2 ports seen off, the other laser sources work as before.
+            let co2_may_be_on = self.co2_output_on != Some(false);
+            if co2_may_be_on && (policy == Policy::Laser || fifo_start) {
+                return Err(GateRefusal::Co2WaterAlarm);
+            }
+        }
         if !self.arming.allows(policy) {
             return Err(GateRefusal::NeedsArming { policy, state: self.arming.state(), estop_latched: self.arming.estop_latched() });
         }
@@ -418,7 +490,25 @@ impl SafetyGate {
         if w.register() == REG_FIFO_CONTROL && words == [2] && self.card_fifo_has_laser && self.arming.state() != ArmState::LaserArmed {
             return Err(GateRefusal::LaserFramesQueued);
         }
+        self.note_what_may_be_queued(w);
         Ok(())
+    }
+
+    /// What `w` may have put on the card, recorded when it is let through and again when it is
+    /// acknowledged. Only an acknowledged FIFO clear forgets queued content.
+    fn note_what_may_be_queued(&mut self, w: &SafeWrite) {
+        match w.register() {
+            REG_FIFO_DATA => {
+                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
+                    self.card_fifo_has_laser = true;
+                }
+                if self.turns_co2_on(w) {
+                    self.card_fifo_has_co2 = true;
+                }
+            }
+            REG_COMMAND if self.turns_co2_on(w) => self.co2_output_on = Some(true),
+            _ => {}
+        }
     }
 
     /// Update tracking after the card acknowledged `w`.
@@ -434,18 +524,15 @@ impl SafetyGate {
             }
             _ => {}
         }
+        self.note_what_may_be_queued(w);
         match w.register() {
-            REG_FIFO_DATA => {
-                if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
-                    self.card_fifo_has_laser = true;
-                }
-            }
             REG_FIFO_CONTROL => match words.first() {
                 Some(2) => self.fifo_running = true,
                 Some(3) => self.fifo_running = false,
                 Some(1) => {
                     self.fifo_running = false;
                     self.card_fifo_has_laser = false;
+                    self.card_fifo_has_co2 = false;
                 }
                 _ => {}
             },
@@ -503,8 +590,17 @@ mod tests {
     use crate::command::{self, MachineParams};
     use crate::fifo::FifoItem;
 
+    /// IN11 high: the CO2 chiller reports water OK.
+    const WATER_OK: u32 = 1 << 10;
+
     fn status(a1: u32, a2: u32, proc: u32, param: u32) -> StatusBlock {
+        status_io(a1, a2, proc, param, WATER_OK, 0)
+    }
+
+    fn status_io(a1: u32, a2: u32, proc: u32, param: u32, di: u32, do_word: u32) -> StatusBlock {
         let mut w = vec![0u32; 36];
+        w[Status::Di as usize] = di;
+        w[Status::Do as usize] = do_word;
         w[Status::Alarm1 as usize] = a1;
         w[Status::Alarm2 as usize] = a2;
         w[Status::ProcessingStatus as usize] = proc;
@@ -711,6 +807,236 @@ mod tests {
         assert_eq!(g.check_write(&command::fifo_start().unwrap(), 0), Err(GateRefusal::LaserFramesQueued));
         g.after_send(&command::fifo_clear().unwrap(), 0);
         assert!(g.check_write(&command::fifo_start().unwrap(), 0).is_ok());
+    }
+
+    fn co2_on() -> SafeWrite {
+        SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap()
+    }
+
+    fn laser_armed(g: &mut SafetyGate) {
+        g.arming.arm_motion().unwrap();
+        let t = g.arming.begin_job().unwrap();
+        g.arming.arm_laser(true, Some(&t)).unwrap();
+    }
+
+    /// [`laser_armed`] for a gate that may be armed and in a job already.
+    fn laser_armed_again(g: &mut SafetyGate) {
+        g.arming.disarm("test");
+        laser_armed(g);
+    }
+
+    #[test]
+    fn co2_is_hard_blocked_without_cooling_water() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        // no status seen yet: the water is unknown, so it is not OK
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // chiller off (IN11 low): blocked even fully laser-armed with the job token
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // other inputs high do not count
+        g.observe_status(1, &status_io(0, 0, 0, 0, !WATER_OK & 0xFFF, 0));
+        assert_eq!(g.check_write(&co2_on(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // chiller on: the normal arming rules apply again
+        g.observe_status(2, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_on(), 2).is_ok());
+        // a bulk DO write that keeps DO9 on is just as blocked
+        g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0));
+        let bulk = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0xFFFF, 0x101], &SafetyConfig::default(), None).unwrap();
+        assert_eq!(g.check_write(&bulk, 3), Err(GateRefusal::Co2WaterAlarm));
+    }
+
+    #[test]
+    fn water_alarm_blocks_only_the_co2_laser() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        // the fibre gate (DO5), motion and switching CO2 off stay as before
+        let fibre = SafeWrite::from_raw_for_simulator(0x65, &[9999, 2, 0x10, 0x10], &SafetyConfig::default(), None).unwrap();
+        assert!(g.check_write(&fibre, 0).is_ok());
+        assert!(g.check_write(&jog(), 0).is_ok());
+        assert!(g.check_write(&command::do_off(9).unwrap(), 0).is_ok());
+        assert!(g.check_write(&command::stop_all_no_decel().unwrap(), 0).is_ok());
+    }
+
+    #[test]
+    fn water_alarm_while_co2_is_on_stops_and_disarms() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert!(g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0x100)).is_empty());
+        let acts = g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0x100));
+        assert!(matches!(acts.as_slice(), [GateAction::Stop(m)] if m.contains("Water Cooling")));
+        assert_eq!(g.arming.state(), ArmState::Disarmed);
+        // a later poll with DO9 still on asks for the stop again until it is off
+        assert_eq!(g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0x100)).len(), 1);
+        assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+    }
+
+    /// The alarm is up and DO9 is still on (the write that switches it off was lost, or the
+    /// caller did not act on the stop): nothing that could fire the tube goes out, however the
+    /// gate is armed again.
+    #[test]
+    fn nothing_fires_while_a_co2_port_is_on_and_the_water_is_not_ok() {
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        let duty_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0, (5000 << 16) | 4], &SafetyConfig::default(), None).unwrap();
+        assert_eq!((pwm.policy(), duty_frame.policy()), (Policy::Laser, Policy::Laser));
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0x100));
+        assert!(g.check_write(&pwm, 0).is_ok(), "water fine and laser armed: the power may be set");
+        // the alarm comes up: the gate disarms and asks for the stop
+        assert_eq!(g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0x100)).len(), 1);
+        // the caller arms again while DO9 is still on
+        laser_armed(&mut g);
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
+        assert_eq!(g.check_write(&pwm, 1), Err(GateRefusal::Co2WaterAlarm));
+        // a stream of duty records, queued after DO9 was switched on directly: neither the
+        // records nor the start go out
+        assert_eq!(g.check_write(&duty_frame, 1), Err(GateRefusal::Co2WaterAlarm));
+        assert!(!g.card_fifo_has_co2);
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // stopping and switching off always pass
+        assert!(g.check_write(&command::do_off(9).unwrap(), 1).is_ok());
+        assert!(g.check_write(&command::fifo_stop().unwrap(), 1).is_ok());
+        assert!(g.check_write(&command::pwm_off(1234, command::MISC_PWM).unwrap(), 1).is_ok());
+        // once a status shows DO9 off the other laser sources work again; the CO2 port stays off
+        laser_armed_again(&mut g);
+        g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0));
+        assert!(g.check_write(&pwm, 2).is_ok());
+        assert!(g.check_write(&command::fifo_start().unwrap(), 2).is_ok());
+        assert_eq!(g.check_write(&co2_on(), 2), Err(GateRefusal::Co2WaterAlarm));
+    }
+
+    /// Before any status was read the gate does not know whether a CO2 port is on.
+    #[test]
+    fn with_no_status_and_no_water_no_laser_write_goes_out() {
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert_eq!(g.co2_output_on, None);
+        assert_eq!(g.check_write(&pwm, 0), Err(GateRefusal::Co2WaterAlarm));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 0), Err(GateRefusal::Co2WaterAlarm));
+    }
+
+    /// The CO2 chiller is switched off in the middle of a fibre cut: laser armed, the fibre gate
+    /// (DO5) on, the stream running, no CO2 output anywhere. The cut goes on.
+    #[test]
+    fn losing_the_co2_water_does_not_stop_a_fibre_job() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert!(g.observe_status(0, &status_io(0, 0, 1, 0, WATER_OK, 0x10)).is_empty());
+        assert!(g.observe_status(1, &status_io(0, 0, 1, 0, 0, 0x10)).is_empty(), "the water alarm stopped a job with no CO2 output");
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
+        // the fibre laser's power may still be set, and the CO2 port may not come on
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        assert!(g.check_write(&pwm, 1).is_ok());
+        assert_eq!(g.check_write(&co2_on(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // a laser-armed gate with nothing running and no CO2 output is left alone as well
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
+    }
+
+    #[test]
+    fn co2_in_the_fifo_needs_water_to_go_in_and_to_start() {
+        // a FIFO DO record switching DO9 on: [frame, header(12 bytes, 9999), 2, mask, value]
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_frame, 0), Err(GateRefusal::Co2WaterAlarm));
+        // queued while the water was OK ...
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_frame, 1).is_ok());
+        g.after_send(&co2_frame, 1);
+        assert!(g.card_fifo_has_co2);
+        // ... cannot be started once the water alarm is up
+        g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 2), Err(GateRefusal::Co2WaterAlarm));
+        // clearing the FIFO forgets the CO2 content
+        g.after_send(&command::fifo_clear().unwrap(), 5);
+        assert!(!g.card_fifo_has_co2);
+    }
+
+    /// The card took a frame but its reply was lost, so `after_send` never ran: what the frame
+    /// holds is still remembered from the moment the gate let it through.
+    #[test]
+    fn a_frame_let_through_counts_as_queued_without_its_reply() {
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_frame, 0).is_ok());
+        assert!(g.card_fifo_has_co2 && g.card_fifo_has_laser);
+        // the water alarm comes up with DO9 still off: the queue holding DO9 does not start
+        g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&command::fifo_start().unwrap(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // a refused write is not counted
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert_eq!(g.check_write(&co2_frame, 0), Err(GateRefusal::Co2WaterAlarm));
+        assert!(!g.card_fifo_has_co2 && !g.card_fifo_has_laser);
+        // DO9 switched on directly with no reply: the gate takes it as on until a status says
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(g.check_write(&co2_on(), 1).is_ok());
+        assert_eq!(g.co2_output_on, Some(true));
+    }
+
+    /// A running stream with CO2 output in it is stopped because of what the FIFO holds. The
+    /// gate is only motion-armed here and DO9 is off at the moment of the poll, so nothing else
+    /// can ask for the stop.
+    #[test]
+    fn a_running_co2_stream_is_stopped_when_the_water_goes() {
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        g.after_send(&co2_frame, 0);
+        g.after_send(&command::fifo_start().unwrap(), 0);
+        // the card runs the stream (processing status 1) and the water is fine: nothing to do
+        assert!(g.observe_status(1, &status_io(0, 0, 1, 0, WATER_OK, 0)).is_empty());
+        assert_eq!(g.arming.state(), ArmState::MotionArmed);
+        // the water goes while the stream runs
+        let acts = g.observe_status(2, &status_io(0, 0, 1, 0, 0, 0));
+        assert!(matches!(acts.as_slice(), [GateAction::Stop(m)] if m.contains("Water Cooling")), "{acts:?}");
+        assert_eq!(g.arming.state(), ArmState::Disarmed);
+        // once the stream no longer runs there is nothing left to stop
+        assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+    }
+
+    #[test]
+    fn unwatched_chiller_blocks_co2_for_good() {
+        let mut cfg = GateConfig::default();
+        cfg.safety.co2_water_input = None;
+        let mut g = SafetyGate::new(cfg);
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0xFFF, 0));
+        assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm));
+        // An input number the card does not have is no better, whichever level counts as OK.
+        for (port, ok_level) in [(0, false), (29, false), (111, false), (0, true), (29, true)] {
+            let mut cfg = GateConfig::default();
+            cfg.safety.co2_water_input = Some(port);
+            cfg.safety.co2_water_ok_level = ok_level;
+            let mut g = SafetyGate::new(cfg);
+            laser_armed(&mut g);
+            for di in [0, 0xFFF] {
+                g.observe_status(0, &status_io(0, 0, 0, 0, di, 0));
+                assert!(!g.co2_water_ok, "input {port}, OK level {ok_level}, inputs {di:#x}");
+                assert_eq!(g.check_write(&co2_on(), 0), Err(GateRefusal::Co2WaterAlarm), "input {port}, OK level {ok_level}");
+            }
+        }
+        // A real input whose OK level is low works as configured.
+        let mut cfg = GateConfig::default();
+        cfg.safety.co2_water_ok_level = false;
+        let mut g = SafetyGate::new(cfg);
+        laser_armed(&mut g);
+        g.observe_status(0, &status_io(0, 0, 0, 0, 0, 0));
+        assert!(g.co2_water_ok);
+        g.observe_status(1, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        assert!(!g.co2_water_ok);
     }
 
     #[test]

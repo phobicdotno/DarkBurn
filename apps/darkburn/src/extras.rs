@@ -64,6 +64,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     options::publish(&app.prefs.opts);
     keymap::publish(&app.prefs.hotkeys);
     i18n::set_language(&app.prefs.language);
+    crate::language_fonts::frame(ctx, &i18n::language());
     let o = &app.prefs.opts;
     let zoom = o.ui_scale / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 1e-3 {
@@ -108,6 +109,8 @@ pub fn shared_defaults(settings_dir: Option<&Path>) -> Option<crate::prefs::Pref
     let mut prefs = candidates.into_iter().filter(|p| p.is_file()).find_map(|p| read_prefs_file(&p).ok())?;
     // AI agent access is switched on by the person at this computer, never by a file.
     prefs.mcp = Default::default();
+    // So is the pendant: it opens a USB device.
+    prefs.opts.pendant = false;
     Some(prefs)
 }
 
@@ -284,8 +287,15 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
     })
 }
 
+/// What a command gets that tries to switch the pendant: only the person at this computer does
+/// that, in the Settings window, because it opens a USB device and makes its keys live.
+pub const PENDANT_ONLY_BY_THE_USER: &str = "the pendant can only be switched on or off by the user in DarkBurn's Settings window";
+
 /// Set any field of the options by name (the `setting.set` command falls back to this).
 pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), String> {
+    if key == "pendant" {
+        return Err(PENDANT_ONLY_BY_THE_USER.into());
+    }
     let mut all = serde_json::to_value(&app.prefs.opts).map_err(|e| e.to_string())?;
     let field = all.get_mut(key).ok_or_else(|| format!("unknown setting {key}"))?;
     if std::mem::discriminant(field) != std::mem::discriminant(value) && !(field.is_number() && value.is_number()) {
@@ -294,6 +304,8 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
     *field = value.clone();
     let mut new: options::Options = serde_json::from_value(all).map_err(|e| format!("{key}: {e}"))?;
     new.sanitise();
+    // Whatever name it came under, no command changes the pendant switch.
+    new.pendant = app.prefs.opts.pendant;
     app.prefs.opts = new;
     if key == "show_rotary_toggles" {
         // The rotary and cylinder toggles are the Modes toolbar.
@@ -310,6 +322,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if app.extras.help_open {
         let topic = help::topic(&app.extras.help_topic);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_help"), "help", &tr("help.title", "Help"))
+            .dockable("db_help")
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {
                 let t = Tokens::get();
@@ -335,13 +348,23 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
         }
     }
     if app.extras.hotkeys.open {
-        capture_key(ctx, app);
+        let mut drawn = false;
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_hotkeys"), "settings", &tr("hotkeys.title", "Edit Hotkeys"))
+            .dockable("db_hotkeys")
+            .cards(2.7)
             .fields()
             .actions("", &tr("ui.close", "Close"), None)
             .show(ctx, true, |ui| {
+                drawn = true;
+                // The key comes from the window the page is in: a window of its own has keys of
+                // its own. Taken before the footer's, so Escape ends the wait, not the window.
+                capture_key(ui.ctx(), app);
                 hotkey_page(ui, app);
             });
+        if !drawn {
+            // A tab behind another one: a wait nobody can see would take the next key pressed.
+            app.extras.hotkeys.capturing = None;
+        }
         if closed || action != ui_kit::Action::None {
             app.extras.hotkeys.open = false;
             app.extras.hotkeys.capturing = None;
@@ -353,12 +376,12 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     }
 }
 
-/// While a command waits for a key: take the next key press.
+/// While a command waits for a key: take the next key press in the window `ctx` draws now.
 fn capture_key(ctx: &Context, app: &mut DarkBurn) {
     let Some(cmd) = app.extras.hotkeys.capturing.clone() else { return };
     let pressed = ctx.input_mut(|i| {
         let found = i.events.iter().find_map(|e| match e {
-            egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } => Some((*key, *modifiers)),
+            egui::Event::Key { key, physical_key, pressed: true, modifiers, repeat: false } => Some((*key, *physical_key, *modifiers)),
             _ => None,
         });
         if found.is_some() {
@@ -366,13 +389,17 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
         }
         found
     });
-    let Some((key, mods)) = pressed else { return };
+    let Some((key, physical, mods)) = pressed else { return };
     let hk = &mut app.extras.hotkeys;
     if key == egui::Key::Escape && !mods.any() {
         hk.capturing = None;
         return;
     }
-    let text = keymap::key_text(mods, key);
+    // A number pad key (NumLock off) is kept as that key, so it does not take the arrow's place.
+    let text = match keymap::numpad_key(key, physical) {
+        Some(pad) if !mods.command && !mods.alt => keymap::numpad_text(pad),
+        _ => keymap::key_text(mods, key),
+    };
     match keymap::assign(&mut app.prefs.hotkeys, &cmd, &text, false) {
         Ok(()) => {
             hk.status = text;
@@ -387,9 +414,45 @@ fn capture_key(ctx: &Context, app: &mut DarkBurn) {
     }
 }
 
+/// Width of a key column in the hotkey editor.
+const KEY_CELL: f32 = 120.0;
+
+/// One key of a command in the hotkey editor (`key`, what it has now): click it, then press the
+/// key; right-click removes just this key.
+fn key_cell(ui: &mut Ui, app: &mut DarkBurn, slot: &str, key: String) {
+    let waiting = app.extras.hotkeys.capturing.as_deref() == Some(slot);
+    let text = if waiting {
+        tr("hotkeys.press", "Press a key...")
+    } else if key.is_empty() {
+        tr("hotkeys.none", "none")
+    } else {
+        key
+    };
+    ui.allocate_ui_with_layout(egui::vec2(KEY_CELL, 22.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(KEY_CELL);
+        let r = ui_kit::button(ui, text, ui_kit::Button::Small)
+            .backing_on_hover_text(tr("hotkeys.key_tip", "Click, then press the new key. Esc cancels. Right-click removes the key."));
+        if r.clicked() {
+            app.extras.hotkeys.capturing = Some(slot.to_string());
+            app.extras.hotkeys.conflict = None;
+        }
+        if r.secondary_clicked() {
+            let _ = keymap::assign(&mut app.prefs.hotkeys, slot, "", false);
+        }
+    });
+}
+
+/// A fixed-width column cell with its content at the left.
+fn left_cell(ui: &mut Ui, width: f32, height: f32, w: impl egui::Widget) {
+    ui.allocate_ui_with_layout(egui::vec2(width, height), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_width(width);
+        ui.add(w);
+    });
+}
+
 fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
     let t = Tokens::get();
-    ui.set_min_width(560.0);
+    ui.set_min_width(660.0);
     let search = tr("hotkeys.search", "Search commands");
     ui_kit::named_control(ui, &search, |ui| ui_kit::hint_field(ui, &mut app.extras.hotkeys.filter, &search));
     ui.add_space(t.space_6);
@@ -398,7 +461,10 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
         ui_kit::status_line(ui, &format!("{key}: {} ({})", tr("hotkeys.clash", "used by several commands"), ids.join(", ")), ui_kit::StatusTone::Dim);
     }
     if let Some((cmd, key, other)) = app.extras.hotkeys.conflict.clone() {
-        let name = |id: &str| keymap::bindable().into_iter().find(|(i, _, _)| *i == id).map(|(_, l, _)| l.to_string()).unwrap_or_default();
+        let name = |id: &str| {
+            let cmd = keymap::command_of(id);
+            crate::commands::find(cmd).map(i18n::cmd_label).unwrap_or_else(|| cmd.to_string())
+        };
         ui_kit::status_line(ui, &format!("{key} {} \"{}\".", tr("hotkeys.taken_by", "is already used by"), name(other)), ui_kit::StatusTone::Dim);
         ui.horizontal(|ui| {
             if ui_kit::button(ui, tr("hotkeys.take", "Take the key"), ui_kit::Button::Small).clicked() {
@@ -410,39 +476,39 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     }
-    let filter = app.extras.hotkeys.filter.to_lowercase();
+    // Folded, so a Turkish "ızgara" finds "Izgara dizisi" (and "izgara" does too).
+    let filter = darkburn_ui::casing::fold(&app.extras.hotkeys.filter);
+    ui.horizontal(|ui| {
+        let head = |ui: &mut Ui, w: f32, text: String| {
+            left_cell(ui, w, 18.0, egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).truncate());
+        };
+        head(ui, 250.0, tr("hotkeys.command", "Command"));
+        head(ui, KEY_CELL, tr("hotkeys.key", "Key"));
+        head(ui, KEY_CELL, tr("hotkeys.second", "Second key"));
+    });
+    // The keys as the key handler sees them: a default another command was given is not shown.
+    let eff = keymap::effective(&app.prefs.hotkeys);
+    let now = |slot: &str| eff.get(slot).cloned().unwrap_or_default();
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
         for (id, label, default) in keymap::bindable() {
             let cmd = crate::commands::find(id);
             let shown = cmd.map(i18n::cmd_label).unwrap_or_else(|| label.to_string());
-            if !filter.is_empty() && !shown.to_lowercase().contains(&filter) && !id.contains(&filter) {
+            if !filter.is_empty() && !darkburn_ui::casing::fold(&shown).contains(&filter) && !id.contains(&filter) {
                 continue;
             }
-            let key = keymap::key_in(&app.prefs.hotkeys, id, default);
-            let waiting = app.extras.hotkeys.capturing.as_deref() == Some(id);
+            let second = keymap::second_of(id);
             ui.horizontal(|ui| {
-                ui.add_sized([250.0, 22.0], egui::Label::new(shown).truncate());
-                let text = if waiting {
-                    tr("hotkeys.press", "Press a key...")
-                } else if key.is_empty() {
-                    tr("hotkeys.none", "none")
-                } else {
-                    key.clone()
-                };
-                if ui_kit::button(ui, text, ui_kit::Button::Small)
-                    .backing_on_hover_text(tr("hotkeys.set_tip", "Click, then press the new key. Esc cancels."))
-                    .clicked()
-                {
-                    app.extras.hotkeys.capturing = Some(id.to_string());
-                    app.extras.hotkeys.conflict = None;
-                }
+                left_cell(ui, 250.0, 22.0, egui::Label::new(shown).truncate());
+                key_cell(ui, app, id, now(id));
+                key_cell(ui, app, &second, now(&second));
                 if ui_kit::button(ui, tr("hotkeys.clear", "Clear"), ui_kit::Button::Small).clicked() {
                     let _ = keymap::assign(&mut app.prefs.hotkeys, id, "", false);
+                    let _ = keymap::assign(&mut app.prefs.hotkeys, &second, "", false);
                 }
-                let changed = app.prefs.hotkeys.contains_key(id);
+                let changed = app.prefs.hotkeys.contains_key(id) || app.prefs.hotkeys.contains_key(&second);
+                let defaults = [default, keymap::second_default(id)].into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(", ");
                 ui.add_enabled_ui(changed, |ui| {
-                    if ui_kit::button(ui, tr("hotkeys.reset", "Default"), ui_kit::Button::Small).backing_on_hover_text(default.to_string()).clicked()
-                    {
+                    if ui_kit::button(ui, tr("hotkeys.reset", "Default"), ui_kit::Button::Small).backing_on_hover_text(defaults).clicked() {
                         keymap::reset(&mut app.prefs.hotkeys, id);
                     }
                 });
@@ -564,6 +630,58 @@ mod tests {
         let list = execute_headless(&mut app, "hotkeys.list", &json!({})).unwrap();
         assert_eq!(list["conflicts"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Edit Hotkeys in a window of its own takes the key pressed there, and not one pressed in
+    /// the main window. The key was read from the main window only, so F7 pressed in the
+    /// hotkey window was never taken and Delete pressed over the drawing was.
+    #[test]
+    fn edit_hotkeys_in_a_window_of_its_own_takes_the_key_pressed_there() {
+        use darkburn_ui::ui_kit::window_host;
+        use egui::{Context, Event, Key, Modifiers, Pos2, RawInput, Rect, vec2};
+        let own = std::rc::Rc::new(std::cell::RefCell::new(Vec::<Event>::new()));
+        let events = own.clone();
+        // Native windows as a desktop backend runs them: each in a pass of its own, with keys of its own.
+        Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let input = RawInput {
+                viewport_id: viewport.ids.this,
+                viewports: std::iter::once((viewport.ids.this, info)).collect(),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(700.0, 600.0))),
+                events: std::mem::take(&mut *events.borrow_mut()),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+            out.textures_delta.clear();
+        });
+        let ctx = Context::default();
+        darkburn_ui::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        window_host::update(&ctx, "db_hotkeys", |p| p.detach());
+        let mut app = app();
+        app.extras.hotkeys.open = true;
+        let frame = |app: &mut DarkBurn, main: Vec<Event>, window: Vec<Event>| {
+            *own.borrow_mut() = window;
+            let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events: main, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| dialogs(ui.ctx(), app));
+            out.textures_delta.clear();
+        };
+        let tap =
+            |key| [true, false].map(|pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE }).to_vec();
+        frame(&mut app, vec![], vec![]);
+        let cmd = "tools.rect";
+        app.extras.hotkeys.capturing = Some(cmd.into());
+        frame(&mut app, tap(Key::Delete), vec![]);
+        assert_eq!(app.extras.hotkeys.capturing.as_deref(), Some(cmd), "a key pressed in the main window is not taken");
+        frame(&mut app, vec![], tap(Key::F7));
+        assert_eq!(app.extras.hotkeys.capturing, None);
+        assert_eq!(keymap::effective(&app.prefs.hotkeys)[cmd], "F7");
+        assert!(app.extras.hotkeys.open);
+        // Escape in the window ends a wait, not the window.
+        app.extras.hotkeys.capturing = Some(cmd.into());
+        frame(&mut app, vec![], tap(Key::Escape));
+        frame(&mut app, vec![], vec![]);
+        assert_eq!((app.extras.hotkeys.capturing.as_deref(), app.extras.hotkeys.open), (None, true));
     }
 
     #[test]

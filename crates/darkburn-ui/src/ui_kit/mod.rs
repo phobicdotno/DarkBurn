@@ -2,6 +2,7 @@
 //! (MIT OR Apache-2.0, see ATTRIBUTION.md). CAD-only modules were left out.
 //! Geometry, typography and colours come from `solidcraft_theme::Tokens`.
 mod actions;
+mod answer_keys;
 mod attention;
 mod checks;
 mod choice;
@@ -32,8 +33,12 @@ mod text_menu;
 mod tree;
 mod value_focus;
 mod wheel;
+pub mod window_host;
+#[cfg(test)]
+mod window_kit_tests;
 
 pub use actions::*;
+pub use answer_keys::{AnswerKeys, answer_key};
 pub use attention::*;
 pub use checks::*;
 pub use choice::*;

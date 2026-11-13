@@ -9,7 +9,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
   never *how* it is built. Everything here is implemented fresh.
 - Items marked *(later)* exist in newer LightBurn releases than 1.4.04. They are optional for parity.
 
-**Progress:** 728 of 802 done (48 partly).
+**Progress:** 747 of 802 done (34 partly).
 
 ---
 
@@ -160,8 +160,8 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARR-41 Virtual array: edit, add to, remove from, exit, flatten, duplicate
 
 ### Laser Tools
-- [~] LT-01 Print and cut: set first target
-- [~] LT-02 Print and cut: set second target
+- [x] LT-01 Print and cut: set first target
+- [x] LT-02 Print and cut: set second target
 - [x] LT-03 Print and cut: align output to targets
 - [x] LT-04 Print and cut: align without scaling
 - [x] LT-05 Print and cut: reset
@@ -231,7 +231,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] TB-22 Cut palette: right-click flashes shapes, shift-click selects them
 - [x] TB-23 Modes: rotary, print and cut, cylinder correction
 - [x] TB-24 Docking: four directions, move as group, lock inner objects, padding
-- [~] TB-25 All toolbars can be shown, hidden, docked and floated *(show, hide and order work, in the Window menu and Settings; the ribbon cannot split off, dock or float)*
+- [x] TB-25 All toolbars can be shown, hidden, docked and floated
 
 ## 3. Status bar
 
@@ -309,7 +309,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 ### Move
 - [x] MOVE-01 Jog arrows for X and Y, diagonals from numpad
 - [x] MOVE-02 Z jog arrows and separate Z speed
-- [~] MOVE-03 Rotary axis jog arrows
+- [~] MOVE-03 Rotary axis jog arrows *(the rotary turns on Y or U only; A and B axes are not supported by the jog or the job output)*
 - [x] MOVE-04 Home button in the centre
 - [x] MOVE-05 Jog distance and speed fields
 - [x] MOVE-06 Continuous jog toggle
@@ -318,16 +318,16 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] MOVE-09 Move to X, Y, Z position
 - [x] MOVE-10 Saved positions list with editor (add, reorder, sort, Z on/off)
 - [x] MOVE-11 Move from machine zero
-- [~] MOVE-12 Focus Z
+- [x] MOVE-12 Focus Z
 - [x] MOVE-13 Set and clear user origin
-- [~] MOVE-14 Set finish position
+- [x] MOVE-14 Set finish position
 - [x] MOVE-15 Fire button with power %
 - [x] MOVE-16 Invert keypad direction
 - [x] MOVE-17 Speed and power override sliders during a job (GRBL)
 - [x] MOVE-18 Laser 2 controls
 
 ### Camera Control
-- [~] CAMP-01 Camera picker
+- [x] CAMP-01 Camera picker
 - [~] CAMP-02 Live viewfinder
 - [x] CAMP-03 Update overlay
 - [x] CAMP-04 Trace from capture
@@ -433,7 +433,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] DRAW-19 Measure: unit switch, remembers last position, axis snap
 - [x] DRAW-20 Position laser: click to move the head
 - [x] DRAW-21 Barcode *(later)*
-- [ ] DRAW-22 Tangent circle generator *(later)*
+- [x] DRAW-22 Tangent circle generator *(later)*
 
 ## 7. Node editing
 
@@ -494,7 +494,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ARRAY-07 Circular array: count, start angle, sweep, rotate shapes, direction
 - [x] ARRAY-08 Copy along path: count or spacing, rotate shapes, start at nearest point
 - [x] ARRAY-09 Nesting of selected shapes
-- [ ] ARRAY-10 True nest and quick nest *(later)*
+- [x] ARRAY-10 True nest and quick nest *(later)*
 - [x] ARRAY-11 Auto-group groups shapes that sit inside each other
 - [x] ARRAY-12 Alignment helper for beginners
 - [x] ARRAY-13 Docking pushes selection against neighbours
@@ -529,7 +529,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] CUT-02 Max power and min power
 - [x] CUT-03 Number of passes
 - [x] CUT-04 Output on or off
-- [~] CUT-05 Air assist, with DSP modes for by layer or with laser
+- [~] CUT-05 Air assist, with DSP modes for by layer or with laser *(air with the laser has no known Ruida encoding)*
 - [x] CUT-06 Laser 1 and laser 2 choice and per-tube power
 - [x] CUT-07 Constant power mode (GRBL M3)
 - [x] CUT-08 Layer name
@@ -617,12 +617,12 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] IMG-17 Adjust image presets: save, load, import, export
 - [x] IMG-18 Trace image: threshold, lower cutoff, ignore small, smoothness, optimize
 - [x] IMG-19 Trace image: fade, show points, clip rectangle, sketch trace, delete image after
-- [~] IMG-20 Trace from camera capture
-- [ ] IMG-21 Multi-file trace *(later)*
-- [~] IMG-22 Fast skip of blank areas in G-code
+- [x] IMG-20 Trace from camera capture
+- [x] IMG-21 Multi-file trace *(later)*
+- [x] IMG-22 Fast skip of blank areas in G-code
 - [~] IMG-23 Scanning offset (backlash) table, import and export
 - [x] IMG-24 Angled image scans
-- [ ] IMG-25 3D model to depth map *(later)*
+- [x] IMG-25 3D model to depth map *(later)*
 
 ---
 
@@ -636,7 +636,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] PREV-06 Time estimate includes passes, overscan, tabs, lead-in and acceleration
 - [x] PREV-07 Zoom, pan, maximise
 - [x] PREV-08 Save preview image, optionally transparent
-- [~] PREV-09 Start here: run, send or save from any point in the job *(run from here on G-code and DSP machines, send on DSP, save as G-code; a galvo job cannot start part way and says so; saving an RD file from a point waits on EXP-07)*
+- [x] PREV-09 Start here: run, send or save from any point in the job *(run from here on G-code and DSP machines, send on DSP, save as G-code or RD; a galvo job cannot start part way and says so)*
 - [x] PREV-10 Layer and pass readout
 - [x] PREV-11 Read controller acceleration and speeds to make the estimate accurate
 
@@ -814,7 +814,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 17. Camera
 
-- [~] CAM-01 Camera selection with exposure and brightness
+- [x] CAM-01 Camera selection with exposure and brightness
 - [x] CAM-02 Overhead or head-mounted camera type
 - [x] CAM-03 Lens calibration wizard, standard and fisheye
 - [x] CAM-04 Camera alignment wizard
@@ -831,13 +831,13 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] ROT-03 Rotary axis choice
 - [x] ROT-04 Steps per rotation, roller diameter, object diameter or circumference
 - [x] ROT-05 Mirror output
-- [~] ROT-06 Test rotation
+- [x] ROT-06 Test rotation
 - [x] ROT-07 Read settings from controller (Ruida)
 - [x] ROT-08 Rotary toggle on the main window
 
 ## 19. Print and cut
 
-- [~] PNC-01 Two target positions
+- [x] PNC-01 Two target positions
 - [x] PNC-02 Align with scaling
 - [x] PNC-03 Align without scaling
 - [x] PNC-04 Reset
@@ -865,7 +865,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] OTHER-07 Project notes dialog shown on open
 - [x] OTHER-08 Hotkey editor
 - [x] OTHER-09 Beginner mode
-- [ ] OTHER-10 Taper warp *(later)*
+- [x] OTHER-10 Taper warp *(later)*
 
 ---
 
@@ -914,7 +914,7 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 - [x] SET-36 Output curve tolerance
 
 ### Camera
-- [~] SET-37 Capture system, resolution, colour view
+- [x] SET-37 Capture system, resolution, colour view
 
 ## 23. Device settings
 
@@ -941,9 +941,9 @@ Tick a box only when the item works in a build and has been tried by hand or by 
 
 ## 24. Keyboard
 
-- [~] KEY-01 Every default shortcut from the menus above *(missing: F2 as a second Start key, Z and diagonal jog keys, Y and N in message boxes)*
+- [x] KEY-01 Every default shortcut from the menus above
 - [x] KEY-02 Laser shortcuts: start, frame, outline frame, send, pause, stop
-- [~] KEY-03 Numpad jogging *(Ctrl+Alt+arrows jog instead: egui does not tell numpad keys from the others)*
+- [~] KEY-03 Numpad jogging *(the number pad jogs with NumLock off; with NumLock on egui cannot tell the pad digits from the digit row)*
 - [x] KEY-04 Node edit single-key commands
 - [x] KEY-05 Align single-key commands
 - [x] KEY-06 Space to pan, Tab to cycle, Esc to cancel

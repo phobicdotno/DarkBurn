@@ -15,6 +15,9 @@ use crate::shell::{APP_BAR_HEIGHT, DarkBurn};
 /// The device has a Z axis (otherwise the Z settings are greyed out).
 const DEVICE_HAS_Z: bool = false;
 
+/// The editor window's key, where the user put it (docked, a window of its own...).
+pub const WINDOW_KEY: &str = "cut_settings_window";
+
 /// One open editing session.
 #[derive(Clone, Debug, Default)]
 struct Session {
@@ -35,6 +38,8 @@ struct Session {
     saved_since: bool,
     /// A live edit was made.
     edited: bool,
+    /// The project the editor was opened in ([`darkburn_core::Editor::project`]).
+    project: u64,
 }
 
 fn session_id() -> Id {
@@ -163,13 +168,23 @@ fn fill_like(m: Mode) -> bool {
 
 /// Show the editor when it is open.
 pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
+    let project = app.editor.project();
     let Some(open) = app.cut_settings_open else {
         // Closed from elsewhere: the edits stay (as if OK).
-        if let Some(s) = ctx.data_mut(|d| d.remove_temp::<Session>(session_id())) {
+        if let Some(s) = ctx.data_mut(|d| d.remove_temp::<Session>(session_id()))
+            && s.project == project
+        {
             finish(app, &s, true);
         }
         return;
     };
+    if ctx.data(|d| d.get_temp::<Session>(session_id())).is_some_and(|s| s.project != project) {
+        // Another project was opened, or a new one made, while the editor was open. What it would
+        // put back (Cancel) or keep as an undo step (OK) are the layers of the project that is
+        // gone: the editor closes and leaves this one as it came.
+        close(ctx, app);
+        return;
+    }
     let mut s = ctx.data(|d| d.get_temp::<Session>(session_id())).unwrap_or_else(|| Session {
         opened_for: open,
         original: app.editor.doc.layers.clone(),
@@ -180,6 +195,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         clean_at: (!app.editor.is_modified()).then(|| app.editor.history.len()),
         saved_since: false,
         edited: false,
+        project,
     });
     if s.edited && !app.editor.is_modified() {
         s.saved_since = true;
@@ -196,11 +212,15 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
     // window that is given no place, two and a half rows above the middle of the main window,
     // the top of this tall one lay over the bar and its menus in most main windows.
     let middle = crate::shell::room_under_the_bar(ctx).center();
+    // Closed from its tab or its window with layers changed, it asks whether to keep them.
+    let unsaved = app.editor.doc.layers != s.original;
     let (closed, action) = ui_kit::Window::new(Id::unique("cut_settings_window"), "settings", title)
+        .dockable(WINDOW_KEY)
         .cards(2.7)
         .fields()
         .placed(Align2::CENTER_CENTER, middle)
         .actions("OK", "Cancel", None)
+        .unsaved(unsaved)
         .show(ctx, true, |ui| body(ui, app, &mut s));
     s.edited |= app.editor.doc.layers != s.original;
     match (closed, action) {

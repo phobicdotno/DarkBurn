@@ -1184,6 +1184,12 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui.label("Head at");
             coord(ui, "Head at", "X", &mut d.head[0], 0.1);
             coord(ui, "Head at", "Y", &mut d.head[1], 0.1);
+            if button(ui, "Read head", "Take the position of the laser head as the connected laser reports it") {
+                match vc::head_now(app, None) {
+                    Ok(p) => d.head = [p.x, p.y],
+                    Err(e) => d.text = e,
+                }
+            }
         });
         ui.horizontal(|ui| {
             ui.label("Mark at");
@@ -1210,11 +1216,18 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         ui_kit::section_heading(ui, "Stitching");
         note(ui, "Move the head to different places over the bed, add a capture at each, then stitch them into one picture.");
         ui.horizontal(|ui| {
-            if button(ui, "Add capture at head position", "Uses the latest camera picture")
-                && let Some(img) = app.vision.raw.clone()
-            {
-                let n = vc::head_add_capture(app, img, Point::new(d.head[0], d.head[1]));
-                d.text = format!("{n} capture(s).");
+            if button(ui, "Add capture at head position", "Uses the latest camera picture, and where a connected laser reports the head") {
+                // A connected laser says where the head is; without one the position typed above counts.
+                let typed = (!app.machine.handle.is_connected()).then(|| Point::new(d.head[0], d.head[1]));
+                match (app.vision.raw.clone(), vc::head_now(app, typed)) {
+                    (None, _) => d.text = "There is no camera picture yet.".into(),
+                    (_, Err(e)) => d.text = e,
+                    (Some(img), Ok(p)) => {
+                        d.head = [p.x, p.y];
+                        let n = vc::head_add_capture(app, img, p);
+                        d.text = format!("{n} capture(s).");
+                    }
+                }
             }
             if button(ui, "Stitch", "") {
                 d.text = msg(vc::head_stitch(app), |v| format!("Stitched {} capture(s).", v["captures"]));

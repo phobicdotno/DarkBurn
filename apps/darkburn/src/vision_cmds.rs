@@ -782,6 +782,16 @@ pub fn mark_in_view(app: &DarkBurn, mark: &HeadMark) -> Point {
     }
 }
 
+/// Where the head is for a head camera mark or capture [CAM-05]: `typed` when given, else where
+/// the connected laser reports it (machine coordinates, from machine zero).
+pub fn head_now(app: &DarkBurn, typed: Option<Point>) -> Result<Point, String> {
+    match typed {
+        Some(p) => Ok(p),
+        None if app.machine.handle.is_connected() => crate::motion_cmds::head_target(app, false),
+        None => Err("connect the laser to read where the head is, or give the head position".into()),
+    }
+}
+
 /// `head` is where the controller reports the head (machine coordinates).
 pub fn head_add_capture(app: &mut DarkBurn, img: RgbaImage, head: Point) -> usize {
     let head = laser_to_design(app, head);
@@ -1385,7 +1395,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "camera.head_add_capture",
         "Add a Head Camera Capture for Stitching",
-        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"}},"required":["path","x","y"]}"#,
+        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"}}}"#,
     ),
     a("camera.head_stitch", "Stitch the Head Camera Captures", ""),
     a(
@@ -1579,10 +1589,22 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
         "camera.align_clear" => Ok(align_clear(app)),
         "camera.head_solve" => head_solve_cmd(app, a),
         "camera.head_add_capture" => (|| {
-            let bytes = std::fs::read(path_arg(a)?).map_err(project_error)?;
-            let img = crate::images::decode(&bytes)?.to_rgba8();
-            let n = head_add_capture(app, img, Point::new(req(a, "x")?, req(a, "y")?));
-            Ok(json!({ "captures": n }))
+            // The picture: a file, else the latest camera picture. The head: x and y, else where
+            // the connected laser reports it.
+            let img = if a.get("path").is_some() {
+                let bytes = std::fs::read(path_arg(a)?).map_err(project_error)?;
+                crate::images::decode(&bytes)?.to_rgba8()
+            } else {
+                app.vision.raw.clone().ok_or("there is no camera picture yet")?
+            };
+            let typed = match (num(a, "x"), num(a, "y")) {
+                (Some(x), Some(y)) => Some(Point::new(x, y)),
+                (None, None) => None,
+                _ => return Err("give both x and y, or neither".into()),
+            };
+            let head = head_now(app, typed)?;
+            let n = head_add_capture(app, img, head);
+            Ok(json!({ "captures": n, "head": { "x": head.x, "y": head.y } }))
         })(),
         "camera.head_stitch" => head_stitch(app),
         "rotary.set" | "laser.rotary" => {

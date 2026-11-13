@@ -319,3 +319,85 @@ fn click_beside(g: &mut Gui, anchor: &str, label: &str) {
         .unwrap_or_else(|| panic!("no {label} button beside {anchor}"));
     g.click_pos(r.center());
 }
+
+// ----- Head camera captures at the reported head position [CAM-05] ---------------------------
+
+fn wait(a: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        a.machine.tick();
+        if f(a) {
+            return;
+        }
+        assert!(std::time::Instant::now() < end, "timed out waiting for {what}");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// A head camera capture without a typed position is placed where the connected laser (the
+/// simulator here) reports the head; without a laser it asks for the position.
+#[test]
+fn a_head_capture_is_placed_where_the_laser_reports_the_head() {
+    use crate::machine_api::LaserState;
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 1 })).unwrap();
+    let e = run(&mut a, "camera.head_add_capture", json!({})).unwrap_err();
+    assert!(e.contains("connect the laser"), "{e}");
+    assert!(run(&mut a, "camera.head_add_capture", json!({ "x": 5.0 })).unwrap_err().contains("both x and y"));
+    let typed = run(&mut a, "camera.head_add_capture", json!({ "x": 12.0, "y": 34.0 })).unwrap();
+    assert_eq!((typed["head"]["x"].as_f64(), typed["head"]["y"].as_f64()), (Some(12.0), Some(34.0)), "a typed position counts as typed");
+
+    run(&mut a, "machine.connect", json!({})).unwrap();
+    wait(&mut a, "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    run(&mut a, "machine.move_to", json!({ "x": 100.0, "y": 80.0, "machine_coords": true, "feed": 6000 })).unwrap();
+    wait(&mut a, "moved", |a| (a.machine.handle.snapshot().machine_pos[0] - 100.0).abs() < 0.05);
+    wait(&mut a, "idle", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    run(&mut a, "machine.get_position", json!({})).unwrap();
+    wait(&mut a, "position known", |a| a.machine.handle.snapshot().has_position);
+    let r = run(&mut a, "camera.head_add_capture", json!({})).unwrap();
+    assert_eq!(r["captures"], 2);
+    let (x, y) = (r["head"]["x"].as_f64().unwrap(), r["head"]["y"].as_f64().unwrap());
+    assert!((x - 100.0).abs() < 0.05 && (y - 80.0).abs() < 0.05, "the reported head: {r}");
+    assert_eq!(a.vision.mosaic.last().map(|c| c.image.dimensions()), Some((320, 240)), "with the latest camera picture");
+    assert_eq!(crate::vision_cmds::head_now(&a, None).map(|p| (p.x.round(), p.y.round())), Ok((100.0, 80.0)));
+    run(&mut a, "machine.disconnect", json!({})).unwrap();
+}
+
+/// Head Camera Alignment: Read head fills in where the laser reports the head, and Add capture
+/// uses it [CAM-05].
+#[test]
+fn the_head_camera_window_reads_the_head_position_from_the_laser() {
+    use crate::machine_api::LaserState;
+    let mut g = Gui::standard();
+    {
+        let mut a = g.app();
+        a.prefs.opts.capture_system = "simulated".into();
+        a.prefs.opts.capture_width = 320;
+        a.prefs.opts.capture_height = 240;
+        a.vision.prefs.live_enabled = true;
+    }
+    g.exec("camera.start", json!({ "index": 1 }));
+    g.exec("machine.connect", json!({}));
+    wait(&mut g.app(), "ready", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    g.exec("machine.move_to", json!({ "x": 100.0, "y": 80.0, "machine_coords": true, "feed": 6000 }));
+    wait(&mut g.app(), "moved", |a| (a.machine.handle.snapshot().machine_pos[0] - 100.0).abs() < 0.05);
+    wait(&mut g.app(), "idle", |a| a.machine.handle.snapshot().state == LaserState::Ready);
+    g.exec("machine.get_position", json!({}));
+    wait(&mut g.app(), "position known", |a| a.machine.handle.snapshot().has_position);
+    show_camera_panel(&mut g);
+    g.click_label("Head camera...");
+    g.frames(3);
+    g.click_label("Read head");
+    g.frames(2);
+    g.screenshot("camera_head_read_head");
+    // Without the laser the position read stays in the fields and Add capture uses it.
+    g.exec("machine.disconnect", json!({}));
+    g.frames(2);
+    g.click_label("Add capture at head position");
+    g.frames(2);
+    let a = g.app();
+    assert_eq!(a.vision.mosaic.len(), 1, "one capture");
+    let want = crate::vision_cmds::laser_to_design(&a, darkburn_core::kurbo::Point::new(100.0, 80.0));
+    let got = a.vision.mosaic[0].head_pos;
+    assert!((got - want).hypot() < 0.05, "placed at the head the laser reported: {got:?}, want {want:?}");
+}

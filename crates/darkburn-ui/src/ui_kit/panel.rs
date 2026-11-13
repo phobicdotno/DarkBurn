@@ -1499,6 +1499,7 @@ impl Window<'_> {
                 });
                 host::native_moved(ui.ctx(), key, inner.map(|r| r.size()), outer.map(|r| r.min));
                 host::native_focus(ui.ctx(), key, focused);
+                host::native_input(ui.ctx());
                 if raise && host::app_focused(ui.ctx()) {
                     if minimized {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(false));

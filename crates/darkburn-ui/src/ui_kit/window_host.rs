@@ -194,6 +194,9 @@ struct State {
     raise: BTreeMap<String, u64>,
     /// The native windows that had the system focus, with the frame they last had it in.
     native_focus: BTreeMap<String, u64>,
+    /// A native window had input that can change a setting, or was moved, since the app last
+    /// asked ([`take_native_input`]).
+    native_input: bool,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -422,7 +425,7 @@ pub(crate) fn native_opening(ctx: &Context, key: &str, first_size: Vec2) -> ([f3
 
 /// The native window of `key` is now `size` (inner) at `pos` (outer, if known).
 pub(crate) fn native_moved(ctx: &Context, key: &str, size: Option<Vec2>, pos: Option<Pos2>) {
-    with(ctx, |s| {
+    let changed = with(ctx, |s| {
         let place = s.places.entry(key.to_string()).or_default();
         let size = size.filter(|v| v.x.is_finite() && v.y.is_finite() && v.x > 0.0 && v.y > 0.0).map(|v| clamp_size([v.x, v.y]));
         let pos = pos.filter(|p| p.x.is_finite() && p.y.is_finite()).map(|p| [p.x, p.y]);
@@ -432,7 +435,44 @@ pub(crate) fn native_moved(ctx: &Context, key: &str, size: Option<Vec2>, pos: Op
             place.native_pos = pos.or(place.native_pos);
             s.dirty = true;
         }
+        changed
     });
+    if changed {
+        note_native_input(ctx);
+    }
+}
+
+/// Input that can change a setting: a click, a key, typed text, a wheel or a pinch.
+pub fn changes_settings(event: &egui::Event) -> bool {
+    matches!(
+        event,
+        egui::Event::PointerButton { .. }
+            | egui::Event::Key { .. }
+            | egui::Event::Text(_)
+            | egui::Event::Paste(_)
+            | egui::Event::MouseWheel { .. }
+            | egui::Event::Zoom(_)
+    )
+}
+
+/// In a native window's pass: notes input there that can change a setting. The main window's
+/// input never shows it, so the app asks [`take_native_input`] as well.
+pub(crate) fn native_input(ctx: &Context) {
+    if ctx.input(|i| i.events.iter().any(changes_settings)) {
+        note_native_input(ctx);
+    }
+}
+
+fn note_native_input(ctx: &Context) {
+    with(ctx, |s| s.native_input = true);
+    // The main window runs next, to hear of it.
+    ctx.request_repaint_of(egui::ViewportId::ROOT);
+}
+
+/// Whether a native window had input that can change a setting, or was moved or resized, since
+/// the last call: what was changed there is the app's to store, as for input in the main window.
+pub fn take_native_input(ctx: &Context) -> bool {
+    with(ctx, |s| std::mem::take(&mut s.native_input))
 }
 
 /// At the end of a native window's pass: the key presses nothing in the window used are kept for
@@ -945,6 +985,50 @@ mod tests {
         let card = egui::AreaState::load(&ctx, Id::unique("drawn")).and_then(|a| a.size).expect("drawn");
         update(&ctx, "drawn", |p| p.detach());
         assert_eq!(draw("drawn", 1.0), Some(card.max(MIN_SIZE)));
+    }
+
+    #[test]
+    fn input_in_a_native_window_is_passed_to_the_app_once() {
+        use egui::{Key, Modifiers};
+        let keys = Keys::default();
+        native_windows(&keys);
+        let ctx = Context::default();
+        crate::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        update(&ctx, "w", |p| p.detach());
+        detached_window(&ctx, false);
+        assert!(!take_native_input(&ctx), "nothing done in it");
+        let click = egui::Event::PointerButton {
+            pos: Pos2::new(20.0, 20.0),
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        };
+        for event in [
+            click,
+            key(Key::A, Modifiers::NONE, true),
+            egui::Event::Text("a".into()),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: vec2(0.0, 1.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Modifiers::NONE,
+            },
+        ] {
+            *keys.borrow_mut() = vec![event.clone()];
+            detached_window(&ctx, false);
+            assert!(take_native_input(&ctx), "{event:?}");
+            assert!(!take_native_input(&ctx), "once: {event:?}");
+        }
+        *keys.borrow_mut() = vec![egui::Event::PointerMoved(Pos2::new(30.0, 30.0))];
+        detached_window(&ctx, false);
+        assert!(!take_native_input(&ctx), "the pointer passing over it changes nothing");
+        // Moved or resized by the system: its new place is the app's to store.
+        native_moved(&ctx, "w", Some(vec2(640.0, 480.0)), Some(Pos2::new(10.0, 20.0)));
+        assert!(take_native_input(&ctx));
+        native_moved(&ctx, "w", Some(vec2(640.0, 480.0)), Some(Pos2::new(10.0, 20.0)));
+        assert!(!take_native_input(&ctx), "where it was already");
     }
 
     #[test]

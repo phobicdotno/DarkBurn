@@ -280,17 +280,17 @@ fn stored_prefs(dir: &std::path::Path) -> Option<String> {
     ron::from_str::<std::collections::HashMap<String, String>>(&text).ok()?.remove(STORAGE_KEY)
 }
 
-/// Input that can change a setting: a click, a key, typed text, a wheel or a pinch.
-fn changes_settings(event: &egui::Event) -> bool {
-    matches!(
-        event,
-        egui::Event::PointerButton { .. }
-            | egui::Event::Key { .. }
-            | egui::Event::Text(_)
-            | egui::Event::Paste(_)
-            | egui::Event::MouseWheel { .. }
-            | egui::Event::Zoom(_)
-    )
+/// Whether this frame had input that can change a setting, or a window of its own had some
+/// since the last frame (the main window's input never shows that).
+fn settings_input(ctx: &egui::Context) -> bool {
+    use darkburn_ui::ui_kit::window_host;
+    if window_host::take_native_input(ctx) {
+        // What it changed reaches the settings in this frame's `ui` (a window's place only
+        // then): the next frame writes that.
+        ctx.request_repaint();
+        return true;
+    }
+    ctx.input(|i| i.events.iter().any(window_host::changes_settings))
 }
 
 struct App {
@@ -332,7 +332,7 @@ impl eframe::App for App {
         if app.safe_mode {
             return;
         }
-        let input = ctx.input(|i| i.events.iter().any(changes_settings));
+        let input = settings_input(ctx);
         let now = std::time::Instant::now();
         if self.writer.due(input, now)
             && let Some(storage) = frame.storage_mut()
@@ -552,6 +552,55 @@ mod tests {
         a.store_beside(&mut disk, pa.to_json(), later, || on_disk);
         let end = Prefs::from_json(&stored(&disk).unwrap());
         assert_eq!((end.theme.as_str(), end.opts.nudge, end.invert_wheel), ("light", 2.0, true));
+    }
+
+    /// A click in a window of its own, which the main window's input never shows, has the
+    /// settings written as a click in the main window does.
+    #[test]
+    fn input_in_a_window_of_its_own_has_the_settings_written() {
+        let click = std::rc::Rc::new(std::cell::Cell::new(false));
+        let feed = click.clone();
+        egui::Context::set_immediate_viewport_renderer(move |ctx, mut viewport| {
+            let mut events = Vec::new();
+            if feed.take() {
+                let pos = egui::pos2(20.0, 20.0);
+                events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            let info = egui::ViewportInfo { parent: Some(viewport.ids.parent), ..Default::default() };
+            let viewports = std::iter::once((viewport.ids.this, info)).collect();
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 500.0)));
+            let input = egui::RawInput { viewport_id: viewport.ids.this, viewports, screen_rect, events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| (viewport.viewport_ui_cb)(ui));
+            out.textures_delta.clear();
+        });
+        let ctx = egui::Context::default();
+        darkburn_ui::fonts::setup_bundled_fonts(&ctx);
+        ctx.set_embed_viewports(false);
+        darkburn_ui::ui_kit::window_host::update(&ctx, "w", |p| p.detach());
+        // One frame: what the app's `logic` sees at its start, then the window drawn.
+        let frame = |clicked: bool| {
+            click.set(clicked);
+            let mut input = None;
+            let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)));
+            let mut out = ctx.run_ui(egui::RawInput { screen_rect, ..Default::default() }, |ui| {
+                input = Some(settings_input(ui.ctx()));
+                darkburn_ui::ui_kit::Window::new(egui::Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
+                    ui.label("w");
+                });
+            });
+            out.textures_delta.clear();
+            input.unwrap()
+        };
+        frame(false);
+        assert!(!frame(false), "nothing done");
+        assert!(!frame(true), "the click comes in this frame's window, after the check");
+        assert!(frame(false), "the next frame writes what it changed");
+        assert!(!frame(false), "once");
     }
 
     #[test]

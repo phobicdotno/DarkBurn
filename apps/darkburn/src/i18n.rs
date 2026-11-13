@@ -72,6 +72,8 @@ pub fn available(code: &str) -> bool {
 pub fn set_language(code: &str) {
     let code = if available(code) { code } else { "en" };
     set_active(code);
+    // Captions in capitals follow the language: Turkish writes "BİRİMLER", not "BIRIMLER".
+    darkburn_ui::casing::set_language_source(language);
 }
 
 /// The language in use.

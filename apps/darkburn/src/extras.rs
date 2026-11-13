@@ -411,12 +411,13 @@ fn hotkey_page(ui: &mut Ui, app: &mut DarkBurn) {
             }
         });
     }
-    let filter = app.extras.hotkeys.filter.to_lowercase();
+    // Folded, so a Turkish "ızgara" finds "Izgara dizisi" (and "izgara" does too).
+    let filter = darkburn_ui::casing::fold(&app.extras.hotkeys.filter);
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
         for (id, label, default) in keymap::bindable() {
             let cmd = crate::commands::find(id);
             let shown = cmd.map(i18n::cmd_label).unwrap_or_else(|| label.to_string());
-            if !filter.is_empty() && !shown.to_lowercase().contains(&filter) && !id.contains(&filter) {
+            if !filter.is_empty() && !darkburn_ui::casing::fold(&shown).contains(&filter) && !id.contains(&filter) {
                 continue;
             }
             let key = keymap::key_in(&app.prefs.hotkeys, id, default);

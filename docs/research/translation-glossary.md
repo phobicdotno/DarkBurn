@@ -580,6 +580,8 @@ the ending joined by a hyphen ("Ctrl-lal"). Panel labels that are not translated
 - Width / Height: Szélesség / Magasság. Reset: visszaállítás. Backup (a saved copy of a file):
   biztonsági mentés. Backup path (the outline an image keeps after a crop): tartalék útvonal.
 - Start (the laser panel button, not translated yet): „Start”.
+- Hotkey conflicts: the key is the subject and the command owns it ("Ctrl+S már foglalt, ez a
+  parancs használja ..."); a bare "használja" reads as "use it".
 
 ## Slovenian (sl)
 
@@ -614,6 +616,10 @@ stems ("varnostn kopij" finds "varnostna kopija" and "varnostne kopije").
 - Width / Height: Širina / Višina. Reset: Ponastavi. Backup (a saved copy of a file):
   varnostna kopija. Backup path (the outline an image keeps after a crop): rezervna pot.
 - Start (the laser panel button, not translated yet): »Start«.
+- Hotkey conflicts: the key (tipka, feminine) is the subject: "Ctrl+S je že dodeljena ukazu",
+  "dodeljena več ukazom"; "uporablja" would make the key use the command.
+- Choices agree with their label: Toolbar icons (Ikone) are Majhne / Srednje / Velike; Curve
+  quality (kakovost) is Groba / Običajna / Fina.
 
 ## Turkish (tr)
 
@@ -650,3 +656,7 @@ quoted “like this”. Turkish adds suffixes to its words, so the one-word chec
 - Width / Height: Genişlik / Yükseklik. Reset: Sıfırla. Backup (a saved copy of a file): yedek.
   Backup path (the outline an image keeps after a crop): yedek yol.
 - Start (the laser panel button, not translated yet): “Start”.
+- Flatten (a virtual array into plain shapes): düzleştir ("Diziyi düzleştir"); "dağıt" is only
+  Distribute.
+- Captions in capitals keep the Turkish i: "Birimler" is shown as "BİRİMLER". The program does
+  this itself, so the file holds normal case.

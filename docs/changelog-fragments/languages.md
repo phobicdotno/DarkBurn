@@ -6,3 +6,4 @@
 - New: Dutch, Danish and Swedish (machine-translated; corrections are welcome)
 - New: Finnish, Polish and Czech (machine-translated; corrections are welcome)
 - New: Hungarian, Slovenian and Turkish (machine-translated; corrections are welcome)
+- Fix: Turkish headings in capitals keep the dot on the İ, and the hotkey search finds Turkish words typed with or without ı

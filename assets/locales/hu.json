@@ -348,7 +348,7 @@
   "hotkeys.search": "Parancsok keresése",
   "hotkeys.set_tip": "Kattintson, majd nyomja meg az új billentyűt. Az Esc megszakítja.",
   "hotkeys.take": "Billentyű átvétele",
-  "hotkeys.taken_by": "már foglalt, használja",
+  "hotkeys.taken_by": "már foglalt, ez a parancs használja",
   "hotkeys.title": "Gyorsbillentyűk szerkesztése",
   "library.any_device": "bármely eszköz",
   "library.apply": "Alkalmazás",

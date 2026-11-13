@@ -260,6 +260,7 @@
   "cmd.tools.start_points": "Startpunkter",
   "cmd.tools.tabs": "Legg til tapper",
   "cmd.tools.text": "Rediger tekst",
+  "cmd.tools.trace_files": "Spor bildefiler...",
   "cmd.tools.trace_image": "Spor bilde",
   "cmd.tools.union": "Boolsk union",
   "cmd.tools.warp": "Vri utvalg (4 punkter)",

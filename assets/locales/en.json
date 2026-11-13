@@ -260,6 +260,7 @@
   "cmd.tools.start_points": "Start Points",
   "cmd.tools.tabs": "Add Tabs",
   "cmd.tools.text": "Edit Text",
+  "cmd.tools.trace_files": "Trace Image Files...",
   "cmd.tools.trace_image": "Trace Image",
   "cmd.tools.union": "Boolean Union",
   "cmd.tools.warp": "Warp Selection (4 points)",

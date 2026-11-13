@@ -373,6 +373,13 @@ mod tests {
         assert!(g.app().nest_ui.job.is_some(), "the run is under way");
         assert!(g.has_text("Cancel stops the run and uses the best layout found so far."));
         g.screenshot("nest-dialog-running");
+        // Cancel once it is placing: cancelled while the selection is still sorted out, the run
+        // ends with nothing to keep (a slow, busy machine gets there late).
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while g.app().nest_ui.job.as_ref().is_some_and(|j| j.progress().1 == 0 && !j.finished()) {
+            assert!(std::time::Instant::now() < end, "the run never started placing");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         click_button(&mut g, "Cancel");
         wait(&mut g);
         let note = g.app().nest_ui.note.clone().unwrap_or_default();

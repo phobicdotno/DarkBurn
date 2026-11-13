@@ -7,9 +7,10 @@
 //! is left out and named in the report. Files are held to the importer's limits (file size,
 //! picture size, decoder memory), and pictures larger than the trace limit are shrunk first.
 //!
-//! `image.trace_files` is the headless command (a list of paths and the trace settings);
-//! `tools.trace_files` asks for the files and opens the window, which steps a preview through
-//! them before tracing.
+//! `image.trace_files` is the headless command (a list of paths and the trace settings); an
+//! agent's call of it runs on a worker too ([`PendingTrace`]) and is collected through the
+//! agent's `pending`. `tools.trace_files` asks for the files and opens the window, which steps
+//! a preview through them before tracing, reading one preview at a time.
 
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
@@ -61,14 +62,9 @@ pub fn load(path: &Path, page: Size, max_px: u64) -> Result<Loaded, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| format!("could not be read ({e})"))?;
     let decoded = std::panic::catch_unwind(AssertUnwindSafe(|| -> Result<Loaded, String> {
-        // The importer checks the format and the picture size from the header before any
-        // pixels are decoded, and gives the size in mm.
-        let opts = crate::import::Options { page, ..Default::default() };
-        let imported = crate::import::bitmap(&bytes, &opts, None)?;
-        let size_mm = match imported.shapes.first().map(|s| &s.kind) {
-            Some(ShapeKind::Image(img)) => (img.width, img.height),
-            _ => return Err("this is not an image DarkBurn can read".into()),
-        };
+        // The importer's own check of the format and the picture size, from the header before
+        // any pixels are decoded; it gives the size in mm and keeps no copy of the bytes.
+        let size_mm = crate::import::bitmap_header(&bytes, page, None)?.mm;
         let mut img = crate::images::decode(&bytes)?;
         let px = u64::from(img.width()) * u64::from(img.height());
         if px > max_px.max(1) {
@@ -89,14 +85,24 @@ pub fn trace_loaded(l: &Loaded, args: &TraceArgs, max_px: u64) -> Vec<BezPath> {
     image_ops::trace_gray_limited(&l.gray, to_mm, args, max_px)
 }
 
+/// The paths one file gave (centred on the origin) and the picture's size in mm.
+pub type Traced = (Vec<BezPath>, (f64, f64));
+
+/// Reads a file for the preview: [`load`] in the app, something slower in tests.
+pub type Loader = Arc<dyn Fn(&Path, Size, u64) -> Result<Loaded, String> + Send + Sync>;
+
+/// Traces one file of a run: [`trace_file`] in the app, something slower in tests.
+pub type Tracer = Arc<dyn Fn(&Path, &TraceArgs, Size) -> Result<Traced, String> + Send + Sync>;
+
 /// What tracing one file gave.
 pub struct FileResult {
     pub path: PathBuf,
-    /// The paths (centred on the origin) and the picture's size in mm, or why it was skipped.
-    pub traced: Result<(Vec<BezPath>, (f64, f64)), String>,
+    /// What was traced, or why the file was skipped.
+    pub traced: Result<Traced, String>,
 }
 
-fn trace_file(path: &Path, args: &TraceArgs, page: Size) -> Result<(Vec<BezPath>, (f64, f64)), String> {
+/// Reads and traces one file.
+pub fn trace_file(path: &Path, args: &TraceArgs, page: Size) -> Result<Traced, String> {
     let l = load(path, page, image_ops::TRACE_MAX_PIXELS)?;
     let paths = std::panic::catch_unwind(AssertUnwindSafe(|| trace_loaded(&l, args, image_ops::TRACE_MAX_PIXELS)))
         .map_err(|_| "the image could not be traced".to_string())?;
@@ -109,12 +115,23 @@ fn trace_file(path: &Path, args: &TraceArgs, page: Size) -> Result<(Vec<BezPath>
 /// Traces `paths` one after another; `done` counts the files finished. None when `cancel` was
 /// set before the end.
 pub fn trace_files(paths: &[PathBuf], args: &TraceArgs, page: Size, cancel: &AtomicBool, done: &AtomicUsize) -> Option<Vec<FileResult>> {
+    trace_files_with(paths, cancel, done, |p| trace_file(p, args, page))
+}
+
+/// [`trace_files`] with `each` tracing one file. `cancel` is looked at before every file and
+/// at the end, so a run stopped part way gives nothing at all.
+pub fn trace_files_with(
+    paths: &[PathBuf],
+    cancel: &AtomicBool,
+    done: &AtomicUsize,
+    mut each: impl FnMut(&Path) -> Result<Traced, String>,
+) -> Option<Vec<FileResult>> {
     let mut out = Vec::with_capacity(paths.len());
     for path in paths {
         if cancel.load(Ordering::Relaxed) {
             return None;
         }
-        out.push(FileResult { path: path.clone(), traced: trace_file(path, args, page) });
+        out.push(FileResult { path: path.clone(), traced: each(path) });
         done.fetch_add(1, Ordering::Relaxed);
     }
     (!cancel.load(Ordering::Relaxed)).then_some(out)
@@ -123,6 +140,7 @@ pub fn trace_files(paths: &[PathBuf], args: &TraceArgs, page: Size, cancel: &Ato
 // ----- Worker -----
 
 /// A run on a worker thread, so the window stays live, shows progress and can stop it.
+/// Dropping it stops it too.
 pub struct TraceJob {
     cancel: Arc<AtomicBool>,
     done: Arc<AtomicUsize>,
@@ -132,16 +150,16 @@ pub struct TraceJob {
 
 impl TraceJob {
     pub fn start(paths: Vec<PathBuf>, args: TraceArgs, page: Size) -> TraceJob {
-        Self::start_with(paths, args, page, false)
+        Self::start_using(paths, args, page, Arc::new(trace_file))
     }
 
-    /// [`TraceJob::start`] with the cancel flag already set (for tests).
-    pub fn start_with(paths: Vec<PathBuf>, args: TraceArgs, page: Size, cancelled: bool) -> TraceJob {
-        let cancel = Arc::new(AtomicBool::new(cancelled));
+    /// [`TraceJob::start`] with `tracer` tracing each file.
+    pub fn start_using(paths: Vec<PathBuf>, args: TraceArgs, page: Size, tracer: Tracer) -> TraceJob {
+        let cancel = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicUsize::new(0));
         let total = paths.len();
         let (c, d) = (cancel.clone(), done.clone());
-        let handle = std::thread::spawn(move || trace_files(&paths, &args, page, &c, &d));
+        let handle = std::thread::spawn(move || trace_files_with(&paths, &c, &d, |p| tracer(p, &args, page)));
         TraceJob { cancel, done, total, handle: Some(handle) }
     }
 
@@ -161,6 +179,13 @@ impl TraceJob {
     /// Wait for the end: the results, or None when it was stopped.
     pub fn take(mut self) -> Option<Vec<FileResult>> {
         self.handle.take().and_then(|h| h.join().ok()).flatten()
+    }
+}
+
+impl Drop for TraceJob {
+    fn drop(&mut self) {
+        // A run nobody waits for any more stops at the next file.
+        self.cancel();
     }
 }
 
@@ -296,33 +321,85 @@ fn page_of(app: &DarkBurn) -> Size {
     Size::new(f64::from(app.prefs.page_width), f64::from(app.prefs.page_height))
 }
 
-/// The settings a run takes from command arguments: the trace settings, `gap` and `columns`.
-fn layout_args(a: &Value) -> (f64, usize) {
-    let gap = a.get("gap").and_then(Value::as_f64).filter(|g| g.is_finite()).map_or(DEFAULT_GAP_MM, |g| g.clamp(0.0, 1000.0));
-    let columns = a.get("columns").and_then(Value::as_u64).map_or(0, |c| c.min(100) as usize);
-    (gap, columns)
+/// The arguments of `image.trace_files`.
+struct Request {
+    paths: Vec<PathBuf>,
+    args: TraceArgs,
+    gap: f64,
+    columns: usize,
 }
 
-/// `image.trace_files`: traces the files in `paths` with the trace settings in `a`, now.
-pub fn execute(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
-    let list = a.get("paths").and_then(Value::as_array).ok_or("argument paths must be a list of file paths")?;
-    let paths: Vec<PathBuf> = list.iter().map(|p| p.as_str().map(PathBuf::from).ok_or("argument paths must hold text")).collect::<Result<_, _>>()?;
-    if paths.is_empty() {
-        return Err("argument paths is empty".into());
+impl Request {
+    fn parse(a: &Value) -> Result<Request, String> {
+        let list = a.get("paths").and_then(Value::as_array).ok_or("argument paths must be a list of file paths")?;
+        let paths: Vec<PathBuf> =
+            list.iter().map(|p| p.as_str().map(PathBuf::from).ok_or("argument paths must hold text")).collect::<Result<_, _>>()?;
+        if paths.is_empty() {
+            return Err("argument paths is empty".into());
+        }
+        if paths.len() > MAX_FILES {
+            return Err(format!("at most {MAX_FILES} files can be traced at once"));
+        }
+        let mut args: TraceArgs = serde_json::from_value(a.clone()).map_err(|e| format!("arguments: {e}"))?;
+        // The files differ in size, so a rectangle of one picture means nothing for the others.
+        args.clip = None;
+        let gap = a.get("gap").and_then(Value::as_f64).filter(|g| g.is_finite()).map_or(DEFAULT_GAP_MM, |g| g.clamp(0.0, 1000.0));
+        let columns = a.get("columns").and_then(Value::as_u64).map_or(0, |c| c.min(100) as usize);
+        Ok(Request { paths, args, gap, columns })
     }
-    if paths.len() > MAX_FILES {
-        return Err(format!("at most {MAX_FILES} files can be traced at once"));
-    }
-    let args: TraceArgs = serde_json::from_value(a.clone()).map_err(|e| format!("arguments: {e}"))?;
-    let (gap, columns) = layout_args(a);
-    let page = page_of(app);
-    let results = trace_files(&paths, &args, page, &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap_or_default();
-    let out = apply(&mut app.editor, results, &args, gap, columns, page)?;
-    Ok(json!({
+}
+
+/// What a run reports to the caller.
+fn report(out: &Outcome) -> Value {
+    json!({
         "created": out.created.iter().map(|s| s.0).collect::<Vec<_>>(),
         "skipped": out.skipped.iter().map(|(f, e)| json!({ "file": f, "error": e })).collect::<Vec<_>>(),
         "nodes": out.nodes,
-    }))
+    })
+}
+
+/// `image.trace_files`: traces the files in `paths` with the trace settings in `a`, now, on
+/// this thread (scripts and tests; an agent's call goes through [`PendingTrace`]).
+pub fn execute(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
+    let r = Request::parse(a)?;
+    let page = page_of(app);
+    let results = trace_files(&r.paths, &r.args, page, &AtomicBool::new(false), &AtomicUsize::new(0)).unwrap_or_default();
+    apply(&mut app.editor, results, &r.args, r.gap, r.columns, page).map(|out| report(&out))
+}
+
+/// `image.trace_files` called by an agent: the files are traced on a worker, so the window
+/// stays live, and the result goes into the document when the agent's `pending` finds it done.
+pub struct PendingTrace {
+    job: TraceJob,
+    args: TraceArgs,
+    gap: f64,
+    columns: usize,
+    page: Size,
+}
+
+impl PendingTrace {
+    /// Checks the arguments and starts the run.
+    pub fn start(app: &DarkBurn, a: &Value) -> Result<PendingTrace, String> {
+        let r = Request::parse(a)?;
+        let page = page_of(app);
+        Ok(PendingTrace { job: TraceJob::start(r.paths, r.args.clone(), page), args: r.args, gap: r.gap, columns: r.columns, page })
+    }
+
+    pub fn finished(&self) -> bool {
+        self.job.finished()
+    }
+
+    /// (files done, files in all).
+    pub fn progress(&self) -> (usize, usize) {
+        self.job.progress()
+    }
+
+    /// Puts what was traced into the document, as [`execute`] does.
+    pub fn finish(self, app: &mut DarkBurn) -> Result<Value, String> {
+        let PendingTrace { job, args, gap, columns, page } = self;
+        let results = job.take().ok_or("the run was stopped, nothing changed")?;
+        apply(&mut app.editor, results, &args, gap, columns, page).map(|out| report(&out))
+    }
 }
 
 // ----- Window -----
@@ -330,8 +407,13 @@ pub fn execute(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
 /// The preview of the file shown in the window.
 #[derive(Default)]
 struct Preview {
+    /// The file shown.
     file: Option<PathBuf>,
-    loading: Option<JoinHandle<Result<Loaded, String>>>,
+    /// The one read running, and its file: maybe one no longer shown. Only one runs at a time,
+    /// so stepping quickly through large files never decodes several at once.
+    loading: Option<(PathBuf, JoinHandle<Result<Loaded, String>>)>,
+    /// Reads started since the window opened.
+    started: usize,
     loaded: Option<Loaded>,
     texture: Option<TextureHandle>,
     paths: Vec<BezPath>,
@@ -349,11 +431,23 @@ pub struct MultiTraceDialog {
     pub job: Option<TraceJob>,
     pub notice: Option<String>,
     preview: Preview,
+    loader: Loader,
+    tracer: Tracer,
 }
 
 impl MultiTraceDialog {
     pub fn new(files: Vec<PathBuf>, args: TraceArgs) -> MultiTraceDialog {
-        MultiTraceDialog { files, current: 0, args, gap: DEFAULT_GAP_MM, job: None, notice: None, preview: Preview::default() }
+        MultiTraceDialog {
+            files,
+            current: 0,
+            args,
+            gap: DEFAULT_GAP_MM,
+            job: None,
+            notice: None,
+            preview: Preview::default(),
+            loader: Arc::new(load),
+            tracer: Arc::new(trace_file),
+        }
     }
 
     /// Adds `more`, leaving out files already in the list.
@@ -381,7 +475,7 @@ impl MultiTraceDialog {
     /// Whether the preview of the shown file has been read (or found unreadable).
     #[cfg(test)]
     pub fn preview_ready(&self) -> bool {
-        self.preview.loading.is_none() && (self.preview.loaded.is_some() || self.preview.error.is_some())
+        self.preview.loaded.is_some() || self.preview.error.is_some()
     }
 
     /// Outlines in the preview.
@@ -398,27 +492,39 @@ impl MultiTraceDialog {
         )
     }
 
-    /// Reads the shown file for the preview on a worker, and traces it again when the settings change.
+    /// Reads the shown file for the preview on a worker, and traces it again when the settings
+    /// change. A read still running for a file no longer shown is let finish and thrown away
+    /// before the next one starts, so at most one runs.
     fn refresh(&mut self, ctx: &Context, page: Size) {
         let want = self.shown().map(Path::to_path_buf);
         if self.preview.file != want {
-            self.preview = Preview { file: want.clone(), ..Preview::default() };
-            if let Some(path) = want {
-                self.preview.loading = Some(std::thread::spawn(move || load(&path, page, image_ui::TRACE_PREVIEW_PIXELS)));
+            let (loading, started) = (self.preview.loading.take(), self.preview.started);
+            self.preview = Preview { file: want, loading, started, ..Preview::default() };
+        }
+        if self.preview.loading.as_ref().is_some_and(|(_, h)| h.is_finished())
+            && let Some((path, h)) = self.preview.loading.take()
+        {
+            let read = h.join().unwrap_or_else(|_| Err("the image could not be read".into()));
+            if self.preview.file.as_ref() == Some(&path) {
+                match read {
+                    Ok(l) => {
+                        let luma = l.gray.to_luma8();
+                        let image = egui::ColorImage::from_gray([luma.width() as usize, luma.height() as usize], luma.as_raw());
+                        self.preview.texture = Some(ctx.load_texture("db_trace_files_base", image, TextureOptions::LINEAR));
+                        self.preview.loaded = Some(l);
+                    }
+                    Err(e) => self.preview.error = Some(e),
+                }
             }
         }
-        if self.preview.loading.as_ref().is_some_and(JoinHandle::is_finished)
-            && let Some(h) = self.preview.loading.take()
+        let waiting = self.preview.loaded.is_none() && self.preview.error.is_none();
+        if waiting
+            && self.preview.loading.is_none()
+            && let Some(path) = self.preview.file.clone()
         {
-            match h.join().unwrap_or_else(|_| Err("the image could not be read".into())) {
-                Ok(l) => {
-                    let luma = l.gray.to_luma8();
-                    let image = egui::ColorImage::from_gray([luma.width() as usize, luma.height() as usize], luma.as_raw());
-                    self.preview.texture = Some(ctx.load_texture("db_trace_files_base", image, TextureOptions::LINEAR));
-                    self.preview.loaded = Some(l);
-                }
-                Err(e) => self.preview.error = Some(e),
-            }
+            let loader = self.loader.clone();
+            self.preview.started += 1;
+            self.preview.loading = Some((path.clone(), std::thread::spawn(move || loader(&path, page, image_ui::TRACE_PREVIEW_PIXELS))));
         }
         if self.preview.loading.is_some() {
             ctx.request_repaint();
@@ -557,7 +663,7 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     if action == ui_kit::Action::Ok && d.job.is_none() && !d.files.is_empty() {
         d.notice = None;
-        d.job = Some(TraceJob::start(d.files.clone(), d.args.clone(), page));
+        d.job = Some(TraceJob::start_using(d.files.clone(), d.args.clone(), page, d.tracer.clone()));
     }
     if d.job.as_ref().is_some_and(TraceJob::finished)
         && let Some(job) = d.job.take()
@@ -580,6 +686,26 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
         ctx.request_repaint();
     }
     app.images.multi = Some(d);
+}
+
+/// Trace Image Files with two small pictures, for the window sweeps (fit, Escape, names),
+/// which cannot open it through the file picker.
+#[cfg(test)]
+pub fn state_case_dialog() -> MultiTraceDialog {
+    let dir = std::env::temp_dir().join(format!("darkburn-trace-files-case-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let files: Vec<PathBuf> = (0..2)
+        .map(|i| {
+            // One file per thread, so tests running side by side never read a half-written one.
+            let p = dir.join(format!("{:?}-{i}.png", std::thread::current().id()).replace(|c: char| !c.is_ascii_alphanumeric() && c != '.', "-"));
+            if !p.exists() {
+                let _ = image::GrayImage::from_fn(60, 40, |x, y| image::Luma([if (10..30).contains(&x) && (10..30).contains(&y) { 0 } else { 255 }]))
+                    .save(&p);
+            }
+            p
+        })
+        .collect();
+    MultiTraceDialog::new(files, TraceArgs::default())
 }
 
 #[cfg(test)]
@@ -715,16 +841,171 @@ mod tests {
     }
 
     #[test]
-    fn a_stopped_run_changes_nothing() {
+    fn a_run_stopped_part_way_gives_nothing_and_traces_no_further_file() {
         let dir = temp("stop");
-        let a = write(&dir, "a.png", &two_squares(48, 28));
-        let job = TraceJob::start_with(vec![a.clone()], TraceArgs::default(), Size::new(400.0, 400.0), true);
+        let files: Vec<PathBuf> = ["a.png", "b.png", "c.png"].iter().map(|n| write(&dir, n, &two_squares(48, 28))).collect();
+        let page = Size::new(400.0, 400.0);
+        // Stopped while the first file is traced: the run gives nothing, the second file is
+        // never looked at.
+        let (cancel, done) = (AtomicBool::new(false), AtomicUsize::new(0));
+        let mut seen = Vec::new();
+        let out = trace_files_with(&files, &cancel, &done, |p| {
+            seen.push(p.to_path_buf());
+            cancel.store(true, Ordering::Relaxed);
+            trace_file(p, &TraceArgs::default(), page)
+        });
+        assert!(out.is_none(), "a stopped run gives nothing to put into the document");
+        assert_eq!(seen, vec![files[0].clone()]);
+        assert_eq!(done.load(Ordering::Relaxed), 1);
+        // On a worker: stopped while it traces, it ends without tracing the rest.
+        let (gate, calls) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+        let job = TraceJob::start_using(files.clone(), TraceArgs::default(), page, held_tracer(&gate, &calls));
+        wait_for(|| calls.load(Ordering::Relaxed) == 1, "the first file");
+        job.cancel();
+        gate.store(true, Ordering::Relaxed);
         assert!(job.take().is_none());
-        let job = TraceJob::start(vec![a], TraceArgs::default(), Size::new(400.0, 400.0));
-        assert_eq!(job.progress().1, 1);
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "no file after the stop");
+        // A run that is not stopped finishes with every file.
+        let job = TraceJob::start(files, TraceArgs::default(), page);
+        assert_eq!(job.progress().1, 3);
         let results = job.take().expect("a run that is not stopped finishes");
-        assert_eq!(results.len(), 1);
-        assert!(results[0].traced.is_ok());
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.traced.is_ok()));
+    }
+
+    /// A tracer that holds each file until `gate` opens, counting the files in `calls`.
+    fn held_tracer(gate: &Arc<AtomicBool>, calls: &Arc<AtomicUsize>) -> Tracer {
+        let (gate, calls) = (gate.clone(), calls.clone());
+        Arc::new(move |p: &Path, a: &TraceArgs, page: Size| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !gate.load(Ordering::Relaxed) && std::time::Instant::now() < end {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            trace_file(p, a, page)
+        })
+    }
+
+    fn wait_for(mut done: impl FnMut() -> bool, what: &str) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < end, "timed out waiting for {what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn stepping_quickly_through_the_files_reads_one_preview_at_a_time() {
+        let dir = temp("steps");
+        let files: Vec<PathBuf> = (0..4).map(|i| write(&dir, &format!("f{i}.png"), &two_squares(48, 28))).collect();
+        let (gate, live, most) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let mut d = MultiTraceDialog::new(files.clone(), TraceArgs::default());
+        let (g, l, m) = (gate.clone(), live.clone(), most.clone());
+        d.loader = Arc::new(move |p: &Path, page: Size, px: u64| {
+            let now = l.fetch_add(1, Ordering::SeqCst) + 1;
+            m.fetch_max(now, Ordering::SeqCst);
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !g.load(Ordering::SeqCst) && std::time::Instant::now() < end {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let out = load(p, page, px);
+            l.fetch_sub(1, Ordering::SeqCst);
+            out
+        });
+        let (ctx, page) = (Context::default(), Size::new(400.0, 400.0));
+        d.refresh(&ctx, page);
+        // Five clicks on Next while the first picture is still being read.
+        for _ in 0..5 {
+            d.step(1);
+            d.refresh(&ctx, page);
+        }
+        assert_eq!(d.preview.started, 1, "no second read starts while one runs");
+        assert!(!d.preview_ready(), "the old file's picture is not shown for the new one");
+        gate.store(true, Ordering::SeqCst);
+        wait_for(
+            || {
+                d.refresh(&ctx, page);
+                d.preview_ready()
+            },
+            "the preview",
+        );
+        assert_eq!(d.shown(), Some(files[1].as_path()));
+        assert_eq!(d.preview.file.as_deref(), Some(files[1].as_path()));
+        assert_eq!(d.preview.started, 2, "the first read, then only the file now shown");
+        assert_eq!(most.load(Ordering::SeqCst), 1, "never two reads at once");
+        assert!(d.preview_outlines() > 0);
+    }
+
+    #[test]
+    fn the_command_drops_a_clip_rectangle_and_traces_every_file_whole() {
+        let dir = temp("clip");
+        let a = write(&dir, "a.png", &two_squares(48, 28));
+        let mut app = DarkBurn::new(Prefs::default());
+        let whole = crate::api::execute_headless(&mut app, "image.trace_files", &json!({ "paths": [a.display().to_string()] })).unwrap();
+        let clipped =
+            crate::api::execute_headless(&mut app, "image.trace_files", &json!({ "paths": [a.display().to_string()], "clip": [0.0, 0.0, 0.1, 0.1] }))
+                .unwrap();
+        assert_eq!(whole["nodes"], clipped["nodes"], "{whole} {clipped}");
+    }
+
+    #[test]
+    fn the_shapes_go_on_the_current_layer_or_the_first_line_layer() {
+        let dir = temp("layer");
+        let a = write(&dir, "a.png", &two_squares(48, 28));
+        let page = Size::new(400.0, 400.0);
+        let traced = || vec![FileResult { path: a.clone(), traced: trace_file(&a, &TraceArgs::default(), page) }];
+        let mut e = Editor::new();
+        e.current_layer = 4;
+        let out = apply(&mut e, traced(), &TraceArgs::default(), 5.0, 0, page).unwrap();
+        assert_eq!(e.doc.get(out.created[0]).unwrap().layer, 4);
+        // An image layer takes no outlines: the first layer that does takes them.
+        e.doc.layer_mut(4).main_mut().mode = darkburn_core::Mode::Image;
+        let first = image_ops::trace_layer(&e.doc, None, 4);
+        assert_ne!(first, 4);
+        let out = apply(&mut e, traced(), &TraceArgs::default(), 5.0, 0, page).unwrap();
+        assert_eq!(e.doc.get(out.created[0]).unwrap().layer, first);
+        // A layer asked for is used.
+        let asked = TraceArgs { layer: Some(7), ..TraceArgs::default() };
+        let out = apply(&mut e, traced(), &asked, 5.0, 0, page).unwrap();
+        assert_eq!(e.doc.get(out.created[0]).unwrap().layer, 7);
+    }
+
+    #[test]
+    fn an_agent_call_traces_on_a_worker_and_lands_when_it_is_done() {
+        use darkburn_mcp::{Backend, ErrorCode, PendingState};
+        let dir = temp("agent");
+        let a = write(&dir, "a.png", &two_squares(48, 28));
+        let bad = write(&dir, "bad.png", b"no picture");
+        let app = std::rc::Rc::new(std::cell::RefCell::new(DarkBurn::new(Prefs::default())));
+        let mut b = crate::mcp_backend::McpBackend::new(app.clone(), Context::default(), true);
+        for id in ["image.trace_files", "tools.trace_files"] {
+            let before = app.borrow().editor.doc.len();
+            let e = b.execute(id, json!({ "paths": [a.display().to_string(), bad.display().to_string()] })).unwrap_err();
+            assert_eq!(e.code, ErrorCode::StillRunning, "{id}: {e:?}");
+            assert_eq!(app.borrow().editor.doc.len(), before, "{id}: nothing lands before the agent asks");
+            let pid = e.pending_id.expect("a pending id");
+            let mut result = None;
+            wait_for(
+                || match b.pending(&pid).unwrap() {
+                    PendingState::Running { .. } => false,
+                    PendingState::Done { result: r, .. } => {
+                        result = Some(r);
+                        true
+                    }
+                    PendingState::Unknown => panic!("{id}: the run vanished"),
+                },
+                "the agent's run",
+            );
+            let v = result.unwrap().unwrap();
+            assert_eq!(v["created"].as_array().map(Vec::len), Some(1), "{v}");
+            assert_eq!(v["skipped"][0]["file"], "bad.png");
+            assert_eq!(app.borrow().editor.doc.len(), before + 1);
+            assert_eq!(app.borrow().editor.history.undo_label(), Some("Trace files"));
+        }
+        // Bad arguments are refused at once.
+        let e = b.execute("image.trace_files", json!({ "paths": [] })).unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidParams, "{e:?}");
+        assert!(!b.busy());
     }
 
     #[test]
@@ -819,5 +1100,98 @@ mod tests {
         g.frames(3);
         assert!(g.window_titles().iter().any(|t| t.contains("not traced")), "{:?}", g.window_titles());
         assert!(g.visible_texts().iter().any(|t| t.contains("unreadable.png")), "the skipped file is named: {:?}", g.visible_texts());
+    }
+
+    /// Waits in the window until `done`.
+    fn wait_gui(g: &mut crate::ui_harness::Gui, what: &str, done: &dyn Fn(&mut crate::ui_harness::Gui) -> bool) {
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done(g) {
+            assert!(std::time::Instant::now() < end, "timed out waiting for {what}");
+            g.frames(2);
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+    }
+
+    #[test]
+    fn trace_image_hands_its_settings_to_trace_several_files() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        let dir = g.temp("from-trace");
+        std::fs::create_dir_all(&dir).unwrap();
+        let picture = write(&dir, "picture.png", &two_squares(48, 28));
+        let r = g.exec("project.import", json!({ "paths": [picture.display().to_string()], "x": 100, "y": 100 }));
+        assert_eq!(r["imported"].as_array().map(Vec::len), Some(1), "{r}");
+        g.run_command("tools.trace_image");
+        g.frames(3);
+        assert_eq!(g.window_titles(), ["Trace Image"]);
+        {
+            let mut app = g.app();
+            let d = app.images.trace.as_mut().expect("Trace Image is open");
+            d.args.threshold = 77;
+            d.args.ignore_smaller = 9;
+            d.clip_on = true;
+        }
+        // The file picker cancelled: Trace Image stays, and says why.
+        g.click_label("Trace several files...");
+        g.frames(3);
+        assert_eq!(g.window_titles(), ["Trace Image"]);
+        assert!(g.app().images.multi.is_none());
+        assert!(g.has_text("no files were chosen"), "{:?}", g.visible_texts());
+        // Files picked: Trace Image gives way to Trace Image Files, with the same settings.
+        let a = write(&dir, "a.png", &two_squares(48, 28));
+        let b = write(&dir, "b.png", &two_squares(48, 28));
+        ::rfd::script_answer(vec![a.clone(), b.clone()]);
+        g.click_label("Trace several files...");
+        g.frames(3);
+        assert_eq!(g.window_titles(), ["Trace Image Files"]);
+        assert!(g.app().images.trace.is_none(), "Trace Image closed");
+        {
+            let app = g.app();
+            let d = app.images.multi.as_ref().expect("Trace Image Files is open");
+            assert_eq!(d.files, vec![a, b]);
+            assert_eq!((d.args.threshold, d.args.ignore_smaller), (77, 9));
+            assert_eq!(d.args.clip, None, "the rectangle of one picture is not used for other files");
+        }
+        assert_eq!(g.app().editor.doc.len(), 1, "nothing traced yet");
+        g.close_dialogs();
+    }
+
+    #[test]
+    fn stop_and_cancel_during_a_run_leave_the_design_as_it_was() {
+        use crate::ui_harness::Gui;
+        let mut g = Gui::standard();
+        let dir = g.temp("stop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let files: Vec<PathBuf> = ["a.png", "b.png", "c.png"].iter().map(|n| write(&dir, n, &two_squares(48, 28))).collect();
+        let (gate, calls) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicUsize::new(0)));
+        for how in ["Stop", "Cancel"] {
+            gate.store(false, Ordering::Relaxed);
+            calls.store(0, Ordering::Relaxed);
+            ::rfd::script_answer(files.clone());
+            g.run_command("tools.trace_files");
+            g.frames(2);
+            g.app().images.multi.as_mut().expect("the window").tracer = held_tracer(&gate, &calls);
+            g.click_label("Trace Files");
+            wait_gui(&mut g, "the run to start", &|_| calls.load(Ordering::Relaxed) == 1);
+            g.frames(2);
+            assert!(g.has_text("Tracing"), "{how}: the progress row shows: {:?}", g.visible_texts());
+            g.click_label(how);
+            g.frames(2);
+            gate.store(true, Ordering::Relaxed);
+            if how == "Stop" {
+                wait_gui(&mut g, "the stopped run", &|g| g.app().images.multi.as_ref().is_some_and(|d| d.job.is_none()));
+                g.frames(2);
+                assert!(g.has_text("Stopped, nothing changed"), "{:?}", g.visible_texts());
+                assert_eq!(g.window_titles(), ["Trace Image Files"], "the window stays for another try");
+                g.close_dialogs();
+            } else {
+                assert!(g.app().images.multi.is_none(), "Cancel closes the window");
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            assert_eq!(calls.load(Ordering::Relaxed), 1, "{how}: no file is traced after it");
+            let app = g.app();
+            assert_eq!(app.editor.doc.len(), 0, "{how}: the design is as it was");
+            assert!(!app.editor.history.can_undo(), "{how}: no undo step");
+        }
     }
 }

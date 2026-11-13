@@ -474,10 +474,19 @@ fn format_ext(f: image::ImageFormat) -> Option<&'static str> {
     })
 }
 
-/// A bitmap as an image shape centred on the origin (not yet placed). Its size comes from the
-/// file's own resolution, else `dpi`, else [`DEFAULT_IMAGE_DPI`]; it is scaled down to fit the
-/// work area when larger.
-pub fn bitmap(bytes: &[u8], opts: &Options, dpi: Option<f64>) -> Result<Imported, String> {
+/// What [`bitmap`] reads from a bitmap's header before any pixels are decoded.
+pub struct BitmapHeader {
+    /// The extension the format is stored under.
+    pub ext: &'static str,
+    /// Size in pixels.
+    pub px: (u32, u32),
+    /// Size in mm as an import places it on a work area of `page`.
+    pub mm: (f64, f64),
+}
+
+/// Checks a bitmap's format and picture size from its header (the import limits) and works out
+/// its size in mm the way [`bitmap`] does, without decoding or copying the pixels.
+pub fn bitmap_header(bytes: &[u8], page: Size, dpi: Option<f64>) -> Result<BitmapHeader, String> {
     let format = image::guess_format(bytes).map_err(|_| "this is not an image DarkBurn can read".to_string())?;
     let ext = format_ext(format).ok_or_else(|| format!("{format:?} images are not supported"))?;
     let (pw, ph) =
@@ -489,11 +498,20 @@ pub fn bitmap(bytes: &[u8], opts: &Options, dpi: Option<f64>) -> Result<Imported
     let dpi = file_dpi(bytes, format).or(dpi).unwrap_or(DEFAULT_IMAGE_DPI);
     let mut w = pw as f64 * 25.4 / dpi;
     let mut h = ph as f64 * 25.4 / dpi;
-    let fit = (opts.page.width / w).min(opts.page.height / h).min(1.0);
+    let fit = (page.width / w).min(page.height / h).min(1.0);
     if fit.is_finite() && fit > 0.0 {
         w *= fit;
         h *= fit;
     }
+    Ok(BitmapHeader { ext, px: (pw, ph), mm: (w, h) })
+}
+
+/// A bitmap as an image shape centred on the origin (not yet placed). Its size comes from the
+/// file's own resolution, else `dpi`, else [`DEFAULT_IMAGE_DPI`]; it is scaled down to fit the
+/// work area when larger.
+pub fn bitmap(bytes: &[u8], opts: &Options, dpi: Option<f64>) -> Result<Imported, String> {
+    let header = bitmap_header(bytes, opts.page, dpi)?;
+    let (ext, pw, ph, w, h) = (header.ext, header.px.0, header.px.1, header.mm.0, header.mm.1);
     let data = ImageData { format: ext.into(), bytes: Arc::from(bytes), px_width: pw, px_height: ph };
     let key = ImageData::key_for(bytes);
     let mut out = Imported::default();

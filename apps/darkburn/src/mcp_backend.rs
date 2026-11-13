@@ -82,6 +82,8 @@ pub struct McpBackend {
     ctx: egui::Context,
     headless: bool,
     builds: Vec<Build>,
+    /// `image.trace_files` runs: id, start, the run [IMG-21].
+    traces: Vec<(String, Instant, crate::multi_trace::PendingTrace)>,
     shots: Vec<Shot>,
     finished: BTreeMap<String, (String, Result<Value, CommandError>)>,
     checkpoints: Vec<(String, Editor, Option<PathBuf>)>,
@@ -259,6 +261,7 @@ impl McpBackend {
             ctx,
             headless,
             builds: Vec::new(),
+            traces: Vec::new(),
             shots: Vec::new(),
             finished: BTreeMap::new(),
             checkpoints: Vec::new(),
@@ -277,7 +280,7 @@ impl McpBackend {
 
     /// A build or screenshot is in progress: the window should keep drawing frames.
     pub fn busy(&self) -> bool {
-        !self.builds.is_empty() || self.shots.iter().any(|s| s.result.is_none())
+        !self.builds.is_empty() || !self.traces.is_empty() || self.shots.iter().any(|s| s.result.is_none())
     }
 
     fn id(&mut self, prefix: &str) -> String {
@@ -334,6 +337,7 @@ impl McpBackend {
     }
 
     fn poll_builds(&mut self) {
+        self.poll_traces();
         let mut i = 0;
         while i < self.builds.len() {
             let ready = self.builds[i].task.poll().is_some();
@@ -348,6 +352,17 @@ impl McpBackend {
                 Err(e) => Err(CommandError::failed(e.to_string())),
             };
             self.finished.insert(id, (b.what, result));
+        }
+    }
+
+    /// Puts finished `image.trace_files` runs into the document.
+    fn poll_traces(&mut self) {
+        while let Some(i) = self.traces.iter().position(|(.., t)| t.finished()) {
+            let Ok(mut app) = self.app.try_borrow_mut() else { return };
+            let (id, _, t) = self.traces.remove(i);
+            let result = t.finish(&mut app).map_err(err_of);
+            drop(app);
+            self.finished.insert(id, ("tracing picture files".into(), result));
         }
     }
 
@@ -608,6 +623,10 @@ impl Backend for McpBackend {
         if let Some(b) = self.builds.iter().find(|b| b.id == id) {
             return Ok(PendingState::Running { what: b.what.clone(), running_s: b.started.elapsed().as_secs() });
         }
+        if let Some((_, started, t)) = self.traces.iter().find(|(t, ..)| t == id) {
+            let (done, total) = t.progress();
+            return Ok(PendingState::Running { what: format!("tracing picture files ({done} of {total})"), running_s: started.elapsed().as_secs() });
+        }
         Ok(match self.finished.remove(id) {
             Some((what, result)) => PendingState::Done { what, result },
             None => PendingState::Unknown,
@@ -618,6 +637,11 @@ impl Backend for McpBackend {
         self.poll_builds();
         let mut v: Vec<RunningOp> =
             self.builds.iter().map(|b| RunningOp { id: b.id.clone(), what: b.what.clone(), running_s: b.started.elapsed().as_secs() }).collect();
+        v.extend(self.traces.iter().map(|(id, started, _)| RunningOp {
+            id: id.clone(),
+            what: "tracing picture files".into(),
+            running_s: started.elapsed().as_secs(),
+        }));
         v.extend(self.shots.iter().filter(|s| s.result.is_none()).map(|s| RunningOp {
             id: s.id.clone(),
             what: "taking a screenshot".into(),
@@ -687,6 +711,15 @@ impl McpBackend {
         }
         if id == "job.generate" {
             return self.start_build("generating the job", Work::Generate, None);
+        }
+        if matches!(id, "image.trace_files" | "tools.trace_files") {
+            // Off the UI thread: a long list of large pictures would freeze the window.
+            let app = self.app.try_borrow().map_err(|_| CommandError::failed("the app is busy: try again"))?;
+            let run = crate::multi_trace::PendingTrace::start(&app, &args).map_err(err_of)?;
+            drop(app);
+            let pid = self.id("t");
+            self.traces.push((pid.clone(), Instant::now(), run));
+            return Err(CommandError::still_running(pid, "tracing picture files"));
         }
         let app_rc = self.app.clone();
         let mut app = app_rc.try_borrow_mut().map_err(|_| CommandError::failed("the app is busy: try again"))?;

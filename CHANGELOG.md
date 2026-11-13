@@ -1,6 +1,12 @@
 # Changelog
 
-## v0.0.676 (build 6)
+## v0.0.682 (build 6)
+- Fix: Machine commands with a value of the wrong kind (like a power of "x") are refused instead of running with the default
+- Fix: The air assist button now uses the same M7 or M8 command as your jobs on GRBL machines
+- Fix: A GRBL laser shows Ready only once it has said where its head is, so a job started right after connecting no longer lands in the wrong place
+- Fix: Running a file stored on a Ruida asks you to read its file list first, so a number from another controller can't start the wrong file
+- Fix: Boolean tools on hundreds of shapes stacked on top of each other finish in a moment instead of freezing for minutes
+- Fix: Importing a drawing too big for the design now says so instead of doing nothing
 - New: "Break at Tabs" in the Edit menu splits a part with tabs into the exact pieces the laser will cut, ready to tweak one by one
 - Fix: A paused red-light frame no longer looks like it's still running after a job start is turned down
 - Fix: Ruida: Stop now really stops: no more moves or a held fire button sneaking through, and nothing starts on top of a running job

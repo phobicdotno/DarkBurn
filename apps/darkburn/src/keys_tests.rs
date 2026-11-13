@@ -123,7 +123,9 @@ fn with_native_windows(keys: &Keys) -> egui::Context {
 /// main window's own shortcut check runs too: it must not see the key.
 fn press_in_own_window(app: &mut DarkBurn, keys: &Keys, ctx: &egui::Context, key: Key, mods: Modifiers) {
     darkburn_ui::ui_kit::window_host::update(ctx, "settings", |p| p.detach());
-    keys.borrow_mut().push(Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods });
+    for pressed in [true, false] {
+        keys.borrow_mut().push(Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: mods });
+    }
     let screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0)));
     let mut root = None;
     let mut out = ctx.run_ui(RawInput { screen_rect, ..Default::default() }, |ui| {

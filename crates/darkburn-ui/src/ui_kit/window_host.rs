@@ -665,8 +665,8 @@ mod tests {
         });
     }
 
-    fn key(key: egui::Key, modifiers: egui::Modifiers, repeat: bool) -> egui::Event {
-        egui::Event::Key { key, physical_key: None, pressed: true, repeat, modifiers }
+    fn key(key: egui::Key, modifiers: egui::Modifiers, pressed: bool) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers }
     }
 
     /// Detached window "w", with a text field that holds the keyboard when `field` is set.
@@ -692,17 +692,19 @@ mod tests {
         update(&ctx, "w", |p| p.detach());
         detached_window(&ctx, false);
         assert!(take_window_keys(&ctx).is_empty());
-        let stop = key(Key::Pause, Modifiers::COMMAND, false);
-        let pause = key(Key::Pause, Modifiers::NONE, false);
-        *keys.borrow_mut() = vec![stop.clone(), pause.clone()];
+        let stop = key(Key::Pause, Modifiers::COMMAND, true);
+        let pause = key(Key::Pause, Modifiers::NONE, true);
+        *keys.borrow_mut() = vec![stop.clone(), key(Key::Pause, Modifiers::COMMAND, false), pause.clone()];
         detached_window(&ctx, false);
-        assert_eq!(take_window_keys(&ctx), vec![stop, pause], "the window's own keys reach the app");
+        assert_eq!(take_window_keys(&ctx), vec![stop, pause.clone()], "the window's own keys reach the app");
         assert!(take_window_keys(&ctx).is_empty(), "once");
-        *keys.borrow_mut() = vec![key(Key::Pause, Modifiers::NONE, true)];
+        // Pause is still held: the system sends it again, as a repeat.
+        *keys.borrow_mut() = vec![pause];
         detached_window(&ctx, false);
         assert!(take_window_keys(&ctx).is_empty(), "a held key counts once");
+        *keys.borrow_mut() = vec![key(Key::Pause, Modifiers::NONE, false)];
         detached_window(&ctx, true);
-        *keys.borrow_mut() = vec![key(Key::S, Modifiers::COMMAND, false)];
+        *keys.borrow_mut() = vec![key(Key::S, Modifiers::COMMAND, true)];
         detached_window(&ctx, true);
         assert!(take_window_keys(&ctx).is_empty(), "keys typed into a field are the field's");
     }
@@ -712,7 +714,7 @@ mod tests {
         let ctx = Context::default();
         crate::fonts::setup_bundled_fonts(&ctx);
         update(&ctx, "w", |p| p.detach());
-        let events = vec![key(egui::Key::Pause, egui::Modifiers::NONE, false)];
+        let events = vec![key(egui::Key::Pause, egui::Modifiers::NONE, true)];
         let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events, ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
             super::super::Window::new(Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |_| {});

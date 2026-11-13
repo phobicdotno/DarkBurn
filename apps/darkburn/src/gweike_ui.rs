@@ -141,6 +141,45 @@ pub fn co2_editor(ui: &mut Ui, c: &mut Co2Craft) {
     });
 }
 
+/// What the card simulator answered, as text for the window: the dissector's explanation, or the
+/// answer's fields one per line.
+pub fn card_answer(v: &serde_json::Value) -> String {
+    if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+        return t.to_owned();
+    }
+    match v.as_object() {
+        Some(o) if !o.is_empty() => o.iter().map(|(k, x)| format!("{k}: {x}")).collect::<Vec<_>>().join("\n"),
+        _ => v.to_string(),
+    }
+}
+
+/// The card simulator's buttons [MCC-05]: each one names an `mcc.*` command; the registry runs it.
+fn card_buttons(ui: &mut Ui, connected: bool, frame: &mut String, cmd: &mut Option<(&'static str, serde_json::Value)>) {
+    ui.horizontal_wrapped(|ui| {
+        if small(ui, &tr("gweike.card_connect", "Connect"), &tr("gweike.card_connect_tip", "Open the simulated card, read only"), !connected) {
+            *cmd = Some(("mcc.connect", json!({})));
+        }
+        if small(ui, &tr("gweike.card_disconnect", "Disconnect"), "", connected) {
+            *cmd = Some(("mcc.disconnect", json!({})));
+        }
+        if small(ui, &tr("gweike.card_status", "Status"), &tr("gweike.card_status_tip", "Read the simulated card's state and alarms"), connected) {
+            *cmd = Some(("mcc.status", json!({})));
+        }
+        if small(ui, &tr("gweike.card_stop", "Stop"), "", true) {
+            *cmd = Some(("mcc.stop", json!({})));
+        }
+        if small(ui, &tr("gweike.card_estop", "Emergency stop"), "", true) {
+            *cmd = Some(("mcc.emergency_stop", json!({})));
+        }
+    });
+    ui.horizontal(|ui| {
+        ui_kit::hint_field(ui, frame, &tr("gweike.card_frame_hint", "frame bytes in hex"));
+        if small(ui, &tr("gweike.card_explain", "Explain a frame"), "", !frame.trim().is_empty()) {
+            *cmd = Some(("mcc.dissect", json!({ "hex": frame.trim() })));
+        }
+    });
+}
+
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if !app.machine.ext.gweike_open {
         return;
@@ -157,6 +196,9 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     let msg = app.machine.ext.gweike_message.clone();
     let plan = app.machine.ext.gweike_plan.clone();
     let card = app.machine.ext.gweike_card.clone();
+    let connected = app.machine.ext.mcc.connected();
+    let frame_id = Id::new("db_gweike_card_frame");
+    let mut frame: String = ctx.data_mut(|d| d.get_temp(frame_id)).unwrap_or_default();
     let doc_layers: Vec<(usize, String)> =
         used.iter().filter(|l| **l < darkburn_core::layer::COLOUR_LAYERS).map(|l| (*l, app.editor.doc.layer(*l).name.clone())).collect();
     let defaults: Vec<(usize, crate::gweike_workflow::LayerMap)> = doc_layers.iter().map(|(l, _)| (*l, s.map_of(*l, &app.editor.doc))).collect();
@@ -248,10 +290,12 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                     ),
                 );
             }
+            card_buttons(ui, connected, &mut frame, &mut cmd);
             if let Some(m) = &msg {
                 note(ui, m);
             }
         });
+    ctx.data_mut(|d| d.insert_temp(frame_id, frame));
     app.machine.ext.gweike_craft_head = head;
     app.machine.ext.gweike_craft_slot = slot;
     if s != app.machine.active().settings.gweike
@@ -266,6 +310,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
             return;
         }
         match crate::api::execute_headless(app, c, &args) {
+            Ok(v) if c.starts_with("mcc.") => app.machine.ext.gweike_message = Some(card_answer(&v)),
             Ok(v) => {
                 app.machine.ext.gweike_message =
                     Some(v.get("path").and_then(|p| p.as_str()).map_or_else(|| "Done.".to_owned(), |p| format!("Wrote {p}")))

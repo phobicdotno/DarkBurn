@@ -1,6 +1,7 @@
 # Changelog
 
-## v0.0.606 (build 7)
+## v0.0.607 (build 7)
+- Fix: the new windows, tools and texts are translated into every language
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there

@@ -502,7 +502,7 @@
   "settings.job_log_dir": "İş günlüğü klasörü",
   "settings.job_log_dir_hint": "DarkBurn ayarlar klasörü",
   "settings.job_log_show": "İş günlüğünü göster",
-  "settings.job_log_text": "job_log.csv dosyasında iş başına bir satır: başlangıç, süre, dosya, cihaz, sonuç.",
+  "settings.job_log_text": "job_log.csv'de iş başına bir satır: başlangıç, süre, dosya, cihaz, sonuç.",
   "settings.jobs": "İşler",
   "settings.length_units": "Uzunluklar",
   "settings.node_size": "Düğüm boyutu",

@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Munkanapló mappája",
   "settings.job_log_dir_hint": "A DarkBurn beállításmappája",
   "settings.job_log_show": "Munkanapló megjelenítése",
-  "settings.job_log_text": "Munkánként egy sor a job_log.csv fájlban: kezdés, időtartam, fájl, eszköz, eredmény.",
+  "settings.job_log_text": "Munkánként egy sor (job_log.csv): kezdés, időtartam, fájl, eszköz, eredmény.",
   "settings.jobs": "Munkák",
   "settings.length_units": "Hosszak",
   "settings.node_size": "Csomópontméret",

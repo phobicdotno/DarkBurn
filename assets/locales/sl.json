@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Mapa dnevnika opravil",
   "settings.job_log_dir_hint": "Mapa nastavitev DarkBurn",
   "settings.job_log_show": "Pokaži dnevnik opravil",
-  "settings.job_log_text": "Ena vrstica na opravilo v job_log.csv: začetek, trajanje, datoteka, naprava, rezultat.",
+  "settings.job_log_text": "Vrstica na opravilo v job_log.csv: začetek, čas, datoteka, naprava, izid.",
   "settings.jobs": "Opravila",
   "settings.length_units": "Dolžine",
   "settings.node_size": "Velikost vozlišč",

@@ -89,11 +89,12 @@ pub fn typed_number(ctx: &egui::Context, suffix: &str) -> impl Fn(&str) -> Optio
     let unit = suffix.trim().to_owned();
     let unit_mm = if unit == "in" { 25.4 } else { 1.0 };
     move |text: &str| {
-        parse_number(text).or_else(|| {
+        let typed = text.trim();
+        let bare = typed.strip_suffix(unit.as_str()).filter(|_| !unit.is_empty()).map(str::trim_end);
+        // The field's own unit after a plain number needs no host parser.
+        parse_number(text).or_else(|| bare.and_then(parse_number)).or_else(|| {
             let host = host.as_ref()?;
-            let typed = text.trim();
-            let bare = typed.strip_suffix(unit.as_str()).filter(|_| !unit.is_empty()).map(str::trim_end);
-            bare.and_then(|b| parse_number(b).or_else(|| host(b, unit_mm))).or_else(|| host(typed, unit_mm)).filter(|v| v.is_finite())
+            bare.and_then(|b| host(b, unit_mm)).or_else(|| host(typed, unit_mm)).filter(|v| v.is_finite())
         })
     }
 }

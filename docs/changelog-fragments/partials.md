@@ -4,3 +4,5 @@
 - New: Set First/Second Target takes the spot where the laser head stands
 - New: Print and Cut can add the red dot offset when you line up with the pointer
 - Fix: Print and Cut "Head" no longer gets the position wrong on GRBL with an origin set
+- Fix: The rotary test turn comes back to where it started on Ruida machines
+- Fix: A finish position off the bed is refused

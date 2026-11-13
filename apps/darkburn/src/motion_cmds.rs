@@ -118,8 +118,37 @@ fn set_finish(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
         }
         _ => return Err("give both x and y, or neither to use the head's position".into()),
     };
+    on_bed(app, p)?;
     app.machine.jog.finish = Some(p);
     Ok(json!({ "finish": { "x": p.0, "y": p.1 } }))
+}
+
+/// Refuse a finish position off the active device's bed: every later job would end with a rapid
+/// move there, outside what the job's own bounds check looks at. The bed is the work area in
+/// machine coordinates, so a machine with negative coordinates has it below zero.
+fn on_bed(app: &DarkBurn, (x, y): (f64, f64)) -> Result<(), String> {
+    let area = app.machine.active().job_device().geometry().work_area();
+    if !(area.width() > 0.0 && area.height() > 0.0) {
+        return Err("this device has no bed size; set it in Device Settings first".into());
+    }
+    const SLACK: f64 = 1e-6;
+    if x < area.x0 - SLACK || x > area.x1 + SLACK || y < area.y0 - SLACK || y > area.y1 + SLACK {
+        return Err(format!(
+            "the finish position X {x:.2}, Y {y:.2} is off the bed (X {:.2} to {:.2}, Y {:.2} to {:.2})",
+            area.x0, area.x1, area.y0, area.y1
+        ));
+    }
+    Ok(())
+}
+
+/// The finish position a job ends at, checked against the active device's bed when the job is
+/// made: one kept from before (a saved device state, or another bed size since) may be off it,
+/// and then the job is refused rather than ending with a move off the bed.
+pub fn finish_for_job(app: &DarkBurn) -> Result<Option<(f64, f64)>, String> {
+    match app.machine.jog.finish {
+        None => Ok(None),
+        Some(p) => on_bed(app, p).map(|_| Some(p)).map_err(|e| format!("{e}. Clear it or set it again in the Move panel.")),
+    }
 }
 
 /// The jog for `units` on the rotary axis: Y (any controller) or U (DSP controllers). The job
@@ -171,9 +200,9 @@ fn rotary_test(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let plan: darkburn_vision::rotary::TestRotationPlan = serde_json::from_value(v["plan"].clone()).map_err(|e| e.to_string())?;
     let feed = num(a, "feed").unwrap_or(app.machine.jog.speed * 60.0);
     let steps = plan.moves.iter().map(|m| rotary_jog(m.axis, m.distance, feed)).collect::<Result<Vec<_>, _>>()?;
-    for j in steps {
-        mach(app.machine.handle.jog_step(j))?;
-    }
+    // As one sequence: a DSP controller works every turn out from one position reading, so the
+    // turn back does not start from a position read while the first turn is still under way.
+    mach(app.machine.handle.jog_sequence(steps))?;
     Ok(json!({ "plan": plan, "sent": true }))
 }
 

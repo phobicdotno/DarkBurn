@@ -694,6 +694,15 @@ impl DriverAdapter for GcodeAdapter {
                 }
                 m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed }).map_err(map_err)
             }
+            C::JogSequence(v) => {
+                if v.iter().any(|j| j.du != 0.0) {
+                    return Err(MachineError::Unsupported("this controller has no rotary axis".into()));
+                }
+                for j in v {
+                    m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed }).map_err(map_err)?;
+                }
+                Ok(())
+            }
             C::JogStart { .. } => unsupported("Continuous jogging (use the step buttons)"),
             C::JogStop => m.jog_cancel().map_err(map_err),
             C::Home => m.home().map_err(map_err),

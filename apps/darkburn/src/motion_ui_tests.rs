@@ -1,11 +1,12 @@
 //! The Move window commands through the interface, on the simulator: the Move panel's rotary
-//! row, Rotary Setup's Run test and print and cut targets taken where the head stands.
+//! row and Focus Z, Rotary Setup's Run test and print and cut targets taken where the head stands.
 //! See docs/UI-TESTING.md.
 use std::time::{Duration, Instant};
 
 use serde_json::json;
 
-use crate::machine_api::LaserState;
+use crate::devices::DeviceType;
+use crate::machine_api::{ConsoleKind, LaserState};
 use crate::ui_harness::Gui;
 
 fn until(g: &mut Gui, what: &str, f: impl Fn(&Gui) -> bool) {
@@ -28,6 +29,17 @@ fn connected_at(g: &mut Gui, x: f64, y: f64) {
     until(g, "the simulator to connect", |g| g.app().machine.handle.snapshot().state == LaserState::Ready);
     g.exec("machine.move_to", json!({ "x": x, "y": y }));
     until(g, "the move", |g| at(g, x, y));
+}
+
+fn z_at(g: &Gui, z: f64) -> bool {
+    let app = g.app();
+    let s = app.machine.handle.snapshot();
+    s.state == LaserState::Ready && (s.machine_pos[2] - z).abs() < 1e-3
+}
+
+fn select(g: &mut Gui, kind: DeviceType) {
+    let id = g.app().machine.devices.devices.iter().find(|d| d.kind == kind).unwrap().id;
+    g.exec("device.select", json!({ "id": id }));
 }
 
 fn show_move_panel(g: &mut Gui) {
@@ -93,4 +105,46 @@ fn set_first_target_takes_where_the_head_stands() {
     g.settle();
     assert!(g.has_text("Placed with the red dot (adds the pointer offset)"), "{:?}", g.visible_texts());
     g.screenshot("print-and-cut-red-dot");
+}
+
+/// Focus Z in the Move panel [MOVE-12]. On the Ruida simulator it runs the controller's focus
+/// routine with the Z field left empty, and Z stops at the focus distance in the controller's Z
+/// settings. On GRBL there is no routine: the button stays greyed out until a Z is typed, then
+/// moves Z to it.
+#[test]
+fn focus_z_in_the_move_panel_runs_the_routine_or_moves_to_the_height_typed() {
+    let mut g = Gui::new(1600.0, 1600.0, 1.0);
+    select(&mut g, DeviceType::SimulatorRuida);
+    connected_at(&mut g, 50.0, 60.0);
+    show_move_panel(&mut g);
+    g.app().machine.jog.goto_z.clear();
+    g.frames(3);
+    assert!(g.has_text("Focus Z"), "{:?}", g.visible_texts());
+    g.click_label("Focus Z");
+    // The simulator's Z settings keep a 5 mm focus distance.
+    until(&mut g, "Z at the focus distance", |g| z_at(g, 5.0));
+    g.screenshot("move-panel-focus-z-ruida");
+    g.exec("machine.disconnect", json!({}));
+    until(&mut g, "the Ruida simulator to disconnect", |g| !g.app().machine.handle.is_connected());
+
+    select(&mut g, DeviceType::SimulatorGrbl);
+    connected_at(&mut g, 50.0, 60.0);
+    show_move_panel(&mut g);
+    g.app().machine.jog.goto_z.clear();
+    g.frames(3);
+    let z_lines = |g: &Gui| {
+        let app = g.app();
+        app.machine.handle.console().iter().filter(|c| c.kind == ConsoleKind::Sent && c.text.contains('Z')).count()
+    };
+    let before = z_lines(&g);
+    g.click_label("Focus Z");
+    g.frames(5);
+    assert_eq!(z_lines(&g), before, "greyed out without a Z: nothing is sent");
+    assert!(z_at(&g, 0.0));
+    g.app().machine.jog.goto_z = "3.5".into();
+    g.frames(3);
+    g.click_label("Focus Z");
+    until(&mut g, "Z at the height typed", |g| z_at(g, 3.5));
+    assert!(at(&g, 50.0, 60.0), "only Z moves");
+    g.screenshot("move-panel-focus-z-grbl");
 }

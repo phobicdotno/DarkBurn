@@ -2,13 +2,15 @@
 //! the rotary jog and test rotation) and of taking a print and cut target from the head, driven
 //! through the command registry against the simulators. No window and no real connection.
 
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use darkburn_ruida as ruida;
 use serde_json::{Value, json};
 
 use crate::api::execute_headless;
 use crate::devices::DeviceType;
-use crate::machine_api::{ConsoleKind, LaserState};
+use crate::machine_api::{ConnectConfig, ConsoleKind, LaserState, Link, RuidaAdapter};
 use crate::prefs::Prefs;
 use crate::shell::DarkBurn;
 
@@ -141,6 +143,48 @@ fn the_finish_position_is_set_from_the_head_or_given_and_cleared() {
     assert_eq!(a.machine.jog.finish, Some((55.0, 66.0)));
 }
 
+/// A finish position off the bed is refused, typed or kept from before: every later job would
+/// end with a rapid move there that the job's own bounds check does not look at.
+#[test]
+fn a_finish_position_off_the_bed_is_refused_and_no_job_ends_there() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    let (w, h) = a.machine.active().bed();
+    let e = run(&mut a, "machine.set_finish", json!({ "x": 5000, "y": -300 })).unwrap_err();
+    assert!(e.contains("off the bed"), "{e}");
+    assert_eq!(a.machine.jog.finish, None, "nothing is kept");
+    for (x, y) in [(w + 0.5, 10.0), (10.0, h + 0.5), (-0.5, 10.0), (10.0, -0.5)] {
+        assert!(run(&mut a, "machine.set_finish", json!({ "x": x, "y": y })).is_err(), "({x}, {y}) is off the bed");
+    }
+    run(&mut a, "machine.set_finish", json!({ "x": w, "y": h })).unwrap();
+    assert_eq!(a.machine.jog.finish, Some((w, h)), "the far corner is on the bed");
+
+    // A machine with negative coordinates has its bed below zero.
+    let id = a.machine.devices.active.unwrap();
+    a.machine.devices.devices.iter_mut().find(|d| d.id == id).unwrap().settings.negative_coords = true;
+    run(&mut a, "machine.set_finish", json!({ "x": -100, "y": -50 })).unwrap();
+    assert!(run(&mut a, "machine.set_finish", json!({ "x": 100, "y": 50 })).is_err());
+    assert_eq!(a.machine.jog.finish, Some((-100.0, -50.0)));
+
+    // One kept from before (a saved device state, another bed size since) stops the job and
+    // the saved file instead of ending them off the bed.
+    a.machine.devices.devices.iter_mut().find(|d| d.id == id).unwrap().settings.negative_coords = false;
+    run(&mut a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    let job = crate::job_cmds::build_now(&a).unwrap();
+    let e = crate::machine_job::request_for(&a, &job, None, false).unwrap_err();
+    assert!(e.contains("off the bed") && e.contains("Clear it"), "{e}");
+    let dir = std::env::temp_dir().join(format!("darkburn-finish-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("job.gc");
+    let e = run(&mut a, "job.save_gcode", json!({ "path": file.to_string_lossy() })).unwrap_err();
+    assert!(e.contains("off the bed"), "{e}");
+    assert!(!file.exists(), "no file is written");
+    run(&mut a, "machine.clear_finish", json!({})).unwrap();
+    assert!(crate::machine_job::request_for(&a, &job, None, false).is_ok());
+    run(&mut a, "job.save_gcode", json!({ "path": file.to_string_lossy() })).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_rotary_jog_turns_the_object_by_the_distance_along_its_surface() {
     let mut a = app();
@@ -204,6 +248,34 @@ fn a_test_rotation_turns_the_object_and_brings_it_back() {
     assert!(words(&jogs[jogs.len() - 1]).contains(&"Y-20".to_string()), "{jogs:?}");
     wait(&mut a, "back at the start", |a| at(a, xy(50.0, 60.0)));
     assert!(run(&mut a, "machine.rotary_test", json!({ "revolutions": 0 })).is_err());
+}
+
+/// On a DSP controller a turn takes time, so a position read just after the first half of the
+/// test can still be the one from before it. The turn back ends at the start all the same: both
+/// halves are absolute moves worked out from one reading [ROT-06].
+#[test]
+fn a_test_rotation_on_a_ruida_comes_back_while_the_turns_take_time() {
+    let mut a = app();
+    let ecfg = ruida::EmulatorConfig { step_mode: true, slow_moves: true, ..Default::default() };
+    let emu = Arc::new(Mutex::new(ruida::RuidaEmulator::new(ecfg)));
+    let cfg = ConnectConfig { sim_time_scale: 50.0, ..Default::default() };
+    let adapter = RuidaAdapter::new(Box::new(ruida::MemoryTransport::udp(emu.clone())), &cfg, true, Some((emu.clone(), 50.0)));
+    a.machine.handle.attach_simulator(Box::new(adapter), Link::SimulatorRuida);
+    wait(&mut a, "connected and ready", |a| state(a) == LaserState::Ready);
+    rotary_on(&mut a, "U");
+    let v = run(&mut a, "machine.rotary_test", json!({ "revolutions": 1, "feed": 3000 })).unwrap();
+    let um = (v["plan"]["moves"][0]["distance"].as_f64().unwrap() * 1000.0).round() as i32;
+    assert_ne!(um, 0, "{v}");
+    let turns = |emu: &Arc<Mutex<ruida::RuidaEmulator>>| {
+        let e = emu.lock().unwrap();
+        e.received
+            .iter()
+            .filter_map(|c| if let ruida::Command::RapidAxis { axis: ruida::Axis::U, pos, .. } = c { Some(*pos) } else { None })
+            .collect::<Vec<_>>()
+    };
+    wait(&mut a, "both turns", |_| turns(&emu).len() >= 2);
+    assert_eq!(turns(&emu), vec![um, 0], "there, then back to the start");
+    assert_eq!(emu.lock().unwrap().position()[3], 0, "the object is back where it started");
 }
 
 #[test]

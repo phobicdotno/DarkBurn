@@ -30,6 +30,10 @@ pub struct EmulatorConfig {
     pub jog_distance_um: i32,
     /// Most files the controller stores.
     pub max_files: usize,
+    /// Motion takes time, as on a real controller: the position registers report where the head
+    /// was before the latest move outside a job until [`RuidaEmulator::settle`]. Off by default,
+    /// where every move is over the moment it arrives.
+    pub slow_moves: bool,
 }
 
 impl Default for EmulatorConfig {
@@ -43,6 +47,7 @@ impl Default for EmulatorConfig {
             step_mode: false,
             jog_distance_um: 10_000,
             max_files: 99,
+            slow_moves: false,
         }
     }
 }
@@ -112,6 +117,8 @@ pub struct RuidaEmulator {
     mem: BTreeMap<u16, u32>,
     files: Vec<StoredFile>,
     pos: [i32; 4],
+    /// What the position registers report while `slow_moves` is on.
+    reported: [i32; 4],
     state: RunState,
     pending: Vec<u8>,
     collect: Option<Collect>,
@@ -194,6 +201,7 @@ impl RuidaEmulator {
             mem,
             files: Vec::new(),
             pos: [0; 4],
+            reported: [0; 4],
             state: RunState::Idle,
             pending: Vec::new(),
             collect: None,
@@ -252,6 +260,15 @@ impl RuidaEmulator {
     }
     pub fn set_step_mode(&mut self, on: bool) {
         self.cfg.step_mode = on;
+    }
+    /// Turn [`EmulatorConfig::slow_moves`] on or off. Either way the reported position catches up.
+    pub fn set_slow_moves(&mut self, on: bool) {
+        self.cfg.slow_moves = on;
+        self.settle();
+    }
+    /// The moves sent so far are over: the position registers report where the head is.
+    pub fn settle(&mut self) {
+        self.reported = self.pos;
     }
     /// Store a file directly (test setup).
     pub fn add_file(&mut self, name: &str, data: Vec<u8>) {
@@ -479,10 +496,10 @@ impl RuidaEmulator {
                 RunState::Running => StatusWord::RUNNING_VALUE,
                 RunState::Paused => StatusWord::PAUSED_VALUE,
             },
-            addr::POS_X => self.pos[0] as u32,
-            addr::POS_Y => self.pos[1] as u32,
-            addr::POS_Z => self.pos[2] as u32,
-            addr::POS_U => self.pos[3] as u32,
+            addr::POS_X => self.shown()[0] as u32,
+            addr::POS_Y => self.shown()[1] as u32,
+            addr::POS_Z => self.shown()[2] as u32,
+            addr::POS_U => self.shown()[3] as u32,
             addr::FILE_COUNT => self.files.len() as u32,
             addr::CARD_ID => self.cfg.card_id,
             a => self.mem.get(&a).copied().unwrap_or(0),
@@ -659,6 +676,14 @@ impl RuidaEmulator {
         let power = if kind == MotionKind::Cut { self.power } else { Power(0) };
         self.motion.push(MotionRecord { kind, from, to, power, speed: self.speed });
         self.pos = to;
+        // A slow move outside a job is still under way: the registers show where it started.
+        // Inside a job the job's own progress is what is stepped.
+        self.reported = if self.cfg.slow_moves && self.job.is_none() { from } else { to };
+    }
+
+    /// The position the registers report.
+    fn shown(&self) -> [i32; 4] {
+        if self.cfg.slow_moves { self.reported } else { self.pos }
     }
 
     fn rapid_to(&mut self, to: [i32; 4], kind: MotionKind) {

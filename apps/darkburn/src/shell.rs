@@ -378,11 +378,13 @@ impl DarkBurn {
         solidcraft_ui_registry::clear_handles();
         // Where the dockable windows are: the stored places in, the user's moves out.
         window_host::sync(ui.ctx(), &mut self.prefs.windows);
-        let areas: Vec<(String, String)> = Area::ALL.into_iter().map(|a| (area_key(a), a.label().to_string())).collect();
-        window_host::dock_areas(ui.ctx(), &areas.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect::<Vec<_>>());
         keep_tab_for_the_canvas(ui.ctx());
         crate::tab_focus::keep_tab_in_the_top_window(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
+        // The areas and texts the window kit shows, in the language just set.
+        let areas: Vec<(String, String)> = Area::ALL.into_iter().map(|a| (area_key(a), a.title())).collect();
+        window_host::dock_areas(ui.ctx(), &areas.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect::<Vec<_>>());
+        window_host::set_texts(ui.ctx(), window_texts());
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
         self.hint = crate::canvas_input::hover_hint(ui.ctx());
         crate::files::frame(ui.ctx(), self);
@@ -952,7 +954,7 @@ impl DarkBurn {
                 Menu::context(&resp, |ui| {
                     ui.set_min_width(220.0);
                     for to in Area::ALL.into_iter().filter(|a| *a != area) {
-                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.label().to_lowercase());
+                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
                         if MenuItem::new("move", &text, "").show(ui).clicked() {
                             window_action = Some((w.clone(), WindowMove::Dock(area_key(to))));
                         }
@@ -973,7 +975,7 @@ impl DarkBurn {
                 Menu::context(&resp, |ui| {
                     ui.set_min_width(200.0);
                     for to in Area::ALL.into_iter().filter(|a| *a != area) {
-                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.label().to_lowercase());
+                        let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
                         if MenuItem::new("move", &text, "").show(ui).clicked() {
                             action = Some((p.id.clone(), Some(to)));
                         }
@@ -985,8 +987,12 @@ impl DarkBurn {
                 });
             }
         }
-        let close_label = if active_window.is_some() { "Close this window" } else { "Hide this panel" };
-        if ui_kit::quiet_icon_button_at(ui, close, "close", close_label).clicked() {
+        let close_label = if active_window.is_some() {
+            crate::i18n::tr("ui.close_window", "Close this window")
+        } else {
+            crate::i18n::tr("ui.hide_panel", "Hide this panel")
+        };
+        if ui_kit::quiet_icon_button_at(ui, close, "close", &close_label).clicked() {
             match &active_window {
                 Some(w) => window_action = Some((w.clone(), WindowMove::Close)),
                 None => action = Some((active.clone(), None)),
@@ -1190,6 +1196,17 @@ fn tools_column(ui: &mut Ui, pan_tool: bool, tool: Tool, hint: &mut Option<Strin
 /// The kit's key for panel area `area` (its name).
 fn area_key(area: Area) -> String {
     format!("{area:?}")
+}
+
+/// The window kit's texts for moving windows, in the interface language.
+fn window_texts() -> window_host::WindowTexts {
+    use crate::i18n::tr;
+    window_host::WindowTexts {
+        move_window: tr("ui.window_move", "Move this window"),
+        float: tr("ui.window_float", "Float in the main window"),
+        detach: tr("ui.window_detach", "Open in its own window"),
+        dock_as_tab: tr("ui.window_dock", "Dock as tab"),
+    }
 }
 
 /// A tab in a panel area: a panel, or a window docked there.

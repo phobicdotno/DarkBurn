@@ -197,6 +197,33 @@ struct State {
     /// A native window had input that can change a setting, or was moved, since the app last
     /// asked ([`take_native_input`]).
     native_input: bool,
+    /// The texts of the header menu and the drop hint, in the app's language.
+    texts: Option<WindowTexts>,
+}
+
+/// The kit's own texts for moving windows, which the app gives in its language
+/// ([`set_texts`]). English until it does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowTexts {
+    /// The tooltip of the header button that moves the window.
+    pub move_window: String,
+    /// The menu item that floats the window in the main window.
+    pub float: String,
+    /// The menu item that opens the window in a window of its own.
+    pub detach: String,
+    /// The menu heading over the panel areas, and the hint on the area a window will dock in.
+    pub dock_as_tab: String,
+}
+
+impl Default for WindowTexts {
+    fn default() -> Self {
+        WindowTexts {
+            move_window: "Move this window".into(),
+            float: "Float in the main window".into(),
+            detach: "Open in its own window".into(),
+            dock_as_tab: "Dock as tab".into(),
+        }
+    }
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -260,6 +287,16 @@ pub fn dock_areas(ctx: &Context, areas: &[(&str, &str)]) {
     with(ctx, |s| {
         s.areas = areas.iter().map(|(k, l)| (k.to_string(), l.to_string())).collect();
     });
+}
+
+/// The texts of the header menu and the drop hint, in the app's language. Once a frame.
+pub fn set_texts(ctx: &Context, texts: WindowTexts) {
+    with(ctx, |s| s.texts = Some(texts));
+}
+
+/// The texts of the header menu and the drop hint: the app's, or English.
+pub fn texts(ctx: &Context) -> WindowTexts {
+    with(ctx, |s| s.texts.clone()).unwrap_or_default()
 }
 
 /// The known dock areas, key and label.
@@ -517,15 +554,10 @@ pub(crate) fn moved(ctx: &Context, key: &str, pos: Pos2) {
 /// Mark `rect`, a panel area, as where the window being dragged will dock.
 pub fn paint_drop_hint(ctx: &Context, rect: Rect) {
     let t = solidcraft_theme::Tokens::get();
+    let text = texts(ctx).dock_as_tab;
     let painter = ctx.layer_painter(LayerId::new(egui::Order::Foreground, Id::unique("db_dock_drop_hint")));
     painter.rect(rect.shrink(2.0), t.radius_sm, t.accent.gamma_multiply(0.18), egui::Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        solidcraft_ui_text::tr_label("Dock as tab"),
-        crate::fonts::semibold(t.font_heading),
-        t.text,
-    );
+    painter.text(rect.center(), egui::Align2::CENTER_CENTER, text, crate::fonts::semibold(t.font_heading), t.text);
     solidcraft_ui_registry::publish_rect("dialog:dock_hint", rect);
 }
 
@@ -534,29 +566,26 @@ pub fn paint_drop_hint(ctx: &Context, rect: Rect) {
 pub(crate) fn place_button(ui: &mut egui::Ui, rect: Rect, key: &str) {
     let place = place(ui.ctx(), key);
     let areas = areas(ui.ctx());
+    let texts = texts(ui.ctx());
     let mut pick: Option<Placement> = None;
     super::Menu::button_with(
         ui,
         |ui, _| {
-            let response = super::icon_button_at(ui, rect, "prefs_layout", solidcraft_ui_text::tr_label("Move this window"));
+            let response = super::icon_button_at(ui, rect, "prefs_layout", &texts.move_window);
             solidcraft_ui_registry::publish_target("dialog:place", response.rect);
             response
         },
         |ui| {
             ui.set_min_width(super::LIST_W);
-            if place.placement != Placement::Floating
-                && super::MenuItem::new("window.float", solidcraft_ui_text::tr_label("Float in the main window"), "").show(ui).clicked()
-            {
+            if place.placement != Placement::Floating && super::MenuItem::new("window.float", &texts.float, "").show(ui).clicked() {
                 pick = Some(Placement::Floating);
             }
-            if place.placement != Placement::Detached
-                && super::MenuItem::new("window.detach", solidcraft_ui_text::tr_label("Open in its own window"), "").show(ui).clicked()
-            {
+            if place.placement != Placement::Detached && super::MenuItem::new("window.detach", &texts.detach, "").show(ui).clicked() {
                 pick = Some(Placement::Detached);
             }
             if !areas.is_empty() {
                 super::Menu::separator(ui);
-                super::Menu::heading(ui, solidcraft_ui_text::tr_label("Dock as tab"));
+                super::Menu::heading(ui, &texts.dock_as_tab);
             }
             for (area, label) in &areas {
                 if place.area() == Some(area.as_str()) {
@@ -694,6 +723,30 @@ mod tests {
         // Not drawn for two frames: closed, its tab goes.
         frame(&ctx, |_| {});
         frame(&ctx, |ui| assert!(docked_tabs(ui.ctx(), "RightTop").is_empty()));
+    }
+
+    #[test]
+    fn the_drop_hint_and_header_menu_use_the_texts_the_app_gives() {
+        let ctx = Context::default();
+        assert_eq!(texts(&ctx), WindowTexts::default(), "English until the app gives its texts");
+        assert_eq!(texts(&ctx).dock_as_tab, "Dock as tab");
+        let given =
+            WindowTexts { move_window: "Flytt".into(), float: "Flyt".into(), detach: "Eget vindu".into(), dock_as_tab: "Fest som fane".into() };
+        set_texts(&ctx, given.clone());
+        assert_eq!(texts(&ctx), given);
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), ..Default::default() };
+        let mut out = ctx.run_ui(input, |ui| paint_drop_hint(ui.ctx(), Rect::from_min_size(Pos2::new(20.0, 20.0), vec2(400.0, 300.0))));
+        out.textures_delta.clear();
+        let painted: Vec<String> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(painted.iter().any(|t| t == "Fest som fane"), "{painted:?}");
+        assert!(!painted.iter().any(|t| t == "Dock as tab"), "{painted:?}");
     }
 
     #[test]

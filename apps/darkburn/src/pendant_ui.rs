@@ -51,6 +51,7 @@ use std::time::{Duration, Instant};
 use darkburn_pendant::{Connector, Key, KeySet, Leds, Pendant, PendantError, PendantEvent, PollOptions, Stamped};
 use serde_json::json;
 
+use crate::i18n::tr;
 use crate::laser_panel::{jog_free, start_allowed};
 use crate::machine_api::{Family, LaserState};
 use crate::machine_ui::{self, run_with};
@@ -75,15 +76,28 @@ pub enum PendantStatus {
 }
 
 impl PendantStatus {
+    /// The status line, in the interface language.
     pub fn text(&self) -> String {
         match self {
-            PendantStatus::Off => "Off".into(),
-            PendantStatus::Looking => "Looking for the receiver".into(),
-            PendantStatus::Connected(name) => format!("Connected: {name}"),
-            PendantStatus::Unavailable(e) => format!("Not available: {e}"),
-            PendantStatus::InUse => "In use by another DarkBurn window".into(),
-            PendantStatus::NoLock(e) => format!("Not opened: no other DarkBurn window could be kept off the receiver ({e})"),
+            PendantStatus::Off => tr("pendant.off", "Off"),
+            PendantStatus::Looking => tr("pendant.looking", "Looking for the receiver"),
+            PendantStatus::Connected(name) => format!("{} {name}", tr("pendant.connected", "Connected:")),
+            PendantStatus::Unavailable(e) => format!("{} {}", tr("pendant.unavailable", "Not available:"), error_text(e)),
+            PendantStatus::InUse => tr("pendant.in_use", "In use by another DarkBurn window"),
+            PendantStatus::NoLock(e) => {
+                format!("{} ({e})", tr("pendant.no_lock", "Not opened: no other DarkBurn window could be kept off the receiver"))
+            }
         }
+    }
+}
+
+/// `e` in the interface language. (The pendant crate's own text is English.)
+pub fn error_text(e: &PendantError) -> String {
+    match e {
+        PendantError::NotFound => tr("pendant.not_found", "no pendant receiver is plugged in"),
+        PendantError::PermissionDenied { path } => format!("{} ({path})", tr("pendant.permission", "no permission to open the pendant receiver")),
+        PendantError::Unsupported => tr("pendant.unsupported", "this build of DarkBurn has no pendant support"),
+        PendantError::Io(e) => format!("{} {e}", tr("pendant.io", "pendant receiver error:")),
     }
 }
 
@@ -169,10 +183,11 @@ pub fn status() -> PendantStatus {
 
 /// The message for a receiver this user may not open (Linux without the udev rule).
 pub fn permission_message() -> String {
-    format!(
-        "The pendant receiver is plugged in, but this user may not open it. Install the udev rule once (it is also in the Linux download, with install-pendant-rule.sh), then unplug and replug the receiver:\n{}",
-        darkburn_pendant::linux_install_command()
-    )
+    let text = tr(
+        "pendant.permission_message",
+        "The pendant receiver is plugged in, but this user may not open it. Install the udev rule once (it is also in the Linux download, with install-pendant-rule.sh), then unplug and replug the receiver:",
+    );
+    format!("{text}\n{}", darkburn_pendant::linux_install_command())
 }
 
 /// Once per frame of the app, drawn or not: start or stop the poll thread with the setting, take

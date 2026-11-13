@@ -773,6 +773,31 @@ fn opening_a_docked_window_that_is_open_brings_its_tab_to_the_front() {
 
 /// Closing a docked window brings back the tab it covered, not the area's first one: with the
 /// panels moved, that can be the Laser panel with its Stop button.
+// In Norwegian the window header menu, the panel areas in it and the close button of a docked
+// window's tab are in Norwegian too.
+#[test]
+fn the_window_menus_follow_the_interface_language() {
+    use darkburn_ui::ui_kit::window_host::Placement;
+    let mut g = Gui::standard();
+    g.app().prefs.language = "nb".into();
+    g.app().settings_open = true;
+    g.frames(3);
+    g.click_id("dialog:place");
+    g.frames(1);
+    for text in ["Åpne i eget vindu", "Fest som fane", "Venstre", "Høyre, øverst", "Høyre, nederst", "Nederst"] {
+        assert!(g.has_text(text), "{text}: {:?}", g.visible_texts());
+    }
+    for text in ["Open in its own window", "Dock as tab", "Right, top"] {
+        assert!(!g.has_text(text), "{text} in English: {:?}", g.visible_texts());
+    }
+    g.click_label("Høyre, øverst");
+    assert_eq!(g.app().prefs.windows.get("settings").map(|p| p.placement.clone()), Some(Placement::Docked("RightTop".into())));
+    g.frames(3);
+    g.click_a11y(Some("Button"), "Lukk dette vinduet");
+    g.frames(2);
+    assert!(!g.app().settings_open, "the window closed");
+}
+
 #[test]
 fn closing_a_docked_window_brings_back_the_tab_it_covered() {
     use crate::panels::Area;

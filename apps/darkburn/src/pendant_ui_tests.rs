@@ -500,6 +500,37 @@ fn permission_denied_shows_the_udev_command() {
     pump(&ctx, &mut a, "the receiver", connected);
 }
 
+// In Norwegian the status line, the receiver errors and the permission message are Norwegian;
+// the install command stays as it is, and English reads as before.
+#[test]
+fn pendant_texts_follow_the_interface_language() {
+    use darkburn_pendant::PendantError;
+    crate::i18n::set_language("nb");
+    assert_eq!(PendantStatus::Off.text(), "Av");
+    assert_eq!(PendantStatus::Looking.text(), "Ser etter mottakeren");
+    assert_eq!(PendantStatus::Connected("XHC WHB04B".into()).text(), "Tilkoblet: XHC WHB04B");
+    assert_eq!(PendantStatus::Unavailable(PendantError::NotFound).text(), "Ikke tilgjengelig: ingen mottaker for håndkontrollen er satt inn");
+    let denied = PendantStatus::Unavailable(PendantError::PermissionDenied { path: "/dev/hidraw3".into() }).text();
+    assert_eq!(denied, "Ikke tilgjengelig: ingen tillatelse til å åpne mottakeren for håndkontrollen (/dev/hidraw3)");
+    assert_eq!(PendantStatus::InUse.text(), "Brukes av et annet DarkBurn-vindu");
+    assert!(PendantStatus::NoLock("x".into()).text().starts_with("Ikke åpnet:"));
+    let m = pendant_ui::permission_message();
+    assert!(m.starts_with("Mottakeren for håndkontrollen er satt inn"), "{m}");
+    assert!(m.ends_with(&format!("\n{}", darkburn_pendant::linux_install_command())), "{m}");
+
+    crate::i18n::set_language("en");
+    for e in [
+        PendantError::NotFound,
+        PendantError::PermissionDenied { path: "/dev/hidraw3".into() },
+        PendantError::Unsupported,
+        PendantError::Io("gone".into()),
+    ] {
+        assert_eq!(PendantStatus::Unavailable(e.clone()).text(), format!("Not available: {e}"));
+    }
+    assert_eq!(PendantStatus::Connected("XHC WHB04B".into()).text(), "Connected: XHC WHB04B");
+    assert!(pendant_ui::permission_message().starts_with("The pendant receiver is plugged in, but this user may not open it."));
+}
+
 #[test]
 fn leds_follow_the_machine() {
     let emu = EmulatorHandle::new();

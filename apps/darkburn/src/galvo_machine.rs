@@ -263,7 +263,7 @@ impl DriverAdapter for GalvoAdapter {
                 "A galvo board never fires from a button. Arm the laser and run a job; the red light shows where it will mark.".into(),
             )),
             C::GetPosition => Ok(()),
-            C::JogStep(_) | C::JogStart { .. } | C::JogStop => unsupported("Jog"),
+            C::JogStep(_) | C::JogSequence(_) | C::JogStart { .. } | C::JogStop => unsupported("Jog"),
             C::Home => unsupported("Home"),
             C::Unlock => Ok(()),
             C::GoToOrigin => unsupported("Go to origin"),

@@ -137,6 +137,7 @@ pub const COMMANDS: &[Cmd] = &[
 /// Whether `id` is handled here.
 pub fn handles(id: &str) -> bool {
     crate::machine_ext::handles(id)
+        || crate::motion_cmds::handles(id)
         || crate::connections::handles(id)
         || crate::machine_job::handles(id)
         || id.starts_with("machine.")
@@ -156,6 +157,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
     let ext = crate::machine_ext::checklist(id);
     if !ext.is_empty() {
         return ext;
+    }
+    let motion = crate::motion_cmds::checklist(id);
+    if !motion.is_empty() {
+        return motion;
     }
     let conn = crate::connections::checklist(id);
     if !conn.is_empty() {
@@ -656,6 +661,9 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
         return Some(r);
     }
     if let Some(r) = crate::machine_ext::run(app, id, a, src) {
+        return Some(r);
+    }
+    if let Some(r) = crate::motion_cmds::run(app, id, a, src) {
         return Some(r);
     }
     Some(run_command(app, id, a, src))

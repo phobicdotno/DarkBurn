@@ -526,3 +526,43 @@ fn the_time_estimate_knows_the_fast_whitespace_scan() {
     // 81 mm of blank: 16 s at 5 mm/s, well under a second at 400 mm/s.
     assert!(fast < plain - 10.0, "the estimate is shorter with fast whitespace on: {plain} s, then {fast} s");
 }
+
+/// IMG-22: with fast skip on, a blank stretch longer than the skip length is crossed with a
+/// rapid move (`G0` in G-code); shorter stretches, or fast skip off, scan through at speed.
+#[test]
+fn fast_skip_rapids_over_blank_stretches_longer_than_the_skip_length() {
+    // Each pixel row: black, white, white, black. A pixel is 2.5 mm, so the gap is 5 mm.
+    let row = [0u8, 255, 255, 0];
+    let px: Vec<u8> = row.iter().copied().cycle().take(16).collect();
+    let build_with = |fast_skip: bool, skip_mm: f64| {
+        let mut i = input(image_doc(|s| s.image_mode = layer::ImageMode::Threshold, px.clone()));
+        i.tuning = Some(crate::scan_offsets::ScanTuning { fast_skip, skip_mm, ..Default::default() });
+        build_job_simple(&i).unwrap()
+    };
+    // Rapid moves along a scan line that cross the gap.
+    let gap_rapids = |b: &BuiltJob| {
+        let mut at = b.toolpath.start;
+        let mut n = 0;
+        for op in &b.toolpath.ops {
+            if let Op::Rapid { to } = op
+                && (to.y - at.y).abs() < 1e-6
+                && (to.x - at.x).abs() > 4.0
+            {
+                n += 1;
+            }
+            if let Some(p) = op.target() {
+                at = p;
+            }
+        }
+        n
+    };
+    let g0_lines = |b: &BuiltJob| gcode_text(b, None, &DeviceGcodeSettings::default()).lines().filter(|l| l.starts_with("G0 ")).count();
+    let (skip, long, off) = (build_with(true, 2.0), build_with(true, 8.0), build_with(false, 2.0));
+    assert!(gap_rapids(&skip) >= 10, "every scan line rapids over its gap: {}", gap_rapids(&skip));
+    assert_eq!(gap_rapids(&long), 0, "a gap shorter than the skip length is scanned through");
+    assert_eq!(gap_rapids(&off), 0, "fast skip off scans through every gap");
+    assert!(g0_lines(&skip) > g0_lines(&off) + 10, "the G-code crosses the gaps with G0: {} vs {}", g0_lines(&skip), g0_lines(&off));
+    // The burn itself is the same.
+    let burned = |b: &BuiltJob| segs(&b.toolpath).iter().filter(|s| s.kind == 'C' && s.power > 0.0).map(|s| (s.to - s.from).hypot()).sum::<f64>();
+    assert!((burned(&skip) - burned(&off)).abs() < 1e-6, "{} vs {}", burned(&skip), burned(&off));
+}

@@ -659,6 +659,10 @@ pub struct TraceDialog {
     paths_for: Option<String>,
     size_mm: (f64, f64),
     pub notice: Option<String>,
+    /// The window is on a camera picture taken for it [IMG-20]; see capture_trace.rs.
+    pub capture: Option<crate::capture_trace::Capture>,
+    /// Capture again was clicked.
+    pub recapture: bool,
 }
 
 impl TraceDialog {
@@ -676,7 +680,17 @@ impl TraceDialog {
             paths_for: None,
             size_mm: (img.width, img.height),
             notice: None,
+            capture: None,
+            recapture: false,
         })
+    }
+
+    /// Draw the preview again from the picture (after Capture again).
+    pub fn reset_preview(&mut self) {
+        self.base = None;
+        self.paths.clear();
+        self.paths_for = None;
+        self.notice = None;
     }
 
     /// The arguments the trace uses (clip rectangle included).
@@ -788,6 +802,9 @@ fn trace_body(ui: &mut Ui, d: &mut TraceDialog) {
             }
             ui_kit::checkbox(ui, "Show points", &mut d.args.show_points);
             ui_kit::checkbox(ui, "Delete image after tracing", &mut d.args.delete_image);
+            if d.capture.is_some() && ui_kit::button(ui, "Capture again", ui_kit::Button::Small).clicked() {
+                d.recapture = true;
+            }
             ui_kit::caption(ui, "Cutoff", &format!("{} outlines, {} nodes", d.paths.len(), image_ops::node_count(&d.paths)));
             if let Some(n) = &d.notice {
                 ui_kit::status_line(ui, n, ui_kit::StatusTone::Error);
@@ -973,14 +990,19 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
             .placed(Align2::CENTER_CENTER, crate::shell::room_under_the_bar(ctx).center())
             .actions("OK", "Cancel", None)
             .show(ctx, true, |ui| under_the_bar(ui, |ui| trace_body(ui, &mut d)));
+        if std::mem::take(&mut d.recapture)
+            && let Err(e) = crate::capture_trace::again(app, &mut d)
+        {
+            d.notice = Some(e);
+        }
         match (closed, action) {
             (_, ui_kit::Action::Ok) => {
-                if let Err(e) = image_ops::trace(&mut app.editor, &d.ids, &d.effective()) {
+                if let Err(e) = crate::capture_trace::finish(app, &d) {
                     d.notice = Some(e.clone());
                     app.images.trace = Some(d);
                 }
             }
-            (true, _) | (_, ui_kit::Action::Cancel) => {}
+            (true, _) | (_, ui_kit::Action::Cancel) => crate::capture_trace::cancel(app, &mut d),
             _ => app.images.trace = Some(d),
         }
     }

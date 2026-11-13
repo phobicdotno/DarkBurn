@@ -682,7 +682,22 @@ impl ExportFormat {
             ExportFormat::Bmp => "BMP picture (.bmp)",
             ExportFormat::Lbrn2 => "LightBurn project for other software (.lbrn2)",
             ExportFormat::GweikeDxf => "Gweike DXF, one layer per material (.dxf)",
-            ExportFormat::GweikeNc => "Gweike G-code (.nc)",
+            ExportFormat::GweikeNc => "Gweike G-code (.nc, .cnc, .g, .txt)",
+        }
+    }
+
+    /// The file name extensions the save dialog offers. The Gweike software reads G-code from
+    /// `.nc`, `.cnc`, `.g` and `.txt` files (MCC-03).
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            ExportFormat::GweikeNc => &["nc", "cnc", "g", "txt"],
+            ExportFormat::Svg => &["svg"],
+            ExportFormat::Ai => &["ai"],
+            ExportFormat::Dxf | ExportFormat::GweikeDxf => &["dxf"],
+            ExportFormat::Png => &["png"],
+            ExportFormat::Jpg => &["jpg", "jpeg"],
+            ExportFormat::Bmp => &["bmp"],
+            ExportFormat::Lbrn2 => &["lbrn2"],
         }
     }
 
@@ -704,7 +719,7 @@ impl ExportFormat {
             "jpg" | "jpeg" => ExportFormat::Jpg,
             "bmp" => ExportFormat::Bmp,
             "lbrn2" => ExportFormat::Lbrn2,
-            "nc" => ExportFormat::GweikeNc,
+            "nc" | "cnc" | "g" => ExportFormat::GweikeNc,
             _ => return None,
         })
     }

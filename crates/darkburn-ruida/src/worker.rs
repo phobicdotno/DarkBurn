@@ -72,6 +72,9 @@ pub enum Request {
         axis: Axis,
         distance_mm: f64,
     },
+    /// Jogs one after another, sent as absolute moves from one position reading
+    /// ([`RuidaMachine::jog_steps`](crate::machine::RuidaMachine::jog_steps)).
+    JogSteps(Vec<(Axis, f64)>),
     JogStart {
         axis: Axis,
         positive: bool,
@@ -346,6 +349,7 @@ impl<T: Transport> Worker<T> {
             R::FrameOutline { points, light } => m.frame_outline(&points, light).map(|_| Done)?,
             R::FrameOnController => m.frame_on_controller().map(|_| Done)?,
             R::JogStep { axis, distance_mm } => m.jog_step(axis, distance_mm).map(|_| Done)?,
+            R::JogSteps(steps) => m.jog_steps(&steps).map(|_| Done)?,
             R::JogStart { axis, positive } => m.jog_start(axis, positive).map(|_| Done)?,
             R::JogStop { axis, positive } => m.jog_stop(axis, positive).map(|_| Done)?,
             R::PanelKey { key, down } => m.panel_key(key, down).map(|_| Done)?,

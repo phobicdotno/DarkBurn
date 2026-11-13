@@ -585,7 +585,7 @@ fn run_pick(app: &mut DarkBurn, pick: Pick) {
             let format = r.format_ext.as_str();
             let ext = ExportFormat::from_name(format).unwrap_or(ExportFormat::Svg);
             let (dir, name) = export_start(app, ext.ext());
-            let mut d = rfd::FileDialog::new().add_filter(ext.label(), &[ext.ext()]).set_file_name(name);
+            let mut d = rfd::FileDialog::new().add_filter(ext.label(), ext.extensions()).set_file_name(name);
             if let Some(dir) = dir {
                 d = d.set_directory(dir);
             }
@@ -700,6 +700,12 @@ pub fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value
                 req.materials = m.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect();
             }
             req.default_material = a.get("default_material").and_then(Value::as_str).map(str::to_string);
+            // The Gweike G-code's contour start and end codes (MCC-03).
+            for (key, field) in [("nc_on", &mut req.nc_on), ("nc_off", &mut req.nc_off)] {
+                if let Some(code) = a.get(key).and_then(Value::as_str) {
+                    *field = code.trim().to_owned();
+                }
+            }
             if format.is_gweike() && req.materials.is_empty() {
                 // The layer to material mapping of the Gweike window.
                 req.materials = app.machine.active().settings.gweike.materials(&app.editor.doc).into_iter().collect();

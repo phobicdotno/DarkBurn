@@ -471,7 +471,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "project.export",
         "Export to a File",
-        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"}},"required":["path"]}"#,
+        r#"{"type":"object","properties":{"path":{"type":"string"},"format":{"enum":["svg","ai","dxf","png","jpg","bmp","lbrn2","gweike_dxf","gweike_nc"]},"selection_only":{"type":"boolean"},"dxf_arcs":{"type":"boolean"},"dxf_layer_names":{"type":"boolean"},"svg_work_area":{"type":"boolean"},"materials":{"type":"object","description":"material name per layer name (Gweike)"},"default_material":{"type":"string"},"nc_on":{"type":"string","description":"Gweike G-code: code before each contour (default M07)"},"nc_off":{"type":"string","description":"Gweike G-code: code after each contour (default M08)"}},"required":["path"]}"#,
     ),
     a(
         "project.print_pdf",
@@ -665,7 +665,13 @@ pub fn shortcut_table() -> &'static [(egui::KeyboardShortcut, &'static str)] {
 }
 
 pub fn find(id: &str) -> Option<&'static Cmd> {
-    COMMANDS.iter().chain(crate::machine_ui::COMMANDS).chain(crate::machine_ext::COMMANDS).chain(crate::connections::COMMANDS).find(|c| c.id == id)
+    COMMANDS
+        .iter()
+        .chain(crate::machine_ui::COMMANDS)
+        .chain(crate::machine_ext::COMMANDS)
+        .chain(crate::motion_cmds::COMMANDS)
+        .chain(crate::connections::COMMANDS)
+        .find(|c| c.id == id)
 }
 
 /// Commands that move axes, fire the laser, send a job, write machine settings or connect to a
@@ -675,7 +681,8 @@ pub fn hardware(id: &str) -> bool {
         || id.starts_with("laser.")
         || id.starts_with("arrange.laser_")
         || matches!(id, "edit.device_settings" | "edit.machine_settings" | "arrange.to_laser" | "tools.position_laser")
-        || crate::job_cmds::hardware(id))
+        || crate::job_cmds::hardware(id)
+        || crate::vision_cmds::hardware(id))
         && !crate::job_cmds::not_hardware(id)
         && !crate::machine_ext::not_hardware(id)
         && !crate::vision_cmds::not_hardware(id)
@@ -831,6 +838,7 @@ pub fn registry() -> &'static [Cmd] {
         let mut v: Vec<Cmd> = COMMANDS.to_vec();
         v.extend_from_slice(crate::machine_ui::COMMANDS);
         v.extend_from_slice(crate::machine_ext::COMMANDS);
+        v.extend_from_slice(crate::motion_cmds::COMMANDS);
         v.extend_from_slice(crate::connections::COMMANDS);
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
@@ -1340,7 +1348,10 @@ mod tests {
                 !info.implemented
                     || crate::machine_ui::handles(&info.id)
                     || crate::key_cmds::works(&info.id)
-                    || crate::laser_position::handles(&info.id),
+                    || crate::laser_position::handles(&info.id)
+                    // The camera commands run too: a real camera opens only after Allow live
+                    // camera, behind the agent gate, and never under `cargo test` (camera_devices.rs).
+                    || crate::vision_cmds::hardware(&info.id),
                 "{} touches hardware and must not run yet",
                 info.id
             );

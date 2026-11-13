@@ -391,12 +391,32 @@ pub fn job_text(dev: &Device, job: &BuiltJob, from_op: Option<usize>, base: &Dev
     }
     if dev.kind.lib_kind() == Some(gp::DeviceKind::Snapmaker) {
         let p = to_profile(dev);
-        let info = gc::snapmaker::JobInfo { bounds: job.bounds, work_speed: 0.0, estimated_seconds: 0.0, power_percent: 0.0 };
+        let info = snapmaker_info(dev, job, from_op);
         return gc::snapmaker::file_text(&p, &info, &out);
     }
     let mut text = out.join("\n");
     text.push('\n');
     text
+}
+
+/// What the Snapmaker file header says about a job (GCODE-04): its size, the fastest burning
+/// speed in mm/min, the highest power and the estimated time of the part that is written.
+pub fn snapmaker_info(dev: &Device, job: &BuiltJob, from_op: Option<usize>) -> gc::snapmaker::JobInfo {
+    let tp = from_op.map_or_else(|| job.toolpath.clone(), |op| job.toolpath_from(op));
+    let (mut speed, mut power) = (0.0f64, 0.0f64);
+    for op in &tp.ops {
+        if let darkburn_job::Op::Cut { speed: s, power: p, .. } | darkburn_job::Op::Arc { speed: s, power: p, .. } = op
+            && *p > 0.0
+        {
+            speed = speed.max(*s);
+            power = power.max(*p);
+        }
+    }
+    let sim = match from_op {
+        None => job.simulate(&dev.settings.additional),
+        Some(_) => darkburn_job::sim::simulate(&tp, &dev.settings.additional.motion()),
+    };
+    gc::snapmaker::JobInfo { bounds: job.bounds, work_speed: speed * 60.0, estimated_seconds: sim.total_time, power_percent: power }
 }
 
 /// A G-code file for `dev` with the move to the Move panel's finish position (a machine
@@ -694,9 +714,19 @@ impl DriverAdapter for GcodeAdapter {
                 }
                 m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed }).map_err(map_err)
             }
+            C::JogSequence(v) => {
+                if v.iter().any(|j| j.du != 0.0) {
+                    return Err(MachineError::Unsupported("this controller has no rotary axis".into()));
+                }
+                for j in v {
+                    m.jog(grbl::JogStep { dx: j.dx, dy: j.dy, dz: j.dz, feed: j.feed }).map_err(map_err)?;
+                }
+                Ok(())
+            }
             C::JogStart { .. } => unsupported("Continuous jogging (use the step buttons)"),
             C::JogStop => m.jog_cancel().map_err(map_err),
             C::Home => m.home().map_err(map_err),
+            C::FocusZ => unsupported("A focus routine"),
             C::Unlock => m.unlock().map_err(map_err),
             C::GoToOrigin => m.go_to_origin().map_err(map_err),
             C::MoveTo(t) => m

@@ -301,13 +301,26 @@ pub fn trace_overlay(app: &mut DarkBurn, args: &Value) -> Result<Value, String> 
     Ok(json!({ "created": r.shapes.iter().map(|s| s.0).collect::<Vec<_>>(), "nodes": r.nodes }))
 }
 
-/// Put the overlay in the document as a picture (selected), ready for the Trace Image window.
-pub fn overlay_as_image(app: &mut DarkBurn) -> Result<ShapeId, String> {
+/// The overlay, encoded and placed, ready to go into the document.
+pub struct OverlayPicture {
+    png: Vec<u8>,
+    size_px: (u32, u32),
+    rect: Rect,
+}
+
+/// The overlay as a picture for [`add_overlay_picture`]; fails without one.
+pub fn overlay_picture(app: &DarkBurn) -> Result<OverlayPicture, String> {
     let (img, adjust, covers) = overlay_flat(app)?;
-    let (w, h) = (img.width(), img.height());
+    let size_px = (img.width(), img.height());
     let rect = adjust.placement(covers);
     let mut png = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(project_error)?;
+    Ok(OverlayPicture { png, size_px, rect })
+}
+
+/// Put the picture in the document (selected), as the undo step "Camera picture".
+pub fn add_overlay_picture(app: &mut DarkBurn, p: OverlayPicture) -> ShapeId {
+    let OverlayPicture { png, size_px: (w, h), rect } = p;
     let layer = app.editor.current_layer;
     let mut id = ShapeId(0);
     app.editor.edit("Camera picture", |d, sel| {
@@ -321,7 +334,7 @@ pub fn overlay_as_image(app: &mut DarkBurn) -> Result<ShapeId, String> {
         sel.set([id]);
         true
     });
-    Ok(id)
+    id
 }
 
 /// Save Background Capture [FILE-14]: the overlay (or the raw frame when there is none) as a picture file.
@@ -339,10 +352,6 @@ pub fn save_capture(app: &mut DarkBurn, path: &Path) -> Result<Value, String> {
 
 fn num(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(Value::as_f64).filter(|v| v.is_finite())
-}
-
-fn req(a: &Value, k: &str) -> Result<f64, String> {
-    num(a, k).ok_or_else(|| format!("argument {k} must be a number"))
 }
 
 fn flag(a: &Value, k: &str) -> Option<bool> {
@@ -779,6 +788,16 @@ pub fn mark_in_view(app: &DarkBurn, mark: &HeadMark) -> Point {
     match view_lens(app) {
         Some(l) => l.undistort_point_with(mark.image, app.vision.state.camera.focal_scale),
         None => mark.image,
+    }
+}
+
+/// Where the head is for a head camera mark or capture [CAM-05]: `typed` when given, else where
+/// the connected laser reports it (machine coordinates, from machine zero).
+pub fn head_now(app: &DarkBurn, typed: Option<Point>) -> Result<Point, String> {
+    match typed {
+        Some(p) => Ok(p),
+        None if app.machine.handle.is_connected() => crate::motion_cmds::head_target(app, false),
+        None => Err("connect the laser to read where the head is, or give the head position".into()),
     }
 }
 
@@ -1343,11 +1362,23 @@ pub const COMMANDS: &[Cmd] = &[
         "Use a Picture File as the Camera Image",
         r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
     ),
+    a("camera.find", "Find Cameras", ""),
+    a(
+        "camera.start",
+        "Start the Live Camera",
+        r#"{"type":"object","properties":{"index":{"type":"integer","minimum":0,"description":"camera number from camera.find; default the chosen camera"}}}"#,
+    ),
+    a("camera.stop", "Stop the Live Camera", ""),
     a("camera.update_overlay", "Update the Camera Overlay", ""),
     a(
         "camera.trace",
         "Trace the Camera Overlay",
         r#"{"type":"object","description":"Trace Image settings (threshold, ignore_less_than, ...), all optional"}"#,
+    ),
+    a(
+        "camera.trace_picture",
+        "Take a Camera Picture and Trace It",
+        r#"{"type":"object","description":"Trace Image settings (threshold, ignore_smaller, ...), all optional; delete_image is on unless set false","properties":{"apply":{"type":"boolean","description":"trace at once, as one undo step (default false: open the Trace Image window on the picture)"},"delete_image":{"type":"boolean"}}}"#,
     ),
     a("camera.save_settings", "Save Camera Settings for New Projects", ""),
     a("camera.export_settings", "Export Camera Settings", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
@@ -1378,7 +1409,7 @@ pub const COMMANDS: &[Cmd] = &[
     a(
         "camera.head_add_capture",
         "Add a Head Camera Capture for Stitching",
-        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"}},"required":["path","x","y"]}"#,
+        r#"{"type":"object","properties":{"path":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"}}}"#,
     ),
     a("camera.head_stitch", "Stitch the Head Camera Captures", ""),
     a(
@@ -1469,9 +1500,15 @@ pub fn handles(id: &str) -> bool {
     ) || COMMANDS.iter().any(|c| c.id == id)
 }
 
-/// These move nothing and send nothing, so the `laser.` prefix rule does not apply.
+/// The commands that open, list or close a camera: they talk to a USB device, so an agent must
+/// be allowed hardware to run them.
+pub fn hardware(id: &str) -> bool {
+    matches!(id, "camera.find" | "camera.start" | "camera.stop")
+}
+
+/// The others move nothing and send nothing, so the `laser.` prefix rule does not apply.
 pub fn not_hardware(id: &str) -> bool {
-    handles(id)
+    handles(id) && !hardware(id)
 }
 
 pub fn works(id: &str) -> bool {
@@ -1500,6 +1537,10 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "laser.feeder" | "test.feeder" => &["OTHER-04"],
         "laser.capture" | "camera.update_overlay" | "camera.load_frame" => &["CAMP-02", "CAMP-03", "CAM-06"],
         "camera.trace" => &["CAMP-04"],
+        "camera.trace_picture" => &["IMG-20", "CAMP-04"],
+        "camera.find" => &["CAMP-01", "CAM-01", "SET-37"],
+        "camera.start" => &["CAMP-01", "CAMP-02", "CAM-01", "SET-37"],
+        "camera.stop" => &["CAMP-02"],
         "camera.save_settings" => &["CAMP-05", "CAM-09"],
         "camera.set" | "camera.get" => &["CAMP-06", "CAMP-07", "CAM-01", "CAM-02", "CAM-08", "CAM-09"],
         "camera.export_settings" | "camera.import_settings" => &["CAM-07"],
@@ -1519,7 +1560,12 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
     Some(match id {
         "laser.pnc_first" | "laser.pnc_second" => (|| {
             let idx = if id == "laser.pnc_first" { 0 } else { 1 };
-            let laser = point_of(a)?;
+            // Without a position the target is where the laser head stands now.
+            let laser = if a.get("x").is_none() && a.get("y").is_none() {
+                crate::motion_cmds::head_target(app, flag(a, "pointer").unwrap_or(false))?
+            } else {
+                point_of(a)?
+            };
             let design = match (num(a, "design_x"), num(a, "design_y")) {
                 (Some(x), Some(y)) => Some(Point::new(x, y)),
                 _ => None,
@@ -1541,9 +1587,13 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
         "pnc.wizard" | "laser.pnc_wizard" => wizard_cmd(app, a),
         "camera.get" => Ok(camera_json(app)),
         "camera.set" => camera_set(app, a),
+        "camera.find" => crate::camera_devices::find(app),
+        "camera.start" => crate::camera_devices::start(app, a),
+        "camera.stop" => Ok(crate::camera_devices::stop(app)),
         "camera.load_frame" => path_arg(a).and_then(|p| load_frame_file(app, &p)).map(|(w, h)| json!({ "width_px": w, "height_px": h })),
         "camera.update_overlay" | "laser.capture" => update_overlay(app),
         "camera.trace" => trace_overlay(app, a),
+        "camera.trace_picture" => crate::capture_trace::command(app, a),
         "camera.save_settings" => save_settings(app),
         "camera.export_settings" => path_arg(a).and_then(|p| export_settings(app, &p)),
         "camera.import_settings" => path_arg(a).and_then(|p| import_settings(app, &p)),
@@ -1555,10 +1605,22 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
         "camera.align_clear" => Ok(align_clear(app)),
         "camera.head_solve" => head_solve_cmd(app, a),
         "camera.head_add_capture" => (|| {
-            let bytes = std::fs::read(path_arg(a)?).map_err(project_error)?;
-            let img = crate::images::decode(&bytes)?.to_rgba8();
-            let n = head_add_capture(app, img, Point::new(req(a, "x")?, req(a, "y")?));
-            Ok(json!({ "captures": n }))
+            // The picture: a file, else the latest camera picture. The head: x and y, else where
+            // the connected laser reports it.
+            let img = if a.get("path").is_some() {
+                let bytes = std::fs::read(path_arg(a)?).map_err(project_error)?;
+                crate::images::decode(&bytes)?.to_rgba8()
+            } else {
+                app.vision.raw.clone().ok_or("there is no camera picture yet")?
+            };
+            let typed = match (num(a, "x"), num(a, "y")) {
+                (Some(x), Some(y)) => Some(Point::new(x, y)),
+                (None, None) => None,
+                _ => return Err("give both x and y, or neither".into()),
+            };
+            let head = head_now(app, typed)?;
+            let n = head_add_capture(app, img, head);
+            Ok(json!({ "captures": n, "head": { "x": head.x, "y": head.y } }))
         })(),
         "camera.head_stitch" => head_stitch(app),
         "rotary.set" | "laser.rotary" => {
@@ -2060,7 +2122,8 @@ mod tests {
     fn overlay_becomes_a_selected_picture_for_the_trace_window() {
         let mut app = app();
         set_frame(&mut app, frame()).unwrap();
-        let id = overlay_as_image(&mut app).unwrap();
+        let p = overlay_picture(&app).unwrap();
+        let id = add_overlay_picture(&mut app, p);
         assert!(matches!(app.editor.doc.get(id).unwrap().kind, ShapeKind::Image(_)));
         assert_eq!(app.editor.selected(), vec![id]);
         assert!(crate::image_ui::TraceDialog::new(&app, vec![id]).is_ok());

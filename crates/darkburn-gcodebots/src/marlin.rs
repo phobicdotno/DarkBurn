@@ -22,7 +22,7 @@ use crate::line::{Commands, LineConfig, PollMode, QuickStop, SettingsStyle};
 use crate::machine::MachineFamily;
 use crate::profile::{DeviceProfile, MarlinPowerMode, TransferMode};
 use crate::smoothie::frame_options;
-use crate::translate::home_command;
+use crate::translate::{home_command, power_scale};
 
 /// Fire and laser-off commands for a power mode.
 pub fn power_commands(mode: MarlinPowerMode, tool: u8) -> (String, String, String) {
@@ -30,6 +30,7 @@ pub fn power_commands(mode: MarlinPowerMode, tool: u8) -> (String, String, Strin
         MarlinPowerMode::M3 | MarlinPowerMode::Inline => ("M3 S{s}".into(), "M5".into(), "M5".into()),
         MarlinPowerMode::M4 => ("M4 S{s}".into(), "M5".into(), "M5".into()),
         MarlinPowerMode::Fan => (format!("M106 P{tool} S{{s}}"), format!("M107 P{tool}"), format!("M107 P{tool}")),
+        MarlinPowerMode::Percent => ("M3 P{percent}".into(), "M5".into(), "M5".into()),
     }
 }
 
@@ -45,7 +46,7 @@ pub fn config(p: &DeviceProfile) -> LineConfig {
     };
     c.poll = PollMode::M114;
     c.poll_interval = Duration::from_millis(500);
-    c.s_max = g.s_max;
+    c.s_max = power_scale(p);
     c.travel = Some(p.travel_limits());
     c.max_fire_percent = g.max_fire_percent;
     c.max_fire_duration = p.fire_duration();
@@ -91,6 +92,7 @@ mod tests {
         assert_eq!(power_commands(MarlinPowerMode::M3, 0).0, "M3 S{s}");
         assert_eq!(power_commands(MarlinPowerMode::M4, 0).0, "M4 S{s}");
         assert_eq!(power_commands(MarlinPowerMode::Fan, 2), ("M106 P2 S{s}".into(), "M107 P2".into(), "M107 P2".into()));
+        assert_eq!(power_commands(MarlinPowerMode::Percent, 0), ("M3 P{percent}".into(), "M5".into(), "M5".into()));
     }
 
     #[test]

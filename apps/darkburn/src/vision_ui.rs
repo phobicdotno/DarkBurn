@@ -69,6 +69,8 @@ pub struct PncDraft {
     /// Waiting for a click on the canvas: (target, is the design position).
     pick: Option<(usize, bool)>,
     text: String,
+    /// The head is placed on the targets with the red dot, which sits at the pointer offset.
+    pointer: bool,
 }
 
 #[derive(Default, Clone)]
@@ -178,6 +180,20 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
     match id {
         "laser.rotary" => open(app, Dlg::Rotary),
         "laser.cylinder" => open(app, Dlg::Cylinder),
+        // With a laser connected, the menu sets the target where the head stands [LT-01, LT-02].
+        "laser.pnc_first" | "laser.pnc_second" if app.machine.handle.is_connected() => {
+            let i = usize::from(id == "laser.pnc_second");
+            let r =
+                vc::execute(app, id, &json!({ "pointer": app.vision.ui.pnc.pointer })).unwrap_or_else(|| Err("not a print and cut command".into()));
+            app.note = Some(match r {
+                Ok(v) => {
+                    let (x, y) = (v["laser"]["x"].as_f64().unwrap_or(0.0), v["laser"]["y"].as_f64().unwrap_or(0.0));
+                    app.vision.ui.pnc.laser[i] = [x, y];
+                    format!("{} target set where the laser is: X {x:.2}, Y {y:.2} mm.", if i == 0 { "First" } else { "Second" })
+                }
+                Err(e) => e,
+            });
+        }
         "laser.print_and_cut" | "laser.pnc_first" | "laser.pnc_second" | "laser.pnc_wizard" => open(app, Dlg::PrintCut),
         "laser.pnc_align" => {
             let r = vc::pnc_align(app, PnCMode::Scaled);
@@ -213,7 +229,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
     true
 }
 
-fn open_dialog(app: &mut DarkBurn, d: Dlg) {
+pub(crate) fn open_dialog(app: &mut DarkBurn, d: Dlg) {
     let s = &app.vision.state;
     let u = &mut app.vision.ui;
     match d {
@@ -513,13 +529,22 @@ fn rotary_dialog(ctx: &Context, app: &mut DarkBurn) {
         ui_kit::section_heading(ui, "Test rotation");
         field(ui, "Turns", &mut d.revs, "");
         ui.horizontal(|ui| {
-            if button(ui, "Plan test", "Shows what the test would do; nothing is sent from here") {
+            if button(ui, "Plan test", "Shows what the test would do; nothing is sent") {
                 // From what the window shows; only Apply keeps the settings.
                 d.plan = msg(vc::rotary_plan_for(app, &rotary_args(&d), d.revs), plan_text);
             }
+            let ready = app.machine.handle.is_connected() && app.machine.handle.snapshot().state == crate::machine_api::LaserState::Ready;
+            if ui.add_enabled_ui(ready, |ui| button(ui, "Run test", "Turn the object by the turns above and back on the connected laser")).inner {
+                let mut args = rotary_args(&d);
+                args["revolutions"] = json!(d.revs);
+                let r = crate::machine_ui::dispatch(app, "machine.rotary_test", &args, crate::machine_ui::Source::Ui);
+                d.plan = msg(r.unwrap_or_else(|| Err("the rotary test is not available".into())), |_| {
+                    "Test rotation sent: the object turns and comes back.".into()
+                });
+            }
         });
         result_line(ui, &d.plan);
-        note(ui, "A test rotation turns the object one way and back so you can check it returns to the start. The machine side sends it.");
+        note(ui, "A test rotation turns the object one way and back so you can check it returns to the start. Run test needs a connected laser.");
         ui.separator();
         ui.horizontal(|ui| {
             if button(ui, "Apply", "Keep these settings") {
@@ -596,6 +621,7 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui,
             "Mark two spots on the printed artwork. For each, put the laser on the spot, note the laser position and the matching position in the design, then set the target.",
         );
+        ui_kit::checkbox(ui, "Placed with the red dot (adds the pointer offset)", &mut d.pointer);
         let names = ["First target", "Second target", "Third target", "Fourth target"];
         #[allow(clippy::needless_range_loop, reason = "i indexes several parallel arrays")]
         for i in 0..2 {
@@ -607,10 +633,12 @@ fn pnc_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if button(ui, "Pick", "Click the canvas to take the position") {
                     d.pick = Some((i, false));
                 }
-                if button(ui, "Head", "Take the position of the laser head as the controller reports it") && app.machine.handle.is_connected() {
-                    let s = app.machine.handle.snapshot();
-                    let p = if s.family == crate::machine_api::Family::Grbl { s.work_pos } else { s.machine_pos };
-                    d.laser[i] = [p[0], p[1]];
+                if button(ui, "Head", "Take the position of the laser head as the controller reports it") {
+                    // From machine zero, as the targets are kept (a GRBL work position is off by the origin).
+                    match crate::motion_cmds::head_target(app, d.pointer) {
+                        Ok(p) => d.laser[i] = [p.x, p.y],
+                        Err(e) => d.text = e,
+                    }
                 }
             });
             ui.horizontal(|ui| {
@@ -1161,6 +1189,12 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
             ui.label("Head at");
             coord(ui, "Head at", "X", &mut d.head[0], 0.1);
             coord(ui, "Head at", "Y", &mut d.head[1], 0.1);
+            if button(ui, "Read head", "Take the position of the laser head as the connected laser reports it") {
+                match vc::head_now(app, None) {
+                    Ok(p) => d.head = [p.x, p.y],
+                    Err(e) => d.text = e,
+                }
+            }
         });
         ui.horizontal(|ui| {
             ui.label("Mark at");
@@ -1187,11 +1221,18 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
         ui_kit::section_heading(ui, "Stitching");
         note(ui, "Move the head to different places over the bed, add a capture at each, then stitch them into one picture.");
         ui.horizontal(|ui| {
-            if button(ui, "Add capture at head position", "Uses the latest camera picture")
-                && let Some(img) = app.vision.raw.clone()
-            {
-                let n = vc::head_add_capture(app, img, Point::new(d.head[0], d.head[1]));
-                d.text = format!("{n} capture(s).");
+            if button(ui, "Add capture at head position", "Uses the latest camera picture, and where a connected laser reports the head") {
+                // A connected laser says where the head is; without one the position typed above counts.
+                let typed = (!app.machine.handle.is_connected()).then(|| Point::new(d.head[0], d.head[1]));
+                match (app.vision.raw.clone(), vc::head_now(app, typed)) {
+                    (None, _) => d.text = "There is no camera picture yet.".into(),
+                    (_, Err(e)) => d.text = e,
+                    (Some(img), Ok(p)) => {
+                        d.head = [p.x, p.y];
+                        let n = vc::head_add_capture(app, img, p);
+                        d.text = format!("{n} capture(s).");
+                    }
+                }
             }
             if button(ui, "Stitch", "") {
                 d.text = msg(vc::head_stitch(app), |v| format!("Stitched {} capture(s).", v["captures"]));
@@ -1213,42 +1254,19 @@ fn head_dialog(ctx: &Context, app: &mut DarkBurn) {
 
 // ----- The Camera Control panel ----------------------------------------------------------------
 
-#[cfg(feature = "live-camera")]
+// Find, Start and Stop go through the command registry, where they are marked as hardware, and
+// the registry goes through camera_devices.rs: nothing here opens a camera itself.
+
 fn find_cameras(app: &mut DarkBurn) {
-    match darkburn_vision::capture::live::list_cameras() {
-        Ok(v) => {
-            app.vision.message = if v.is_empty() { Some("No camera found.".into()) } else { None };
-            app.vision.cameras = v;
-        }
-        Err(e) => app.vision.message = Some(e.to_string()),
-    }
+    let _ = crate::api::execute_headless(app, "camera.find", &json!({}));
 }
 
-#[cfg(not(feature = "live-camera"))]
-fn find_cameras(app: &mut DarkBurn) {
-    app.vision.message = Some("This build was made without live camera support. You can still use picture files.".into());
-}
-
-#[cfg(feature = "live-camera")]
 fn start_live(app: &mut DarkBurn, index: u32) {
-    match darkburn_vision::capture::live::LiveCamera::open(index) {
-        Ok(cam) => {
-            app.vision.source = Some(Box::new(cam));
-            app.vision.live = true;
-            app.vision.message = None;
-        }
-        Err(e) => app.vision.message = Some(e.to_string()),
-    }
-}
-
-#[cfg(not(feature = "live-camera"))]
-fn start_live(app: &mut DarkBurn, _index: u32) {
-    app.vision.message = Some("This build was made without live camera support.".into());
+    let _ = crate::api::execute_headless(app, "camera.start", &json!({ "index": index }));
 }
 
 fn stop_live(app: &mut DarkBurn) {
-    app.vision.live = false;
-    app.vision.source = None;
+    let _ = crate::api::execute_headless(app, "camera.stop", &json!({}));
 }
 
 /// The Camera Control panel [CAMP-01 to CAMP-07, CAM-01 to CAM-09].
@@ -1262,14 +1280,15 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     // Source
     ui_kit::section_heading(ui, "Camera");
     let mut allowed = app.vision.prefs.live_enabled;
-    if vc::live_built() && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
+    let possible = crate::camera_devices::available(app);
+    if possible && ui_kit::checkbox(ui, "Allow live camera", &mut allowed).changed() {
         app.vision.prefs.live_enabled = allowed;
         if !allowed {
             stop_live(app);
         }
         let _ = vc::save_prefs(app);
     }
-    if allowed && vc::live_built() {
+    if allowed && possible {
         let names: Vec<String> = app.vision.cameras.iter().map(|(_, n)| n.clone()).collect();
         let mut names_ref: Vec<&str> = vec!["No camera"];
         names_ref.extend(names.iter().map(String::as_str));
@@ -1297,7 +1316,7 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
                 }
             }
         });
-    } else if !vc::live_built() {
+    } else if !possible {
         ui.label(RichText::new("No live camera in this build. Use a picture file.").size(t.font_small).color(t.text_dim));
     }
     ui.horizontal_wrapped(|ui| {
@@ -1316,8 +1335,12 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
     }
     // Viewfinder
     if let Some(raw) = app.vision.raw.as_ref() {
-        let key = app.vision.frame_gen;
-        let id = upload(&ctx, &mut app.vision.ui.tex_raw, key, "vision_raw", raw);
+        let colour = app.prefs.opts.capture_colour;
+        let key = (app.vision.frame_gen << 1) | u64::from(colour);
+        // Turned black and white only when a new picture is uploaded, not on every frame.
+        let stale = app.vision.ui.tex_raw.as_ref().is_none_or(|(_, k)| *k != key);
+        let shown = if stale { crate::camera_devices::viewfinder(raw, colour) } else { std::borrow::Cow::Borrowed(raw) };
+        let id = upload(&ctx, &mut app.vision.ui.tex_raw, key, "vision_raw", &shown);
         let w = ui.available_width().min(300.0);
         let h = w * raw.height() as f32 / raw.width().max(1) as f32;
         ui.add(egui::Image::new(egui::load::SizedTexture::new(id, vec2(w, h))));
@@ -1329,14 +1352,8 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
         if button(ui, "Update overlay", "Take the latest picture and lay it over the bed") {
             app.vision.message = vc::update_overlay(app).err();
         }
-        if button(ui, "Trace", "Open the Trace Image window on the camera picture") {
-            match vc::overlay_as_image(app) {
-                Ok(_) => {
-                    let ctx2 = ctx.clone();
-                    app.run(&ctx2, "tools.trace_image");
-                }
-                Err(e) => app.vision.message = Some(e),
-            }
+        if button(ui, "Trace", "Take a picture and open the Trace Image window on it") {
+            app.vision.message = crate::api::execute_headless(app, "camera.trace_picture", &json!({})).err();
         }
         if button(ui, "Save settings", "Remember these camera settings for new projects") {
             app.vision.message = vc::save_settings(app).err();

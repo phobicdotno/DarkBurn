@@ -9,10 +9,14 @@ mod arrange_hunt_tests;
 #[cfg(test)]
 mod arrange_origin_tests;
 mod art_library;
+mod camera_devices;
+#[cfg(test)]
+mod camera_devices_tests;
 mod canvas;
 mod canvas_input;
 #[cfg(test)]
 mod canvas_tests;
+mod capture_trace;
 mod commands;
 #[cfg(test)]
 mod completion_ui_tests;
@@ -96,7 +100,12 @@ mod mcp_ui;
 mod misc_cmds;
 #[cfg(test)]
 mod monkey_tests;
+mod motion_cmds;
+#[cfg(test)]
+mod motion_cmds_tests;
 mod motion_read;
+#[cfg(test)]
+mod motion_ui_tests;
 #[cfg(target_os = "windows")]
 mod native_frame;
 mod node_tool;

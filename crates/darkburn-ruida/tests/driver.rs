@@ -239,6 +239,17 @@ fn home_and_origin() {
 }
 
 #[test]
+fn focus_z_stops_at_the_focus_distance() {
+    let (mut m, emu) = udp_machine();
+    m.home(HomeAxes::Z).unwrap();
+    m.write_setting(addr::FOCUS_DEPTH, 7_500).unwrap();
+    m.focus_z().unwrap();
+    assert_eq!(lock(&emu).position()[2], 7_500);
+    assert_eq!(lock(&emu).motion.last().unwrap().kind, MotionKind::Home);
+    assert_eq!(m.status().unwrap().z, 7_500);
+}
+
+#[test]
 fn frame_rectangle_and_outline() {
     let (mut m, emu) = udp_machine();
     m.frame_rect(Rect::new(10.0, 20.0, 110.0, 70.0), false).unwrap();
@@ -305,6 +316,35 @@ fn jog_step_and_continuous() {
     m.panel_key(PanelKey::PlusY, true).unwrap();
     m.panel_key(PanelKey::PlusY, false).unwrap();
     assert_eq!(lock(&emu).position()[1], 50_000);
+}
+
+/// A rapid move takes time on a real controller, so a position read right after one can still
+/// be the one from before it. Jogs there and back go out as absolute moves from one reading and
+/// end where they started all the same.
+#[test]
+fn jogs_there_and_back_end_at_the_start_while_the_moves_are_slow() {
+    let (mut m, emu) = udp_machine();
+    m.move_to(Point::new(50.0, 50.0), false).unwrap();
+    lock(&emu).set_slow_moves(true);
+    m.jog_steps(&[(Axis::U, 20.0), (Axis::U, -20.0)]).unwrap();
+    let e = lock(&emu);
+    assert_eq!(e.position(), [50_000, 50_000, 0, 0], "back at the start");
+    let turns: Vec<i32> = e.motion.iter().rev().take(2).rev().map(|r| r.to[3]).collect();
+    assert_eq!(turns, vec![20_000, 0], "there, then back");
+    drop(e);
+    // The emulator's registers still show the start of the last move until it is over.
+    assert_eq!(m.status().unwrap().u, 20_000);
+    lock(&emu).settle();
+    assert_eq!(m.status().unwrap().u, 0);
+
+    m.jog_steps(&[(Axis::Y, 5.0), (Axis::Y, -5.0)]).unwrap();
+    assert_eq!(lock(&emu).position(), [50_000, 50_000, 0, 0]);
+    // A target off the bed refuses the whole run before anything moves.
+    let n = lock(&emu).motion.len();
+    assert!(m.jog_steps(&[(Axis::X, 10.0), (Axis::X, -100.0), (Axis::X, 90.0)]).is_err());
+    assert!(m.jog_steps(&[(Axis::U, f64::NAN)]).is_err());
+    assert_eq!(lock(&emu).motion.len(), n, "nothing was sent");
+    m.jog_steps(&[]).unwrap();
 }
 
 // ---- settings -----------------------------------------------------------------------------

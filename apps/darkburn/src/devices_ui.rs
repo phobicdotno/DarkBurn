@@ -616,10 +616,15 @@ fn gcode_firmware_fields(ui: &mut Ui, d: &mut Device) {
         ui_kit::number_field(ui, &mut e.max_fire_seconds, 0.1..=600.0, 0.5, " s");
     });
     if matches!(kind, Some(DeviceKind::Marlin | DeviceKind::Snapmaker)) {
-        let modes = [MarlinPowerMode::M3, MarlinPowerMode::M4, MarlinPowerMode::Inline, MarlinPowerMode::Fan];
+        let modes = [MarlinPowerMode::M3, MarlinPowerMode::M4, MarlinPowerMode::Inline, MarlinPowerMode::Fan, MarlinPowerMode::Percent];
         let mut mi = modes.iter().position(|m| *m == e.marlin_power).unwrap_or(0);
         ui_kit::row(ui, "Laser power", |ui| {
-            ui_kit::dropdown(ui, "ds_marlin_mode", &mut mi, &["M3 S (constant)", "M4 S (dynamic)", "Inline (M3 I)", "Fan output (M106)"]);
+            ui_kit::dropdown(
+                ui,
+                "ds_marlin_mode",
+                &mut mi,
+                &["M3 S (constant)", "M4 S (dynamic)", "Inline (M3 I)", "Fan output (M106)", "Percent (M3 P, Snapmaker)"],
+            );
         });
         e.marlin_power = modes[mi];
         ui_kit::row(ui, "Fan or tool number", |ui| {

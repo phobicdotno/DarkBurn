@@ -94,6 +94,21 @@ struct Snapshot {
     revision: u64,
 }
 
+/// Redo steps taken out of the history with [`History::take_redo`], to be put back with
+/// [`History::put_back_redo`] when the change that would have cleared them is taken back.
+#[derive(Clone, Debug, Default)]
+pub struct RedoSteps(Vec<Snapshot>);
+
+impl RedoSteps {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// Unlimited undo and redo.
 #[derive(Clone, Debug, Default)]
 pub struct History {
@@ -140,6 +155,17 @@ impl History {
     pub fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+    }
+
+    /// Take the redo steps out, before a change that may be taken back as if it never came
+    /// (a change clears them).
+    pub fn take_redo(&mut self) -> RedoSteps {
+        RedoSteps(std::mem::take(&mut self.redo))
+    }
+
+    /// Put redo steps from [`History::take_redo`] back, in place of any there are now.
+    pub fn put_back_redo(&mut self, steps: RedoSteps) {
+        self.redo = steps.0;
     }
 }
 
@@ -376,6 +402,30 @@ mod tests {
         assert!(!e.is_modified(), "the document is as it was saved");
         assert_eq!(e.selection.ids(), &[id], "the selection the change made is kept");
         assert!(e.redo(), "and what could be redone still can");
+    }
+
+    /// A change that is taken back with drop_checkpoint can leave redo as it was.
+    #[test]
+    fn redo_steps_can_be_kept_across_a_change_that_is_taken_back() {
+        let mut e = Editor::new();
+        e.edit("Add", |d, _| {
+            d.add(square(0.0));
+            true
+        });
+        e.undo();
+        assert_eq!(e.history.redo_label(), Some("Add"));
+        let kept = e.history.take_redo();
+        assert_eq!(kept.len(), 1);
+        e.edit("Picture", |d, _| {
+            d.add(square(5.0));
+            true
+        });
+        assert!(!e.history.can_redo());
+        e.drop_checkpoint();
+        e.history.put_back_redo(kept);
+        assert_eq!(e.doc.len(), 0);
+        assert!(e.redo(), "redo brings the first change back");
+        assert_eq!(e.doc.len(), 1);
     }
 
     #[test]

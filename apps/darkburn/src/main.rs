@@ -143,6 +143,9 @@ mod text_render;
 mod text_tests;
 mod text_ui;
 mod thumbnail;
+mod toolbar_dock;
+#[cfg(test)]
+mod toolbar_dock_tests;
 mod tools;
 #[cfg(test)]
 mod ui_bug_tests;

@@ -127,6 +127,7 @@ fn changed(done: bool) -> Result<Value, String> {
 /// The commands that take arguments; None when `id` is not one of them.
 fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, String>> {
     Some(match id {
+        "window.toolbar_place" => crate::toolbar_dock::place_command(app, a),
         "window.toolbar_move" => (|| {
             let tb = text(a, "toolbar")?;
             if !crate::prefs::TOOLBARS.iter().any(|(t, _)| *t == tb) {

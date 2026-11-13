@@ -1190,6 +1190,11 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
             }
         }
     }
+    if let Some(layout) = dev.state.toolbar_layout.as_deref()
+        && let Ok(places) = serde_json::from_str::<crate::toolbar_dock::ToolbarPlaces>(layout)
+    {
+        p.toolbar_places = places;
+    }
     p.sanitise();
     // Each device keeps its own material and cut library [LIB-09, LAYER-10].
     app.extras.library.switch_device(&dev.name, &app.prefs);
@@ -1206,6 +1211,7 @@ pub fn adopt_device_state(app: &mut DarkBurn) {
 pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
     let (inches, grid, layout) = (app.prefs.numeric_inches, app.prefs.show_grid, serde_json::to_string(&app.prefs.panels).ok());
     let spacing = f64::from(app.prefs.grid_spacing);
+    let toolbars = serde_json::to_string(&app.prefs.toolbar_places).ok();
     let (saved, finish) = (app.machine.jog.saved.clone(), app.machine.jog.finish);
     if let Some(d) = app.machine.devices.get_mut(id) {
         d.state.saved_positions = saved;
@@ -1215,6 +1221,7 @@ pub fn capture_device_state(app: &mut DarkBurn, id: u64) {
         // Stored to a thousandth of a millimetre, so 0.1 does not come back as 0.10000000149.
         d.state.grid_spacing = (spacing * 1000.0).round() / 1000.0;
         d.state.panel_layout = layout;
+        d.state.toolbar_layout = toolbars;
     }
 }
 

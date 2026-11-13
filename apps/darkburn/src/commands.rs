@@ -219,6 +219,11 @@ pub const COMMANDS: &[Cmd] = &[
         "Move a Toolbar",
         r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id, for example arrange"},"delta":{"type":"integer","description":"places to move: negative is earlier"}},"required":["toolbar"]}"#,
     ),
+    a(
+        "window.toolbar_place",
+        "Dock or Float a Toolbar",
+        r#"{"type":"object","properties":{"toolbar":{"type":"string","description":"a toolbar id: main, arrange, modifiers, numeric, text, modes, docking, tools or palette"},"place":{"type":"string","enum":["home","top","bottom","left","right","floating"],"description":"home is its usual place (the ribbon, the tools at the left, the palette at the bottom)"},"x":{"type":"number","description":"floating: left edge in points"},"y":{"type":"number","description":"floating: top edge in points"}},"required":["toolbar","place"]}"#,
+    ),
     c("window.preview", "Preview", "Alt+P", "db_preview"),
     c("view.zoom_page", "Zoom to Page", "Ctrl+0", "db_zoom_page"),
     c("view.zoom_in", "Zoom In", "Ctrl+=", "db_zoom_in"),
@@ -553,6 +558,7 @@ pub fn works(id: &str) -> bool {
             | "arrange.unlock"
             | "window.reset_layout"
             | "window.toolbar_move"
+            | "window.toolbar_place"
             | "view.zoom_page"
             | "view.zoom_in"
             | "view.zoom_out"
@@ -679,6 +685,7 @@ pub fn hardware(id: &str) -> bool {
 pub fn checklist(id: &str) -> &'static [&'static str] {
     match id {
         "file.new" => &["FILE-01"],
+        "window.toolbar_place" => &["TB-25"],
         "file.open" | "project.open" => &["FILE-04"],
         "file.import" | "project.import" => &["FILE-05", "IMP-03", "IMP-04", "IMP-05", "IMP-06", "IMP-13", "PROJ-02", "PROJ-03"],
         "file.notes" => &["FILE-06"],

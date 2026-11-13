@@ -399,6 +399,9 @@ pub struct DeviceState {
     pub show_grid: bool,
     /// Dock layout of this device as the app's own JSON (`Prefs::panels`); `None` keeps the current one.
     pub panel_layout: Option<String>,
+    /// Where this device's toolbars were moved to, as the app's own JSON (`Prefs::toolbar_places`);
+    /// `None` keeps the current places [TB-25].
+    pub toolbar_layout: Option<String>,
     /// Default layers (cut settings) as the app's own JSON; `None` keeps the project's.
     pub default_layers: Option<String>,
     /// Remembered serial port ("" = choose automatically).
@@ -419,6 +422,7 @@ impl Default for DeviceState {
             grid_spacing: 10.0,
             show_grid: true,
             panel_layout: None,
+            toolbar_layout: None,
             default_layers: None,
             port: AUTO_PORT.into(),
             excluded_ports: Vec::new(),

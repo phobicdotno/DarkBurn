@@ -7,3 +7,4 @@
 - Fix: closing a popped-out window with its own close button, Esc or Close works as it does inside the main window
 - Fix: clicking a button in a window that sits over a panel no longer docks the window, even when the button is held down a while
 - Fix: the Preview docks again when dragged onto a panel by its title bar, and right-clicking its title bar opens the dock menu
+- New: every toolbar can be docked at any edge of the window or floated over it, by dragging it or from its right-click menu

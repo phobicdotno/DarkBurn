@@ -1348,7 +1348,7 @@ pub fn camera_panel(ui: &mut Ui, app: &mut DarkBurn) {
             app.vision.message = vc::update_overlay(app).err();
         }
         if button(ui, "Trace", "Take a picture and open the Trace Image window on it") {
-            app.vision.message = crate::capture_trace::open(app).err();
+            app.vision.message = crate::api::execute_headless(app, "camera.trace_picture", &json!({})).err();
         }
         if button(ui, "Save settings", "Remember these camera settings for new projects") {
             app.vision.message = vc::save_settings(app).err();

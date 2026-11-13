@@ -303,11 +303,30 @@ pub fn trace_overlay(app: &mut DarkBurn, args: &Value) -> Result<Value, String> 
 
 /// Put the overlay in the document as a picture (selected), ready for the Trace Image window.
 pub fn overlay_as_image(app: &mut DarkBurn) -> Result<ShapeId, String> {
+    let p = overlay_picture(app)?;
+    Ok(add_overlay_picture(app, p))
+}
+
+/// The overlay, encoded and placed, ready to go into the document.
+pub struct OverlayPicture {
+    png: Vec<u8>,
+    size_px: (u32, u32),
+    rect: Rect,
+}
+
+/// The overlay as a picture for [`add_overlay_picture`]; fails without one.
+pub fn overlay_picture(app: &DarkBurn) -> Result<OverlayPicture, String> {
     let (img, adjust, covers) = overlay_flat(app)?;
-    let (w, h) = (img.width(), img.height());
+    let size_px = (img.width(), img.height());
     let rect = adjust.placement(covers);
     let mut png = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(project_error)?;
+    Ok(OverlayPicture { png, size_px, rect })
+}
+
+/// Put the picture in the document (selected), as the undo step "Camera picture".
+pub fn add_overlay_picture(app: &mut DarkBurn, p: OverlayPicture) -> ShapeId {
+    let OverlayPicture { png, size_px: (w, h), rect } = p;
     let layer = app.editor.current_layer;
     let mut id = ShapeId(0);
     app.editor.edit("Camera picture", |d, sel| {
@@ -321,7 +340,7 @@ pub fn overlay_as_image(app: &mut DarkBurn) -> Result<ShapeId, String> {
         sel.set([id]);
         true
     });
-    Ok(id)
+    id
 }
 
 /// Save Background Capture [FILE-14]: the overlay (or the raw frame when there is none) as a picture file.
@@ -1362,6 +1381,11 @@ pub const COMMANDS: &[Cmd] = &[
         "Trace the Camera Overlay",
         r#"{"type":"object","description":"Trace Image settings (threshold, ignore_less_than, ...), all optional"}"#,
     ),
+    a(
+        "camera.trace_picture",
+        "Take a Camera Picture and Trace It",
+        r#"{"type":"object","description":"Trace Image settings (threshold, ignore_smaller, ...), all optional; delete_image is on unless set false","properties":{"apply":{"type":"boolean","description":"trace at once, as one undo step (default false: open the Trace Image window on the picture)"},"delete_image":{"type":"boolean"}}}"#,
+    ),
     a("camera.save_settings", "Save Camera Settings for New Projects", ""),
     a("camera.export_settings", "Export Camera Settings", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("camera.import_settings", "Import Camera Settings", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
@@ -1519,6 +1543,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "laser.feeder" | "test.feeder" => &["OTHER-04"],
         "laser.capture" | "camera.update_overlay" | "camera.load_frame" => &["CAMP-02", "CAMP-03", "CAM-06"],
         "camera.trace" => &["CAMP-04"],
+        "camera.trace_picture" => &["IMG-20", "CAMP-04"],
         "camera.find" => &["CAMP-01", "CAM-01", "SET-37"],
         "camera.start" => &["CAMP-01", "CAMP-02", "CAM-01", "SET-37"],
         "camera.stop" => &["CAMP-02"],
@@ -1574,6 +1599,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, args: &Value) -> Option<Result<Valu
         "camera.load_frame" => path_arg(a).and_then(|p| load_frame_file(app, &p)).map(|(w, h)| json!({ "width_px": w, "height_px": h })),
         "camera.update_overlay" | "laser.capture" => update_overlay(app),
         "camera.trace" => trace_overlay(app, a),
+        "camera.trace_picture" => crate::capture_trace::command(app, a),
         "camera.save_settings" => save_settings(app),
         "camera.export_settings" => path_arg(a).and_then(|p| export_settings(app, &p)),
         "camera.import_settings" => path_arg(a).and_then(|p| import_settings(app, &p)),

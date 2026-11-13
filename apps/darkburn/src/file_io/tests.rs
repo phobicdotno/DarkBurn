@@ -497,6 +497,11 @@ fn gweike_gcode_is_written_under_every_extension_the_vendor_software_reads() {
     let code = std::fs::read_to_string(&txt).unwrap();
     assert!(code.lines().any(|l| l == "M03") && code.lines().any(|l| l == "M05"), "{code}");
     assert!(!code.lines().any(|l| l == "M07" || l == "M08"), "{code}");
+    // Agents find the start and end codes in the command's schema.
+    let schema = crate::commands::describe("project.export").unwrap().args_schema;
+    for key in ["nc_on", "nc_off"] {
+        assert_eq!(schema["properties"][key]["type"], "string", "{key} is in the project.export schema");
+    }
 }
 
 #[test]

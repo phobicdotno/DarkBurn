@@ -222,10 +222,10 @@ fn trace_from_the_camera_takes_a_picture_that_cancel_takes_away() {
     run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
     let steps = a.editor.history.len();
     crate::capture_trace::open(&mut a).unwrap();
-    let d = a.images.trace.take().expect("the Trace Image window opens");
+    let mut d = a.images.trace.take().expect("the Trace Image window opens");
     assert!(d.args.delete_image, "the picture is only there for the trace");
     assert_eq!(images(&a), 1);
-    crate::capture_trace::cancel(&mut a, &d);
+    crate::capture_trace::cancel(&mut a, &mut d);
     assert_eq!((a.editor.doc.len(), a.editor.history.len()), (0, steps), "Cancel leaves nothing behind");
     assert!(!a.editor.history.redo_label().is_some_and(|l| l == "Camera picture"), "and nothing to redo either");
 
@@ -306,6 +306,131 @@ fn the_camera_panel_traces_a_fresh_picture() {
     assert_eq!(counts, (0, 1));
     assert_eq!(g.app().editor.history.undo_label(), Some("Trace camera picture"));
     g.screenshot("camera_trace_done");
+}
+
+/// A rectangle drawn and undone, so Redo can bring it back.
+fn something_to_redo(a: &mut DarkBurn) {
+    run(a, "shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20 })).unwrap();
+    run(a, "edit.undo", json!({})).unwrap();
+    assert!(a.editor.history.can_redo());
+}
+
+/// Trace then Cancel leaves Redo as it was: the document is back where it was, so what could be
+/// redone still can.
+#[test]
+fn cancelling_a_camera_trace_keeps_what_could_be_redone() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    something_to_redo(&mut a);
+    let redo = a.editor.history.redo_labels().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    crate::capture_trace::open(&mut a).unwrap();
+    let mut d = a.images.trace.take().unwrap();
+    crate::capture_trace::again(&mut a, &mut d).unwrap();
+    crate::capture_trace::cancel(&mut a, &mut d);
+    assert_eq!(a.editor.doc.len(), 0);
+    assert_eq!(a.editor.history.redo_labels(), redo, "Redo is as it was before Trace");
+    run(&mut a, "edit.redo", json!({})).unwrap();
+    assert_eq!(a.editor.doc.len(), 1, "and brings the rectangle back");
+}
+
+/// Trace in the panel while Trace Image is open on a camera picture puts the new picture in the
+/// old one's place; Cancel then leaves nothing behind.
+#[test]
+fn trace_twice_leaves_one_camera_picture() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    let steps = a.editor.history.len();
+    run(&mut a, "camera.trace_picture", json!({})).unwrap();
+    let first = picture(&a);
+    run(&mut a, "camera.trace_picture", json!({ "threshold": 100 })).unwrap();
+    assert_eq!(images(&a), 1, "one picture, not two");
+    assert_ne!(picture(&a), first, "the new one");
+    let mut d = a.images.trace.take().expect("the window is still open");
+    assert_eq!(d.args.threshold, 100, "with the settings it was given");
+    assert!(a.editor.doc.get(d.ids[0]).is_some(), "on the new picture");
+    crate::capture_trace::cancel(&mut a, &mut d);
+    assert_eq!((a.editor.doc.len(), a.editor.history.len()), (0, steps), "Cancel leaves nothing behind");
+}
+
+/// When Capture again cannot take a picture, the window keeps the one it shows and can still
+/// trace it.
+#[test]
+fn a_failed_capture_again_keeps_the_picture() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    crate::capture_trace::open(&mut a).unwrap();
+    let mut d = a.images.trace.take().unwrap();
+    let before = picture(&a);
+    // The camera stops giving pictures (unplugged).
+    a.vision.source = Some(Box::new(darkburn_vision::capture::CannedFrames::default()));
+    assert!(crate::capture_trace::again(&mut a, &mut d).is_err());
+    assert_eq!(images(&a), 1);
+    assert_eq!(picture(&a), before, "the picture the window shows stays");
+    assert!(a.editor.doc.get(d.ids[0]).is_some(), "and the window is still on it");
+    let r = crate::capture_trace::finish(&mut a, &d).unwrap();
+    assert!(r.nodes > 0);
+    assert_eq!((images(&a), paths(&a)), (0, 1), "OK still traces it");
+}
+
+/// A head camera with stitched captures: Trace takes the stitched picture (a new frame does not
+/// change it) [IMG-20, CAM-05].
+#[test]
+fn trace_from_the_camera_takes_the_stitched_head_camera_picture() {
+    let mut a = simulated(320, 240);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    // A head camera whose picture shows 40 x 30 mm around the head at 8 px/mm.
+    let marks: Vec<Value> = [(40.0, 30.0), (280.0, 30.0), (280.0, 210.0), (40.0, 210.0), (160.0, 120.0)]
+        .iter()
+        .map(|(px, py)| {
+            let bed = json!({ "x": 100.0 + (px - 160.0) / 8.0, "y": 100.0 - (py - 120.0) / 8.0 });
+            json!({ "image": { "x": px, "y": py }, "head": { "x": 100.0, "y": 100.0 }, "bed": bed })
+        })
+        .collect();
+    run(&mut a, "camera.head_solve", json!({ "marks": marks, "image_width": 320, "image_height": 240 })).unwrap();
+    let dark = image::RgbaImage::from_pixel(320, 240, image::Rgba([40, 40, 40, 255]));
+    crate::vision_cmds::head_add_capture(&mut a, dark.clone(), darkburn_core::kurbo::Point::new(100.0, 100.0));
+    crate::vision_cmds::head_add_capture(&mut a, dark, darkburn_core::kurbo::Point::new(140.0, 100.0));
+    // Before Stitch there is no head camera picture to trace.
+    assert!(run(&mut a, "camera.trace_picture", json!({})).unwrap_err().contains("Stitch"));
+    run(&mut a, "camera.head_stitch", json!({})).unwrap();
+    let stitched = a.vision.overlay.as_ref().unwrap().img.clone();
+    run(&mut a, "camera.trace_picture", json!({})).unwrap();
+    assert!(a.images.trace.is_some(), "Trace Image opens");
+    assert_eq!(a.vision.overlay.as_ref().unwrap().img, stitched, "on the stitched picture");
+    let d = a.images.trace.take().unwrap();
+    let r = crate::capture_trace::finish(&mut a, &d).unwrap();
+    assert!(r.nodes > 0, "the dark captures are traced");
+    assert_eq!((images(&a), paths(&a)), (0, 1));
+}
+
+/// The command does what the window does, without a window: open Trace Image on a fresh
+/// picture, or with apply trace it at once as one undo step [IMG-20].
+#[test]
+fn the_trace_picture_command_traces_without_a_window() {
+    assert!(!crate::commands::hardware("camera.trace_picture"), "it opens no device");
+    assert!(crate::vision_cmds::checklist("camera.trace_picture").contains(&"IMG-20"));
+    let mut a = simulated(320, 240);
+    // Without a camera or picture file there is nothing to trace.
+    assert!(run(&mut a, "camera.trace_picture", json!({ "apply": true })).is_err());
+    assert_eq!(a.editor.doc.len(), 0);
+    run(&mut a, "camera.start", json!({ "index": 0 })).unwrap();
+    let steps = a.editor.history.len();
+    let r = run(&mut a, "camera.trace_picture", json!({ "apply": true })).unwrap();
+    assert!(r["nodes"].as_u64().unwrap() > 0, "{r}");
+    assert!(a.images.trace.is_none(), "no window is left open");
+    assert_eq!((images(&a), paths(&a)), (0, 1), "the picture went after tracing");
+    assert_eq!(a.editor.history.len(), steps + 1);
+    assert_eq!(a.editor.history.undo_label(), Some("Trace camera picture"));
+    // Keep the picture when asked; a threshold that finds nothing leaves the design as it was.
+    run(&mut a, "camera.trace_picture", json!({ "apply": true, "delete_image": false })).unwrap();
+    assert_eq!((images(&a), paths(&a)), (1, 2), "picture and paths");
+    let before = (a.editor.doc.len(), a.editor.history.len());
+    assert!(run(&mut a, "camera.trace_picture", json!({ "apply": true, "threshold": 0 })).is_err());
+    assert_eq!((a.editor.doc.len(), a.editor.history.len()), before, "a failed trace leaves no picture behind");
+    // Without apply the window opens on the picture.
+    let r = run(&mut a, "camera.trace_picture", json!({})).unwrap();
+    assert_eq!(r["opened"], "trace_image");
+    assert!(a.images.trace.as_ref().is_some_and(|d| d.args.delete_image));
 }
 
 /// Click the `label` button on the row of `anchor`.
@@ -400,4 +525,35 @@ fn the_head_camera_window_reads_the_head_position_from_the_laser() {
     let want = crate::vision_cmds::laser_to_design(&a, darkburn_core::kurbo::Point::new(100.0, 80.0));
     let got = a.vision.mosaic[0].head_pos;
     assert!((got - want).hypot() < 0.05, "placed at the head the laser reported: {got:?}, want {want:?}");
+}
+
+// ----- The capture system in Settings [SET-37] ------------------------------------------------
+
+/// Settings > Devices: the capture system is picked from its list, and the next Find uses it.
+#[test]
+fn the_capture_system_is_picked_in_settings() {
+    let mut g = Gui::standard();
+    g.app().vision.prefs.live_enabled = true;
+    assert_eq!(g.app().prefs.opts.capture_system, "default");
+    g.run_command("edit.settings");
+    g.settle();
+    g.click_label("Devices");
+    g.frames(3);
+    let window = g.dialog_windows().into_iter().next().expect("Settings is open");
+    for _ in 0..60 {
+        if g.find_text("Default for this computer").is_some_and(|r| r.top() > window.top() + 60.0 && r.bottom() < window.bottom() - 70.0) {
+            break;
+        }
+        g.scroll(window.center(), egui::vec2(0.0, -60.0));
+    }
+    g.click_label("Default for this computer");
+    g.frames(2);
+    g.click_label("Simulated camera");
+    g.frames(2);
+    assert_eq!(g.app().prefs.opts.capture_system, "simulated", "the pick is kept");
+    g.screenshot("settings_capture_system");
+    g.close_dialogs();
+    let r = g.exec("camera.find", json!({}));
+    assert_eq!(r["system"], "simulated", "Find uses the picked system: {r}");
+    assert_eq!(r["cameras"].as_array().map(Vec::len), Some(2));
 }

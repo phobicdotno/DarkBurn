@@ -1001,7 +1001,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                     app.images.trace = Some(d);
                 }
             }
-            (true, _) | (_, ui_kit::Action::Cancel) => crate::capture_trace::cancel(app, &d),
+            (true, _) | (_, ui_kit::Action::Cancel) => crate::capture_trace::cancel(app, &mut d),
             _ => app.images.trace = Some(d),
         }
     }

@@ -197,7 +197,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     let plan = app.machine.ext.gweike_plan.clone();
     let card = app.machine.ext.gweike_card.clone();
     let connected = app.machine.ext.mcc.connected();
-    let frame_id = Id::new("db_gweike_card_frame");
+    let frame_id = Id::unique("db_gweike_card_frame");
     let mut frame: String = ctx.data_mut(|d| d.get_temp(frame_id)).unwrap_or_default();
     let doc_layers: Vec<(usize, String)> =
         used.iter().filter(|l| **l < darkburn_core::layer::COLOUR_LAYERS).map(|l| (*l, app.editor.doc.layer(*l).name.clone())).collect();

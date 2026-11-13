@@ -174,7 +174,7 @@ fn parse_hex(s: &str) -> Result<Vec<u8>, String> {
     if digits.is_empty() {
         return Err("argument hex is empty".into());
     }
-    if digits.len() % 2 != 0 {
+    if !digits.len().is_multiple_of(2) {
         return Err("argument hex has an odd number of digits".into());
     }
     digits

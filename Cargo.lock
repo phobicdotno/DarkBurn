@@ -1198,6 +1198,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "darkburn-lihuiyu"
+version = "0.0.530"
+dependencies = [
+ "darkburn-job",
+ "kurbo 0.13.1",
+]
+
+[[package]]
 name = "darkburn-mcc"
 version = "0.0.530"
 dependencies = [

@@ -7,9 +7,27 @@
 
 use crate::path::{Contour, contours, flatten_contour};
 use crate::query::{seg_intersections, winding_number};
-use kurbo::{BezPath, ParamCurve, ParamCurveExtrema, PathSeg, Point};
+use kurbo::{BezPath, ParamCurve, ParamCurveExtrema, ParamCurveNearest, PathSeg, Point};
 
 const JOIN: f64 = 1e-6;
+
+/// The region's edge as the clip sees it: its flattened edges, the box around each, and how
+/// near to an edge counts as on it.
+struct Edges {
+    segs: Vec<PathSeg>,
+    boxes: Vec<kurbo::Rect>,
+    band: f64,
+}
+
+impl Edges {
+    /// True when `p` lies on the region's edge.
+    fn touch(&self, p: Point) -> bool {
+        let band = self.band;
+        self.segs.iter().zip(&self.boxes).any(|(e, b)| {
+            p.x >= b.x0 - band && p.x <= b.x1 + band && p.y >= b.y0 - band && p.y <= b.y1 + band && e.nearest(p, 1e-12).distance_sq <= band * band
+        })
+    }
+}
 
 /// The straight edges of the flattened region.
 fn region_edges(region: &[BezPath], tol: f64) -> Vec<PathSeg> {
@@ -44,14 +62,16 @@ fn inside(all: &BezPath, p: Point) -> bool {
 }
 
 /// The pieces of `path` inside `region`, as open subpaths (a closed outline that is wholly inside
-/// stays closed). `tol` is the flattening tolerance of the region's curves, in millimetres.
+/// stays closed). `tol` is the flattening tolerance of the region's curves, in millimetres. A
+/// piece that runs along the region's edge (within `tol` of it) counts as inside.
 pub fn clip_stroke(path: &BezPath, region: &[BezPath], tol: f64) -> BezPath {
-    let edges = region_edges(region, tol);
-    let edge_boxes: Vec<kurbo::Rect> = edges.iter().map(ParamCurveExtrema::bounding_box).collect();
+    let segs = region_edges(region, tol);
+    let boxes: Vec<kurbo::Rect> = segs.iter().map(ParamCurveExtrema::bounding_box).collect();
+    let edges = Edges { segs, boxes, band: if tol.is_finite() { tol.max(1e-9) } else { 1e-9 } };
     let all = all_region(region);
     let mut out = BezPath::new();
     for c in contours(path) {
-        let pieces = clip_contour(&c, &edges, &edge_boxes, &all);
+        let pieces = clip_contour(&c, &edges, &all);
         match pieces {
             Pieces::All => out.extend(c.to_bezpath().iter()),
             Pieces::Some(list) => {
@@ -69,14 +89,14 @@ enum Pieces {
     Some(Vec<BezPath>),
 }
 
-fn clip_contour(c: &Contour, edges: &[PathSeg], boxes: &[kurbo::Rect], all: &BezPath) -> Pieces {
+fn clip_contour(c: &Contour, edges: &Edges, all: &BezPath) -> Pieces {
     // Kept sub-segments in order, with whether each continues the one before it.
     let mut kept: Vec<PathSeg> = Vec::new();
     let mut dropped_any = false;
     for seg in &c.segs {
         let sb = ParamCurveExtrema::bounding_box(seg).inflate(1e-9, 1e-9);
         let mut ts = vec![0.0, 1.0];
-        for (e, eb) in edges.iter().zip(boxes) {
+        for (e, eb) in edges.segs.iter().zip(&edges.boxes) {
             if !sb.overlaps(*eb) {
                 continue;
             }
@@ -90,7 +110,10 @@ fn clip_contour(c: &Contour, edges: &[PathSeg], boxes: &[kurbo::Rect], all: &Bez
         ts.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
         for w in ts.windows(2) {
             let sub = seg.subsegment(w[0]..w[1]);
-            if inside(all, sub.eval(0.5)) {
+            // A point on the region's edge is inside or outside by the luck of the winding
+            // rule (the bottom and left edges of a rectangle count, the top and right do not):
+            // a piece that lies along the edge is kept whichever edge it is.
+            if inside(all, sub.eval(0.5)) || [0.25, 0.5, 0.75].iter().all(|t| edges.touch(sub.eval(*t))) {
                 kept.push(sub);
             } else {
                 dropped_any = true;

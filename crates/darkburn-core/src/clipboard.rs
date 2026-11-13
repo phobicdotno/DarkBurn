@@ -90,9 +90,12 @@ impl Clipboard {
     }
 
     /// Read clipboard text written by [`Clipboard::to_text`]; None when it is something else.
+    /// The text may come from anywhere: its shapes are put on layers that exist, as a
+    /// project's are when it is opened.
     pub fn from_text(text: &str) -> Option<Clipboard> {
         let body = text.strip_prefix(CLIPBOARD_MARK)?.trim_start();
-        let body: ClipText = serde_json::from_str(body).ok()?;
+        let mut body: ClipText = serde_json::from_str(body).ok()?;
+        body.shapes.iter_mut().for_each(crate::project::on_real_layers);
         let mut images = ImageStore::new();
         for i in body.images {
             let bytes = unhex(&i.data)?;

@@ -240,6 +240,19 @@ impl<'a> Emitter<'a> {
         if !self.s.comments {
             return;
         }
+        // The text may be anything (a layer's name is in it). A line break would make the rest
+        // of it a line of G-code. GRBL also acts on its realtime characters wherever they
+        // stand, in a comment too: `!`, `~`, `?` and every byte above ASCII.
+        let grbl = self.s.flavor.is_grbl();
+        let text: String = text
+            .chars()
+            .map(|c| match c {
+                c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => ' ',
+                '!' | '~' | '?' if grbl => '_',
+                c if grbl && !c.is_ascii() => '_',
+                c => c,
+            })
+            .collect();
         if self.s.flavor == Flavor::LinuxCnc {
             out.push(format!("({})", text.replace(['(', ')'], "")));
         } else {
@@ -769,6 +782,60 @@ mod tests {
         s.overscan_as_g0 = false;
         let g = emit(&tp(ops, false), &s);
         assert!(g.contains("M4\nG1 X2 F6000\n"), "{g}");
+    }
+
+    /// A layer's name is free text and is written into a comment. Whatever it holds, the
+    /// comment stays one line: a line break in it would make the rest a line of G-code.
+    #[test]
+    fn a_line_break_in_a_comment_does_not_start_a_line_of_g_code() {
+        for flavor in [Flavor::Grbl, Flavor::GrblHal, Flavor::FluidNc, Flavor::Marlin, Flavor::Smoothieware, Flavor::LinuxCnc] {
+            let with = |text: &str| {
+                let mut ops = vec![Op::Comment { text: text.into() }];
+                ops.extend(sq());
+                emit(&tp(ops, false), &GcodeSettings::new(flavor))
+            };
+            let plain = with("Layer C00 Wood");
+            for name in [
+                "Wood\nM3 S1000",
+                "Wood\r\nG1 X500 S1000",
+                "Wood\rM3 S1000",
+                "Wood\u{b}M3 S1000\u{c}",
+                "Wood\u{85}M3 S1000",
+                "Wood\u{2028}M3 S1000\u{2029}",
+            ] {
+                let g = with(&format!("Layer C00 {name}"));
+                let lines: Vec<&str> = g.split(['\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}']).collect();
+                assert_eq!(lines.len(), plain.split('\n').count(), "{flavor:?}, {name:?}: {g:?}");
+                for l in lines.iter().filter(|l| l.contains("S1000")) {
+                    assert!(l.starts_with(';') || l.starts_with('('), "{flavor:?}, {name:?}: {l:?} is not a comment");
+                }
+                assert!(g.contains("Wood"), "the name is still there: {g:?}");
+            }
+        }
+    }
+
+    /// GRBL acts on its realtime characters wherever they stand in what it is sent, in a
+    /// comment too: `!` holds the job, and the bytes of a letter outside ASCII are override
+    /// commands (for the feed, the power, the air). A saved file must not hold them.
+    #[test]
+    fn a_grbl_comment_holds_no_realtime_characters() {
+        let names = ["Cut! now", "Wait ~ here?", "\u{c4}u\u{df}en \u{da} \u{160}", "\u{6728}\u{6750}", "tab\there\u{18}"];
+        for flavor in [Flavor::Grbl, Flavor::GrblHal, Flavor::FluidNc] {
+            for name in names {
+                let mut ops = vec![Op::Comment { text: format!("Layer C00 {name} - Line") }];
+                ops.extend(sq());
+                let g = emit(&tp(ops, false), &GcodeSettings::new(flavor));
+                let bad: Vec<char> =
+                    g.chars().filter(|c| matches!(c, '!' | '~' | '?') || !(c.is_ascii_graphic() || *c == ' ' || *c == '\n')).collect();
+                assert!(bad.is_empty(), "{flavor:?}, {name:?}: {bad:?} in {g:?}");
+                assert!(g.contains("; Layer C00 ") && g.contains(" - Line\n"), "the rest of the comment is kept: {g:?}");
+            }
+        }
+        // Other controllers have no such characters: the name is written as it is.
+        for flavor in [Flavor::Marlin, Flavor::Smoothieware, Flavor::LinuxCnc] {
+            let g = emit(&tp(vec![Op::Comment { text: "Layer C00 \u{c4}u\u{df}en! - Line".into() }], false), &GcodeSettings::new(flavor));
+            assert!(g.contains("Layer C00 \u{c4}u\u{df}en! - Line"), "{flavor:?}: {g:?}");
+        }
     }
 
     #[test]

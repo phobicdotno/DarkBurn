@@ -111,7 +111,8 @@ pub fn grid_fit(item_bbox: Rect, target: Rect, spacing: Spacing) -> (usize, usiz
         } else if step <= 1e-12 {
             1
         } else {
-            ((avail - size + 1e-9) / step).floor() as usize + 1
+            // An area far larger than any count: as many as there are numbers for, not one past it.
+            (((avail - size + 1e-9) / step).floor() as usize).saturating_add(1)
         }
     };
     (fit(target.height(), item_bbox.height(), step.y), fit(target.width(), item_bbox.width(), step.x))

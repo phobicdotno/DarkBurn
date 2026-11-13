@@ -48,8 +48,14 @@ pub fn polylines_to_path(lines: &[(Vec<Point>, bool)]) -> BezPath {
     p
 }
 
+/// The farthest coordinate (mm) handed to the overlay library, which cannot take a point that is
+/// not a number or absurdly far out.
+const MAX_COORD: f64 = 1e12;
+
 /// Union of all filled areas in `paths` (non-zero rule, which is how glyph outlines are wound).
 /// The result is flattened to polygons within `tol` mm; one `BezPath` per outer shape, holes inside it.
+/// An outline with a point that is not a number or absurdly far out has no area that could be
+/// worked out and is left out.
 pub fn weld(paths: &[BezPath], tol: f64) -> Vec<BezPath> {
     let mut rings: Vec<Vec<[f64; 2]>> = Vec::new();
     for p in paths {
@@ -57,7 +63,7 @@ pub fn weld(paths: &[BezPath], tol: f64) -> Vec<BezPath> {
             if pts.len() > 1 && pts.first() == pts.last() {
                 pts.pop();
             }
-            if pts.len() >= 3 {
+            if pts.len() >= 3 && pts.iter().all(|q| q.x.abs() <= MAX_COORD && q.y.abs() <= MAX_COORD) {
                 rings.push(pts.iter().map(|q| [q.x, q.y]).collect());
             }
         }

@@ -285,7 +285,22 @@ fn tidy(s: &mut Shape, ids: &mut Vec<u64>) {
     }
     if let Some(a) = &mut s.array {
         for c in &mut a.source {
-            c.layer = c.layer.min(LAYER_COUNT - 1);
+            on_real_layers(c);
+        }
+    }
+}
+
+/// Put `s`, its children and the originals of its arrays on layers that exist, at every depth.
+pub(crate) fn on_real_layers(s: &mut Shape) {
+    s.layer = s.layer.min(LAYER_COUNT - 1);
+    if let crate::shape::ShapeKind::Group { children } = &mut s.kind {
+        for c in children {
+            on_real_layers(c);
+        }
+    }
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            on_real_layers(c);
         }
     }
 }

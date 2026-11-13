@@ -144,9 +144,9 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
     breaks.sort_by(|a, b| a.partial_cmp(b).unwrap());
     breaks.dedup_by(|a, b| (*a - *b).abs() < EPS);
 
-    // Lead-in start.
-    let lead_in = ls.lead_in.filter(|l| l.length > EPS);
-    let lead_out = ls.lead_out.filter(|l| l.length > EPS);
+    // Lead-in start. Leads lie on the waste side, and only a closed shape has one.
+    let lead_in = ls.lead_in.filter(|l| closed && l.length > EPS);
+    let lead_out = ls.lead_out.filter(|l| closed && l.length > EPS);
     let lead_in_op = lead_in.map(|l| lead_geometry(l, start, t0, normal(t0), true, speed, power));
     let entry = lead_in_op.as_ref().map_or(start, |(p, _)| *p);
 
@@ -491,6 +491,25 @@ mod tests {
         emit_path(&square(), true, &PathContext { depth: 1, ..ctx(&s) }, &mut ops);
         let Op::Rapid { to } = ops[0] else { panic!() };
         assert!((to.y - 2.0).abs() < 1e-9, "{to:?}");
+    }
+
+    /// Leads go on the waste side of a closed shape. An open line has no waste side: it is cut
+    /// as drawn, from its first point to its last, with nothing burned beside it.
+    #[test]
+    fn an_open_path_gets_no_lead_in_or_lead_out() {
+        for style in [LeadStyle::Line, LeadStyle::Arc] {
+            let mut s = CutSettings::line(10.0, 50.0);
+            s.line.lead_in = Some(Lead { length: 2.0, angle_deg: 90.0, style });
+            s.line.lead_out = Some(Lead { length: 2.0, angle_deg: 90.0, style });
+            let line = [Point::new(0.0, 0.0), Point::new(20.0, 0.0)];
+            let mut ops = Vec::new();
+            emit_path(&line, false, &ctx(&s), &mut ops);
+            assert_eq!(
+                ops,
+                vec![Op::Rapid { to: Point::new(0.0, 0.0) }, Op::Cut { to: Point::new(20.0, 0.0), speed: 10.0, power: 50.0 }],
+                "{style:?}"
+            );
+        }
     }
 
     #[test]

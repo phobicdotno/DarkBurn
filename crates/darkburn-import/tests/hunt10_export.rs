@@ -123,3 +123,10 @@ fn ai_export_keeps_layer_names_outside_latin1() {
     layers.dedup();
     assert_eq!(layers, vec!["切割".to_string(), "雕刻".to_string()]);
 }
+
+#[test]
+fn mtext_bad_unicode_code_does_not_eat_the_next_letters() {
+    // "\U+" always skipped seven characters, so a code without four hex digits took the
+    // following letters with it: "\U+4 Bolts" came back as "lts".
+    assert_eq!(dxf_import::strip_mtext("\\U+00e9t\\U+4 Bolts"), "ét\\U+4 Bolts");
+}

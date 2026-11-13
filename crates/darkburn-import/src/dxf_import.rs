@@ -814,10 +814,22 @@ pub fn strip_mtext(s: &str) -> String {
                     }
                     'U' if chars.get(i + 2) == Some(&'+') => {
                         let hex: String = chars.iter().skip(i + 3).take(4).collect();
-                        if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                            out.push(ch);
+                        let code = if hex.chars().count() == 4 && hex.chars().all(|h| h.is_ascii_hexdigit()) {
+                            u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                        } else {
+                            None
+                        };
+                        match code {
+                            Some(ch) => {
+                                out.push(ch);
+                                i += 7;
+                            }
+                            // Not a code: keep the text as written.
+                            None => {
+                                out.push('\\');
+                                i += 1;
+                            }
                         }
-                        i += 7;
                     }
                     // Codes with an argument ending in ';' (font, height, colour, width ...).
                     _ => {

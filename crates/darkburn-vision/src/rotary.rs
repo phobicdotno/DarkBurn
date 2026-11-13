@@ -332,6 +332,9 @@ fn y_extent(paths: &[BezPath]) -> Option<(f64, f64)> {
     e
 }
 
+/// The most slices [`split_by_slice`] makes.
+pub const MAX_SLICES: usize = 100_000;
+
 /// Cut the design into equal bands no taller than `max_size` mm (galvo field limit), one rotation per band.
 pub fn split_by_slice(paths: &[BezPath], max_size: f64, params: &RotaryParams) -> Result<Vec<RotarySlice>, RotaryError> {
     if !(max_size > 0.0) {
@@ -339,7 +342,12 @@ pub fn split_by_slice(paths: &[BezPath], max_size: f64, params: &RotaryParams) -
     }
     params.validate()?;
     let Some((ymin, ymax)) = y_extent(paths) else { return Ok(Vec::new()) };
-    let n = (((ymax - ymin) / max_size) - 1e-9).ceil().max(1.0) as usize;
+    let n = (((ymax - ymin) / max_size) - 1e-9).ceil().max(1.0);
+    // More slices than any design needs: a typing slip, and too many to build.
+    if !(n <= MAX_SLICES as f64) {
+        return Err(RotaryError::InvalidSliceSize);
+    }
+    let n = n as usize;
     let size = (ymax - ymin) / n as f64;
     let mut out = Vec::with_capacity(n);
     for i in 0..n {

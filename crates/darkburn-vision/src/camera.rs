@@ -472,7 +472,9 @@ pub fn adjust_brightness_contrast(img: &RgbaImage, brightness: f32, contrast: f3
 /// Next exposure value to try: moves `current` towards a mean brightness of `target` (damped), clamped to `range`.
 pub fn suggest_exposure(current: f64, measured_mean: f64, target: f64, range: (f64, f64)) -> f64 {
     let ratio = (target / measured_mean.max(0.01)).clamp(0.25, 4.0);
-    (current * ratio.powf(0.8)).clamp(range.0, range.1)
+    // `f64::clamp` panics on a reversed or NaN range; min/max skip a NaN bound.
+    let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+    (current * ratio.powf(0.8)).max(lo).min(hi)
 }
 
 // ---------------------------------------------------------------- settings

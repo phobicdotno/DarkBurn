@@ -84,7 +84,7 @@ impl CylinderCorrection {
     }
 
     fn check(&self) -> Result<(), CylinderError> {
-        if self.radius > 0.0 { Ok(()) } else { Err(CylinderError::InvalidRadius) }
+        if self.radius > 0.0 && self.radius.is_finite() && self.centre.is_finite() { Ok(()) } else { Err(CylinderError::InvalidRadius) }
     }
 
     /// Map a flat design point to the bed position that lands there on the surface.

@@ -502,7 +502,7 @@
   "settings.job_log_dir": "Папка журнала заданий",
   "settings.job_log_dir_hint": "Папка настроек DarkBurn",
   "settings.job_log_show": "Показать журнал заданий",
-  "settings.job_log_text": "Одна строка на задание в job_log.csv: начало, длительность, файл, устройство, результат.",
+  "settings.job_log_text": "В job_log.csv: начало, время, файл, устройство, итог.",
   "settings.jobs": "Задания",
   "settings.length_units": "Длины",
   "settings.node_size": "Размер узлов",

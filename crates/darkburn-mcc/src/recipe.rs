@@ -25,10 +25,17 @@
 //! `AfterLaserOffDelay{i}`. All five stored stages are read; [`ProcessType::stages`] says how
 //! many run. `LayerFileName` is the craft name, and the nozzle is taken from that name
 //! ([`RecipeName`]). See `docs/research/mlaser-files.md` for the full list.
+//!
+//! Every write path ([`apply_fibre`], [`apply_co2`], [`apply_craft`], [`entry_for`],
+//! [`RecipeFile::new`], [`RecipeFile::set_craft`], [`write_recipe`],
+//! [`LayerTable::apply_craft_table`]) refuses a craft that the craft checks flag with an error
+//! ([`refuse_craft_errors`]), so no out-of-range recipe reaches a file the vendor program loads.
+//! A layer whose craft is unchanged is left alone without a check, so a table that already holds
+//! a flagged layer can still have its other layers edited.
 
 use crate::craft::{
     Co2Craft, Craft, CraftIssue, CraftTable, CurveNode, CutSettings, FibreCraft, FocusRamp, FollowerSettings, GasType, LAYERS_PER_HEAD, PierceStage,
-    ProcessType, SlowStart, SmoothPierce, format_curve_nodes, parse_curve_nodes,
+    ProcessType, Severity, SlowStart, SmoothPierce, format_curve_nodes, parse_curve_nodes,
 };
 use crate::paramxml::{Attr, AttrList, Entry, MlaserError, ParamDoc, Section, parse_number};
 
@@ -114,6 +121,16 @@ pub fn validate_craft(craft: &Craft) -> Vec<CraftIssue> {
     match craft {
         Craft::Fibre(c) => c.validate(),
         Craft::Co2(c) => c.validate(),
+    }
+}
+
+/// `Err` naming every error-level finding of a craft check; warnings pass.
+pub fn refuse_craft_errors(issues: &[CraftIssue]) -> Result<(), MlaserError> {
+    let errors: Vec<String> = issues.iter().filter(|i| i.severity == Severity::Error).map(|i| format!("{}: {}", i.path, i.message)).collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(MlaserError::new(format!("the craft fails the craft checks and is not written: {}", errors.join("; "))))
     }
 }
 
@@ -428,12 +445,17 @@ impl Wr<'_> {
 
 /// Write a fibre craft into a `GP` entry, changing only what differs from the craft the entry
 /// holds now. The nozzle is not stored (it lives in the name). At most five pierce stages are
-/// stored; stages the new craft does not list keep their stored values.
+/// stored; stages the new craft does not list keep their stored values. A craft equal to the one
+/// stored changes nothing; any other craft must pass the craft checks.
 pub fn apply_fibre(e: &mut Entry, new: &FibreCraft) -> Result<(), MlaserError> {
     if new.pierce.len() > STORED_STAGES {
         return Err(MlaserError::new(format!("{} pierce stages; at most {STORED_STAGES} are stored", new.pierce.len())));
     }
     let (old, _) = fibre_from_entry(e);
+    if old == *new {
+        return Ok(());
+    }
+    refuse_craft_errors(&new.validate())?;
     let mut w = Wr { e };
     let (o, n) = (&old.cut, &new.cut);
     w.flag("NoManu", Some(old.no_manu), new.no_manu);
@@ -503,9 +525,14 @@ pub fn apply_fibre(e: &mut Entry, new: &FibreCraft) -> Result<(), MlaserError> {
     Ok(())
 }
 
-/// Write a CO2 craft into a `GP` entry, changing only what differs.
+/// Write a CO2 craft into a `GP` entry, changing only what differs. A craft equal to the one
+/// stored changes nothing; any other craft must pass the craft checks.
 pub fn apply_co2(e: &mut Entry, new: &Co2Craft) -> Result<(), MlaserError> {
     let (old, _) = co2_from_entry(e);
+    if old == *new {
+        return Ok(());
+    }
+    refuse_craft_errors(&new.validate())?;
     let mut w = Wr { e };
     w.flag("PowerAdjustWithSpeed", Some(old.dynamic_power), new.dynamic_power);
     w.flag("FreqAdjustWithSpeed", Some(old.dynamic_freq), new.dynamic_freq);
@@ -796,15 +823,15 @@ impl RecipeFile {
         Ok(())
     }
 
-    /// The file bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// The file bytes. Refused for a file whose text could not be decoded.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MlaserError> {
         self.doc.to_bytes()
     }
 }
 
 /// The bytes of a new recipe file holding `craft`.
 pub fn write_recipe(craft: &Craft) -> Result<Vec<u8>, MlaserError> {
-    Ok(RecipeFile::new(craft)?.to_bytes())
+    RecipeFile::new(craft)?.to_bytes()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -854,56 +881,61 @@ impl LayerTable {
     }
 
     /// Write a craft table back. Each layer changes only what differs. A slot with no section
-    /// gets one (after the last section of its head) only when its craft is not the default.
+    /// gets one (after the last section of its head) only when its craft is not the default. On an
+    /// error (a changed craft the checks flag) the table is left as it was.
     pub fn apply_craft_table(&mut self, table: &CraftTable) -> Result<(), MlaserError> {
-        let fibre = table.fibre.iter().cloned().map(Craft::Fibre);
-        let co2 = table.co2.iter().cloned().map(Craft::Co2);
-        let fibre_default = Craft::Fibre(FibreCraft::default());
-        let co2_default = Craft::Co2(Co2Craft::default());
-        for (i, craft) in fibre.enumerate().chain(co2.enumerate()) {
-            let kind = LayerKind::of(&craft);
-            let name = kind.section_name(i + 1);
-            if let Some(e) = self.doc.section_mut(&name).and_then(|s| s.entry_mut(LAYER_ENTRY)) {
-                apply_craft(e, &craft)?;
-                continue;
-            }
-            let default = if kind == LayerKind::Fibre { &fibre_default } else { &co2_default };
-            if craft == *default {
-                continue;
-            }
-            let mut entry = match kind {
-                LayerKind::Fibre => fibre_template(),
-                LayerKind::Co2 => {
-                    let mut e = co2_template();
-                    e.set("CutFreq", "5000");
-                    e
-                }
-            };
-            apply_craft(&mut entry, &craft)?;
-            let section = Section { name, attrs: Vec::new(), entries: vec![entry] };
-            let at = self
-                .doc
-                .sections
-                .iter()
-                .rposition(|s| LayerKind::from_section_name(&s.name).is_some_and(|(k, slot)| k == kind && slot <= i + 1))
-                .map(|p| p + 1)
-                .or_else(|| {
-                    (kind == LayerKind::Fibre)
-                        .then(|| {
-                            self.doc.sections.iter().position(|s| LayerKind::from_section_name(&s.name).is_some_and(|(k, _)| k == LayerKind::Co2))
-                        })
-                        .flatten()
-                })
-                .unwrap_or(self.doc.sections.len());
-            self.doc.sections.insert(at, section);
-        }
+        let mut doc = self.doc.clone();
+        apply_table_to(&mut doc, table)?;
+        self.doc = doc;
         Ok(())
     }
 
-    /// The file bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// The file bytes. Refused for a file whose text could not be decoded.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MlaserError> {
         self.doc.to_bytes()
     }
+}
+
+fn apply_table_to(doc: &mut ParamDoc, table: &CraftTable) -> Result<(), MlaserError> {
+    let fibre = table.fibre.iter().cloned().map(Craft::Fibre);
+    let co2 = table.co2.iter().cloned().map(Craft::Co2);
+    let fibre_default = Craft::Fibre(FibreCraft::default());
+    let co2_default = Craft::Co2(Co2Craft::default());
+    for (i, craft) in fibre.enumerate().chain(co2.enumerate()) {
+        let kind = LayerKind::of(&craft);
+        let name = kind.section_name(i + 1);
+        if let Some(e) = doc.section_mut(&name).and_then(|s| s.entry_mut(LAYER_ENTRY)) {
+            apply_craft(e, &craft)?;
+            continue;
+        }
+        let default = if kind == LayerKind::Fibre { &fibre_default } else { &co2_default };
+        if craft == *default {
+            continue;
+        }
+        let mut entry = match kind {
+            LayerKind::Fibre => fibre_template(),
+            LayerKind::Co2 => {
+                let mut e = co2_template();
+                e.set("CutFreq", "5000");
+                e
+            }
+        };
+        apply_craft(&mut entry, &craft)?;
+        let section = Section { name, attrs: Vec::new(), entries: vec![entry] };
+        let at = doc
+            .sections
+            .iter()
+            .rposition(|s| LayerKind::from_section_name(&s.name).is_some_and(|(k, slot)| k == kind && slot <= i + 1))
+            .map(|p| p + 1)
+            .or_else(|| {
+                (kind == LayerKind::Fibre)
+                    .then(|| doc.sections.iter().position(|s| LayerKind::from_section_name(&s.name).is_some_and(|(k, _)| k == LayerKind::Co2)))
+                    .flatten()
+            })
+            .unwrap_or(doc.sections.len());
+        doc.sections.insert(at, section);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1099,7 +1131,7 @@ mod tests {
         assert_eq!(r.layer.slot, 11);
         assert!(r.layer.notes.is_empty());
         assert_eq!(r.layer.craft, Craft::Fibre(c));
-        assert_eq!(r.to_bytes(), bytes, "write of what was read is byte-identical");
+        assert_eq!(r.to_bytes().unwrap(), bytes, "write of what was read is byte-identical");
     }
 
     #[test]
@@ -1129,16 +1161,16 @@ mod tests {
     #[test]
     fn unknown_attributes_and_number_forms_survive_a_round_trip() {
         let mut r = read_recipe(ODD.as_bytes()).unwrap();
-        assert_eq!(r.to_bytes(), ODD.as_bytes());
+        assert_eq!(r.to_bytes().unwrap(), ODD.as_bytes());
         let craft = r.layer.craft.clone();
         r.set_craft(&craft).unwrap();
-        assert_eq!(r.to_bytes(), ODD.as_bytes(), "an unchanged craft changes nothing");
+        assert_eq!(r.to_bytes().unwrap(), ODD.as_bytes(), "an unchanged craft changes nothing");
         let Craft::Fibre(mut c) = craft else { panic!("fibre") };
         assert_eq!(c.cut.gas, GasType::HighN2);
         assert_eq!(c.nozzle.as_deref(), Some("2.0S"));
         c.cut.speed_mm_s = 50.0;
         r.set_craft(&Craft::Fibre(c)).unwrap();
-        let text = String::from_utf8(r.to_bytes()).unwrap();
+        let text = String::from_utf8(r.to_bytes().unwrap()).unwrap();
         assert_eq!(text, ODD.replace("41.666666666666671", "50"));
     }
 
@@ -1150,13 +1182,13 @@ mod tests {
         c.smooth_pierce =
             Some(SmoothPierce { height_mm: 4.0, time_ms: 100.0, focus_mm: 0.0, power_pct: 50.0, freq_hz: 500.0, peak_current_pct: 100.0 });
         r.set_craft(&Craft::Fibre(c.clone())).unwrap();
-        let text = String::from_utf8(r.to_bytes()).unwrap();
+        let text = String::from_utf8(r.to_bytes().unwrap()).unwrap();
         assert!(text.contains(" SlowStart=\"1\" SlowStartLength=\"3\" SlowStartSpeed=\"10\""));
         assert!(text.contains(" EnableSmoothPierce=\"1\" SmoothPierceDrillHeight=\"4\" SmoothPierceDrillTime_ms=\"100\""));
         assert_eq!(r.layer.craft, Craft::Fibre(c.clone()));
         c.slow_start = None;
         r.set_craft(&Craft::Fibre(c)).unwrap();
-        let text = String::from_utf8(r.to_bytes()).unwrap();
+        let text = String::from_utf8(r.to_bytes().unwrap()).unwrap();
         assert!(text.contains(" SlowStart=\"0\" SlowStartLength=\"3\""));
     }
 
@@ -1176,7 +1208,7 @@ mod tests {
         // Unchanged write-back leaves the bad text alone.
         let mut r2 = r.clone();
         r2.set_craft(&r.layer.craft).unwrap();
-        assert_eq!(r2.to_bytes(), r.to_bytes());
+        assert_eq!(r2.to_bytes().unwrap(), r.to_bytes().unwrap());
     }
 
     #[test]
@@ -1187,6 +1219,58 @@ mod tests {
         c.cut.power_pct = 100.0;
         c.pierce.push(PierceStage::default());
         assert!(write_recipe(&Craft::Fibre(c)).is_err(), "six stages");
+    }
+
+    #[test]
+    fn crafts_the_checks_flag_are_never_written() {
+        let mut c = fibre_sample();
+        c.cut.power_pct = 150.0;
+        let err = write_recipe(&Craft::Fibre(c)).unwrap_err();
+        assert!(err.message.contains("cut.power_pct"), "{err}");
+        let mut c = fibre_sample();
+        c.pierce[0].height_mm = -1.0;
+        assert!(write_recipe(&Craft::Fibre(c)).is_err(), "negative pierce height");
+        let mut c = fibre_sample();
+        c.cut.gas_pressure_bar = crate::craft::MAX_PRESSURE_BAR + 1.0;
+        assert!(RecipeFile::new(&Craft::Fibre(c)).is_err(), "pressure above the valve");
+        let mut c = Co2Craft { name: "co2".into(), ..Co2Craft::default() };
+        c.duty_pct = 120.0;
+        assert!(write_recipe(&Craft::Co2(c)).is_err(), "CO2 duty");
+
+        // set_craft leaves the file as it was.
+        let mut r = read_recipe(ODD.as_bytes()).unwrap();
+        let Craft::Fibre(mut bad) = r.layer.craft.clone() else { panic!("fibre") };
+        bad.cut.power_pct = 150.0;
+        assert!(r.set_craft(&Craft::Fibre(bad)).is_err());
+        assert_eq!(r.to_bytes().unwrap(), ODD.as_bytes());
+
+        // A table: a flagged edit is refused, nothing is half written.
+        let src = table_doc();
+        let mut t = LayerTable::parse(src.as_bytes()).unwrap();
+        let (mut table, _) = t.to_craft_table();
+        table.fibre[1].pierce[0].gas_pressure_bar = 99.0;
+        assert!(t.apply_craft_table(&table).is_err());
+        assert_eq!(t.to_bytes().unwrap(), src.as_bytes());
+        let (mut table, _) = t.to_craft_table();
+        table.fibre[6] =
+            FibreCraft { name: "new seven".into(), cut: CutSettings { speed_mm_s: 0.0, ..CutSettings::default() }, ..FibreCraft::default() };
+        assert!(t.apply_craft_table(&table).is_err(), "a new flagged slot");
+        assert!(t.doc.section("PLayerParam7").is_none());
+    }
+
+    #[test]
+    fn a_stored_flagged_layer_does_not_block_editing_the_others() {
+        // Slot 1 is stored with a power the checks refuse; slot 2 can still be edited and slot 1
+        // is written back as it was.
+        let src = table_doc().replacen("CutPower=\"100\"", "CutPower=\"150\"", 1);
+        let mut t = LayerTable::parse(src.as_bytes()).unwrap();
+        let (mut table, _) = t.to_craft_table();
+        assert!(!table.fibre[0].is_valid());
+        table.fibre[1].cut.power_pct = 70.0;
+        t.apply_craft_table(&table).unwrap();
+        let (back, _) = t.to_craft_table();
+        assert_eq!(back.fibre[0].cut.power_pct, 150.0);
+        assert_eq!(back.fibre[1].cut.power_pct, 70.0);
     }
 
     #[test]
@@ -1240,7 +1324,7 @@ mod tests {
         assert_eq!(table.fibre[1].name, "layer 2");
         assert_eq!(table.co2[0].name, "layer 1");
         t.apply_craft_table(&table).unwrap();
-        assert_eq!(t.to_bytes(), src.as_bytes(), "an unchanged table changes nothing");
+        assert_eq!(t.to_bytes().unwrap(), src.as_bytes(), "an unchanged table changes nothing");
         table.fibre[1].cut.power_pct = 80.0;
         table.fibre[4] = FibreCraft { name: "new five".into(), ..fibre_from_entry(&fibre_template()).0 };
         table.co2[0].freq_hz = 1000.0;

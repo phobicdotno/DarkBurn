@@ -677,6 +677,23 @@ mod tests {
     }
 
     #[test]
+    fn recipes_the_craft_checks_flag_are_reported() {
+        // Written by hand: the library refuses to write such a craft itself.
+        let t = TempDir::new("flagged");
+        t.put(
+            "Cutting parameters/1200W/Steel/Steel 1mm 1.5S F0 N2.xml",
+            b"<ParameterRoot>\r\n<PLayerParam11>\r\n<GP CutSpeed=\"20\" CutPower=\"150\" CutFreq=\"5000\" CutGasType=\"2\" CutAirPressure=\"0.8\" ManuType=\"0\" LayerFileName=\"Steel 1mm 1.5S F0 N2\"/>\r\n</PLayerParam11>\r\n</ParameterRoot>\r\n",
+        );
+        t.put("Cutting parameters/1200W/Steel/Steel 2mm 1.5S F0 N2.xml", &fibre("Steel 2mm 1.5S F0 N2", GasType::N2, 0.0));
+        let lib = scan(&t.0);
+        assert_eq!(lib.recipes.len(), 2);
+        let flagged = lib.flagged();
+        assert_eq!(flagged.len(), 1, "{flagged:?}");
+        assert_eq!(flagged[0].0.title(), "Steel 1mm 1.5S F0 N2");
+        assert!(flagged[0].1.iter().any(|i| i.severity == crate::craft::Severity::Error && i.path == "cut.power_pct"), "{:?}", flagged[0].1);
+    }
+
+    #[test]
     fn head_folders() {
         assert_eq!(HeadFolder::parse("1200W"), Some(HeadFolder::Fibre { watts: 1200, air: false }));
         assert_eq!(HeadFolder::parse("1200w_AIR"), Some(HeadFolder::Fibre { watts: 1200, air: true }));

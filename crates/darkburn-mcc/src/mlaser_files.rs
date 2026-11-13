@@ -285,6 +285,12 @@ impl IniFile {
         let pair = IniLine::Pair { key: key.to_string(), value: value.to_string(), raw: None };
         match last_in_section {
             Some(i) => self.lines.insert(i + 1, pair),
+            // A top-level key with no top-level pairs yet goes before the first section, so it
+            // stays at the top level.
+            None if section.is_empty() => {
+                let at = self.lines.iter().position(|l| matches!(l, IniLine::Section { .. })).unwrap_or(self.lines.len());
+                self.lines.insert(at, pair);
+            }
             None => {
                 if !section.is_empty() {
                     self.lines.push(IniLine::Section { name: section.to_string(), raw: format!("[{section}]") });
@@ -309,8 +315,8 @@ impl IniFile {
         join_lines(&lines, self.line_ending, self.trailing_newline)
     }
 
-    /// The file bytes.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// The file bytes. Refused for a file whose text could not be decoded.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MlaserError> {
         encode_text(&self.to_text(), self.encoding)
     }
 }
@@ -506,7 +512,7 @@ mod tests {
     fn ini_keeps_every_line_and_edits_in_place() {
         let src = "[IP]\r\nCardIP=192.0.2.10\r\nCardSubnet=255.255.255.0\r\nCardGateway=192.0.2.1\r\nCardPort=5000\r\n\r\nConnectWait=3\r\n; note\r\n[Soft]\r\nLang=1\r\n";
         let mut ini = IniFile::parse(src.as_bytes()).unwrap();
-        assert_eq!(ini.to_bytes(), src.as_bytes());
+        assert_eq!(ini.to_bytes().unwrap(), src.as_bytes());
         assert_eq!(ini.sections(), ["IP", "Soft"]);
         assert_eq!(ini.get("ip", "cardport"), Some("5000"));
         let net = NetSettings::from_ini(&ini);
@@ -519,6 +525,38 @@ mod tests {
         ini.set("Soft", "Skin", "2");
         ini.set("New", "A", "b");
         assert_eq!(ini.to_text(), src.replace("Lang=1\r\n", "Lang=0\r\nSkin=2\r\n[New]\r\nA=b\r\n"));
+    }
+
+    #[test]
+    fn a_top_level_key_stays_at_the_top_level() {
+        // No top-level pairs yet, and the file ends inside [Net]: the new key goes before the
+        // first section, not into [Net].
+        let src = "; settings\r\n[IP]\r\nCardPort=5000\r\n[Net]\r\nWait=3\r\n";
+        let mut ini = IniFile::parse(src.as_bytes()).unwrap();
+        ini.set("", "Foo", "1");
+        assert_eq!(ini.get("", "Foo"), Some("1"));
+        assert_eq!(ini.get("Net", "Foo"), None);
+        assert_eq!(ini.to_text(), "; settings\r\nFoo=1\r\n[IP]\r\nCardPort=5000\r\n[Net]\r\nWait=3\r\n");
+        // With a top-level pair already there, the next one follows it.
+        ini.set("", "Bar", "2");
+        assert_eq!(ini.to_text(), "; settings\r\nFoo=1\r\nBar=2\r\n[IP]\r\nCardPort=5000\r\n[Net]\r\nWait=3\r\n");
+        // A file with no sections at all gets the key at the end.
+        let mut flat = IniFile::parse(b"A=1\r\n").unwrap();
+        flat.set("", "B", "2");
+        assert_eq!(flat.to_text(), "A=1\r\nB=2\r\n");
+        let mut empty = IniFile::parse(b"").unwrap();
+        empty.set("", "C", "3");
+        assert_eq!(empty.get("", "C"), Some("3"));
+    }
+
+    #[test]
+    fn a_gbk_ini_read_without_its_code_page_is_not_written_back() {
+        let bytes = b"[S]\r\nName=\xB2\xBB\xD0\xE2\xB8\xD6\r\n";
+        let ini = IniFile::parse(bytes).unwrap();
+        #[cfg(not(feature = "cp936"))]
+        assert!(ini.to_bytes().is_err());
+        #[cfg(feature = "cp936")]
+        assert_eq!(ini.to_bytes().unwrap(), bytes.to_vec());
     }
 
     #[test]

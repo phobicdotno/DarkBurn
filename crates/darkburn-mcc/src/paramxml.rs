@@ -76,7 +76,10 @@ pub enum TextEncoding {
 /// else is code page 936 with the `cp936` feature and a lossy UTF-8 conversion without it.
 pub fn decode_text(bytes: &[u8]) -> (String, TextEncoding) {
     if let Some(rest) = bytes.strip_prefix(b"\xEF\xBB\xBF") {
-        return (String::from_utf8_lossy(rest).into_owned(), TextEncoding::Utf8Bom);
+        return match std::str::from_utf8(rest) {
+            Ok(t) => (t.to_string(), TextEncoding::Utf8Bom),
+            Err(_) => (String::from_utf8_lossy(rest).into_owned(), TextEncoding::Lossy),
+        };
     }
     if let Ok(s) = std::str::from_utf8(bytes) {
         return (s.to_string(), TextEncoding::Utf8);
@@ -91,27 +94,34 @@ pub fn decode_text(bytes: &[u8]) -> (String, TextEncoding) {
     }
 }
 
-/// Encode text back into the encoding it was read with. [`TextEncoding::Lossy`] (and
-/// [`TextEncoding::Gbk`] without the `cp936` feature) writes UTF-8.
-pub fn encode_text(s: &str, enc: TextEncoding) -> Vec<u8> {
+/// Encode text back into the encoding it was read with. A [`TextEncoding::Lossy`] document (and
+/// a [`TextEncoding::Gbk`] one without the `cp936` feature) is refused: its non-UTF-8 text was
+/// replaced by U+FFFD when it was read, and writing it would destroy that text in the file for
+/// good.
+pub fn encode_text(s: &str, enc: TextEncoding) -> Result<Vec<u8>, MlaserError> {
     match enc {
-        TextEncoding::Utf8 | TextEncoding::Lossy => s.as_bytes().to_vec(),
+        TextEncoding::Utf8 => Ok(s.as_bytes().to_vec()),
         TextEncoding::Utf8Bom => {
             let mut v = b"\xEF\xBB\xBF".to_vec();
             v.extend_from_slice(s.as_bytes());
-            v
+            Ok(v)
         }
+        TextEncoding::Lossy => Err(lossy_refusal()),
         TextEncoding::Gbk => {
             #[cfg(feature = "cp936")]
             {
-                encoding_rs::GBK.encode(s).0.into_owned()
+                Ok(encoding_rs::GBK.encode(s).0.into_owned())
             }
             #[cfg(not(feature = "cp936"))]
             {
-                s.as_bytes().to_vec()
+                Err(lossy_refusal())
             }
         }
     }
+}
+
+fn lossy_refusal() -> MlaserError {
+    MlaserError::new("the file holds text that is not UTF-8 (Chinese text in code page 936) and this build cannot write it back; it is not written")
 }
 
 /// Line ending of a text file.
@@ -429,8 +439,9 @@ impl ParamDoc {
         out
     }
 
-    /// Write the document as bytes in its encoding.
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// Write the document as bytes in its encoding. Refused for a document whose text could not
+    /// be decoded ([`encode_text`]).
+    pub fn to_bytes(&self) -> Result<Vec<u8>, MlaserError> {
         encode_text(&self.to_text(), self.encoding)
     }
 }
@@ -650,7 +661,7 @@ mod tests {
         let gp = doc.sections[0].entry("GP").unwrap();
         assert_eq!(gp.get("C").unwrap(), "L\"x\"");
         assert_eq!(gp.get_f64("B"), Some(0.6));
-        assert_eq!(doc.to_bytes(), SAMPLE.as_bytes());
+        assert_eq!(doc.to_bytes().unwrap(), SAMPLE.as_bytes());
     }
 
     #[test]
@@ -669,7 +680,7 @@ mod tests {
         let doc = ParamDoc::parse(&bytes).unwrap();
         assert_eq!(doc.encoding, TextEncoding::Utf8Bom);
         assert_eq!(doc.declaration.as_deref(), Some("xml version=\"1.0\""));
-        assert_eq!(doc.to_bytes(), bytes);
+        assert_eq!(doc.to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -811,12 +822,22 @@ mod tests {
         {
             assert_eq!(doc.encoding, TextEncoding::Gbk);
             assert_eq!(doc.sections[0].entries[0].get("n").unwrap(), "\u{4e0d}\u{9508}\u{94a2}");
-            assert_eq!(doc.to_bytes(), bytes.to_vec());
+            assert_eq!(doc.to_bytes().unwrap(), bytes.to_vec());
         }
         #[cfg(not(feature = "cp936"))]
         {
             assert_eq!(doc.encoding, TextEncoding::Lossy);
             assert!(doc.sections[0].entries[0].get("n").unwrap().contains('\u{FFFD}'));
+            // Writing it back would turn the Chinese text into U+FFFD for good: refused.
+            let err = doc.to_bytes().unwrap_err();
+            assert!(err.message.contains("not UTF-8"), "{err}");
+            assert!(encode_text("abc", TextEncoding::Gbk).is_err());
         }
+        // A byte-order mark followed by bytes that are not UTF-8 is lossy too, never UTF-8.
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(bytes);
+        let doc = ParamDoc::parse(&bom).unwrap();
+        assert_eq!(doc.encoding, TextEncoding::Lossy);
+        assert!(doc.to_bytes().is_err());
     }
 }

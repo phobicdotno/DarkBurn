@@ -672,7 +672,7 @@ mod tests {
     /// Detached window "w", with a text field that holds the keyboard when `field` is set.
     fn detached_window(ctx: &Context, field: bool) {
         frame(ctx, |ui| {
-            super::super::Window::new(Id::new("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
+            super::super::Window::new(Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |ui| {
                 if field {
                     let mut text = String::new();
                     ui.text_edit_singleline(&mut text).request_focus();
@@ -715,7 +715,7 @@ mod tests {
         let events = vec![key(egui::Key::Pause, egui::Modifiers::NONE, false)];
         let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1200.0, 800.0))), events, ..Default::default() };
         let mut out = ctx.run_ui(input, |ui| {
-            super::super::Window::new(Id::new("w"), "", "W").dockable("w").show(ui.ctx(), true, |_| {});
+            super::super::Window::new(Id::unique("w"), "", "W").dockable("w").show(ui.ctx(), true, |_| {});
         });
         out.textures_delta.clear();
         assert!(take_window_keys(&ctx).is_empty(), "the main window has these keys already");

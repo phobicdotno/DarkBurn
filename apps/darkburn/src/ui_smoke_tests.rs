@@ -827,6 +827,23 @@ fn every_dockable_window_docks_in_each_area_detaches_and_closes() {
     assert!(footers > 0, "no window showed a footer");
 }
 
+// A window docked alone in the narrow left area, its title (Device Settings and the device's
+// name) wider than the area: its tab stays in the strip, cut short. It went behind the chevron,
+// and the strip was empty.
+#[test]
+fn a_tab_wider_than_its_area_stays_in_the_strip() {
+    use darkburn_ui::ui_kit::window_host::WindowPlace;
+    let mut g = Gui::standard();
+    let mut place = WindowPlace::default();
+    place.dock("Left");
+    g.app().prefs.windows.insert("db_device_settings".into(), place);
+    g.run_command("edit.device_settings");
+    let area = g.rect_of("panel:area:Left").expect("the left area, for the window");
+    let tab = g.rect_of("panel:tab:window:db_device_settings").unwrap_or_else(|| panic!("its tab: {:?}", g.rects("panel:tab:")));
+    assert!(area.contains_rect(tab), "{tab:?} in {area:?}");
+    assert!(tab.width() > 40.0, "{tab:?}");
+}
+
 // Two windows docked in one area are two tabs, and closing one leaves the other. A window stored
 // as docked in an area this version does not have opens floating instead.
 #[test]

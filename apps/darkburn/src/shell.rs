@@ -890,8 +890,10 @@ impl DarkBurn {
             let room = tabs_clip.width() - 4.0 - overflow_w;
             keep = vec![false; tabs.len()];
             let at = tabs.iter().position(|p| p.id == active).unwrap_or(0);
-            let mut used = 0.0;
-            for i in std::iter::once(at).chain((0..tabs.len()).filter(|i| *i != at)) {
+            // The active tab stays also when it alone is wider than the room: it is cut short.
+            keep[at] = true;
+            let mut used = widths[at];
+            for i in (0..tabs.len()).filter(|i| *i != at) {
                 if used + widths[i] <= room {
                     keep[i] = true;
                     used += widths[i];
@@ -943,7 +945,7 @@ impl DarkBurn {
                 painter.rect_filled(tr, t.radius_sm, t.hover);
             }
             painter.galley(pos2(tr.left() + 8.0, tr.center().y - g.size().y / 2.0), g, if on { t.selected_ink } else { ink });
-            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr);
+            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr.intersect(tabs_clip));
             if resp.clicked() {
                 pick = Some(p.id.clone());
             }

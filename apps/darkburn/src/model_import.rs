@@ -470,6 +470,7 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     {
         let s = d.effective();
         d.job = Some(std::thread::spawn(move || render(&m, &s)));
+        ctx.request_repaint();
     }
     if d.job.as_ref().is_some_and(JoinHandle::is_finished)
         && let Some(job) = d.job.take()

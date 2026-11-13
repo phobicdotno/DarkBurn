@@ -11,6 +11,7 @@
 //! - [`tabs`]: tabs/bridges, perforation, lead-in/out; [`slots`]: slot resizing; [`hull`]: rubber-band outline
 //! - [`transform`]: warp, deform, mirror, two-point rotate/scale; [`array`]: grid, circular, along path
 //! - [`nest`]: simple strip nesting
+//! - [`tangent`]: tangent circles to two or three lines, arcs or circles
 
 pub use kurbo;
 
@@ -27,6 +28,7 @@ pub mod path;
 pub mod query;
 pub mod slots;
 pub mod tabs;
+pub mod tangent;
 pub mod transform;
 pub mod unfillet;
 

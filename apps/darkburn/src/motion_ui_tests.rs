@@ -18,7 +18,8 @@ fn until(g: &mut Gui, what: &str, f: impl Fn(&Gui) -> bool) {
 }
 
 fn at(g: &Gui, x: f64, y: f64) -> bool {
-    let s = g.app().machine.handle.snapshot();
+    let app = g.app();
+    let s = app.machine.handle.snapshot();
     s.state == LaserState::Ready && (s.machine_pos[0] - x).abs() < 1e-3 && (s.machine_pos[1] - y).abs() < 1e-3
 }
 

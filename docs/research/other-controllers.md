@@ -27,6 +27,7 @@ Note: when this was written, `docs/HARDWARE-CHECKS.md` was not yet in the main t
 | Ruida gaps | **Mostly answerable now from MIT sources** (section 4); a few need a capture | |
 | TopWisdom (TL-A1 and family) | **Needs real hardware capture** | No protocol or file spec public anywhere found. |
 | Trocen / AWC / LO-X7 (USB, Ethernet, `.ud5`) | **Needs real hardware capture** | No protocol or file spec public; one forum hint that `.ud5` is scrambled with a model-dependent key. |
+| Lihuiyu M2 Nano family (stock K40), EGV | **Files and emulator done; USB needs approval and hardware** | MIT MeerK40t driver; see section 7. |
 
 Neither Trocen nor TopWisdom is blocked by licence: there is simply nothing to read. The only code found that names them is a stub with no byte-level content (section 1.3).
 
@@ -284,3 +285,38 @@ No public source gives card IDs for RDC6445G, 654x, 658x, 5121, 320A, 420B, 6332
 | LibLaserCut, jnweiger/ruida-laser, smiilaserpants/RuiDa-Machine-Code | LGPL-3.0 / GPL-2.0 / GPL-3.0 | No (docs and README only) |
 | Luban, Snapmaker controller firmware, Beam Bench, LaserWeb4, All4Laser | AGPL-3.0 / GPL-3.0 | No (Beam Bench docs quoted once for the "deferred" statement) |
 | Trocen, TopWisdom, Darkly Labs, Cubiio vendor manuals | proprietary | Facts only |
+
+## 7. Lihuiyu / K40 (M2 Nano family)
+
+Date: 2026-11-13. Crate: `crates/darkburn-lihuiyu`. Source: MeerK40t `meerk40t/lihuiyu/`, `meerk40t/ch341/` and its tests, MIT, read at commit `d511944e08788e88077727f682957759884ff5ca` (25 September 2026). LibLaserCut (LGPL) and K40 Whisperer (GPL) were not opened. No device was connected.
+
+### 7.1 What was learned
+
+- **Boards** [src]: the stock K40 boards (M2 Nano, M1, M3, B2, B, B1, A, M) all take EGV ("LHYMICRO-GL"), a text language of relative moves in mils (1/1000 inch). The power is not in the language: the laser is only switched on (`D`) and off (`U`), and the strength is set with the knob or the panel on the machine. M3 boards with new firmware also take a PWM power value; DarkBurn reads it back but does not write it.
+- **Moves** [src]: `B` right, `T` left, `L` up (towards the back), `R` down, `M` diagonal, each followed by a distance (`a`–`y` for 1–25, `|a`–`|z` for 26–51, three digits up to 254, `z` per 255). Native origin is the back-left corner with y growing towards the front.
+- **Modes** [src]: rapid moves are `I…S1P`; a cut block is `I`, a speed code, `N`, the declared directions and `S1E`, then moves, closed with `FNSE-`. Raster mode is the same with a raster step in the speed code (`G` and three digits): reversing the row direction makes the board step one raster step on its own.
+- **Speed codes** [src]: a 16-bit timer period per board and acceleration, written as `CV` or `V` plus two three-digit numbers, an acceleration digit, sometimes a `C` suffix, and for program mode a diagonal value. All 3064 codes from MeerK40t's test list (taken from the original board software) are checked against DarkBurn's output in `tests/speed_codes.rs`.
+- **Transport** [src]: a CH341 USB chip (`1a86:5512`) in EPP mode. Packets are 30 bytes of text padded with `F`, framed as `0x00` + payload + CRC-8 (32 bytes). The CH341 takes at most 31 data bytes after its EPP write command byte `0xA6`, so on the wire a packet is 34 bytes: `A6 00 <30 bytes> A6 <crc>` (MeerK40t's `CH341EppWrite`). After each packet the host reads a status byte: 206 OK, 238 busy, 207 CRC error (send again), 236 finished, 239 power problem, 204 serial OK (or finished on M3). A `-` after a job means "wait until the board has finished".
+- **Files** [src]: `.egv` files are the EGV text behind a short header (`Document type : LHYMICRO-GL file`, version, creator, then `%0%0%0%0%`).
+
+### 7.2 What DarkBurn does
+
+- Writes vector cuts and horizontal bidirectional fills from a DarkBurn toolpath as EGV, and saves `.egv` files. Fills whose rows the raster mode cannot follow (angled rows, one-way rows, rows that burn while changing lines) are written as cut lines instead.
+- Reads EGV back with an in-memory board; every behaviour is tested by round trip, on every board model and many speeds, also through the packet layer.
+- Changes speed by leaving the block (`FNSE-`) and starting a new one. MeerK40t can switch on the fly with `@NSE`, but its own driver notes say testing showed "some chance of a runaway" with that switch, so DarkBurn does not use it.
+- In program mode it always writes acceleration 1 with the `C` suffix. MeerK40t writes the digit 1 there too but computes the value with the speed's own acceleration, which gives a different speed on B2, A, B and B1 boards above 25.4 mm/s. DarkBurn keeps the value and the digit consistent [inferred].
+- Clamps speeds to 140 mm/s for cuts and 750 mm/s for rasters, and raises rasters below the slowest the board can do (about 5.1 mm/s on M2, 9.5 mm/s on B2) to that speed; each clamp gives a warning.
+- Refuses jobs still in design coordinates and points outside the bed (310 x 210 mm by default).
+- There is a `Transport` trait and a send loop, tested only against the in-memory board. There is **no** real USB link.
+
+### 7.3 Open hardware questions
+
+| Question | Why it matters | Status |
+|---|---|---|
+| Does the real speed match the code? MeerK40t says M2 boards move at about 92 % of the speed asked for with the original software's equation, and offers a "fix speeds" equation | Cut depth and engrave darkness | DarkBurn writes the original equation by default (`fix_speeds` off); measure on a machine |
+| Is the laser off after a raster row reversal, or does it carry over? | DarkBurn always switches it off before reversing, which is safe but may add a `U`/`D` per row | open |
+| Can the board model be read from the board? | A wrong model gives wrong speeds | The user must pick it; open |
+| Are the A, B and B1 equations right? Only one equation per board is known, and none for the `C` suffix | Speeds on older boards | Untested; DarkBurn's "acceleration 1 everywhere" choice in program mode needs a check on a B2 board |
+| Does the CH341 link work as described (34-byte EPP writes `A6 00 <30> A6 <crc>` on endpoint `0x02`, status by a vendor control request)? | Sending jobs straight from DarkBurn | Not written; needs the owner's approval and a test on a real K40 |
+| How does M3 PWM (`W` codes) map to power, and from which firmware? | Power from the layer setting instead of the knob | Read only; not written |
+| What is the slowest raster speed that still steps cleanly? | Rasters below it are raised with a warning | Calculated limits only |

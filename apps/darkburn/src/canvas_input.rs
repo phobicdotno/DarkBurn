@@ -131,6 +131,10 @@ fn handle_at(xf: &Xf, bbox: kurbo::Rect, s: Pos2) -> Option<Handle> {
 pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, xf: &Xf, panning: bool) {
     let ctx = ui.ctx().clone();
     let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
+    // Typing ends when another tool is picked, as it does with Escape.
+    if app.tool != Tool::Text {
+        crate::text_ui::finish_typing(app);
+    }
     if st.tool != app.tool {
         cancel(app, &mut st);
         st.pen = Pen::default();

@@ -29,6 +29,8 @@ mod devices;
 mod devices_ui;
 #[cfg(test)]
 mod doc_hunt10_tests;
+#[cfg(test)]
+mod doc_hunt10b_tests;
 mod dock_geom;
 mod dock_layout;
 mod draw_more;

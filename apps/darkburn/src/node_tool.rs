@@ -1131,7 +1131,12 @@ fn measure_tool(
         }
     });
     // Selection numbers, recomputed when the selection or document changes.
-    let key = app.editor.revision().wrapping_mul(31).wrapping_add(app.editor.selected().iter().map(|i| i.0).sum::<u64>());
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (app.editor.revision(), app.editor.selected().iter().map(|i| i.0).collect::<Vec<u64>>()).hash(&mut h);
+        h.finish()
+    };
     if st.sel_info.0 != key || st.sel_info.1.is_empty() {
         let lines = match crate::shape_ops::execute(app, "measure.selection", &Value::Null) {
             Some(Ok(v)) => selection_lines(&v, mem.inches),
@@ -1174,6 +1179,12 @@ fn measure_tool(
 #[cfg(test)]
 pub fn measure_points(ctx: &egui::Context) -> Vec<Point> {
     ctx.data_mut(|d| d.get_temp::<MeasureMem>(measure_id())).map(|m| m.pts).unwrap_or_default()
+}
+
+/// The selection lines the measure tool shows (for tests).
+#[cfg(test)]
+pub fn measure_selection_lines(ctx: &egui::Context) -> Vec<String> {
+    ctx.data_mut(|d| d.get_temp::<State>(state_id())).map(|s| s.sel_info.1).unwrap_or_default()
 }
 
 fn selection_lines(v: &Value, inches: bool) -> Vec<String> {

@@ -1,7 +1,6 @@
 # Changelog
 
-## v0.0.531 (build 7)
-- New: the CO2 laser is blocked while the water cooling alarm is on
+## v0.0.530 (build 7)
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 

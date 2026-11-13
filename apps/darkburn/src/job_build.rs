@@ -530,7 +530,8 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
             pwm_hz: s.pwm_override.then(|| (s.pwm_khz.clamp(0.1, 1000.0) * 1000.0).round() as u32),
             ppi: s.ppi_enabled.then_some(s.ppi.max(1.0)),
             u_offset: s.u_offset,
-            power2: (s.laser != LaserSelect::Laser1).then_some([s.min_power_2.clamp(0.0, 100.0).min(s.max_power_2.clamp(0.0, 100.0)), s.max_power_2.clamp(0.0, 100.0)]),
+            power2: (s.laser != LaserSelect::Laser1)
+                .then_some([s.min_power_2.clamp(0.0, 100.0).min(s.max_power_2.clamp(0.0, 100.0)), s.max_power_2.clamp(0.0, 100.0)]),
         },
         z: job::ZSettings { enabled: z_enabled && (s.z_offset != 0.0 || s.z_step != 0.0), offset: s.z_offset, step_per_pass: s.z_step },
         ..job::CutSettings::default()

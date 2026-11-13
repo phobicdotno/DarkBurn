@@ -44,6 +44,11 @@
 //! | [`planner`] | toolpath to ticks and a time estimate ([`planner::dry_run`]) |
 //! | [`chf`] | `.chf` reader and writer (MCC-02) |
 //! | [`craft`] | [`craft::FibreCraft`], [`craft::Co2Craft`] and validation (MCC-04) |
+//! | [`paramxml`] | tolerant reader and byte-faithful writer of Mlaser's parameter XML |
+//! | [`recipe`] | Mlaser recipe files and layer tables to and from crafts, recipe-name parsing |
+//! | [`profile`] | Mlaser machine settings merged into a [`profile::MachineProfile`], typed views, diff |
+//! | [`mlaser_files`] | compensation tables, `.ini` files, `scFlie` value lists, job statistics |
+//! | [`library`] | folder scanner: recipes, settings, small files and unreadable files ([`library::scan`]) |
 //! | [`gate`] | arming state machine and PC-side checks |
 //! | [`sim`] | [`sim::CardSimulator`] (MCC-05) and the loopback [`sim::SimLink`] |
 //!
@@ -56,7 +61,12 @@ pub mod crc;
 pub mod fifo;
 pub mod frame;
 pub mod gate;
+pub mod library;
+pub mod mlaser_files;
+pub mod paramxml;
 pub mod planner;
+pub mod profile;
+pub mod recipe;
 pub mod registers;
 pub mod sim;
 
@@ -67,6 +77,11 @@ pub use crc::{CrcOrder, crc16_modbus};
 pub use fifo::{FifoFeeder, FifoItem, PackedFrame};
 pub use frame::{RawFrame, Reply, Request, RequestError};
 pub use gate::{ArmState, ArmingStateMachine, SafetyGate};
+pub use library::{Library, RecipeKind, scan};
+pub use mlaser_files::{CompensationTable, IniFile, ScFile};
+pub use paramxml::{MlaserError, ParamDoc};
 pub use planner::{DryRunPlan, PathSegment, PlanConfig, dry_run};
+pub use profile::MachineProfile;
+pub use recipe::{LayerKind, LayerTable, RecipeFile, RecipeName, read_recipe, write_recipe};
 pub use registers::Forbidden;
 pub use sim::{CardSimulator, SimConfig, SimLink};

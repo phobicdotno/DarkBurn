@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.603 (build 7)
+## v0.0.606 (build 7)
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
@@ -76,6 +76,9 @@
 - Fix: AI agents can no longer save files into DarkBurn's own settings folder
 - Fix: AI agents no longer leave a file window waiting for you; they are asked for the file name
 - Fix: the licence list in the Mac download now has the licence of the code that talks to the wireless pendant
+- New: First groundwork for K40 lasers with the stock board
+- New: Reads the laser's own cutting recipes and machine settings, ready for quick switching
+- New: Pick a recipe from the laser's own settings folder and put it on a craft slot with one click
 
 ## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another

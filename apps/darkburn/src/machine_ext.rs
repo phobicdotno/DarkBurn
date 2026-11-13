@@ -114,6 +114,17 @@ pub const COMMANDS: &[Cmd] = &[
     a("gweike.export_chf", "Export the Gweike Craft File (.chf)", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
     a("gweike.plan", "Gweike Planner Dry Run", ""),
     a("gweike.simulate", "Run the Plan on the Gweike Card Simulator", ""),
+    a("gweike.recipes_scan", "Read a Gweike Settings Package", r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#),
+    a(
+        "gweike.recipes",
+        "List the Gweike Recipes",
+        r#"{"type":"object","properties":{"head":{"enum":["fibre","co2","all"]},"filter":{"type":"string"}}}"#,
+    ),
+    a(
+        "gweike.recipe_use",
+        "Use a Gweike Recipe on a Craft Slot",
+        r#"{"type":"object","properties":{"recipe":{"type":"string"},"slot":{"type":"integer"}},"required":["recipe"]}"#,
+    ),
 ];
 
 /// Whether `id` is handled here.
@@ -165,6 +176,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "galvo.lens_test" | "laser.lens_test" => &["LT-18", "GALVO-17"],
         "galvo.repeat_marking" | "laser.repeat_marking" => &["LT-17", "GALVO-13", "GALVO-14"],
         "gweike.open" | "gweike.layer_map" | "gweike.set_craft" | "gweike.crafts" => &["MCC-04"],
+        "gweike.recipes_scan" | "gweike.recipes" | "gweike.recipe_use" => &["MCC-04"],
         "gweike.export_chf" => &["MCC-02"],
         "gweike.plan" | "gweike.simulate" => &["MCC-05"],
         _ => &[],
@@ -187,6 +199,8 @@ pub struct ExtUi {
     pub gweike_message: Option<String>,
     pub gweike_craft_head: Head,
     pub gweike_craft_slot: usize,
+    /// The recipes of the Gweike settings package read last.
+    pub gweike_recipes: crate::gweike_recipes::RecipeShelf,
     pub gcode_scripts_open: bool,
     /// Machine Settings of a Smoothieware or Marlin controller: edits not written yet.
     pub gcode_edits: std::collections::BTreeMap<String, String>,
@@ -327,6 +341,9 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
         "gweike.export_chf" => gweike_export(app, a),
         "gweike.plan" => gweike_plan(app, false),
         "gweike.simulate" => gweike_plan(app, true),
+        "gweike.recipes_scan" => crate::gweike_recipes::scan_command(app, a),
+        "gweike.recipes" => crate::gweike_recipes::list_command(app, a),
+        "gweike.recipe_use" => crate::gweike_recipes::use_command(app, a),
         other => Err(format!("{other} is not a machine command")),
     })
 }

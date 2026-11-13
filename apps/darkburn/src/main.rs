@@ -52,6 +52,9 @@ mod galvo_machine;
 mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
+mod gweike_recipes;
+#[cfg(test)]
+mod gweike_recipes_tests;
 mod gweike_ui;
 mod gweike_workflow;
 mod help;

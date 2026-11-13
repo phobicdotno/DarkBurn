@@ -1,8 +1,10 @@
-//! More drawing and selection commands: select shapes like the selected ones, a star, and a
-//! circle or an arc through three points. They are document edits and run without a window.
+//! More drawing and selection commands: select shapes like the selected ones, a star, a
+//! circle or an arc through three points, and a gap left in closed outlines. They are document
+//! edits and run without a window.
 
 use darkburn_core::kurbo::{Arc, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
-use darkburn_core::{Shape, ShapeId};
+use darkburn_core::{CutDirection, Shape, ShapeId, ShapeKind};
+use darkburn_geom::path::{self as gpath, Contour, Direction};
 use serde_json::{Value, json};
 
 use crate::commands::Cmd;
@@ -33,6 +35,11 @@ pub const COMMANDS: &[Cmd] = &[
         "Add Arc Through Three Points",
         r#"{"type":"object","properties":{"points":{"type":"array","description":"start, a point on the way, end","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"minItems":3,"maxItems":3},"layer":{"type":"integer"}},"required":["points"]}"#,
     ),
+    cmd(
+        "shape.open_gap",
+        "Leave a Gap",
+        r#"{"type":"object","properties":{"length":{"type":"number","exclusiveMinimum":0,"description":"how much of each closed outline is left uncut just before its start point, mm"}},"required":["length"]}"#,
+    ),
 ];
 
 /// The commands of this file (all of them run in this build).
@@ -52,6 +59,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
         "shape.add_star" => add_star(app, a),
         "shape.add_circle_3pt" => add_circle(app, a),
         "shape.add_arc_3pt" => add_arc(app, a),
+        "shape.open_gap" => open_gap(app, a),
         _ => return None,
     })
 }
@@ -213,6 +221,144 @@ fn add_arc(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let m = darkburn_geom::query::arc_through(p, q, r).ok_or("the three points lie on one line")?;
     let id = add(app, "Add arc", Shape::path(path, layer))?;
     Ok(json!({ "id": id.0, "centre": [m.center.x, m.center.y], "radius": m.radius, "sweep_degrees": m.sweep.to_degrees() }))
+}
+
+/// `path` with a gap of `length` left in every closed sub-path just before its start point: each
+/// becomes an open path that starts where it did, runs the same way and stops `length` short of
+/// closing. Open sub-paths stay as they are. `Ok(None)` when no sub-path is closed; `Err` with the
+/// length of the shortest closed outline when the gap would take all of one.
+pub fn gap_path(path: &BezPath, length: f64) -> Result<Option<BezPath>, f64> {
+    gap_contours(gpath::contours(path), length).map(|cs| cs.map(|cs| gpath::from_contours(cs.iter())))
+}
+
+fn is_closed(c: &Contour) -> bool {
+    c.is_closed_within(1e-6)
+}
+
+fn gap_contours(cs: Vec<Contour>, length: f64) -> Result<Option<Vec<Contour>>, f64> {
+    if !cs.iter().any(is_closed) {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(cs.len());
+    for c in cs {
+        if !is_closed(&c) {
+            out.push(c);
+            continue;
+        }
+        let total = c.length();
+        if !total.is_finite() || total - length < MIN_GAP {
+            return Err(total);
+        }
+        let closed = Contour { closed: true, ..c };
+        out.push(Contour::new(darkburn_geom::tabs::extract(&closed, 0.0, total - length), false));
+    }
+    Ok(Some(out))
+}
+
+/// The doc-space contours `doc` of shape `s` turned the way the shape is cut: its forced start
+/// points and forced direction are put into the outline itself, since an open path has neither.
+fn as_cut(s: &Shape, doc: &BezPath) -> Vec<Contour> {
+    let mut cs = gpath::contours(doc);
+    let own = gpath::contours(&s.outline());
+    if own.len() == cs.len() {
+        // `own` is the same outline where the shape's parent puts it: the same segments, so a
+        // place found on one is the same place on the other.
+        for sp in s.start_points() {
+            let q = s.transform * Point::new(sp[0], sp[1]);
+            let best = own
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| is_closed(c))
+                .filter_map(|(i, c)| gpath::nearest_on_contour(c, q).map(|(at, d)| (i, at, d)))
+                .min_by(|a, b| a.2.total_cmp(&b.2));
+            if let Some((i, at, _)) = best {
+                let c = Contour { closed: true, ..cs[i].clone() };
+                cs[i] = gpath::contour_with_start(&c, at);
+            }
+        }
+    }
+    let want = match s.direction {
+        CutDirection::Clockwise => Some(Direction::Clockwise),
+        CutDirection::CounterClockwise => Some(Direction::CounterClockwise),
+        _ => None,
+    };
+    for c in &mut cs {
+        let turn = match want {
+            Some(d) => is_closed(c) && !matches!(gpath::contour_direction(c), Direction::Degenerate) && gpath::contour_direction(c) != d,
+            None => s.direction == CutDirection::Reversed,
+        };
+        if turn {
+            *c = c.reversed();
+        }
+    }
+    cs
+}
+
+/// Forget the forced start points and direction of the shapes `ids` (and of shapes in them).
+fn clear_cut_order(s: &mut Shape, ids: &[ShapeId]) {
+    if ids.contains(&s.id) {
+        s.set_start_points(&[]);
+        s.direction = CutDirection::Auto;
+    }
+    if let ShapeKind::Group { children } = &mut s.kind {
+        for c in children {
+            clear_cut_order(c, ids);
+        }
+    }
+}
+
+fn open_gap(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
+    let length =
+        a.get("length").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0).ok_or("argument length must be a number above zero (mm)")?;
+    let ids = crate::shape_ops::in_draw_order(&app.editor.doc, &app.editor.selected());
+    if ids.is_empty() {
+        return Err("nothing is selected".into());
+    }
+    let mut changed: Vec<ShapeId> = Vec::new();
+    let mut skipped: Vec<ShapeId> = Vec::new();
+    let mut too_short: Option<f64> = None;
+    let done = app.editor.edit("Leave a gap", |d, _| {
+        crate::shape_ops::map_shapes_in_doc(d, &ids, &mut |s, p| {
+            if too_short.is_some() {
+                return None;
+            }
+            match gap_contours(as_cut(s, p), length) {
+                Ok(Some(cs)) => {
+                    changed.push(s.id);
+                    Some(gpath::from_contours(cs.iter()))
+                }
+                Ok(None) => {
+                    skipped.push(s.id);
+                    None
+                }
+                Err(total) => {
+                    too_short = Some(total);
+                    None
+                }
+            }
+        });
+        for id in &ids {
+            if let Some(s) = d.get_mut(*id) {
+                clear_cut_order(s, &changed);
+            }
+        }
+        too_short.is_none() && !changed.is_empty()
+    });
+    if let Some(total) = too_short {
+        return Err(format!("the gap must be shorter than the outline it goes in ({total:.3} mm): nothing was cut"));
+    }
+    if !done {
+        return Err(if skipped.is_empty() {
+            "the selection has no outline to leave a gap in".into()
+        } else {
+            "the selected shapes are open already: nothing was cut".into()
+        });
+    }
+    let mut v = json!({ "changed": changed.len(), "ids": changed.iter().map(|i| i.0).collect::<Vec<_>>(), "skipped": skipped.iter().map(|i| i.0).collect::<Vec<_>>() });
+    if !skipped.is_empty() {
+        v["note"] = json!(format!("{} open shape(s) left as they were", skipped.len()));
+    }
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -444,5 +590,161 @@ mod tests {
             }
         }
         assert!(a.editor.doc.iter().next().is_none(), "nothing was drawn");
+    }
+
+    // ------------------------------------------------------------ leave a gap
+
+    fn square(a: &mut DarkBurn) -> ShapeId {
+        add(a, "square", Shape::path(square_path(), 0)).unwrap()
+    }
+
+    /// A 10 mm square from the origin, counter-clockwise: 40 mm round.
+    fn square_path() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.close_path();
+        p
+    }
+
+    fn only_contour(a: &DarkBurn, id: ShapeId) -> Contour {
+        let s = a.editor.doc.get(id).unwrap();
+        let cs = gpath::contours(&s.outline());
+        assert_eq!(cs.len(), 1);
+        cs[0].clone()
+    }
+
+    fn close(a: Point, b: Point) -> bool {
+        a.distance(b) < 1e-6
+    }
+
+    #[test]
+    fn a_gap_is_left_just_before_the_start_and_the_cut_keeps_its_way() {
+        let mut a = app();
+        let id = square(&mut a);
+        let before = a.editor.doc.clone();
+        let v = run(&mut a, "shape.open_gap", json!({ "length": 5 })).unwrap();
+        assert_eq!(v["changed"], 1);
+        let s = a.editor.doc.get(id).unwrap();
+        assert!(!s.is_closed(), "the outline is open now");
+        let c = only_contour(&a, id);
+        assert!(!c.closed);
+        assert_eq!(c.nodes().len(), 5, "{:?}", c.nodes());
+        assert!(close(c.start().unwrap(), Point::new(0.0, 0.0)), "it starts where it did");
+        assert!(close(c.node(1).unwrap(), Point::new(10.0, 0.0)), "and goes the same way");
+        assert!(close(c.end().unwrap(), Point::new(0.0, 5.0)), "it stops 5 mm short, on the outline");
+        assert!((c.length() - 35.0).abs() < 1e-6);
+        assert_eq!(a.editor.selected(), vec![id]);
+        run(&mut a, "edit.undo", Value::Null).unwrap();
+        assert_eq!(a.editor.doc, before);
+    }
+
+    #[test]
+    fn a_gap_in_a_circle_stays_on_the_circle() {
+        let mut a = app();
+        let v = run(&mut a, "shape.add_ellipse", json!({ "x": 40, "y": 40, "width": 20, "height": 20 })).unwrap();
+        let id = id_of(&v);
+        let old = gpath::contours(&a.editor.doc.get(id).unwrap().outline())[0].clone();
+        let (start, total) = (old.start().unwrap(), old.length());
+        let ccw = gpath::contour_direction(&old);
+        run(&mut a, "shape.open_gap", json!({ "length": 3 })).unwrap();
+        let c = only_contour(&a, id);
+        let centre = Point::new(50.0, 50.0);
+        assert!(close(c.start().unwrap(), start));
+        assert!((c.end().unwrap().distance(centre) - 10.0).abs() < 1e-3, "the end is on the circle");
+        assert!((c.length() - (total - 3.0)).abs() < 1e-6, "{} {}", c.length(), total);
+        on_circle(&c.to_bezpath(), centre, 10.0);
+        // The ends are 3 mm apart round the circle: that chord.
+        let chord = 2.0 * 10.0 * (3.0 / 20.0_f64).sin();
+        assert!((c.end().unwrap().distance(start) - chord).abs() < 1e-3);
+        assert_eq!(gpath::contour_direction(&c), ccw, "same way round");
+    }
+
+    #[test]
+    fn a_gap_honours_a_forced_start_point_and_direction() {
+        let mut a = app();
+        let mut sh = Shape::path(square_path(), 0);
+        sh.start_point = Some([10.0, 5.0]);
+        sh.direction = CutDirection::Clockwise;
+        let id = add(&mut a, "square", sh).unwrap();
+        run(&mut a, "shape.open_gap", json!({ "length": 5 })).unwrap();
+        let c = only_contour(&a, id);
+        assert!(close(c.start().unwrap(), Point::new(10.0, 5.0)), "{:?}", c.nodes());
+        assert!(close(c.node(1).unwrap(), Point::new(10.0, 0.0)), "clockwise: {:?}", c.nodes());
+        assert!(close(c.end().unwrap(), Point::new(10.0, 10.0)), "{:?}", c.nodes());
+        assert!((c.length() - 35.0).abs() < 1e-6);
+        let s = a.editor.doc.get(id).unwrap();
+        assert!(s.start_point.is_none() && s.direction == CutDirection::Auto, "the path itself carries them now");
+    }
+
+    #[test]
+    fn a_gap_skips_open_shapes_and_one_undo_brings_all_back() {
+        let mut a = app();
+        let sq = square(&mut a);
+        let e = id_of(&run(&mut a, "shape.add_ellipse", json!({ "x": 30, "y": 0, "width": 10, "height": 6 })).unwrap());
+        let mut line = BezPath::new();
+        line.move_to((0.0, 30.0));
+        line.line_to((20.0, 30.0));
+        let open = add(&mut a, "line", Shape::path(line, 0)).unwrap();
+        run(&mut a, "selection.set", json!({ "ids": [sq.0, e.0, open.0] })).unwrap();
+        let before = a.editor.doc.clone();
+        let rev = a.editor.revision();
+        let v = run(&mut a, "shape.open_gap", json!({ "length": 2 })).unwrap();
+        assert_eq!(v["changed"], 2);
+        assert_eq!(v["skipped"], json!([open.0]));
+        assert!(v["note"].as_str().unwrap().contains("open"));
+        assert!(!a.editor.doc.get(sq).unwrap().is_closed() && !a.editor.doc.get(e).unwrap().is_closed());
+        assert_eq!(a.editor.doc.get(open).unwrap(), before.get(open).unwrap(), "the open line is left alone");
+        assert_eq!(a.editor.revision(), rev + 1, "one step");
+        run(&mut a, "edit.undo", Value::Null).unwrap();
+        assert_eq!(a.editor.doc, before);
+    }
+
+    #[test]
+    fn a_gap_refuses_bad_input() {
+        let mut a = app();
+        let sq = square(&mut a);
+        a.editor.selection.clear();
+        assert!(run(&mut a, "shape.open_gap", json!({ "length": 5 })).is_err(), "nothing selected");
+        run(&mut a, "selection.set", json!({ "ids": [sq.0] })).unwrap();
+        let before = a.editor.doc.clone();
+        for bad in [
+            json!({}),
+            json!({ "length": 0 }),
+            json!({ "length": -2 }),
+            json!({ "length": "5" }),
+            json!({ "length": null }),
+            json!({ "length": 40 }),
+            json!({ "length": 39.9999 }),
+            json!({ "length": 55 }),
+        ] {
+            assert!(run(&mut a, "shape.open_gap", bad.clone()).is_err(), "{bad}");
+            assert_eq!(a.editor.doc, before, "{bad} changed nothing");
+        }
+        // Only open shapes: nothing to cut.
+        run(&mut a, "shape.open_gap", json!({ "length": 5 })).unwrap();
+        let opened = a.editor.doc.clone();
+        let err = run(&mut a, "shape.open_gap", json!({ "length": 5 })).unwrap_err();
+        assert!(err.contains("open"), "{err}");
+        assert_eq!(a.editor.doc, opened);
+        // A gap too long for one of two shapes cuts neither.
+        run(&mut a, "edit.undo", Value::Null).unwrap();
+        let small = id_of(&run(&mut a, "shape.add_rect", json!({ "x": 50, "y": 0, "width": 2, "height": 2 })).unwrap());
+        run(&mut a, "selection.set", json!({ "ids": [sq.0, small.0] })).unwrap();
+        let both = a.editor.doc.clone();
+        assert!(run(&mut a, "shape.open_gap", json!({ "length": 9 })).is_err());
+        assert_eq!(a.editor.doc, both);
+    }
+
+    #[test]
+    fn the_menus_list_the_new_entries_beside_their_kin() {
+        use crate::commands::{Entry, MENUS};
+        let edit = MENUS.iter().find(|m| m.0 == "Edit").map(|m| m.1).expect("an Edit menu");
+        let ids: Vec<&str> = edit.iter().filter_map(|e| if let Entry::Cmd(id) = e { Some(*id) } else { None }).collect();
+        let at = |id: &str| ids.iter().position(|i| *i == id).unwrap_or_else(|| panic!("{id} is not in the Edit menu"));
+        assert_eq!(at("shape.open_gap"), at("edit.close_path") + 1);
+        assert_eq!(at("edit.select_similar") + 1, at("edit.select_open"));
     }
 }

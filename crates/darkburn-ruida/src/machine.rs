@@ -394,6 +394,23 @@ impl<T: Transport> RuidaMachine<T> {
         }
     }
 
+    /// Take in what has already arrived on the data channel, without waiting for more.
+    fn absorb_waiting(&mut self) -> Result<()> {
+        for _ in 0..64 {
+            let Some(d) = self.t.recv(Channel::Data, Duration::ZERO)? else { break };
+            let logical = self.swz.unswizzle(&d);
+            match self.t.framing() {
+                Framing::Udp if matches!(logical.as_slice(), [0xCC] | [0xCD] | [0xCF]) => self.late_acks = self.late_acks.saturating_sub(1),
+                Framing::Udp => self.inbox.extend(parse_commands(&logical)),
+                Framing::Stream => {
+                    self.stream_buf.extend_from_slice(&logical);
+                    self.drain_stream();
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Move complete commands from the stream buffer to the inbox.
     fn drain_stream(&mut self) {
         let buf = std::mem::take(&mut self.stream_buf);
@@ -428,7 +445,14 @@ impl<T: Transport> RuidaMachine<T> {
     }
 
     /// Send `cmd` and wait for a reply matching `pred`, resending on timeout.
+    ///
+    /// Replies carry no number. When a question was asked twice because its answer was late,
+    /// both copies get answered, and the second answer is still around when the same thing is
+    /// asked the next time. So whatever answers this question and is here before it is asked is
+    /// an answer to an earlier one and is thrown away.
     pub fn query(&mut self, cmd: &Command, pred: &dyn Fn(&Command) -> bool) -> Result<Command> {
+        self.absorb_waiting()?;
+        self.inbox.retain(|c| !pred(c));
         let mut attempt = 0;
         loop {
             self.send_commands(std::slice::from_ref(cmd))?;
@@ -705,8 +729,13 @@ impl<T: Transport> RuidaMachine<T> {
         if !distance_mm.is_finite() {
             return Err(RuidaError::Encode("the jog distance is not a number".into()));
         }
-        let target =
-            cur.checked_add(mm_to_um(distance_mm)).ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
+        // `mm_to_um` cuts a longer distance to the end of the 32-bit range: refuse it instead.
+        let um = (distance_mm * 1000.0).round();
+        let target = (i32::MIN as f64..=i32::MAX as f64)
+            .contains(&um)
+            .then(|| cur.checked_add(um as i32))
+            .flatten()
+            .ok_or_else(|| RuidaError::Encode(format!("a jog of {distance_mm} mm is out of range")))?;
         if matches!(axis, Axis::X | Axis::Y) {
             let p = if axis == Axis::X { Point::new(um_to_mm(target), um_to_mm(s.y)) } else { Point::new(um_to_mm(s.x), um_to_mm(target)) };
             self.check_bounds(p)?;
@@ -882,6 +911,8 @@ pub fn next_name(base: &str, existing: &[&str], max: usize) -> String {
             (!digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) && stem.starts_with(prefix) && prefix.len() == full)
                 .then(|| digits.parse::<u32>().ok())
                 .flatten()
+                // There is no number after the largest one; such a name is not one of ours.
+                .filter(|&n| n < u32::MAX)
         })
         .max()
         .unwrap_or(0)

@@ -30,12 +30,18 @@ const INT_HEADER: usize = 0xE;
 pub enum CorError {
     /// File shorter than its layout needs.
     Truncated { needed: usize, got: usize },
+    /// A node holds an offset the board has no way to take: more than 15 bits, or (in the
+    /// float layout) not a number. `row` and `col` count from 0.
+    OutOfRange { row: usize, col: usize },
 }
 
 impl fmt::Display for CorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Truncated { needed, got } => write!(f, "The lens correction file is too short ({got} bytes, needs {needed})."),
+            Self::OutOfRange { row, col } => {
+                write!(f, "The lens correction file holds an offset the board cannot take (row {}, column {}).", row + 1, col + 1)
+            }
         }
     }
 }
@@ -50,10 +56,15 @@ pub enum CorFormat {
     Int,
 }
 
-/// Board encoding of one signed offset: negatives become `0x8000 + |v|`.
+/// Largest offset the board takes, either way: 15 bits beside the sign bit.
+pub const OFFSET_MAX: i32 = 0x7FFF;
+
+/// Board encoding of one signed offset: negatives become `0x8000 + |v|`. An offset beyond
+/// [`OFFSET_MAX`] is sent as the largest one of its sign, never with its top bits cut off
+/// (which would turn its sign round).
 pub fn encode_offset(v: i32) -> u16 {
-    let w = if v >= 0 { v } else { -v + 0x8000 };
-    (w & 0xFFFF) as u16
+    let size = v.unsigned_abs().min(OFFSET_MAX as u32) as u16;
+    if v >= 0 { size } else { 0x8000 | size }
 }
 
 /// Inverse of [`encode_offset`] for values written by it.
@@ -108,6 +119,7 @@ impl CorTable {
         let label: Vec<u16> = bytes[..LABEL_LEN].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         let is_float = String::from_utf16_lossy(&label) == "LMC1COR_1.0";
         let f64_at = |o: usize| f64::from_le_bytes(bytes[o..o + 8].try_into().expect("8 bytes"));
+        let out_of_range = |i: usize| CorError::OutOfRange { row: i / GRID, col: i % GRID };
         let mut nodes = Vec::with_capacity(GRID * GRID);
         if is_float {
             let start = LABEL_LEN + FLOAT_HEADER;
@@ -115,7 +127,12 @@ impl CorTable {
             let scale = f64_at(LABEL_LEN + 2 + 43 * 8);
             for i in 0..GRID * GRID {
                 let o = start + i * 16;
-                nodes.push((f64_at(o).round() as i32, f64_at(o + 8).round() as i32));
+                // "Not a number" would read as 0 and anything huge as the largest number.
+                let (dx, dy) = (f64_at(o).round(), f64_at(o + 8).round());
+                if !(dx.abs() <= OFFSET_MAX as f64 && dy.abs() <= OFFSET_MAX as f64) {
+                    return Err(out_of_range(i));
+                }
+                nodes.push((dx as i32, dy as i32));
             }
             Ok(Self { nodes, scale: scale.is_finite().then_some(scale), format: CorFormat::Float })
         } else {
@@ -125,7 +142,11 @@ impl CorTable {
             let i32_at = |o: usize| i32::from_le_bytes(bytes[o..o + 4].try_into().expect("4 bytes"));
             for i in 0..GRID * GRID {
                 let o = start + i * 8;
-                nodes.push((i32_at(o), i32_at(o + 4)));
+                let (dx, dy) = (i32_at(o), i32_at(o + 4));
+                if dx.unsigned_abs() > OFFSET_MAX as u32 || dy.unsigned_abs() > OFFSET_MAX as u32 {
+                    return Err(out_of_range(i));
+                }
+                nodes.push((dx, dy));
             }
             Ok(Self { nodes, scale: scale.is_finite().then_some(scale), format: CorFormat::Int })
         }

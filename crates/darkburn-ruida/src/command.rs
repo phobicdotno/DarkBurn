@@ -541,8 +541,14 @@ fn push_i14(v: &mut Vec<u8>, x: i32) -> Result<()> {
     v.extend_from_slice(&encode_i14(x)?);
     Ok(())
 }
-fn push_u14(v: &mut Vec<u8>, x: u16) {
+/// A file number, a setting address or a count. The field has 14 bits; a larger value would lose
+/// its top bits and name something else (file 16384 would read 0, which means "all files").
+fn push_u14(v: &mut Vec<u8>, x: u16) -> Result<()> {
+    if x > 0x3FFF {
+        return Err(RuidaError::Encode(format!("{x} does not fit 14 bits")));
+    }
     v.extend_from_slice(&encode_u14(x));
+    Ok(())
 }
 fn param(b: u8) -> Result<u8> {
     if b >= 0x80 { Err(RuidaError::Encode(format!("parameter byte 0x{b:02X} must be < 0x80"))) } else { Ok(b) }
@@ -678,7 +684,7 @@ impl Command {
             MaxLayerPart(p) => v.extend_from_slice(&[0xCA, 0x22, param(*p)?]),
             UFileId(n) => {
                 v.extend_from_slice(&[0xCA, 0x30]);
-                push_u14(v, *n);
+                push_u14(v, *n)?;
             }
             ZuMap(p) => v.extend_from_slice(&[0xCA, 0x40, param(*p)?]),
             WorkModePart { part, mode } => v.extend_from_slice(&[0xCA, 0x41, param(*part)?, param(*mode)?]),
@@ -716,22 +722,22 @@ impl Command {
             }
             GetSetting { addr } => {
                 v.extend_from_slice(&[0xDA, 0x00]);
-                push_u14(v, *addr);
+                push_u14(v, *addr)?;
             }
             SetSetting { addr, value, value2 } => {
                 v.extend_from_slice(&[0xDA, 0x01]);
-                push_u14(v, *addr);
+                push_u14(v, *addr)?;
                 push_u35(v, *value);
                 push_u35(v, *value2);
             }
             SettingReply { addr, value } => {
                 v.extend_from_slice(&[0xDA, 0x01]);
-                push_u14(v, *addr);
+                push_u14(v, *addr)?;
                 push_u35(v, *value);
             }
             SettingReplyRaw { addr, data } => {
                 v.extend_from_slice(&[0xDA, 0x01]);
-                push_u14(v, *addr);
+                push_u14(v, *addr)?;
                 for &b in data {
                     v.push(param(b)?);
                 }
@@ -750,7 +756,7 @@ impl Command {
             ProcessTopLeft { x, y } => xy(v, &[0xE7, 0x03], *x, *y),
             ProcessRepeat(a) => {
                 v.extend_from_slice(&[0xE7, 0x04]);
-                a.iter().for_each(|&n| push_u14(v, n));
+                a.iter().try_for_each(|&n| push_u14(v, n))?;
             }
             ArrayDirection(d) => v.extend_from_slice(&[0xE7, 0x05, param(*d)?]),
             FeedRepeat(a, b) => {
@@ -761,7 +767,7 @@ impl Command {
             ProcessBottomRight { x, y } => xy(v, &[0xE7, 0x07], *x, *y),
             ArrayRepeat(a) => {
                 v.extend_from_slice(&[0xE7, 0x08]);
-                a.iter().for_each(|&n| push_u14(v, n));
+                a.iter().try_for_each(|&n| push_u14(v, n))?;
             }
             DocumentMin { x, y } => xy(v, &[0xE7, 0x50], *x, *y),
             DocumentMax { x, y } => xy(v, &[0xE7, 0x51], *x, *y),
@@ -788,26 +794,26 @@ impl Command {
             FeedAutoCalc(i) => v.extend_from_slice(&[0xF1, 0x04, param(*i)?]),
             DeleteFiles { first, last } => {
                 v.extend_from_slice(&[0xE8, 0x00]);
-                push_u14(v, *first);
-                push_u14(v, *last);
+                push_u14(v, *first)?;
+                push_u14(v, *last)?;
             }
             GetFileName(n) => {
                 v.extend_from_slice(&[0xE8, 0x01]);
-                push_u14(v, *n);
+                push_u14(v, *n)?;
             }
             FileName { index, name } => {
                 v.extend_from_slice(&[0xE8, 0x01]);
-                push_u14(v, *index);
+                push_u14(v, *index)?;
                 v.extend_from_slice(&encode_cstring(name));
             }
             BeginFileTransfer => v.extend_from_slice(&[0xE8, 0x02]),
             RunFile(n) => {
                 v.extend_from_slice(&[0xE8, 0x03]);
-                push_u14(v, *n);
+                push_u14(v, *n)?;
             }
             CalcFileTime(n) => {
                 v.extend_from_slice(&[0xE8, 0x04]);
-                push_u14(v, *n);
+                push_u14(v, *n)?;
             }
             Raw(bytes) => v.extend_from_slice(bytes),
         }
@@ -1066,6 +1072,8 @@ fn decode_typed(b: &[u8]) -> Option<Command> {
             0x01 => {
                 let addr = u14(2)?;
                 match n {
+                    // The firmware version is text; its length says nothing about its kind.
+                    _ if addr == crate::settings::addr::FIRMWARE => SettingReplyRaw { addr, data: b[4..].to_vec() },
                     14 => SetSetting { addr, value: u35(4)?, value2: u35(9)? },
                     9 => SettingReply { addr, value: u35(4)? },
                     _ => SettingReplyRaw { addr, data: b[4..].to_vec() },

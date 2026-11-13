@@ -331,7 +331,10 @@ impl Snapshot {
         }
     }
     fn s_max(&self, opts: &ConnectOptions) -> f64 {
-        opts.s_max.or_else(|| self.settings.get(&30).and_then(|v| v.parse().ok())).filter(|v| *v > 0.0).unwrap_or(1000.0)
+        // A value from the device settings that is no usable number (0, "not a number", endless)
+        // does not hide the controller's own `$30`: 1000 in its place can be four times too much.
+        let usable = |v: &f64| v.is_finite() && *v > 0.0;
+        opts.s_max.filter(usable).or_else(|| self.settings.get(&30).and_then(|v| v.parse().ok()).filter(usable)).unwrap_or(1000.0)
     }
     fn travel(&self, opts: &ConnectOptions) -> Option<TravelLimits> {
         if opts.travel.is_some() {
@@ -430,7 +433,11 @@ impl BoundsCheck {
     pub fn check(&self) -> Result<(), GrblError> {
         let (j, m) = (self.job, self.machine);
         let eps = 1e-6;
-        if j.x0 < m.x0 - eps || j.y0 < m.y0 - eps || j.x1 > m.x1 + eps || j.y1 > m.y1 + eps {
+        // Written as "fits", not as "sticks out": every comparison with "not a number" is false,
+        // and a job whose extent is not a number has not been shown to fit.
+        let finite = [j.x0, j.y0, j.x1, j.y1].into_iter().all(f64::is_finite);
+        let fits = j.x0 >= m.x0 - eps && j.y0 >= m.y0 - eps && j.x1 <= m.x1 + eps && j.y1 <= m.y1 + eps;
+        if !(finite && fits) {
             return Err(GrblError::OutOfBounds(format!(
                 "the job spans X {:.1}..{:.1}, Y {:.1}..{:.1} but the machine is X {:.1}..{:.1}, Y {:.1}..{:.1}",
                 j.x0, j.x1, j.y0, j.y1, m.x0, m.x1, m.y0, m.y1
@@ -589,7 +596,8 @@ impl SettingsBackup {
             let (n, v) = line.strip_prefix('$').and_then(|r| r.split_once('=')).ok_or_else(bad)?;
             let n: u16 = n.trim().parse().map_err(|_| bad())?;
             let v = v.trim();
-            v.parse::<f64>().map_err(|_| bad())?;
+            // "nan" and "inf" read as numbers in Rust; no setting is either.
+            v.parse::<f64>().ok().filter(|x| x.is_finite()).ok_or_else(bad)?;
             b.values.push((n, v.to_owned()));
         }
         Ok(b)
@@ -1078,7 +1086,8 @@ impl GrblMachine {
     pub fn write_setting(&self, number: u16, value: &str) -> Result<(), GrblError> {
         self.free()?;
         let v = value.trim();
-        if v.parse::<f64>().is_err() {
+        // "nan" and "inf" read as numbers in Rust; no setting is either.
+        if !v.parse::<f64>().is_ok_and(f64::is_finite) {
             return Err(GrblError::InvalidArgument(format!("${number}: '{value}' is not a number.")));
         }
         self.send(Cmd::Line { text: format!("${number}={v}"), origin: Origin::Internal(Tag::SettingWrite(number, v.to_owned())) })

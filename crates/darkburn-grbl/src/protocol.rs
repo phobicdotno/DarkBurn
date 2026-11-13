@@ -243,7 +243,8 @@ fn parse_axes(s: &str) -> Option<(Axes, usize)> {
     let mut out = [0.0; 4];
     let mut n = 0;
     for (i, part) in s.split(',').enumerate() {
-        let v: f64 = part.trim().parse().ok()?;
+        // "nan" and "inf" read as numbers; a position is neither.
+        let v: f64 = part.trim().parse().ok().filter(|v: &f64| v.is_finite())?;
         if i < 4 {
             out[i] = v;
         }
@@ -330,14 +331,20 @@ fn parse_status_v09(body: &str) -> Option<StatusReport> {
         vals.clear();
     };
     for t in tokens {
-        if let Some((k, v)) = t.split_once(':') {
-            flush(&key, &mut vals, &mut r);
-            key = k.to_owned();
-            if let Ok(x) = v.parse() {
-                vals.push(x);
+        let v = match t.split_once(':') {
+            Some((k, v)) => {
+                flush(&key, &mut vals, &mut r);
+                key = k.to_owned();
+                v
             }
-        } else if let Ok(x) = t.parse() {
-            vals.push(x);
+            None => t,
+        };
+        match v.parse::<f64>() {
+            Ok(x) if x.is_finite() => vals.push(x),
+            // A position with a value that cannot be read is no position: leaving the value
+            // out would move the other axes up one place.
+            _ if matches!(key.as_str(), "MPos" | "WPos") => return None,
+            _ => {}
         }
     }
     flush(&key, &mut vals, &mut r);

@@ -229,7 +229,13 @@ fn script_lines(s: &str) -> Vec<String> {
 }
 
 fn scale_s(s_in: f64, opts: &TranslateOptions) -> f64 {
-    if opts.in_s_max <= 0.0 { 0.0 } else { (s_in / opts.in_s_max * opts.out_s_max).clamp(0.0, opts.out_s_max.max(0.0)) }
+    // Without a usable full-power value on both sides there is no power to write: an endless
+    // `out_s_max` would turn every power into the largest number there is.
+    let usable = |v: f64| v.is_finite() && v > 0.0;
+    if !usable(opts.in_s_max) || !usable(opts.out_s_max) || !s_in.is_finite() {
+        return 0.0;
+    }
+    (s_in / opts.in_s_max * opts.out_s_max).clamp(0.0, opts.out_s_max)
 }
 
 fn fmt_s(v: f64, out_max: f64) -> String {

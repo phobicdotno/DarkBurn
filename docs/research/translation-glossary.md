@@ -397,6 +397,7 @@ Key names stay as in English. Panel labels that are not translated yet are quote
 - Offset: forskyde, Forskydning. Trace: vektorisere. Bitmap: bitmap.
 - Group / Ungroup: Gruppér / Opløs gruppe. Array: mønster.
 - Align / Distribute / Dock: Juster / Fordel / Skub. Flip: spejlvende. Mirror: spejle.
+  Align top / bottom / centres: Juster øverst / nederst / midt. Assign to layer: Tildel til lag.
 - Snap: fastgøre, Fastgøring. Grid: gitter. Lock: låse. Crop: beskæring. Pan: panorere.
 - Page: side. Canvas: lærred. Bed: arbejdsbord. Work area: arbejdsområde.
 - Toolbar: værktøjslinje. Ribbon tab Home: Start. Hotkeys: genvejstaster. Settings: Indstillinger.

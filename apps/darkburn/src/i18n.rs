@@ -322,6 +322,30 @@ mod tests {
         set_language("en");
     }
 
+    /// Review corrections: Danish aligns "nederst"/"øverst"/"midt" (not the plurals "bunde",
+    /// "toppe", "midter"), the library button puts settings *on* a layer ("til lag", not
+    /// "assign a layer"), and the Move help says "kør hjem".
+    #[test]
+    fn danish_and_swedish_keep_the_review_wording() {
+        let da = locale("da");
+        let sv = locale("sv");
+        for (key, want) in [
+            ("cmd.arrange.align_bottom", "Juster nederst"),
+            ("cmd.arrange.align_top", "Juster øverst"),
+            ("cmd.arrange.align_centres", "Juster midt"),
+            ("cmd.arrange.align_h_centres", "Juster midt vandret"),
+            ("cmd.arrange.align_v_centres", "Juster midt lodret"),
+            ("cmd.arrange.distribute_h_centres", "Fordel midt vandret"),
+            ("cmd.arrange.distribute_v_centres", "Fordel midt lodret"),
+            ("library.assign", "Tildel til lag"),
+        ] {
+            assert_eq!(da[key], want, "da {key}");
+        }
+        assert!(da["help.move.p1"].contains("kør hjem"), "da help.move.p1: {:?}", da["help.move.p1"]);
+        assert!(!da["help.move.p1"].contains("til hjem"), "da help.move.p1: {:?}", da["help.move.p1"]);
+        assert_eq!(sv["library.assign"], "Tilldela till lager");
+    }
+
     /// The two Spanish files are not copies of each other: each uses the words of its own
     /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
     /// in Latin America, and "ordenador" against "computadora".

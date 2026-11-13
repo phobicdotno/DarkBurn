@@ -165,10 +165,10 @@ fn form_ui(ui: &mut Ui, f: &mut NestForm, quick: bool, page: (f64, f64)) {
     ui.label(tr("nest.stays", "Locked shapes and shapes on layers with output off stay where they are."));
 }
 
+/// Starts the run on a worker thread; the selection is sorted out there too.
 fn start(app: &mut DarkBurn, id: &str) -> Result<(), String> {
     let s = nest_cmds::settings(id, &app.nest_ui.form.args(id), nest_cmds::page(app))?;
-    let job = nest_cmds::collect(&app.editor.doc, &app.editor.selected(), s, app.editor.revision())?;
-    app.nest_ui.job = Some(NestJob::start(job));
+    app.nest_ui.job = Some(NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision()));
     Ok(())
 }
 
@@ -192,8 +192,7 @@ fn finish(app: &mut DarkBurn) {
         return;
     }
     let Some(worker) = app.nest_ui.job.take() else { return };
-    let (job, result) = worker.take();
-    match result.and_then(|r| nest_cmds::apply(&mut app.editor, &job, &r)) {
+    match worker.take().and_then(|(job, r)| nest_cmds::apply(&mut app.editor, &job, &r)) {
         Ok(v) => {
             let text = summary(&v);
             app.nest_ui.error = None;
@@ -390,6 +389,33 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(50));
         g.frames(2);
         assert_eq!(g.app().editor.revision(), rev);
+    }
+
+    #[test]
+    fn a_run_that_ends_after_another_project_was_opened_moves_nothing() {
+        use darkburn_core::{Editor, arrange, kurbo::Affine};
+        let mut g = Gui::standard();
+        let ids: Vec<ShapeId> = (0..30).map(|i| add(&mut g, 300.0 + 12.0 * i as f64, 300.0, 10.0, 7.0)).collect();
+        let doc_a = g.app().editor.doc.clone();
+        // Another project with the same shapes somewhere else; both open unmodified.
+        let mut doc_b = doc_a.clone();
+        arrange::transform(&mut doc_b, &ids, Affine::translate((5.0, 5.0)));
+        {
+            let mut app = g.app();
+            app.editor = Editor::with_document(doc_a);
+            app.editor.selection.set(ids.clone());
+        }
+        g.run_command(TRUE);
+        g.app().nest_ui.form.time = 2.0;
+        g.frames(1);
+        start(&mut g.app(), TRUE).unwrap();
+        g.app().editor = Editor::with_document(doc_b.clone());
+        wait(&mut g);
+        let error = g.app().nest_ui.error.clone();
+        assert!(error.as_deref().is_some_and(|e| e.contains("nothing was moved")), "{error:?}");
+        assert!(g.has_text("the design changed while nesting; nothing was moved"));
+        assert!(g.app().editor.doc == doc_b, "the other project is untouched");
+        g.close_dialogs();
     }
 
     #[test]

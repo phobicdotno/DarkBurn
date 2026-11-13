@@ -6,19 +6,25 @@
 //! What moves and what stays:
 //! - Every selected item (a group is one item) moves as one piece, unless it is locked or none
 //!   of its shapes is on a layer with output on.
-//! - A selected item that lies inside the closed outline of another selected item (a hole, an
-//!   engraving on a part) moves with that item.
+//! - A selected item that lies on another selected item (an engraving on a part, a hole cut
+//!   as a shape of its own) moves with that item. It lies on the item when every point of it is
+//!   inside the item's material: inside an odd number of its closed cut outlines (so a part
+//!   sitting in a hole is not on the frame around it), or inside its fills or images.
 //! - Locked shapes and shapes on layers with output off stay put and are kept clear of. With
 //!   `keep_clear` (on by default) every other shape on the sheet is kept clear of as well.
 //! - Shapes on Line layers with output on cut the material: their closed contours can be holes
 //!   that other parts go into. Everything else (fills, images, layers with output off) only
-//!   takes room.
+//!   takes room. A shape on a layer with output off whose box covers a whole sheet is a drawn
+//!   material outline: it counts by its line, so the parts go inside it.
+//! - The selection is sorted out on the worker thread too, and that part also stops on Cancel
+//!   and at the time limit (then nothing moves). A finished run moves the shapes only when the
+//!   design is still the one it was started on.
 
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use darkburn_core::arrange;
 use darkburn_core::kurbo::{Affine, BezPath, Point, Rect};
@@ -27,7 +33,7 @@ use darkburn_geom::path::flatten_to_polylines;
 use darkburn_geom::sheet_nest::{self, NestPart, NestProgress, SheetNestOptions, SheetNestResult};
 use serde_json::{Value, json};
 
-use crate::shape_ops::{flag, in_draw_order, num};
+use crate::shape_ops::{flag, num};
 use crate::shell::DarkBurn;
 
 pub const QUICK: &str = "arrange.quick_nest";
@@ -37,6 +43,10 @@ pub const TRUE: &str = "arrange.true_nest";
 const TOL: f64 = 0.05;
 /// Most points of an item tested against an outline it may lie inside.
 const PROBES: usize = 200;
+/// Most bigger items an item is tested against to find the one it lies on, smallest first.
+const CANDIDATES: usize = 16;
+/// Why a run that was stopped before it started placing moved nothing.
+const STOPPED: &str = "the run was stopped before any shape was placed; nothing was moved";
 
 pub fn works(id: &str) -> bool {
     id == QUICK || id == TRUE
@@ -60,7 +70,12 @@ pub fn args_schema(id: &str) -> Option<&'static str> {
 
 // ---------------------------------------------------------------- settings
 
+/// Most rotations handed to the packer (which thins them further, evenly).
+const MAX_STEPS: usize = 3600;
+
 /// The rotations for a step in degrees: none for 0, every multiple below a full turn otherwise.
+/// A step so fine that there would be more than [`MAX_STEPS`] keeps that many multiples, spread
+/// evenly over the whole turn.
 pub fn rotations(step: f64) -> Result<Vec<f64>, String> {
     if !step.is_finite() || step < 0.0 {
         return Err("rotation_step must be 0 or more degrees".into());
@@ -69,7 +84,8 @@ pub fn rotations(step: f64) -> Result<Vec<f64>, String> {
         return Ok(vec![0.0]);
     }
     let n = ((360.0 - 1e-9) / step).floor() as usize + 1;
-    Ok((0..n.min(3600)).map(|k| k as f64 * step).filter(|a| *a < 360.0 - 1e-9).collect())
+    let k = |i: usize| if n > MAX_STEPS { i * n / MAX_STEPS } else { i };
+    Ok((0..n.min(MAX_STEPS)).map(|i| k(i) as f64 * step).filter(|a| *a < 360.0 - 1e-9).collect())
 }
 
 /// Everything a run needs besides the shapes.
@@ -128,6 +144,8 @@ pub struct Job {
     pub settings: Settings,
     /// The document revision the parts were taken from.
     pub revision: u64,
+    /// The design the parts were taken from (cheap: shapes are shared).
+    pub doc: Document,
 }
 
 fn on_output(doc: &Document, s: &Shape) -> bool {
@@ -140,7 +158,14 @@ fn cuts(doc: &Document, leaf: &Shape) -> bool {
     !leaf.is_image() && layer.outputs() && layer.settings.iter().any(|c| c.enabled && c.mode == Mode::Line)
 }
 
-fn part_of(doc: &Document, ids: &[ShapeId]) -> NestPart {
+fn covers(outer: &Rect, inner: &Rect) -> bool {
+    outer.x0 <= inner.x0 + TOL && outer.y0 <= inner.y0 + TOL && outer.x1 >= inner.x1 - TOL && outer.y1 >= inner.y1 - TOL
+}
+
+/// The shapes `ids` as one part. A leaf on a layer with output off whose box covers one of
+/// `frames` (the sheets' usable areas) is a drawn material outline: it never burns, so it is
+/// handed over as a cut, which counts by its line when it surrounds a sheet.
+fn part_of(doc: &Document, ids: &[ShapeId], frames: &[Rect]) -> NestPart {
     let mut part = NestPart::default();
     for s in ids.iter().filter_map(|i| doc.get(*i)) {
         for leaf in s.leaves() {
@@ -148,7 +173,8 @@ fn part_of(doc: &Document, ids: &[ShapeId]) -> NestPart {
             if path.elements().is_empty() {
                 continue;
             }
-            if cuts(doc, &leaf) { part.cuts.push(path) } else { part.marks.push(path) }
+            let outline = !doc.layer(leaf.layer).outputs() && frames.iter().any(|f| covers(&leaf.bbox(), f));
+            if outline || cuts(doc, &leaf) { part.cuts.push(path) } else { part.marks.push(path) }
         }
     }
     part
@@ -166,87 +192,132 @@ fn inside_ring(ring: &[Point], p: Point) -> bool {
     inside
 }
 
-/// Up to [`PROBES`] points spread over the outline.
-fn probes(path: &BezPath) -> Vec<Point> {
-    let pts: Vec<Point> = flatten_to_polylines(path, TOL).into_iter().flat_map(|p| p.points).collect();
-    if pts.len() <= PROBES {
-        return pts;
-    }
-    (0..PROBES).map(|i| pts[i * (pts.len() - 1) / (PROBES - 1)]).collect()
+/// A closed ring with its box.
+type Ring = (Rect, Vec<Point>);
+
+/// A selected item, for finding what it lies on.
+struct Item {
+    id: ShapeId,
+    bbox: Rect,
+    /// Closed rings of its cutting leaves, and of everything else (fills, images, engraving).
+    cut: Vec<Ring>,
+    mark: Vec<Ring>,
+    /// Up to [`PROBES`] points spread over its outline.
+    probes: Vec<Point>,
 }
 
-/// For every item, the smallest other item whose closed outline holds all of it.
-fn holders(items: &[(ShapeId, BezPath, Rect)]) -> Vec<Option<usize>> {
-    let rings: Vec<Vec<Vec<Point>>> = items
-        .iter()
-        .map(|(_, p, _)| flatten_to_polylines(p, TOL).into_iter().filter(|l| l.closed && l.points.len() >= 3).map(|l| l.points).collect())
-        .collect();
-    let probes: Vec<Vec<Point>> = items.iter().map(|(_, p, _)| probes(p)).collect();
-    (0..items.len())
-        .map(|i| {
-            let b = items[i].2;
-            let mut best: Option<(f64, usize)> = None;
-            for (j, (_, _, ob)) in items.iter().enumerate() {
-                let bigger = ob.area() > b.area() + 1e-9;
-                let around = ob.x0 <= b.x0 + TOL && ob.y0 <= b.y0 + TOL && ob.x1 >= b.x1 - TOL && ob.y1 >= b.y1 - TOL;
-                if j == i || !bigger || !around || rings[j].is_empty() || probes[i].is_empty() {
-                    continue;
-                }
-                // Inside when every point of it lies inside one of the holder's closed contours.
-                let held = probes[i].iter().all(|p| rings[j].iter().any(|r| inside_ring(r, *p)));
-                if held && best.is_none_or(|(a, _)| ob.area() < a) {
-                    best = Some((ob.area(), j));
-                }
+fn item(doc: &Document, s: &Shape) -> Item {
+    let (mut cut, mut mark, mut all) = (Vec::new(), Vec::new(), Vec::new());
+    for leaf in s.leaves() {
+        let is_cut = cuts(doc, &leaf);
+        for pl in flatten_to_polylines(&leaf.outline(), TOL) {
+            all.extend_from_slice(&pl.points);
+            if pl.closed && pl.points.len() >= 3 {
+                let b = pl.points.iter().fold(Rect::from_points(pl.points[0], pl.points[0]), |r, p| r.union_pt(*p));
+                if is_cut { cut.push((b, pl.points)) } else { mark.push((b, pl.points)) }
             }
-            best.map(|b| b.1)
-        })
-        .collect()
+        }
+    }
+    let probes = if all.len() <= PROBES { all } else { (0..PROBES).map(|i| all[i * (all.len() - 1) / (PROBES - 1)]).collect() };
+    Item { id: s.id, bbox: s.bbox(), cut, mark, probes }
 }
 
-/// The parts, obstacles and members for nesting `selected` on `doc`.
-pub fn collect(doc: &Document, selected: &[ShapeId], settings: Settings, revision: u64) -> Result<Job, String> {
-    let chosen = in_draw_order(doc, selected);
-    let moving: Vec<ShapeId> = chosen.iter().copied().filter(|i| doc.get(*i).is_some_and(|s| on_output(doc, s))).collect();
+/// The closed cut (or other) rings of the items `on` whose box holds `bbox`.
+fn rings_over<'a>(items: &'a [Item], on: &[usize], cut: bool, bbox: &Rect) -> Vec<&'a [Point]> {
+    let rings = on.iter().flat_map(|m| if cut { &items[*m].cut } else { &items[*m].mark });
+    rings.filter(|(b, _)| covers(b, bbox)).map(|(_, r)| r.as_slice()).collect()
+}
+
+/// True when every probe of `it` lies in the material of the items `on`: inside an odd number of
+/// their closed cut rings, or of their other closed rings. Rings whose box does not hold the
+/// whole item are left out.
+fn held(items: &[Item], on: &[usize], it: &Item) -> bool {
+    let (cut, mark) = (rings_over(items, on, true, &it.bbox), rings_over(items, on, false, &it.bbox));
+    if it.probes.is_empty() || (cut.is_empty() && mark.is_empty()) {
+        return false;
+    }
+    let odd = |rings: &[&[Point]], p: Point| rings.iter().filter(|r| inside_ring(r, p)).count() % 2 == 1;
+    it.probes.iter().all(|p| odd(&cut, *p) || odd(&mark, *p))
+}
+
+/// Sorts the items into parts: biggest first, every item joins the smallest bigger part it lies
+/// on (trying at most [`CANDIDATES`]), or starts a part of its own. Parts and their members come
+/// in draw order. Err when `stop` says so.
+fn grouped(items: &[Item], stop: &mut dyn FnMut() -> bool) -> Result<Vec<Vec<usize>>, String> {
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by(|&a, &b| items[b].bbox.area().total_cmp(&items[a].bbox.area()).then(a.cmp(&b)));
+    let mut groups: Vec<(Rect, Vec<usize>)> = Vec::new();
+    for &i in &order {
+        if stop() {
+            return Err(STOPPED.into());
+        }
+        let it = &items[i];
+        let mut cands: Vec<usize> =
+            (0..groups.len()).filter(|&g| groups[g].0.area() > it.bbox.area() + 1e-9 && covers(&groups[g].0, &it.bbox)).collect();
+        cands.sort_by(|&a, &b| groups[a].0.area().total_cmp(&groups[b].0.area()).then(a.cmp(&b)));
+        let mut home = None;
+        for g in cands.into_iter().take(CANDIDATES) {
+            if stop() {
+                return Err(STOPPED.into());
+            }
+            if held(items, &groups[g].1, it) {
+                home = Some(g);
+                break;
+            }
+        }
+        match home {
+            Some(g) => groups[g].1.push(i),
+            None => groups.push((it.bbox, vec![i])),
+        }
+    }
+    let mut out: Vec<Vec<usize>> = groups.into_iter().map(|g| g.1).collect();
+    for m in &mut out {
+        m.sort_unstable();
+    }
+    out.sort_by_key(|m| m[0]);
+    Ok(out)
+}
+
+/// The parts, obstacles and members for nesting `selected` on `doc`. `stop` is asked now and
+/// then; when it says so, the result is an error and nothing is to be moved.
+pub fn collect(doc: &Document, selected: &[ShapeId], settings: Settings, revision: u64, stop: &mut dyn FnMut() -> bool) -> Result<Job, String> {
+    let wanted: HashSet<ShapeId> = selected.iter().copied().collect();
+    let chosen: Vec<&Arc<Shape>> = doc.shapes.iter().filter(|s| wanted.contains(&s.id) && !s.locked).collect();
+    let moving: Vec<&Arc<Shape>> = chosen.iter().copied().filter(|s| on_output(doc, s)).collect();
     if moving.is_empty() {
         return Err(if chosen.is_empty() { "nothing is selected".into() } else { "the selected shapes are on layers with output off".into() });
     }
-    let items: Vec<(ShapeId, BezPath, Rect)> =
-        moving.iter().filter_map(|i| doc.get(*i).map(|s| (*i, s.outline(), s.bbox()))).filter(|(_, p, _)| !p.elements().is_empty()).collect();
-    let holder = holders(&items);
-    let root = |mut i: usize| {
-        // Holders are strictly bigger, so this ends.
-        while let Some(j) = holder[i] {
-            i = j;
+    let mut items: Vec<Item> = Vec::with_capacity(moving.len());
+    for s in moving.iter().filter(|s| !s.outline().elements().is_empty()) {
+        if stop() {
+            return Err(STOPPED.into());
         }
-        i
-    };
-    let mut members: Vec<Vec<ShapeId>> = Vec::new();
-    let mut slot: Vec<Option<usize>> = vec![None; items.len()];
-    for (i, item) in items.iter().enumerate() {
-        let r = root(i);
-        let k = *slot[r].get_or_insert_with(|| {
-            members.push(Vec::new());
-            members.len() - 1
-        });
-        members[k].push(item.0);
+        items.push(item(doc, s));
     }
-    // Members in draw order (items already are, but a holder can come after what it holds).
-    let order: Vec<ShapeId> = doc.iter().map(|s| s.id).collect();
-    for m in &mut members {
-        m.sort_by_key(|id| order.iter().position(|o| o == id));
-    }
+    let members: Vec<Vec<ShapeId>> = grouped(&items, stop)?.into_iter().map(|m| m.into_iter().map(|i| items[i].id).collect()).collect();
     let moved: HashSet<ShapeId> = members.iter().flatten().copied().collect();
-    let parts: Vec<NestPart> = members.iter().map(|m| part_of(doc, m)).collect();
-    let reach = settings.sheet.inflate(settings.opts.gap.abs() + 1.0, settings.opts.gap.abs() + 1.0);
-    let obstacles: Vec<NestPart> = doc
-        .iter()
-        .filter(|s| !moved.contains(&s.id))
-        .filter(|s| settings.keep_clear || s.locked || !on_output(doc, s))
-        .filter(|s| s.bbox().overlaps(reach))
-        .map(|s| part_of(doc, &[s.id]))
-        .filter(|p| !p.cuts.is_empty() || !p.marks.is_empty())
-        .collect();
-    Ok(Job { parts, obstacles, members, settings, revision })
+    let parts: Vec<NestPart> = members.iter().map(|m| part_of(doc, m, &[])).collect();
+    // Every sheet the run may use, and the margin's usable area of each.
+    let o = &settings.opts;
+    let sheets: Vec<Rect> = (0..o.max_sheets.max(1)).map(|k| sheet_nest::sheet_rect(settings.sheet, o.sheet_spacing, k)).collect();
+    let frames: Vec<Rect> = sheets.iter().map(|r| r.inset(-o.margin.max(0.0))).collect();
+    let g = o.gap.abs() + 1.0;
+    let reach: Vec<Rect> = sheets.iter().map(|r| r.inflate(g, g)).collect();
+    let mut obstacles: Vec<NestPart> = Vec::new();
+    for s in doc.iter() {
+        if moved.contains(&s.id) || !(settings.keep_clear || s.locked || !on_output(doc, s)) {
+            continue;
+        }
+        let b = s.bbox();
+        if !reach.iter().any(|r| b.overlaps(*r)) {
+            continue;
+        }
+        let p = part_of(doc, &[s.id], &frames);
+        if !p.cuts.is_empty() || !p.marks.is_empty() {
+            obstacles.push(p);
+        }
+    }
+    Ok(Job { parts, obstacles, members, settings, revision, doc: doc.clone() })
 }
 
 // ---------------------------------------------------------------- running
@@ -263,9 +334,43 @@ pub fn pack(job: &Job, progress: &mut dyn FnMut(NestProgress) -> bool) -> Result
     r.map_err(|e| e.to_string())
 }
 
+/// Sort out the selection and pack it, all within the time limit. `cancel` is asked now and
+/// then; `progress` hears how the packing goes.
+pub fn prepare_and_pack(
+    doc: &Document,
+    selected: &[ShapeId],
+    settings: Settings,
+    revision: u64,
+    cancel: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(NestProgress),
+) -> Result<(Job, SheetNestResult), String> {
+    let t0 = Instant::now();
+    let limit = settings.opts.time_limit;
+    let mut job = collect(doc, selected, settings, revision, &mut || cancel() || t0.elapsed() >= limit)?;
+    // The packing gets what is left of the time.
+    job.settings.opts.time_limit = limit.saturating_sub(t0.elapsed());
+    let result = pack(&job, &mut |p| {
+        progress(p);
+        !cancel()
+    });
+    job.settings.opts.time_limit = limit;
+    Ok((job, result?))
+}
+
+/// Same design: the shapes and layers the parts were taken from (notes and job settings may
+/// differ).
+fn same_design(a: &Document, b: &Document) -> bool {
+    a.shapes.len() == b.shapes.len()
+        && a.shapes.iter().zip(&b.shapes).all(|(x, y)| Arc::ptr_eq(x, y) || x == y)
+        && a.layers == b.layers
+        && a.layer_order == b.layer_order
+}
+
 /// Move the shapes as `result` says, in one undo step. Unplaced parts stay where they are.
+/// Nothing moves when the design is not the one the run started on (it was edited, or another
+/// project was opened, in the meantime).
 pub fn apply(e: &mut Editor, job: &Job, result: &SheetNestResult) -> Result<Value, String> {
-    if e.revision() != job.revision {
+    if e.revision() != job.revision || !same_design(&e.doc, &job.doc) {
         return Err("the design changed while nesting; nothing was moved".into());
     }
     let label = if job.settings.quick { "Quick Nest" } else { "True Nest" };
@@ -307,8 +412,7 @@ pub fn execute(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, 
     let a = if a.is_null() { &null } else { a };
     Some((|| {
         let s = settings(id, a, page(app))?;
-        let job = collect(&app.editor.doc, &app.editor.selected(), s, app.editor.revision())?;
-        let result = pack(&job, &mut |_| true)?;
+        let (job, result) = prepare_and_pack(&app.editor.doc, &app.editor.selected(), s, app.editor.revision(), &|| false, &mut |_| {})?;
         apply(&mut app.editor, &job, &result)
     })())
 }
@@ -318,24 +422,22 @@ pub struct NestJob {
     cancel: Arc<AtomicBool>,
     done: Arc<AtomicUsize>,
     total: Arc<AtomicUsize>,
-    handle: Option<JoinHandle<Result<SheetNestResult, String>>>,
-    job: Job,
+    handle: Option<JoinHandle<Result<(Job, SheetNestResult), String>>>,
 }
 
 impl NestJob {
-    pub fn start(job: Job) -> NestJob {
+    /// Start nesting `selected` of `doc` (a copy of the open design).
+    pub fn start(doc: Document, selected: Vec<ShapeId>, settings: Settings, revision: u64) -> NestJob {
         let cancel = Arc::new(AtomicBool::new(false));
         let (done, total) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let (c, d, t) = (cancel.clone(), done.clone(), total.clone());
-        let work = job.clone();
         let handle = std::thread::spawn(move || {
-            pack(&work, &mut |p| {
+            prepare_and_pack(&doc, &selected, settings, revision, &|| c.load(Ordering::Relaxed), &mut |p| {
                 d.store(p.done, Ordering::Relaxed);
                 t.store(p.total, Ordering::Relaxed);
-                !c.load(Ordering::Relaxed)
             })
         });
-        NestJob { cancel, done, total, handle: Some(handle), job }
+        NestJob { cancel, done, total, handle: Some(handle) }
     }
 
     /// Ask the run to stop; it ends soon with the best layout found so far.
@@ -357,12 +459,11 @@ impl NestJob {
     }
 
     /// Wait for the end: the job and what the run found.
-    pub fn take(mut self) -> (Job, Result<SheetNestResult, String>) {
-        let result = match self.handle.take().map(|h| h.join()) {
+    pub fn take(mut self) -> Result<(Job, SheetNestResult), String> {
+        match self.handle.take().map(|h| h.join()) {
             Some(Ok(r)) => r,
             _ => Err("the nesting run failed".into()),
-        };
-        (self.job, result)
+        }
     }
 }
 
@@ -391,6 +492,13 @@ mod tests {
         assert_eq!(rotations(400.0).unwrap(), vec![0.0]);
         assert_eq!(rotations(1e-3).unwrap().len(), 3600);
         assert!(rotations(-5.0).is_err());
+        // A step finer than a tenth of a degree still covers the whole turn.
+        for step in [0.05, 0.01, 1e-3] {
+            let r = rotations(step).unwrap();
+            let top = r.iter().copied().fold(0.0, f64::max);
+            assert!(top > 359.0 && top < 360.0, "{step}: up to {top}");
+            assert!(r.windows(2).all(|w| w[1] > w[0]));
+        }
     }
 
     #[test]
@@ -553,8 +661,7 @@ mod tests {
         let ids: Vec<ShapeId> = (0..40).map(|i| add_rect(&mut app, 300.0 + 12.0 * i as f64, 300.0, 10.0, 7.0, 0)).collect();
         select(&mut app, &ids);
         let s = settings(TRUE, &json!({ "x": 0, "y": 0, "width": 200, "height": 200, "time_limit": 30 }), page(&app)).unwrap();
-        let job = collect(&app.editor.doc, &app.editor.selected(), s, app.editor.revision()).unwrap();
-        let worker = NestJob::start(job);
+        let worker = NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision());
         worker.cancel();
         assert!(worker.cancelled());
         let end = std::time::Instant::now() + Duration::from_secs(20);
@@ -562,8 +669,7 @@ mod tests {
             assert!(std::time::Instant::now() < end, "the cancelled run never ended");
             std::thread::sleep(Duration::from_millis(2));
         }
-        let (job, result) = worker.take();
-        let result = result.unwrap();
+        let (job, result) = worker.take().unwrap();
         assert!(result.stopped);
         let out = apply(&mut app.editor, &job, &result).unwrap();
         assert_eq!(out["stopped"], true);
@@ -571,6 +677,148 @@ mod tests {
         let other = add_rect(&mut app, 0.0, 300.0, 5.0, 5.0, 0);
         let _ = other;
         assert!(apply(&mut app.editor, &job, &result).is_err());
+    }
+
+    /// Shapes on a fresh design: (design, the shapes).
+    fn design(rects: &[(f64, f64, f64, f64)]) -> (Document, Vec<ShapeId>) {
+        let mut app = app();
+        let ids = rects.iter().map(|r| add_rect(&mut app, r.0, r.1, r.2, r.3, 0)).collect();
+        (app.editor.doc.clone(), ids)
+    }
+
+    #[test]
+    fn a_run_that_ends_after_another_project_was_opened_moves_nothing() {
+        let (doc_a, ids) = design(&[(300.0, 300.0, 20.0, 20.0), (340.0, 300.0, 20.0, 20.0)]);
+        // Another project: the same shapes, but somewhere else. Both open unmodified (revision 0).
+        let mut doc_b = doc_a.clone();
+        arrange::transform(&mut doc_b, &ids, Affine::translate((-150.0, 40.0)));
+        let mut app = app();
+        app.editor = Editor::with_document(doc_a.clone());
+        app.editor.selection.set(ids.clone());
+        let s = settings(QUICK, &json!({ "x": 0, "y": 0, "width": 100, "height": 100 }), page(&app)).unwrap();
+        let (job, result) = prepare_and_pack(&app.editor.doc, &app.editor.selected(), s, app.editor.revision(), &|| false, &mut |_| {}).unwrap();
+        app.editor = Editor::with_document(doc_b.clone());
+        assert_eq!(app.editor.revision(), job.revision);
+        assert!(apply(&mut app.editor, &job, &result).is_err());
+        assert_eq!(app.editor.doc, doc_b, "the other project is untouched");
+        // Reopening the same design is fine.
+        app.editor = Editor::with_document(doc_a);
+        assert_eq!(apply(&mut app.editor, &job, &result).unwrap()["changed"], true);
+    }
+
+    #[test]
+    fn a_part_sitting_in_a_hole_is_not_welded_to_the_frame_on_the_next_run() {
+        let mut app = app();
+        let frame = run(&mut app, "shape.add_path", json!({ "svg_path": "M0 0 L60 0 L60 60 L0 60 Z M10 10 L10 50 L50 50 L50 10 Z" })).unwrap();
+        let frame = ShapeId(frame["id"].as_u64().unwrap());
+        let small = add_rect(&mut app, 200.0, 200.0, 30.0, 30.0, 0);
+        select(&mut app, &[frame, small]);
+        let sheet = json!({ "x": 0, "y": 0, "width": 62, "height": 62, "gap": 1, "time_limit": 3 });
+        let out = run(&mut app, TRUE, sheet.clone()).unwrap();
+        assert_eq!(out["unplaced"], 0, "{out}");
+        assert!(in_sheet(bbox(&app, small), bbox(&app, frame)));
+        // Run again as it lies: the part in the hole is still a part of its own.
+        let mut again = sheet;
+        again["allow_holes"] = json!(false);
+        let out = run(&mut app, TRUE, again).unwrap();
+        assert_eq!(out["parts"], 2, "{out}");
+        assert_eq!(out["unplaced"], 1, "{out}");
+        // An engraving on the frame's material still goes with the frame.
+        let mut app = crate::shape_ops::tests::app();
+        let frame =
+            run(&mut app, "shape.add_path", json!({ "svg_path": "M300 300 L360 300 L360 360 L300 360 Z M310 310 L310 350 L350 350 L350 310 Z" }))
+                .unwrap();
+        let frame = ShapeId(frame["id"].as_u64().unwrap());
+        let mark = add_rect(&mut app, 302.0, 302.0, 5.0, 5.0, 1);
+        select(&mut app, &[frame, mark]);
+        let out = run(&mut app, TRUE, json!({ "x": 0, "y": 0, "width": 100, "height": 100, "time_limit": 2 })).unwrap();
+        assert_eq!(out["parts"], 1, "{out}");
+    }
+
+    #[test]
+    fn obstacles_on_later_sheets_are_kept_clear_of() {
+        for id in [QUICK, TRUE] {
+            let mut app = app();
+            // Sheet 1 runs from x 110 to 210; this leaves only a 28 mm strip of it.
+            let locked = add_rect(&mut app, 110.0, 0.0, 70.0, 100.0, 0);
+            app.editor.doc.get_mut(locked).unwrap().locked = true;
+            let ids: Vec<ShapeId> = (0..3).map(|i| add_rect(&mut app, 400.0 + 70.0 * i as f64, 300.0, 60.0, 60.0, 0)).collect();
+            select(&mut app, &ids);
+            let a = json!({ "x": 0, "y": 0, "width": 100, "height": 100, "max_sheets": 3, "sheet_spacing": 10, "gap": 2, "time_limit": 2 });
+            let out = run(&mut app, id, a).unwrap();
+            assert_eq!(out["unplaced"], 1, "{id}: {out}");
+            assert_eq!(out["sheets_used"], 3, "{id}: {out}");
+            let lb = bbox(&app, locked);
+            for p in &ids {
+                let b = bbox(&app, *p);
+                assert!(b.x0 >= 400.0 || apart(b, lb, 2.0), "{id}: {b:?} is on the obstacle");
+            }
+        }
+    }
+
+    #[test]
+    fn a_material_outline_frames_the_sheet_but_a_fill_over_it_takes_it_all() {
+        for id in [QUICK, TRUE] {
+            let mut app = app();
+            // The material drawn on a layer with output off, just around the sheet.
+            add_rect(&mut app, -1.0, -1.0, 102.0, 102.0, 5);
+            app.editor.doc.layer_mut(5).output = false;
+            let ids: Vec<ShapeId> = (0..4).map(|i| add_rect(&mut app, 300.0 + 30.0 * i as f64, 300.0, 20.0, 20.0, 0)).collect();
+            select(&mut app, &ids);
+            let a = json!({ "x": 0, "y": 0, "width": 100, "height": 100, "gap": 2, "time_limit": 2 });
+            let out = run(&mut app, id, a.clone()).unwrap();
+            assert_eq!(out["unplaced"], 0, "{id}: {out}");
+            // A filled shape over the whole sheet (it burns all of it): nothing fits.
+            run(&mut app, "edit.undo", Value::Null).unwrap();
+            add_rect(&mut app, -1.0, -1.0, 102.0, 102.0, 6);
+            for c in &mut app.editor.doc.layer_mut(6).settings {
+                c.mode = Mode::Fill;
+            }
+            select(&mut app, &ids);
+            let out = run(&mut app, id, a).unwrap();
+            assert_eq!(out["unplaced"], 4, "{id}: {out}");
+        }
+    }
+
+    /// `n` concentric 100-point rings around (1000, 1000), each a selected shape.
+    fn concentric(app: &mut DarkBurn, n: usize) -> Vec<ShapeId> {
+        (0..n)
+            .map(|i| {
+                let r = 10.0 + i as f64 * 0.5;
+                let pts: Vec<String> = (0..100)
+                    .map(|k| {
+                        let a = k as f64 * std::f64::consts::TAU / 100.0;
+                        format!("{} {}", 1000.0 + r * a.cos(), 1000.0 + r * a.sin())
+                    })
+                    .collect();
+                let v = run(app, "shape.add_path", json!({ "svg_path": format!("M{} Z", pts.join(" L")) })).unwrap();
+                ShapeId(v["id"].as_u64().unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sorting_out_a_big_selection_is_bounded_and_stops() {
+        let mut app = app();
+        let ids = concentric(&mut app, 1500);
+        let s = settings(QUICK, &json!({ "x": 0, "y": 0, "width": 100, "height": 100 }), page(&app)).unwrap();
+        let t0 = Instant::now();
+        let job = collect(&app.editor.doc, &ids, s.clone(), 0, &mut || false).unwrap();
+        assert!(t0.elapsed() < Duration::from_secs(20), "took {:?}", t0.elapsed());
+        // Every ring lies on the next bigger one or in its hole, turn about: frames with holes.
+        assert_eq!(job.parts.len(), 750);
+        assert!(job.members.iter().all(|m| m.len() == 2));
+        let t0 = Instant::now();
+        assert!(collect(&app.editor.doc, &ids, s.clone(), 0, &mut || true).is_err());
+        let mut calls = 0;
+        assert!(
+            collect(&app.editor.doc, &ids, s, 0, &mut || {
+                calls += 1;
+                calls > 2000
+            })
+            .is_err()
+        );
+        assert!(t0.elapsed() < Duration::from_secs(5), "stopping took {:?}", t0.elapsed());
     }
 
     #[test]

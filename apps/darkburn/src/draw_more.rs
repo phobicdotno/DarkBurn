@@ -684,24 +684,32 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_in_a_circle_stays_on_the_circle() {
+    fn a_gap_in_a_circle_stays_on_its_outline() {
+        // Measured against the shape's own outline: an ellipse is drawn with curves that come
+        // close to the true circle but not to within a micrometre.
         let mut a = app();
         let v = run(&mut a, "shape.add_ellipse", json!({ "x": 40, "y": 40, "width": 20, "height": 20 })).unwrap();
         let id = id_of(&v);
         let old = gpath::contours(&a.editor.doc.get(id).unwrap().outline())[0].clone();
         let (start, total) = (old.start().unwrap(), old.length());
-        let ccw = gpath::contour_direction(&old);
+        let way = gpath::contour_direction(&old);
         run(&mut a, "shape.open_gap", json!({ "length": 3 })).unwrap();
         let c = only_contour(&a, id);
-        let centre = old.bounding_box().unwrap().center();
-        assert!(close(c.start().unwrap(), start));
-        assert!((c.end().unwrap().distance(centre) - 10.0).abs() < 1e-3, "the end is on the circle");
+        assert!(!c.closed);
+        assert!(close(c.start().unwrap(), start), "it starts where it did");
+        // It ends 3 mm before the start, measured along the old outline.
+        let (_, want) = darkburn_geom::tabs::point_at_distance(&old, total - 3.0).unwrap();
+        assert!(close(c.end().unwrap(), want), "{:?} {want:?}", c.end());
         assert!((c.length() - (total - 3.0)).abs() < 1e-6, "{} {}", c.length(), total);
-        on_circle(&c.to_bezpath(), centre, 10.0);
-        // The ends are 3 mm apart round the circle: that chord.
-        let chord = 2.0 * 10.0 * (3.0 / 20.0_f64).sin();
-        assert!((c.end().unwrap().distance(start) - chord).abs() < 1e-3);
-        assert_eq!(gpath::contour_direction(&c), ccw, "same way round");
+        // Every point of the new path lies on the old outline: the gap is cut out, not redrawn.
+        for seg in &c.segs {
+            for i in 0..=8 {
+                let p = seg.eval(i as f64 / 8.0);
+                let (_, d2) = gpath::nearest_on_contour(&old, p).unwrap();
+                assert!(d2.sqrt() < 1e-6, "{p:?} is {} mm off the outline", d2.sqrt());
+            }
+        }
+        assert_eq!(gpath::contour_direction(&c), way, "same way round");
     }
 
     #[test]

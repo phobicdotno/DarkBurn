@@ -131,6 +131,19 @@ fn the_black_and_white_view_keeps_brightness_and_drops_colour() {
     assert_eq!(p[0], 124);
 }
 
+/// Click the camera panel's own `label` button: the one on the row of "Find cameras" (the Laser
+/// panel has Start and Stop buttons too).
+fn click_in_camera_row(g: &mut Gui, label: &str) {
+    let row = g.find_text("Find cameras").expect("the camera buttons are shown");
+    let r = g
+        .find_texts(label)
+        .into_iter()
+        .filter(|r| (r.center().y - row.center().y).abs() < 4.0)
+        .min_by(|a, b| (a.center().x - row.center().x).abs().total_cmp(&(b.center().x - row.center().x).abs()))
+        .unwrap_or_else(|| panic!("no {label} button beside Find cameras"));
+    g.click_pos(r.center());
+}
+
 fn show_camera_panel(g: &mut Gui) {
     if !g.app().prefs.panel("camera").visible {
         g.run_command("panel.camera");
@@ -158,26 +171,25 @@ fn the_camera_panel_finds_starts_and_stops_a_camera() {
     g.frames(2);
     assert_eq!(g.app().vision.cameras.len(), 2);
     // Start without a choice asks for one.
-    g.click_label("Start");
+    click_in_camera_row(&mut g, "Start");
     g.frames(2);
     assert!(!g.app().vision.live);
     assert!(g.has_text("Pick a camera first."));
     g.exec("camera.set", json!({ "device_index": 0, "camera_name": "Simulated overhead camera" }));
     g.frames(2);
-    g.click_label("Start");
+    click_in_camera_row(&mut g, "Start");
     g.frames(2);
     assert!(g.app().vision.live, "Start opened the camera");
     let first = g.app().vision.frame_gen;
     g.frames(6);
     assert!(g.app().vision.frame_gen > first + 2, "the viewfinder follows the camera");
-    assert!(g.has_text("Stop"));
     assert!(!g.has_text("No picture yet."));
     g.screenshot("camera_panel_live_simulated");
     // Black and white view.
     g.app().prefs.opts.capture_colour = false;
     g.frames(3);
     g.screenshot("camera_panel_live_simulated_bw");
-    g.click_label("Stop");
+    click_in_camera_row(&mut g, "Stop");
     g.frames(2);
     assert!(!g.app().vision.live && g.app().vision.source.is_none());
     let stopped = g.app().vision.frame_gen;

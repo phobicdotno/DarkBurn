@@ -91,3 +91,45 @@ fn widths_open_at_the_artwork_size_and_esc_closes_without_change() {
     assert!(!g.window_titles().iter().any(|t| t == "Taper Warp"));
     assert!(is_rect(&g, id));
 }
+
+#[test]
+fn untouched_widths_follow_the_selection_and_typed_ones_stay() {
+    let mut g = Gui::standard();
+    g.frames(2);
+    let page = g.app().prefs.page();
+    let (x0, y0) = (page.x as f64 * 0.55, page.y as f64 * 0.3);
+    let first = g.exec("shape.add_rect", json!({ "x": x0, "y": y0, "width": 60, "height": 40, "layer": 0 }))["id"].as_u64().unwrap();
+    let second = g.exec("shape.add_rect", json!({ "x": x0, "y": y0 + 60.0, "width": 100, "height": 20, "layer": 0 }))["id"].as_u64().unwrap();
+    g.exec("selection.set", json!({ "ids": [first] }));
+    g.run_command(ID);
+    g.frames(2);
+    g.click_label("Artwork widths").frames(2);
+    assert_eq!(taper_warp::form(&g.ctx()).top_w, 60.0);
+
+    // Another shape is picked while the window is open: the untouched widths follow it, so OK
+    // leaves it as it is.
+    g.exec("selection.set", json!({ "ids": [second] }));
+    g.frames(2);
+    let f = taper_warp::form(&g.ctx());
+    assert_eq!((f.top_w, f.bottom_w, f.art_h), (100.0, 100.0, 20.0));
+    assert!(g.has_text("These sizes leave the artwork as it is."), "{:?}", g.visible_texts());
+    let steps = g.app().editor.history.len();
+    g.click_id("dialog:ok").frames(2);
+    assert_eq!(g.app().editor.history.len(), steps, "nothing to change");
+    assert!(is_rect(&g, second));
+
+    // A width the person typed is kept when the selection changes.
+    g.run_command(ID);
+    g.frames(2);
+    g.click_id("dialog:control:Bottom width");
+    g.key(Key::A, Modifiers::COMMAND);
+    g.type_text("50");
+    g.enter();
+    g.frames(2);
+    assert_eq!(taper_warp::form(&g.ctx()).bottom_w, 50.0);
+    g.exec("selection.set", json!({ "ids": [first] }));
+    g.frames(2);
+    let f = taper_warp::form(&g.ctx());
+    assert_eq!((f.top_w, f.bottom_w, f.art_h), (100.0, 50.0, 20.0));
+    g.close_dialogs();
+}

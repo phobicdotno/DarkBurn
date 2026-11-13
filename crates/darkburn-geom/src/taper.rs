@@ -11,7 +11,7 @@
 
 use crate::transform::map_path;
 use kurbo::{BezPath, Point, Rect, Vec2};
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 /// How the artwork is reshaped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +40,8 @@ pub enum TaperError {
     EmptyArtwork,
     /// The artwork does not fit on the object at the chosen place.
     OffObject,
-    /// In cone mode the artwork would go more than once round the cone.
+    /// The artwork would go more than once round the object (or, in cone mode with plain
+    /// widths, round the unrolled cone).
     WrapsAround,
 }
 
@@ -67,7 +68,8 @@ impl Taper {
     /// top edge to the artwork's top edge; `None` centres the artwork on the side.
     ///
     /// The artwork's height is taken as a distance along the side. Its wide end keeps the
-    /// artwork's width; the other end shrinks in step with the diameter there.
+    /// artwork's width; the other end shrinks in step with the diameter there. Artwork wider
+    /// than the object's circumference at its wide end would overlap itself and is refused.
     pub fn from_object(art: Rect, top_d: f64, bottom_d: f64, height: f64, from_top: Option<f64>) -> Result<Taper, TaperError> {
         if !(positive(top_d) && positive(bottom_d) && positive(height)) {
             return Err(TaperError::BadSize);
@@ -90,6 +92,11 @@ impl Taper {
         let d = |s: f64| top_d + (bottom_d - top_d) * s / side;
         let (dt, db) = (d(start), d(end));
         let wide = dt.max(db);
+        // The wide edge keeps the artwork's width and must fit once round the object there;
+        // the narrow edge shrinks in step with its diameter, so it fits as well.
+        if w > PI * wide * (1.0 + 1e-12) {
+            return Err(TaperError::WrapsAround);
+        }
         Ok(Taper { top: w * dt / wide, bottom: w * db / wide, height: h })
     }
 
@@ -437,6 +444,30 @@ mod tests {
         assert_eq!(Taper::from_object(art, 50.0, 40.0, 50.0, Some(25.0)), Err(TaperError::OffObject));
         assert_eq!(Taper::from_object(art, 50.0, 40.0, 50.0, Some(-1.0)), Err(TaperError::OffObject));
         assert!(Taper::from_object(art, 50.0, 40.0, 50.0, Some(20.0)).is_ok());
+    }
+
+    #[test]
+    fn artwork_wider_than_the_object_is_round_is_refused() {
+        // A cup 80 across the top, 60 across the bottom and 100 tall: 251.3 mm round the top.
+        // The unrolled sector of such a cup is far narrower than a full turn, so the sector
+        // check alone would let artwork ten times round the cup through.
+        let round = PI * 80.0;
+        let wide = |w: f64| Rect::new(0.0, 0.0, w, 20.0);
+        for w in [2500.0, 300.0, round + 0.01] {
+            assert_eq!(Taper::from_object(wide(w), 80.0, 60.0, 100.0, Some(0.0)), Err(TaperError::WrapsAround), "{w} mm wide");
+        }
+        let t = Taper::from_object(wide(round - 0.01), 80.0, 60.0, 100.0, Some(0.0)).unwrap();
+        assert!(TaperWarp::new(wide(round - 0.01), t, TaperMode::Cone).is_ok());
+        // Lower down the cup is narrower, so less fits round it.
+        let side = 100.0f64.hypot(10.0);
+        let low = 80.0 - 20.0 * 60.0 / side;
+        assert_eq!(Taper::from_object(wide(PI * low + 0.5), 80.0, 60.0, 100.0, Some(60.0)), Err(TaperError::WrapsAround));
+        assert!(Taper::from_object(wide(PI * low - 0.5), 80.0, 60.0, 100.0, Some(60.0)).is_ok());
+        // Upside down the wide end is at the bottom, and it is the one that counts.
+        assert!(Taper::from_object(wide(PI * 80.0 - 0.01), 60.0, 80.0, 100.0, Some(side - 20.0)).is_ok());
+        assert_eq!(Taper::from_object(wide(PI * 80.0 + 0.01), 60.0, 80.0, 100.0, Some(side - 20.0)), Err(TaperError::WrapsAround));
+        // A cylinder too: the simple mode cannot wrap artwork more than once round either.
+        assert_eq!(Taper::from_object(wide(PI * 50.0 + 0.01), 50.0, 50.0, 100.0, None), Err(TaperError::WrapsAround));
     }
 
     #[test]

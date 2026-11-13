@@ -36,6 +36,10 @@ pub const ARGS: &str = r#"{"type":"object","properties":{"sizes":{"enum":["diame
 /// How closely (mm) the preview follows the result.
 const PREVIEW_TOL: f64 = 0.05;
 
+/// The largest size (mm) the window and the command take. Far larger sizes would bend small
+/// artwork into paths of millions of points.
+pub const MAX_SIZE: f64 = 10_000.0;
+
 /// The arguments of command `id`, when it is ours.
 pub fn args_schema(id: &str) -> Option<&'static str> {
     handles(id).then_some(ARGS)
@@ -82,7 +86,7 @@ pub fn message(e: TaperError) -> String {
         TaperError::BadSize => tr("taper.bad_size", "Every size must be greater than zero."),
         TaperError::EmptyArtwork => tr("taper.flat", "The artwork needs both width and height to be warped."),
         TaperError::OffObject => tr("taper.off_object", "The artwork does not fit on the side of the object there."),
-        TaperError::WrapsAround => tr("taper.wraps", "The artwork would go more than once round the cone."),
+        TaperError::WrapsAround => tr("taper.wraps", "The artwork would go more than once round the object."),
     }
 }
 
@@ -203,7 +207,11 @@ pub fn apply(app: &mut DarkBurn, settings: &Settings) -> Result<Value, String> {
 fn number(a: &Value, key: &str) -> Result<Option<f64>, String> {
     match a.get(key) {
         None | Some(Value::Null) => Ok(None),
-        Some(v) => v.as_f64().filter(|v| v.is_finite()).map(Some).ok_or_else(|| format!("argument {key} must be a number")),
+        Some(v) => match v.as_f64().filter(|v| v.is_finite()) {
+            Some(v) if v > MAX_SIZE => Err(format!("argument {key} must be at most {MAX_SIZE} mm")),
+            Some(v) => Ok(Some(v)),
+            None => Err(format!("argument {key} must be a number")),
+        },
     }
 }
 
@@ -273,6 +281,10 @@ pub struct Form {
     pub top_w: f64,
     pub bottom_w: f64,
     pub art_h: f64,
+    /// The selection and design revision the widths were last fitted to, and the widths put in
+    /// then. While the widths are as they were put in, they follow the selection.
+    fit_key: String,
+    fitted: [f64; 3],
     pub message: Option<String>,
 }
 
@@ -290,6 +302,8 @@ impl Default for Form {
             top_w: 0.0,
             bottom_w: 0.0,
             art_h: 0.0,
+            fit_key: String::new(),
+            fitted: [0.0; 3],
             message: None,
         }
     }
@@ -309,13 +323,43 @@ impl Form {
     /// Fill the widths from the artwork's box (no change until they are edited), and make the
     /// object tall enough for the artwork.
     fn fit(&mut self, src: Rect) {
-        self.top_w = src.width();
-        self.bottom_w = src.width();
-        self.art_h = src.height();
+        self.fit_widths(src);
         if src.height() >= self.object_h {
             self.object_h = (src.height() * 1.25).ceil();
         }
     }
+
+    fn fit_widths(&mut self, src: Rect) {
+        self.top_w = src.width();
+        self.bottom_w = src.width();
+        self.art_h = src.height();
+        self.fitted = [self.top_w, self.bottom_w, self.art_h];
+    }
+
+    /// When the selection or the design changed since the widths were fitted, fit them to the
+    /// new selection, unless the person has typed widths of their own.
+    fn follow(&mut self, app: &DarkBurn) {
+        let key = fit_key(app);
+        if key == self.fit_key {
+            return;
+        }
+        self.fit_key = key;
+        if [self.top_w, self.bottom_w, self.art_h] == self.fitted
+            && let Some(src) = selection_box(app)
+        {
+            self.fit_widths(src);
+        }
+    }
+}
+
+fn fit_key(app: &DarkBurn) -> String {
+    format!("{}|{:?}", app.editor.revision(), app.editor.selected())
+}
+
+/// The box round the selection's shapes that can be warped.
+fn selection_box(app: &DarkBurn) -> Option<Rect> {
+    let ids = targets(&app.editor.doc, &app.editor.selected()).ok()?;
+    crate::text_render::prepare_for_output(&app.editor.doc).bbox_of(&ids)
 }
 
 fn form_id() -> egui::Id {
@@ -372,9 +416,8 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
     let mut f = form(ctx);
     f.open = true;
     f.message = None;
-    if let Ok(ids) = targets(&app.editor.doc, &app.editor.selected())
-        && let Some(src) = crate::text_render::prepare_for_output(&app.editor.doc).bbox_of(&ids)
-    {
+    f.fit_key = fit_key(app);
+    if let Some(src) = selection_box(app) {
         f.fit(src);
     }
     store(ctx, f);
@@ -388,6 +431,7 @@ pub fn window(ctx: &egui::Context, app: &mut DarkBurn) {
     if !f.open {
         return;
     }
+    f.follow(app);
     let settings = f.settings();
     let result = cached_preview(ctx, app, &settings);
     let title = tr("taper.title", "Taper Warp");
@@ -417,7 +461,7 @@ pub fn window(ctx: &egui::Context, app: &mut DarkBurn) {
 }
 
 fn size_row(ui: &mut egui::Ui, id: &str, label: &str, value: &mut f64, min: f64) {
-    ui.push_id(id, |ui| numeric::row(ui, label, value, &Num::new(min..=10_000.0, 2, " mm")));
+    ui.push_id(id, |ui| numeric::row(ui, label, value, &Num::new(min..=MAX_SIZE, 2, " mm")));
 }
 
 fn body(ui: &mut egui::Ui, f: &mut Form, result: &Result<Preview, String>) {
@@ -669,6 +713,90 @@ mod tests {
         assert_eq!(out["sizes"]["bottom"], 30.0);
         assert_eq!(out["sizes"]["height"], 20.0);
         assert_eq!(a.editor.history.len(), steps);
+    }
+
+    #[test]
+    fn cone_mode_refuses_artwork_wider_than_the_cup_is_round() {
+        let mut a = app();
+        // A cup 80 across the top is 251 mm round; its unrolled sector is far less than a full
+        // turn, so only the object's own size shows that this artwork would overlap itself.
+        for width in [2500.0, 300.0] {
+            let id = add_rect(&mut a, 0.0, 0.0, width, 20.0);
+            select(&mut a, &[id]);
+            let steps = a.editor.history.len();
+            for mode in ["cone", "simple"] {
+                let err = run(&mut a, ID, json!({ "top": 80, "bottom": 60, "height": 100, "from_top": 0, "mode": mode })).unwrap_err();
+                assert_eq!(err, "The artwork would go more than once round the object.", "{width} mm, {mode}");
+            }
+            assert_eq!(a.editor.history.len(), steps);
+            assert!(matches!(a.editor.doc.get(id).unwrap().kind, ShapeKind::Rect { .. }));
+        }
+        let id = add_rect(&mut a, 0.0, 0.0, 250.0, 20.0);
+        select(&mut a, &[id]);
+        let out = run(&mut a, ID, json!({ "top": 80, "bottom": 60, "height": 100, "from_top": 0, "mode": "cone" })).unwrap();
+        assert_eq!(out["changed"], true, "250 mm goes just once round: {out}");
+    }
+
+    #[test]
+    fn without_from_top_the_artwork_sits_centred_on_the_side() {
+        let mut a = app();
+        let id = add_rect(&mut a, 0.0, 0.0, 40.0, 20.0);
+        select(&mut a, &[id]);
+        let out = run(&mut a, ID, json!({ "top": 80, "bottom": 60, "height": 100, "mode": "cone" })).unwrap();
+        let side = 100.0f64.hypot(10.0);
+        let d = |s: f64| 80.0 - 20.0 * s / side;
+        let s0 = (side - 20.0) / 2.0;
+        assert!((out["sizes"]["top"].as_f64().unwrap() - 40.0).abs() < 1e-9, "{out}");
+        assert!((out["sizes"]["bottom"].as_f64().unwrap() - 40.0 * d(s0 + 20.0) / d(s0)).abs() < 1e-9, "{out}");
+        // Placed at the top instead, the narrow edge is wider, as the cup narrows downwards.
+        run(&mut a, "edit.undo", json!({})).unwrap();
+        let top = run(&mut a, ID, json!({ "top": 80, "bottom": 60, "height": 100, "from_top": 0, "preview": true })).unwrap();
+        assert!(top["sizes"]["bottom"].as_f64().unwrap() > out["sizes"]["bottom"].as_f64().unwrap());
+    }
+
+    #[test]
+    fn locked_shapes_in_the_selection_are_left_alone() {
+        let mut a = app();
+        let free = add_rect(&mut a, 0.0, 0.0, 40.0, 40.0);
+        let locked = add_rect(&mut a, 100.0, 0.0, 40.0, 80.0);
+        a.editor.edit("Lock", |d, _| {
+            d.get_mut(locked).unwrap().locked = true;
+            true
+        });
+        select(&mut a, &[free, locked]);
+        let out = run(&mut a, ID, json!({ "sizes": "widths", "top": 40, "bottom": 20 })).unwrap();
+        assert_eq!(out["warped"], 1, "{out}");
+        assert!(matches!(a.editor.doc.get(locked).unwrap().kind, ShapeKind::Rect { .. }), "the locked shape is untouched");
+        // The box is the free shape's alone: its bottom edge is squeezed about x = 20.
+        let pts = points(&a, free);
+        for p in [Point::new(10.0, 0.0), Point::new(30.0, 0.0), Point::new(40.0, 40.0), Point::new(0.0, 40.0)] {
+            assert!(has(&pts, p), "{p:?} missing from {pts:?}");
+        }
+        select(&mut a, &[locked]);
+        assert_eq!(run(&mut a, ID, json!({ "sizes": "widths", "top": 40, "bottom": 20 })).unwrap_err(), "Select the shapes to warp.");
+    }
+
+    #[test]
+    fn sizes_beyond_the_windows_limit_are_refused() {
+        let mut a = app();
+        let id = add_rect(&mut a, 0.0, 0.0, 30.0, 30.0);
+        select(&mut a, &[id]);
+        let steps = a.editor.history.len();
+        for args in [
+            json!({ "sizes": "widths", "top": 1e8, "bottom": 5e7, "height": 1e8, "mode": "cone" }),
+            json!({ "sizes": "widths", "top": 1e8, "bottom": 5e7, "height": 1e8, "mode": "cone", "preview": true }),
+            json!({ "sizes": "widths", "top": 40, "bottom": 30, "height": 10_000.5 }),
+            json!({ "top": 20_000, "bottom": 60, "height": 100 }),
+            json!({ "top": 80, "bottom": 60, "height": 100, "from_top": 1e6 }),
+        ] {
+            let err = run(&mut a, ID, args.clone()).unwrap_err();
+            assert!(err.contains("at most 10000 mm"), "{args}: {err}");
+        }
+        assert_eq!(a.editor.history.len(), steps);
+        assert!(matches!(a.editor.doc.get(id).unwrap().kind, ShapeKind::Rect { .. }));
+        // The limit itself is fine.
+        let out = run(&mut a, ID, json!({ "sizes": "widths", "top": 10_000, "bottom": 5_000, "height": 10_000, "mode": "cone" })).unwrap();
+        assert_eq!(out["changed"], true, "{out}");
     }
 
     #[test]

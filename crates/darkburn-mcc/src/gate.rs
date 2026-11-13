@@ -864,16 +864,31 @@ mod tests {
         // ... cannot be started once the water alarm is up
         g.observe_status(2, &status_io(0, 0, 0, 0, 0, 0));
         assert_eq!(g.check_write(&command::fifo_start().unwrap(), 2), Err(GateRefusal::Co2WaterAlarm));
-        // and a running CO2 stream is stopped
-        laser_armed(&mut g);
-        g.observe_status(3, &status_io(0, 0, 0, 0, WATER_OK, 0));
-        g.after_send(&command::fifo_start().unwrap(), 3);
-        g.fifo_running = true;
-        let acts = g.observe_status(4, &status_io(0, 0, 0, 0, 0, 0));
-        assert!(matches!(acts.as_slice(), [GateAction::Stop(_)]));
         // clearing the FIFO forgets the CO2 content
         g.after_send(&command::fifo_clear().unwrap(), 5);
         assert!(!g.card_fifo_has_co2);
+    }
+
+    /// A running stream with CO2 output in it is stopped because of what the FIFO holds. The
+    /// gate is only motion-armed here and DO9 is off at the moment of the poll, so nothing else
+    /// can ask for the stop.
+    #[test]
+    fn a_running_co2_stream_is_stopped_when_the_water_goes() {
+        let co2_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, (12 << 16) | 9999, 2, 0x100, 0x100], &SafetyConfig::default(), None).unwrap();
+        let mut g = SafetyGate::default();
+        g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
+        g.after_send(&co2_frame, 0);
+        g.after_send(&command::fifo_start().unwrap(), 0);
+        // the card runs the stream (processing status 1) and the water is fine: nothing to do
+        assert!(g.observe_status(1, &status_io(0, 0, 1, 0, WATER_OK, 0)).is_empty());
+        assert_eq!(g.arming.state(), ArmState::MotionArmed);
+        // the water goes while the stream runs
+        let acts = g.observe_status(2, &status_io(0, 0, 1, 0, 0, 0));
+        assert!(matches!(acts.as_slice(), [GateAction::Stop(m)] if m.contains("Water Cooling")), "{acts:?}");
+        assert_eq!(g.arming.state(), ArmState::Disarmed);
+        // once the stream no longer runs there is nothing left to stop
+        assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
     }
 
     #[test]

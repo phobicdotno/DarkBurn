@@ -18,7 +18,7 @@ use crate::encoding::{decode_cstring, mm_to_um, um_to_mm};
 use crate::error::{Result, RuidaError};
 use crate::packet::{chunks, frame};
 use crate::rd::RdJob;
-use crate::settings::{ControllerInfo, Laser2Settings, MachineSettings, MachineStatus, StatusWord, UAxisSettings, addr, board_name, writable};
+use crate::settings::{ControllerInfo, Laser2Settings, MachineSettings, MachineState, MachineStatus, StatusWord, UAxisSettings, addr, board_name, writable};
 use crate::swizzle::{Magic, Swizzler};
 use crate::transport::{Channel, Framing, Transport};
 
@@ -120,6 +120,10 @@ pub struct RuidaMachine<T: Transport = Box<dyn Transport>> {
     /// sent, less answers seen), and the time after which they are given up.
     panel_owed: usize,
     panel_owed_until: Instant,
+    /// Keys this driver pressed and has not seen released: panel keys (the Pulse key fires the
+    /// laser) and data-channel jog keys. Stop, Start, a job start and a disconnect let them go.
+    held_panel: Vec<PanelKey>,
+    held_jog: Vec<JogKey>,
 }
 
 impl<T: Transport> RuidaMachine<T> {
@@ -138,6 +142,8 @@ impl<T: Transport> RuidaMachine<T> {
             late_acks: 0,
             panel_owed: 0,
             panel_owed_until: Instant::now(),
+            held_panel: Vec::new(),
+            held_jog: Vec::new(),
         }
     }
 
@@ -181,8 +187,42 @@ impl<T: Transport> RuidaMachine<T> {
         Ok(info)
     }
 
+    /// Let go of every key this driver still holds (best effort), then forget the controller.
     pub fn disconnect(&mut self) {
+        if self.info.is_some() {
+            let _ = self.release_keys();
+        }
+        self.held_panel.clear();
+        self.held_jog.clear();
         self.info = None;
+    }
+
+    /// Release every key this driver pressed and has not released. A key whose release was not
+    /// answered stays on the list, so the next call sends it again. Returns the first error.
+    fn release_keys(&mut self) -> Result<()> {
+        let mut first = Ok(());
+        for key in self.held_panel.clone() {
+            match self.send_panel(PanelCommand::KeyUp(key)) {
+                Ok(()) => self.held_panel.retain(|k| *k != key),
+                Err(e) => first = first.and(Err(e)),
+            }
+        }
+        for key in self.held_jog.clone() {
+            match self.send_commands(&[Command::KeyUp(key)]) {
+                Ok(()) => self.held_jog.retain(|k| *k != key),
+                Err(e) => first = first.and(Err(e)),
+            }
+        }
+        first
+    }
+
+    /// Refuse anything that would move the head, fire or start a job while the controller
+    /// reports a job running or paused.
+    fn refuse_during_job(&mut self) -> Result<()> {
+        match self.status()?.state {
+            MachineState::Running | MachineState::Paused => Err(RuidaError::ControllerError("a job is running or paused on the controller".into())),
+            MachineState::Idle | MachineState::Moving => Ok(()),
+        }
     }
 
     /// Find the controller's magic by asking for the card ID with candidate values, the common
@@ -650,6 +690,7 @@ impl<T: Transport> RuidaMachine<T> {
 
     /// Start (or restart) the current job.
     pub fn start(&mut self) -> Result<()> {
+        self.release_keys()?;
         self.send_commands(&[Command::Start])
     }
     pub fn pause(&mut self) -> Result<()> {
@@ -658,8 +699,11 @@ impl<T: Transport> RuidaMachine<T> {
     pub fn resume(&mut self) -> Result<()> {
         self.send_commands(&[Command::Resume])
     }
+    /// Stop the job, then let go of every key this driver holds.
     pub fn stop(&mut self) -> Result<()> {
-        self.send_commands(&[Command::Stop])
+        let stopped = self.send_commands(&[Command::Stop]);
+        let released = self.release_keys();
+        stopped.and(released)
     }
 
     pub fn home(&mut self, axes: HomeAxes) -> Result<()> {
@@ -673,12 +717,14 @@ impl<T: Transport> RuidaMachine<T> {
     /// Rapid move to the job origin. UNCERTAIN: sent as `D9 10 00 0 0` (rapid XY with the
     /// "origin" option); a real controller may need the panel Origin key instead.
     pub fn go_to_origin(&mut self) -> Result<()> {
+        self.refuse_during_job()?;
         self.send_commands(&[Command::RapidXY { option: RapidOption::Origin, x: 0, y: 0 }])
     }
 
     /// Rapid move to a point in mm. Checked against the bed size when known.
     pub fn move_to(&mut self, p: Point, light: bool) -> Result<()> {
         self.check_bounds(p)?;
+        self.refuse_during_job()?;
         let option = if light { RapidOption::Light } else { RapidOption::None };
         self.send_commands(&[Command::RapidXY { option, x: mm_to_um(p.x), y: mm_to_um(p.y) }])
     }
@@ -707,6 +753,7 @@ impl<T: Transport> RuidaMachine<T> {
         for &p in pts {
             self.check_bounds(p)?;
         }
+        self.refuse_during_job()?;
         let option = if light { RapidOption::Light } else { RapidOption::None };
         let cmds: Vec<Command> = pts.iter().map(|p| Command::RapidXY { option, x: mm_to_um(p.x), y: mm_to_um(p.y) }).collect();
         self.send_commands(&cmds)
@@ -720,6 +767,9 @@ impl<T: Transport> RuidaMachine<T> {
     /// Jog one axis by `distance_mm` (relative, rapid).
     pub fn jog_step(&mut self, axis: Axis, distance_mm: f64) -> Result<()> {
         let s = self.status()?;
+        if matches!(s.state, MachineState::Running | MachineState::Paused) {
+            return Err(RuidaError::ControllerError("a job is running or paused on the controller".into()));
+        }
         let cur = match axis {
             Axis::X => s.x,
             Axis::Y => s.y,
@@ -745,17 +795,45 @@ impl<T: Transport> RuidaMachine<T> {
 
     /// Start continuous jog (key down). Call [`jog_stop`](Self::jog_stop) to end it.
     pub fn jog_start(&mut self, axis: Axis, positive: bool) -> Result<()> {
-        self.send_commands(&[Command::KeyDown(JogKey::for_axis(axis, positive))])
+        self.refuse_during_job()?;
+        let key = JogKey::for_axis(axis, positive);
+        // Counted as held before it goes out: the press may arrive even if its answer does not.
+        if !self.held_jog.contains(&key) {
+            self.held_jog.push(key);
+        }
+        self.send_commands(&[Command::KeyDown(key)])
     }
 
     /// End continuous jog (key up).
     pub fn jog_stop(&mut self, axis: Axis, positive: bool) -> Result<()> {
-        self.send_commands(&[Command::KeyUp(JogKey::for_axis(axis, positive))])
+        let key = JogKey::for_axis(axis, positive);
+        self.send_commands(&[Command::KeyUp(key)])?;
+        self.held_jog.retain(|k| *k != key);
+        Ok(())
     }
 
     /// Press or release a wireless-panel key on the jog port (UDP only).
+    ///
+    /// Pressing the Pulse key or a jog key is refused while a job runs or is paused; a key
+    /// pressed here is let go by Stop, Start, a job start and a disconnect.
     pub fn panel_key(&mut self, key: PanelKey, down: bool) -> Result<()> {
-        self.send_panel(if down { PanelCommand::KeyDown(key) } else { PanelCommand::KeyUp(key) })
+        if !down {
+            self.send_panel(PanelCommand::KeyUp(key))?;
+            self.held_panel.retain(|k| *k != key);
+            return Ok(());
+        }
+        if self.t.framing() != Framing::Udp {
+            return Err(RuidaError::Unsupported("the jog port exists only over Ethernet".into()));
+        }
+        let moves_or_fires = !matches!(key, PanelKey::StartPause | PanelKey::Stop | PanelKey::Escape);
+        if moves_or_fires {
+            self.refuse_during_job()?;
+            // Counted as held before it goes out: the press may arrive even if its answer does not.
+            if !self.held_panel.contains(&key) {
+                self.held_panel.push(key);
+            }
+        }
+        self.send_panel(PanelCommand::KeyDown(key))
     }
 
     // ---- files ----------------------------------------------------------------------------
@@ -850,10 +928,15 @@ impl<T: Transport> RuidaMachine<T> {
     /// Stream a job straight to the controller and run it without storing it under a name.
     pub fn run_job_now(&mut self, job: &RdJob) -> Result<()> {
         let logical = job.to_logical()?;
+        self.refuse_during_job()?;
+        self.release_keys()?;
         self.send_logical(&logical)
     }
 
+    /// Run a stored file. Refused while a job runs or is paused.
     pub fn run_file(&mut self, index: u16) -> Result<()> {
+        self.refuse_during_job()?;
+        self.release_keys()?;
         self.send_commands(&[Command::RunFile(index)])
     }
 

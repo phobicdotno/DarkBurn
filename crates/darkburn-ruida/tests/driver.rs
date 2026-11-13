@@ -623,10 +623,10 @@ fn a_late_acknowledge_is_not_taken_for_the_next_datagram() {
     // must not pass for its own.
     let n = m.transport().sent;
     m.transport_mut().script = [vec![Pass; n], vec![Late, Pass, Lost]].concat();
-    m.move_to(Point::new(10.0, 10.0), false).unwrap();
+    m.send_commands(&[rapid(10.0, 10.0)]).unwrap();
     assert_eq!(m.resends, 1);
-    m.move_to(Point::new(20.0, 20.0), false).unwrap();
-    m.move_to(Point::new(30.0, 30.0), false).unwrap();
+    m.send_commands(&[rapid(20.0, 20.0)]).unwrap();
+    m.send_commands(&[rapid(30.0, 30.0)]).unwrap();
     let e = lock(&emu);
     let pts: Vec<[i32; 2]> = e.motion[before..].iter().map(|r| [r.to[0], r.to[1]]).collect();
     assert!(pts.contains(&[20_000, 20_000]), "the second move never reached the controller and nobody noticed: {pts:?}");
@@ -659,25 +659,25 @@ fn a_late_answer_to_a_key_press_is_not_taken_for_the_answer_to_its_release() {
             let n = m.transport().sent;
             m.transport_mut().script = [vec![Pass; n], script.to_vec()].concat();
             let resends = m.resends;
-            m.panel_key(key, true).unwrap();
+            m.send_panel(PanelCommand::KeyDown(key)).unwrap();
             assert_eq!(m.resends, resends + 1);
             assert!(key_is_down(&emu, key));
-            m.panel_key(key, false).unwrap();
+            m.send_panel(PanelCommand::KeyUp(key)).unwrap();
             assert!(!key_is_down(&emu, key), "{key:?}: the release never reached the controller and nobody noticed");
             assert_eq!(m.resends, resends + 2, "{key:?}: the lost release was sent again");
             // Right after that the key still works, at the price of one release sent twice:
             // the answer to the lost copy could still come.
-            m.panel_key(key, true).unwrap();
+            m.send_panel(PanelCommand::KeyDown(key)).unwrap();
             assert!(key_is_down(&emu, key));
-            m.panel_key(key, false).unwrap();
+            m.send_panel(PanelCommand::KeyUp(key)).unwrap();
             assert!(!key_is_down(&emu, key));
             assert!(m.resends <= resends + 3);
             // And once that answer is given up the link is as good as new: nothing is sent twice.
             std::thread::sleep(std::time::Duration::from_millis(60));
             let resends = m.resends;
             let sent = m.transport().sent;
-            m.panel_key(key, true).unwrap();
-            m.panel_key(key, false).unwrap();
+            m.send_panel(PanelCommand::KeyDown(key)).unwrap();
+            m.send_panel(PanelCommand::KeyUp(key)).unwrap();
             assert!(!key_is_down(&emu, key));
             assert_eq!((m.resends, m.transport().sent), (resends, sent + 2));
         }
@@ -693,8 +693,14 @@ fn a_release_that_is_never_answered_is_an_error_also_after_a_late_answer() {
     let n = m.transport().sent;
     // Press: answered late. Release: every copy is lost.
     m.transport_mut().script = [vec![Pass; n], vec![Late, Pass], vec![Lost; 16]].concat();
-    m.panel_key(PanelKey::Pulse, true).unwrap();
-    let r = m.panel_key(PanelKey::Pulse, false);
+    m.send_panel(PanelCommand::KeyDown(PanelKey::Pulse)).unwrap();
+    let r = m.send_panel(PanelCommand::KeyUp(PanelKey::Pulse));
     assert!(matches!(r, Err(RuidaError::Timeout(_))), "a release that never arrived was reported as done: {r:?}");
     assert!(key_is_down(&emu, PanelKey::Pulse));
+}
+
+/// A rapid move as the driver sends it, without the checks of `move_to` before it (the
+/// late-acknowledge tests script every datagram).
+fn rapid(x: f64, y: f64) -> Command {
+    Command::RapidXY { option: RapidOption::None, x: (x * 1000.0) as i32, y: (y * 1000.0) as i32 }
 }

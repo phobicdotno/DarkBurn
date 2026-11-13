@@ -369,6 +369,7 @@ target/release/darkburn
 ```
 
 - `cargo test --workspace` runs the tests. The UI tests draw the real app offscreen and need a graphics adapter; a software Vulkan driver such as lavapipe will do. See [UI-TESTING.md](UI-TESTING.md).
+- Japanese, Korean and Chinese are drawn with the computer's own fonts, and a test checks that every character of their translations has one. On Linux install a font for them first, on Debian and Ubuntu `sudo apt install fonts-noto-cjk`; Windows and macOS have them. Without one that test fails, and the layout tests for those languages are skipped.
 - `darkburn --safe-mode` starts without your saved settings.
 - The Windows packages are made by `scripts/build-installer.ps1` and `scripts/build-portable.ps1`, and the Linux and macOS archives by `scripts/package-unix.sh`, with output in `dist/`. The tools they need, the release steps and the version rules are in [RELEASING.md](RELEASING.md).
 - Rules for anyone who writes code here: [BUILD-RULES.md](BUILD-RULES.md).

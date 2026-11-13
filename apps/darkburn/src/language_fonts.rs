@@ -247,6 +247,13 @@ fn definitions_for(code: &str) -> FontDefinitions {
     darkburn_ui::fonts::with_fallbacks(darkburn_ui::fonts::base_font_definitions(), faces(&work_out(code, false)))
 }
 
+/// Whether the fonts this computer gives `code` draw every character of `text`. A UI test of a
+/// language with system fonts asks first, and skips on a computer that has none for its script.
+#[cfg(test)]
+pub(crate) fn this_computer_draws(code: &str, text: &str) -> bool {
+    undrawable(definitions_for(code), &characters(text)).is_empty()
+}
+
 fn names_id() -> egui::Id {
     egui::Id::unique("darkburn_language_names_wanted")
 }

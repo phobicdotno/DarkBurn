@@ -774,6 +774,48 @@ mod tests {
         assert_one_stem_per_term(&[("ko", ["너비", "높이", "초기화", "백업", "백업 경로"])]);
     }
 
+    /// Every text that names the selection says 選択範囲 in Japanese and 선택 영역 in Korean, so
+    /// the help names the art library buttons as they read. Choosing a camera is another sense,
+    /// and "Clear Selection" and "No selection" are the usual deselect phrases 選択を解除 /
+    /// 選択なし and 선택 해제 / 선택 없음 [review of I18N-04].
+    #[test]
+    fn japanese_and_korean_name_the_selection_with_one_word() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        let other_sense = ["cmd.help.camera", "cmd.selection.clear", "status.no_selection"];
+        let keys: Vec<&String> = en
+            .iter()
+            .filter(|(k, _)| !other_sense.contains(&k.as_str()) && !k.starts_with("help.camera_selection."))
+            .filter(|(_, v)| v.to_lowercase().split(|c: char| !c.is_alphabetic()).any(|w| w == "selection"))
+            .map(|(k, _)| k)
+            .collect();
+        assert!(keys.len() >= 15, "{keys:?}");
+        let (ja, ko) = (locale("ja"), locale("ko"));
+        let mut bad = Vec::new();
+        for key in keys {
+            if !ja[key].contains("選択範囲") {
+                bad.push(format!("ja {key}: {:?} lacks 選択範囲", ja[key]));
+            }
+            if !starts_words(&ko[key], "선택 영역") {
+                bad.push(format!("ko {key}: {:?} lacks 선택 영역", ko[key]));
+            }
+        }
+        bad.extend(ko.iter().filter(|(_, v)| v.contains("선택 항목")).map(|(k, v)| format!("ko {k}: {v:?} says 선택 항목")));
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// Review corrections in Japanese and Korean: the job origin setting names the option
+    /// "Cut selected graphics" (not the cut settings of a selection), and Apply Path to Text is
+    /// a whole command name in Korean [review of I18N-04].
+    #[test]
+    fn japanese_and_korean_keep_the_review_wording() {
+        let (ja, ko) = (locale("ja"), locale("ko"));
+        assert_eq!(ja["settings.cut_selected"], "既定で選択したグラフィックをカット");
+        assert_eq!(ja["settings.save_job_origin"], "ジョブ原点と「選択したグラフィックをカット」をプロジェクトに保存");
+        assert_eq!(ko["settings.cut_selected"], "기본적으로 선택한 그래픽 절단");
+        assert_eq!(ko["settings.save_job_origin"], "작업 원점과 선택한 그래픽 절단 여부를 프로젝트에 저장");
+        assert_eq!(ko["cmd.tools.path_to_text"], "텍스트에 경로 적용");
+    }
+
     /// The stem check finds a term in any of its forms, and only at the start of words.
     #[test]
     fn the_stem_check_matches_the_start_of_each_word() {

@@ -20,18 +20,25 @@ struct View {
     elided: Vec<String>,
 }
 
-/// Draws frames until the interface fonts draw every character of `text`. Japanese and Korean
-/// take their faces from the computer's fonts, worked out on a thread of their own; until they
-/// arrive their text shows as boxes.
-fn wait_for_glyphs(g: &mut Gui, text: &str) {
+/// Draws frames until the interface fonts draw every character of `text` in language `code`,
+/// and says whether they do. Japanese and Korean take their faces from the computer's fonts,
+/// worked out on a thread of their own; until they arrive their text shows as boxes. On a
+/// computer with no font for the script there is nothing to wait for: false at once, and the
+/// caller skips the language, as the font tests do (CI installs fonts-noto-cjk).
+fn wait_for_glyphs(g: &mut Gui, code: &str, text: &str) -> bool {
+    if !crate::language_fonts::this_computer_draws(code, text) {
+        eprintln!("{code}: no font on this computer draws {text:?}, skipped");
+        return false;
+    }
     let font = egui::FontId::proportional(14.0);
     let start = std::time::Instant::now();
     while !g.ctx().fonts_mut(|f| text.chars().all(|c| c.is_whitespace() || f.has_glyph(&font, c))) {
-        assert!(start.elapsed() < std::time::Duration::from_secs(120), "no font on this computer draws {text:?}");
+        assert!(start.elapsed() < std::time::Duration::from_secs(120), "{code}: the faces that draw {text:?} never arrived");
         std::thread::sleep(std::time::Duration::from_millis(10));
         g.frames(1);
     }
     g.settle();
+    true
 }
 
 fn look(g: &mut Gui, code: &str, name: &'static str) -> View {
@@ -42,11 +49,15 @@ fn look(g: &mut Gui, code: &str, name: &'static str) -> View {
 
 /// Every panel, the settings and the longest help topic in `code`. `edit`, `general` and
 /// `help_title` are the Edit menu, the first settings page and the help topic's title in it.
-fn views_in(code: &str, edit: &str, general: &str, help_title: &str) -> Vec<View> {
+/// None on a computer with no font for the language.
+fn views_in(code: &str, edit: &str, general: &str, help_title: &str) -> Option<Vec<View>> {
     let mut g = Gui::standard();
     g.run_command(&format!("lang.{code}"));
     g.settle();
-    wait_for_glyphs(&mut g, edit);
+    if !wait_for_glyphs(&mut g, code, edit) {
+        crate::i18n::set_language("en");
+        return None;
+    }
     assert_eq!(crate::i18n::language(), code);
     assert!(g.has_text(edit), "{code}: no {edit:?} in {:?}", g.visible_texts());
     let mut out = Vec::new();
@@ -69,13 +80,14 @@ fn views_in(code: &str, edit: &str, general: &str, help_title: &str) -> Vec<View
     g.close_dialogs();
 
     crate::i18n::set_language("en");
-    out
+    Some(out)
 }
 
-/// No layout problems, and no more texts cut short in any view than in English.
+/// No layout problems, and no more texts cut short in any view than in English. Skipped on a
+/// computer with no font for the language.
 fn fits_like_english(code: &str, edit: &str, general: &str, help_title: &str) {
-    let english = views_in("en", "Edit", "General", "Choosing a camera");
-    let views = views_in(code, edit, general, help_title);
+    let Some(views) = views_in(code, edit, general, help_title) else { return };
+    let english = views_in("en", "Edit", "General", "Choosing a camera").expect("English needs no system font");
     let mut bad = Vec::new();
     for (en, v) in english.iter().zip(&views) {
         bad.extend(v.problems.iter().map(|p| format!("{code}, {}: {p}", v.name)));
@@ -181,6 +193,25 @@ fn korean_fits_the_window() {
     fits_like_english("ko", "편집", "일반", "카메라 선택");
 }
 
+/// On a computer with no font for a text there is nothing to wait for: the language is skipped
+/// at once, where the wait used to spin for two minutes and then fail [review of I18N-04].
+/// U+10FFFD is a private-use character no ordinary font draws.
+#[test]
+fn a_text_no_font_on_the_computer_draws_is_skipped_at_once() {
+    for code in ["ja", "ko"] {
+        let mut g = Gui::standard();
+        g.run_command(&format!("lang.{code}"));
+        g.settle();
+        let start = std::time::Instant::now();
+        let drawn = wait_for_glyphs(&mut g, code, "\u{10fffd}");
+        crate::i18n::set_language("en");
+        assert!(!drawn, "{code}: a font draws U+10FFFD");
+        assert!(start.elapsed() < std::time::Duration::from_secs(60), "{code}: waited {:?}", start.elapsed());
+    }
+    let mut g = Gui::standard();
+    assert!(wait_for_glyphs(&mut g, "en", "Edit"), "English is drawn by the bundled font");
+}
+
 /// A row may end between two Japanese characters, or next to one, without splitting a word;
 /// between two letters of a Latin or Korean word it splits the word.
 #[test]
@@ -195,13 +226,17 @@ fn a_line_break_between_japanese_characters_splits_no_word() {
 }
 
 /// The cut table's column headers in `code`, left to right as painted, with the overlaps
-/// between neighbours. A header longer than its narrow column runs into the next one.
+/// between neighbours. A header longer than its narrow column runs into the next one. Nothing
+/// on a computer with no font for the language: it is skipped, and the others are still checked.
 fn cut_header_overlaps(code: &str) -> Vec<String> {
     use crate::i18n::tr;
     let mut g = Gui::standard();
     g.run_command(&format!("lang.{code}"));
     g.settle();
-    wait_for_glyphs(&mut g, &tr("menu.File", "File"));
+    if !wait_for_glyphs(&mut g, code, &tr("menu.File", "File")) {
+        crate::i18n::set_language("en");
+        return Vec::new();
+    }
     let labels = [
         tr("cuts.col.layer", "Layer"),
         tr("cuts.col.mode", "Mode"),

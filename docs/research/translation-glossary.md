@@ -787,7 +787,9 @@ remain words of their own. The ampersand is the full-width ＆, never "&".
   Rotary: ロータリー. Galvo: ガルバノ. Print and cut: プリント＆カット; its targets: ターゲット.
 - Device / Machine / Controller: デバイス / マシン / コントローラー. Console: コンソール.
   Preview: プレビュー. Nudge: 微移動.
-- Shape / Object: 図形 / オブジェクト. Selection: 選択範囲. Path: パス. Node: ノード. Weld: 溶接.
+- Shape / Object: 図形 / オブジェクト. Selection: 選択範囲 (also the art library buttons
+  選択範囲を追加, 選択範囲で置き換え); deselecting keeps the usual 選択を解除 and 選択なし. Selected
+  shapes: 選択した図形. Path: パス. Node: ノード. Weld: 溶接.
 - Boolean union / difference / intersection: ブール結合 / ブール差分 / ブール交差; the group:
   ブール演算.
 - Offset: オフセット. Trace: トレース. Bitmap: ビットマップ.
@@ -809,6 +811,8 @@ remain words of their own. The ampersand is the full-width ＆, never "&".
   Backup path (the outline an image keeps after a crop): 予備パス.
 - Debug log: デバッグログ.
 - Start (the laser panel button, not translated yet): 「Start」 in help, Start in the setting.
+- Cut selected graphics (the job option): 選択したグラフィックをカット; the setting that saves it
+  with the project quotes it: ジョブ原点と「選択したグラフィックをカット」をプロジェクトに保存.
 - Hotkey conflicts: "Ctrl+S キーは既に次のコマンドで使用されています ..."; "複数のコマンドで使用中";
   Take the key: キーを引き継ぐ.
 - Choices: Small / Medium / Large: 小 / 中 / 大. Coarse / Normal / Fine: 粗い / 標準 / 細かい.
@@ -834,7 +838,10 @@ followed by 키 ("Ctrl 키와 Shift 키를") so it stays a word of its own.
   Print and cut: 인쇄 후 절단; its targets: 타깃.
 - Device / Machine / Controller: 장치 / 기계 / 컨트롤러. Console: 콘솔. Preview: 미리 보기.
   Nudge: 미세 이동.
-- Shape / Object: 도형 / 개체. Selection: 선택 영역. Path: 경로. Node: 노드. Weld: 용접.
+- Shape / Object: 도형 / 개체. Selection: 선택 영역 (also the art library buttons 선택 영역 추가,
+  선택 영역으로 바꾸기), never 선택 항목; deselecting keeps the usual 선택 해제 and 선택 없음.
+  Selected shapes: 선택한 도형. Path: 경로. Apply Path to Text: 텍스트에 경로 적용. Node: 노드.
+  Weld: 용접.
 - Boolean union / difference / intersection: 불리언 합집합 / 차집합 / 교집합; the group:
   불리언 연산.
 - Offset: 오프셋. Trace: 추적. Bitmap: 비트맵.
@@ -854,6 +861,8 @@ followed by 키 ("Ctrl 키와 Shift 키를") so it stays a word of its own.
   Backup path (the outline an image keeps after a crop): 백업 경로.
 - Debug log: 디버그 로그.
 - Start (the laser panel button, not translated yet): 'Start' in help, Start in the setting.
+- Cut selected graphics (the job option): 선택한 그래픽 절단; the setting that saves it with the
+  project: 작업 원점과 선택한 그래픽 절단 여부를 프로젝트에 저장.
 - Hotkey conflicts: "Ctrl+S 키는 이미 다음 명령에 할당됨 ..."; "여러 명령에서 사용 중";
   Take the key: 키 가져오기.
 - Choices agree with their label: Toolbar icons are 작게 / 중간 / 크게; Curve quality is 낮음 /

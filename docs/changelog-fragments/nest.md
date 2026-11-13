@@ -1,0 +1,5 @@
+- New: Quick Nest packs the selected shapes onto a sheet by their bounding boxes, with optional quarter turns and a gap
+- New: True Nest packs the selected shapes by their real outlines, can turn them in any step and put small parts inside holes
+- New: Nesting can use a typed sheet size or the work area, and spill onto more sheets side by side
+- New: Cancel a running True Nest to keep the best layout found so far
+- New: Locked shapes and shapes on layers with output off stay put while nesting, and parts keep clear of them

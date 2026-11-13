@@ -354,9 +354,17 @@ mod tests {
         docked.windows.entry("settings".into()).or_default().dock("RightTop");
         docked.windows.entry("db_hotkeys".into()).or_default().resize(egui::vec2(640.0, 480.0));
         assert_eq!(Prefs::from_json(&docked.to_json()), docked, "window places survive a restart");
-        let odd = Prefs::from_json(r#"{"windows": {"settings": {"placement": "docked"}, "x": 5, "y": {"size": [1e9, -1]}}}"#);
-        assert!(odd.windows.get("x").is_none_or(|p| *p == Default::default()));
-        assert!(odd.windows.get("y").is_none_or(|p| p.size.is_none_or(|s| s[0] <= 8192.0 && s[1] >= 180.0)));
+        // One entry this version cannot read costs that window its place, not the others theirs.
+        let odd = Prefs::from_json(
+            r#"{"windows": {"settings": {"placement": "docked"}, "x": 5, "y": {"size": [1e9, -1]},
+                "db_devices": {"placement": {"docked": "Left"}, "size": [500, 400]}}}"#,
+        );
+        let windows: Vec<&str> = odd.windows.keys().map(String::as_str).collect();
+        assert_eq!(windows, ["db_devices", "settings", "x", "y"]);
+        assert_eq!(odd.windows["settings"], Default::default(), "a placement it cannot read: a floating card");
+        assert_eq!(odd.windows["x"], Default::default());
+        assert_eq!(odd.windows["y"].size, Some([8192.0, 180.0]), "a size is held to the limits");
+        assert_eq!((odd.windows["db_devices"].area(), odd.windows["db_devices"].size), (Some("Left"), Some([500.0, 400.0])));
         assert_eq!(Prefs::from_json("not json"), Prefs::default());
         let odd = Prefs::from_json(r#"{"grid_contrast": 7, "page_width": -3, "panels": {"gone": {"area": "Left", "visible": true}}}"#);
         assert_eq!(odd.grid_contrast, 1.0);

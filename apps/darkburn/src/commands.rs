@@ -1341,7 +1341,10 @@ mod tests {
                 !info.implemented
                     || crate::machine_ui::handles(&info.id)
                     || crate::key_cmds::works(&info.id)
-                    || crate::laser_position::handles(&info.id),
+                    || crate::laser_position::handles(&info.id)
+                    // The camera commands run too: a real camera opens only after Allow live
+                    // camera, behind the agent gate, and never under `cargo test` (camera_devices.rs).
+                    || crate::vision_cmds::hardware(&info.id),
                 "{} touches hardware and must not run yet",
                 info.id
             );

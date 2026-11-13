@@ -347,6 +347,10 @@ const ONE_SHOT: &[&str] = &[
     // Set up, then Nest packs the selection once (the window stays for another try).
     "Quick Nest",
     "True Nest",
+    // Set up, then OK warps the artwork once and closes the window.
+    "Taper Warp",
+    // The tangent tool's own window: it shows while the tool is on and goes with it.
+    "Tangent Circle",
     // Picks a machine or walks through setting one up, step by step, then closes.
     "Find my laser",
     "Network bridge setup",
@@ -459,6 +463,8 @@ const NOT_DOCKABLE: &[(&str, &str)] = &[
     ("db_qr_dialog", "set up, then OK makes the code once"),
     ("db_trace_image", "set up, then OK traces once"),
     ("db_convert_bitmap", "set up, then Convert does it once"),
+    ("db_taper_warp", "set up, then OK warps the artwork once"),
+    ("db_tangent", "the tangent tool's own window: shows while the tool is on and goes with it"),
     ("db_macro_edit", "edits one macro; OK saves it and closes"),
     ("db_find_laser", "picks a machine, then closes"),
     ("db_device_wizard", "walks through setting up a machine, then closes"),

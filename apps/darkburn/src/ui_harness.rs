@@ -90,22 +90,24 @@ pub fn splits_a_word(last: char, first: char) -> bool {
 }
 
 /// One lock for everything that makes the software rasteriser work: making a GPU device,
-/// destroying one, and drawing a picture.
+/// destroying one, and drawing a picture take it alone; ordinary frames share it.
 ///
 /// Tests run in parallel threads, each with its own device, and all of them end up on the one
 /// software adapter the harness prefers (WARP on Windows). The process crashed now and then
 /// with an access violation inside `d3d10warp.dll`, on one of its own worker threads. The
 /// crash dumps showed some tests drawing a screenshot while others made or destroyed their
 /// device; serialising only creation and teardown did not stop it. So drawing takes the lock
-/// too. Ordinary frames do not: they draw nothing, they only make textures and queue the
-/// uploads, which run with the next picture.
+/// too. Ordinary frames draw nothing, but they make textures and upload them; on Linux the
+/// Vulkan loader crashed naming such an upload buffer while another test made or destroyed its
+/// device. So frames take the lock shared: side by side with each other, never beside a device
+/// being made, destroyed or drawn.
 ///
 /// Everything that owns a piece of the device lives inside the harness (the renderer and the
 /// copies of its render state that eframe keeps), and the harness only ever exists inside a
 /// [`Guarded`]: [`Guarded::build`] makes it under the lock and `Drop` destroys it under the
 /// lock, also when a test panics or the app fails to start. The app itself holds nothing of
 /// the GPU, so it may outlive the harness.
-static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static GPU: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 struct Guarded(Option<Harness<'static, crate::App>>);
 
@@ -113,13 +115,19 @@ impl Guarded {
     /// Runs `make` (which creates the device) under the GPU lock. If `make` panics, what it
     /// had built so far is dropped while the lock is still held.
     fn build(make: impl FnOnce() -> Harness<'static, crate::App>) -> Guarded {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         Guarded(Some(make()))
+    }
+
+    /// One ordinary frame, under the shared side of the GPU lock.
+    fn step(&mut self) {
+        let _gpu = GPU.read().unwrap_or_else(|e| e.into_inner());
+        self.0.as_mut().expect("the harness is alive").step();
     }
 
     /// Draws the last frame offscreen, under the GPU lock.
     fn render(&mut self) -> Result<image::RgbaImage, String> {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         self.0.as_mut().expect("the harness is alive").render()
     }
 }
@@ -139,7 +147,7 @@ impl std::ops::DerefMut for Guarded {
 
 impl Drop for Guarded {
     fn drop(&mut self) {
-        let _gpu = GPU.lock().unwrap_or_else(|e| e.into_inner());
+        let _gpu = GPU.write().unwrap_or_else(|e| e.into_inner());
         self.0 = None;
     }
 }

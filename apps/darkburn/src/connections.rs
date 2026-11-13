@@ -616,8 +616,10 @@ pub fn automation_command(app: &mut DarkBurn, text: &str) -> String {
             if !app.machine.handle.is_connected() {
                 return "ERROR: no laser is connected".into();
             }
-            // Built at once, then the same path as the Start button (checklist, bounds).
-            match crate::machine_job::start_now(app, crate::machine_job::Action::Start { from_op: None }, false) {
+            // Built at once, then the same path as the Start button (checklist, bounds), from
+            // the operation "Start here" names when one is set.
+            let from_op = crate::job_cmds::start_op(app);
+            match crate::machine_job::start_now(app, crate::machine_job::Action::Start { from_op }, false) {
                 Ok(v) if v.get("waiting_for_checklist").and_then(Value::as_bool) == Some(true) => "WAITING: tick the checklist in DarkBurn".into(),
                 Ok(_) => "OK".into(),
                 Err(e) => format!("ERROR: {e}"),

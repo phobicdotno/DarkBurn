@@ -378,6 +378,12 @@ pub fn rd_file_bytes(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>) -> 
 
 /// The request for the connected machine's family.
 pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_only: bool) -> Result<JobRequest, String> {
+    // As Save from here: an operation past the end leaves nothing to run.
+    if let Some(op) = from_op
+        && op > job.toolpath.ops.len()
+    {
+        return Err(format!("op_index {op} is past the end of the job ({} operations)", job.toolpath.ops.len()));
+    }
     let tp = match from_op {
         Some(op) => job.toolpath_from(op),
         None => job.toolpath.clone(),
@@ -405,6 +411,11 @@ pub fn request_for(app: &DarkBurn, job: &BuiltJob, from_op: Option<usize>, send_
         Family::Ruida => {
             let shift = if tp.space == CoordSpace::RelativeToStart {
                 let s = app.machine.handle.snapshot();
+                // A controller is ready as soon as it answers; where its head is comes with the
+                // first status report. Until then "from the current position" has no place.
+                if !s.has_position {
+                    return Err("The controller has not reported where the head is yet. Use Get position, then start again.".into());
+                }
                 Vec2::new(s.machine_pos[0], s.machine_pos[1])
             } else {
                 Vec2::ZERO

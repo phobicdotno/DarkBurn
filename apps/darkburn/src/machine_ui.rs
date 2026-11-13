@@ -542,6 +542,11 @@ impl MachineUi {
 
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07].
     pub fn select_device(&mut self, id: u64) -> bool {
+        // The device in use already: nothing changes, and its connection (with the job it may be
+        // running) stays.
+        if self.devices.active == Some(id) && self.devices.get(id).is_some() {
+            return true;
+        }
         if !self.devices.select(id) {
             return false;
         }
@@ -866,6 +871,11 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
                 _ => None,
             };
             let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to };
+            // The limit the device has now, as for Fire.
+            let limit = m.active().settings.fire_max_percent;
+            if s.family == Family::Grbl && spec.laser_percent.is_some_and(|p| p > limit) {
+                return Err(format!("Fire power must be between 0 and {limit} %."));
+            }
             mach(m.handle.frame_rect(r, spec))
         }
         "machine.home" => mach(m.handle.home()),
@@ -911,12 +921,24 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             }
             let percent = num(a, "percent").unwrap_or(m.fire_percent);
             let secs = num(a, "secs").unwrap_or(m.fire_secs);
+            // The driver holds the limit it was connected with; the device's limit counts from
+            // the moment it is set (a frame with the laser on keeps to it the same way).
+            let limit = d.settings.fire_max_percent;
+            if d.family() == Family::Grbl && percent > limit {
+                return Err(format!("Fire power must be between 0 and {limit} %."));
+            }
             mach(m.handle.fire(percent, secs))
         }
         "machine.fire_off" => mach(m.handle.fire_off()),
         "machine.overrides" => {
-            let g = |k: &str| a.get(k).and_then(Value::as_u64).and_then(|v| u16::try_from(v).ok());
-            mach(m.handle.set_overrides(g("feed"), g("power"), g("rapid")))
+            // A value that is no whole percentage is an error, not an override left as it was.
+            let g = |k: &str| match a.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => {
+                    v.as_u64().and_then(|v| u16::try_from(v).ok()).map(Some).ok_or_else(|| format!("argument {k} must be a whole number of percent"))
+                }
+            };
+            mach(m.handle.set_overrides(g("feed")?, g("power")?, g("rapid")?))
         }
         // ----- console and settings
         "machine.console" => mach(m.handle.send_console(a.get("line").and_then(Value::as_str).ok_or("argument line must be text")?)),
@@ -1269,6 +1291,11 @@ pub fn family_of(m: &MachineUi) -> Family {
 /// corner, G-code settings, motion numbers and scan offsets flow from it into `app.job`. Edits made
 /// in the job builder's own G-code window or the images window flow back into the profile.
 pub fn sync_job_state(app: &mut DarkBurn) {
+    // What `job.json` holds is read before the first hand-over. Read after it (the job windows
+    // load it later in the frame), it looked like an edit made in the job builder and replaced
+    // the active device's own G-code settings at every start.
+    let dir = app.settings_dir.clone();
+    app.job.ensure_loaded(dir.as_deref());
     let Some(active) = app.machine.devices.active else { return };
     let scan_now = crate::scan_offsets::current();
     let same_device = app.machine.job_synced.as_ref().is_some_and(|s| s.0 == active);

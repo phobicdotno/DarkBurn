@@ -1391,6 +1391,9 @@ pub struct RuidaAdapter {
     job_name: String,
     job_estimated: Option<Duration>,
     saw_running: bool,
+    /// The request to run a stored file came back as an error: the job that was announced is
+    /// taken back unless the next status report shows the controller running after all.
+    run_failed: Option<String>,
     last_advance: Instant,
     jog_keys: Vec<(ruida::Axis, bool)>,
     fire: Option<Instant>,
@@ -1445,6 +1448,7 @@ impl RuidaAdapter {
             job_name: String::new(),
             job_estimated: None,
             saw_running: false,
+            run_failed: None,
             last_advance: Instant::now(),
             jog_keys: Vec::new(),
             fire: None,
@@ -1506,6 +1510,15 @@ impl RuidaAdapter {
         if matches!(s.state, S::Running | S::Paused) {
             self.saw_running = true;
         }
+        // A stored file whose start was refused never ran: it is not a job that finished. (When
+        // only the answer was lost and the controller runs it, the job stays.)
+        if let Some(why) = self.run_failed.take()
+            && s.state == S::Idle
+            && !self.saw_running
+            && self.job_started.take().is_some()
+        {
+            self.out.push(MachineEvent::JobAborted(format!("the controller did not start the file ({why})")));
+        }
         if self.job_started.is_some()
             && s.state == S::Idle
             && (self.saw_running || self.job_started.is_some_and(|t| t.elapsed() > Duration::from_secs(3)))
@@ -1534,6 +1547,10 @@ impl RuidaAdapter {
                         } else {
                             self.out.push(MachineEvent::JobAborted("cancelled".into()));
                         }
+                    }
+                    Op::Other("run file") => {
+                        self.run_failed = Some(msg.clone());
+                        self.out.push(MachineEvent::Error(msg));
                     }
                     Op::Time(_) | Op::Other(_) | Op::BedX | Op::BedY => self.out.push(MachineEvent::Error(msg)),
                 }
@@ -1754,11 +1771,14 @@ impl DriverAdapter for RuidaAdapter {
                 self.note(ConsoleKind::Sent, "Resume");
                 self.req(R::Resume, Op::Other("resume"))
             }
-            C::Stop => {
+            // An emergency stop is the same request to this controller, and ends the job the
+            // same way: left as a running job, it was reported as finished once the head stood.
+            C::Stop | C::EmergencyStop => {
                 self.note(ConsoleKind::Sent, "Stop");
                 // The stop itself always goes out; a job is only reported as stopped when one
                 // (or a frame) was under way.
                 let had_job = self.job_started.take().is_some() || working;
+                self.run_failed = None;
                 self.framing_until = None;
                 self.snap.job = None;
                 self.release_fire();
@@ -1901,9 +1921,17 @@ impl DriverAdapter for RuidaAdapter {
             C::ListFiles => self.req(R::ListFiles, Op::Other("list")),
             C::RunFile(i) => {
                 busy(working)?;
+                // The controller does not answer a number it has no file for: with the list
+                // read, such a start is refused here instead of shown as a job that ran.
+                if let Some(files) = &self.snap.ruida.files
+                    && !files.iter().any(|f| f.index == i)
+                {
+                    return Err(MachineError::Invalid(format!("There is no file number {i} on the controller.")));
+                }
                 self.release_fire();
                 self.job_started = Some(Instant::now());
                 self.saw_running = false;
+                self.run_failed = None;
                 self.out.push(MachineEvent::JobStarted);
                 self.req(R::RunFile(i), Op::Other("run file"))
             }
@@ -1935,10 +1963,6 @@ impl DriverAdapter for RuidaAdapter {
                 }
                 None => Err(MachineError::Invalid("No file name is waiting for an answer.".into())),
             },
-            C::EmergencyStop => {
-                self.release_fire();
-                self.req(R::Stop, Op::Other("stop"))
-            }
             C::Air(_) | C::PersistSettings | C::WriteGcodeSetting { .. } => {
                 Err(MachineError::Unsupported("that is a G-code controller command; this is a Ruida controller".into()))
             }
@@ -1956,7 +1980,11 @@ impl DriverAdapter for RuidaAdapter {
         if self.snap.connected() {
             self.release_fire();
             let _ = self.h.request(ruida::Request::Stop);
-            let _ = self.h.request(ruida::Request::Disconnect);
+            let last = self.h.request(ruida::Request::Disconnect);
+            // A worker that is told to end drops what it has not begun yet. So the end waits
+            // (not for ever) until the key is let go, the stop is sent and the link is closed:
+            // a worker in the middle of a status question would leave the laser firing.
+            let _ = self.h.wait(last, Duration::from_secs(3), &mut |_| ruida::OverwriteChoice::Cancel);
         }
         self.h.shutdown();
         self.snap.link = LinkState::Disconnected;

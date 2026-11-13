@@ -122,6 +122,8 @@ struct Item {
     depth: usize,
     /// The smallest shape of the layer this one lies inside.
     parent: Option<usize>,
+    /// How many cut outlines of the whole job this one lies inside (odd: the kerf shrinks it).
+    kerf_depth: usize,
     /// The cut direction set on the shape.
     direction: darkburn_core::CutDirection,
     /// Manually placed tabs (document coordinates).
@@ -144,7 +146,7 @@ impl Item {
     /// The outline grown by the kerf (shrunk for a hole), in document coordinates.
     fn grown(&self, kerf: f64) -> BezPath {
         if kerf != 0.0 {
-            darkburn_geom::offset::kerf_offset(&self.path, if self.depth % 2 == 1 { -kerf } else { kerf }, crate::job_build::TOLERANCE)
+            darkburn_geom::offset::kerf_offset(&self.path, if self.kerf_depth % 2 == 1 { -kerf } else { kerf }, crate::job_build::TOLERANCE)
         } else {
             self.path.clone()
         }
@@ -389,6 +391,29 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
     // job of every other machine.
     let planner = crate::job_build::JobProjectSettings::from_doc(doc, &darkburn_job::PlannerSettings::default()).planner;
     let by_priority = planner.optimize && planner.order_by.contains(&darkburn_job::OrderKey::Priority);
+    // A kerf offset grows a part and shrinks a hole. What is a hole is counted over the outlines
+    // that are cut on every layer of the job, as in the job of the other machines
+    // (`job_build::collect`): holes are often given a layer of their own. Each outline comes
+    // with the number of its shape; they are only needed when some layer has a kerf offset.
+    let marked = |li: usize| doc.layer(li).outputs() && !layer::is_tool_layer(li);
+    let cut_as_line = |s: &CutSetting| s.enabled && (s.mode == Mode::FillLine || (s.mode == Mode::Line && !s.galvo.drill));
+    let any_kerf = (0..layer::LAYER_COUNT).any(|li| marked(li) && doc.layer(li).settings.iter().any(|s| cut_as_line(s) && s.kerf != 0.0));
+    let mut cut_outlines: Vec<(usize, Rect, Vec<Point>)> = Vec::new();
+    let mut leaf_no = 0usize;
+    for top in doc.iter() {
+        for leaf in top.leaves() {
+            leaf_no += 1;
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            if !any_kerf || !marked(li) || leaf.is_image() || !doc.layer(li).settings.iter().any(cut_as_line) {
+                continue;
+            }
+            for poly in darkburn_job::geom::flatten(&leaf.outline(), crate::job_build::TOLERANCE) {
+                if poly.closed {
+                    cut_outlines.push((leaf_no, darkburn_job::geom::bbox(&poly.pts), poly.pts));
+                }
+            }
+        }
+    }
     let order: Vec<usize> = doc.layer_order.clone();
     for li in order {
         let l = doc.layer(li);
@@ -397,8 +422,10 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
         }
         let mut items: Vec<Item> = Vec::new();
         let mut images = Vec::new();
+        let mut leaf_no = 0usize;
         for top in doc.iter() {
             for leaf in top.leaves() {
+                leaf_no += 1;
                 if leaf.layer.min(layer::LAYER_COUNT - 1) != li {
                     continue;
                 }
@@ -414,6 +441,19 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                 if p.elements().is_empty() {
                     continue;
                 }
+                let bbox = p.bounding_box();
+                let kerf_depth = match p.elements().first() {
+                    Some(darkburn_core::kurbo::PathEl::MoveTo(p0)) => cut_outlines
+                        .iter()
+                        .filter(|(no, r, pts)| {
+                            *no != leaf_no
+                                && r.area() > bbox.area() + 1e-9
+                                && darkburn_job::geom::rect_inside(bbox, *r)
+                                && darkburn_job::geom::point_in_polygon(*p0, pts)
+                        })
+                        .count(),
+                    _ => 0,
+                };
                 items.push(Item {
                     path: p,
                     priority: if by_priority { leaf.priority } else { 0 },
@@ -421,6 +461,7 @@ pub fn build_job(doc: &Document, dev: &Device) -> Result<GalvoBuild, String> {
                     starts: leaf.start_points().map(|q| leaf.transform * Point::new(q[0], q[1])).collect(),
                     depth: 0,
                     parent: None,
+                    kerf_depth,
                     direction: leaf.direction,
                     tabs: leaf.tabs.iter().map(|q| leaf.transform * Point::new(q[0], q[1])).collect(),
                 });

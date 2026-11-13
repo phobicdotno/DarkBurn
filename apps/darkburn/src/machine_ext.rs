@@ -391,6 +391,14 @@ pub fn galvo_start(app: &mut DarkBurn, send_only: bool) -> Result<Value, String>
     if !armed {
         return Err("Arm the laser first (Arm in the Laser panel). The laser is never enabled without it.".into());
     }
+    // The board checks the frame with the rule it was connected with. "Require framing" counts
+    // from the moment it is switched on in the device, so it is checked here as well.
+    if dev.settings.galvo.require_framing
+        && let crate::machine_api::JobData::Galvo { job, .. } = &req.data
+        && app.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key) != Some(job.frame_key)
+    {
+        return Err("Frame the job with the red light before starting it.".into());
+    }
     let outcome = app.machine.begin_start(req)?;
     app.job_run.from_project = true;
     match outcome {

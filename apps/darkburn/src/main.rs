@@ -27,6 +27,8 @@ mod cuts_panel;
 mod device_file_tests;
 mod devices;
 mod devices_ui;
+#[cfg(test)]
+mod doc_hunt10_tests;
 mod dock_geom;
 mod dock_layout;
 mod escape;
@@ -82,6 +84,8 @@ mod machine_ext;
 mod machine_ext_tests;
 #[cfg(test)]
 mod machine_ext_ui_tests;
+#[cfg(test)]
+mod machine_hunt10_tests;
 mod machine_job;
 mod machine_ui;
 #[cfg(test)]

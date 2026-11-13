@@ -513,6 +513,30 @@ mod tests {
         assert!(!tr["art.load_tip"].contains("birden çoğu"), "tr art.load_tip: {:?}", tr["art.load_tip"]);
     }
 
+    /// Review corrections for Greek and Russian: the shared Dark/Light choices are feminine in
+    /// Russian (they agree with "Тема"), so the canvas Background row takes a feminine noun too;
+    /// the Russian visibility column is not "Видим" ("we see"); Flatten Image Crop says the
+    /// crop becomes permanent and reads differently from Apply Crop Path; the Greek debug log
+    /// is "αποσφαλμάτωση" (debugging), not a log of errors only.
+    #[test]
+    fn greek_and_russian_keep_the_review_wording() {
+        let el = locale("el");
+        let ru = locale("ru");
+        assert_eq!(ru["choice.Dark"], "Темная");
+        assert_eq!(ru["choice.Light"], "Светлая");
+        assert_eq!(ru["settings.background"], "Подложка");
+        assert_eq!(ru["cuts.col.show"], "Показ");
+        assert!(ru.values().all(|v| !v.split(|c: char| !c.is_alphabetic()).any(|w| w == "Видим")), "ru: a text still says Видим");
+        assert_eq!(ru["cmd.edit.image_flatten"], "Окончательно обрезать изображение");
+        assert!(!ru["cmd.edit.image_flatten"].starts_with("Применить"), "ru: Flatten reads like Apply Crop Path");
+        assert_eq!(el["cmd.help.debug_log"], "Ενεργοποίηση καταγραφής αποσφαλμάτωσης");
+        assert_eq!(el["help.debug_on"], "Η καταγραφή αποσφαλμάτωσης είναι ενεργή.");
+        assert_eq!(el["help.debug_off"], "Η καταγραφή αποσφαλμάτωσης είναι ανενεργή.");
+        for key in ["cmd.help.debug_log", "help.debug_on", "help.debug_off"] {
+            assert!(!el[key].contains("σφαλμάτων"), "el {key}: {:?}", el[key]);
+        }
+    }
+
     /// The two Spanish files are not copies of each other: each uses the words of its own
     /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
     /// in Latin America, and "ordenador" against "computadora".

@@ -595,7 +595,7 @@
   "settings.job_log_dir": "ジョブログのフォルダー",
   "settings.job_log_dir_hint": "DarkBurn の設定フォルダー",
   "settings.job_log_show": "ジョブログを表示",
-  "settings.job_log_text": "job_log.csv にジョブごとに 1 行: 開始、所要時間、ファイル、デバイス、結果。",
+  "settings.job_log_text": "job_log.csv に 1 ジョブ 1 行: 開始、時間、ファイル、デバイス、結果。",
   "settings.jobs": "ジョブ",
   "settings.length_units": "長さ",
   "settings.node_size": "ノードのサイズ",

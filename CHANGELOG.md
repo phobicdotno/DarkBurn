@@ -1,6 +1,128 @@
 # Changelog
 
-## v0.0.528 (build 6)
+## v0.0.650 (build 6)
+- New: You can now connect to the Gweike card simulator to try things out. It only reads
+- New: Check the Gweike card's status, with any alarms spelled out in plain words
+- New: Select Similar Shapes: pick one shape and grab all the others of the same kind and size in one go
+- New: star shape: choose how many points it has and how pointy it is
+- New: Draw a circle through three points
+- New: Draw an arc through three points: start, a point along the way, and end
+- New: The Gweike card simulator window now has Connect, Disconnect, Status, Stop and Emergency stop buttons
+- New: Paste a Gweike controller frame in hex and get it explained in plain words
+- New: AI agents can always stop the simulated Gweike card, but connecting to it needs both the machine and the Gweike switches
+- New: "Leave a Gap" leaves a bit of a closed shape uncut so the part stays in the sheet
+- New: "Select Similar Shapes" is now in the Edit menu
+- Fix: Gweike: letting go of a jog key now brakes the way the original software does
+- Fix: Gweike: odd machine settings can no longer keep a stop from being built
+- Fix: Gweike: the safety gate now uses the bed size, limits and ports you set, not only the built-in ones
+- Fix: Gweike: a stop now switches off every laser output your machine is set up with
+- Fix: Gweike: a jog whose answer got lost still stops when you let go
+- Fix: Gweike: stop right after start now stops the job even if the start's answer went missing
+- Fix: Gweike: a job that was stopped is no longer picked up by a later start; clear it first
+- Fix: Gweike: one late answer from the controller no longer confuses everything after it
+- Fix: Gweike: a stop is sent again if the controller did not answer
+- Fix: Gweike: stops always reach the laser outputs, never switch anything back on, keep trying until the card hears them, and a lost connection stops a running job
+- Fix: Ruida controllers with a short or 9-letter firmware name now show the right firmware version
+- Fix: Deleting or running a file on a Ruida controller can no longer hit the wrong file (or all of them)
+- Fix: A Ruida job with a broken coordinate or speed is refused instead of sending the head somewhere odd
+- Fix: Very large Ruida jobs no longer turn a long cut into a tiny one
+- Fix: Opening a damaged .rd file no longer crashes DarkBurn
+- Fix: Auto-numbered Ruida file names no longer trip over oddly named files on the controller
+- Fix: Ruida settings no longer read one value behind after a slow network answer
+- Fix: An absurd jog distance on a Ruida is refused instead of shortened
+- Fix: Broken galvo lens files are refused instead of bending the field the wrong way
+- Fix: A galvo layer with a broken speed or frequency is refused instead of firing at full pulse
+- Fix: A galvo fill with a broken line spacing is refused
+- Fix: Galvo jobs with impossible device settings are refused instead of marking in the wrong place
+- Fix: Importing an EZCad config with a nonsense number no longer breaks the field size
+- Fix: Disconnecting a galvo while framing no longer says a job was aborted
+- Fix: After pause and resume, a galvo job waiting for the foot pedal still says so
+- Fix: A GRBL job whose size can't be worked out no longer slips past the bounds check
+- Fix: Garbled GRBL position reports no longer show nonsense coordinates
+- Fix: A garbled GRBL 0.9 status line no longer swaps the X/Y/Z readout
+- Fix: The GRBL fire button uses the controller's own max power when the device setting is unusable
+- Fix: GRBL settings that aren't real numbers are refused before they're sent
+- Fix: A broken max-power setting can no longer turn every cut into full power
+- Fix: A broken fire-button time limit no longer crashes the connection
+- Fix: The fire button refuses to work with a broken max-power setting instead of firing at full power
+- Fix: Marlin settings that aren't real numbers are refused
+- Fix: Garbled position reports from Marlin and Smoothie no longer show nonsense coordinates
+- Fix: Agents now get the G-code settings of the device they just picked
+- Fix: Your device's G-code settings no longer get overwritten when DarkBurn starts
+- Fix: An emergency stop on a Ruida now shows the job as stopped
+- Fix: Running a file that isn't on the controller is refused
+- Fix: A controller file that didn't start no longer shows as finished
+- Fix: A lower fire limit in Device Settings applies right away
+- Fix: Framing with the laser on respects the fire limit too
+- Fix: Bad override values now give an error instead of silently doing nothing
+- Fix: START from automation now honours Start here
+- Fix: Imported .rd files no longer get a stray line from 0,0
+- Fix: Galvo 'require framing' works as soon as you switch it on
+- Fix: Jobs from the current position wait until the Ruida reports where the head is
+- Fix: Galvo kerf now shrinks holes that sit on their own layer
+- Fix: Disconnecting a Ruida while firing always lets the laser go
+- Fix: Picking the device you're already using no longer disconnects it
+- Fix: Run from here past the end of a job is refused
+- Fix: Select Smaller no longer marks a saved project as changed
+- Fix: Warp, Deform, Round Corners, Resize Slots, Optimize and Close with Tolerance work right on shapes in a moved or resized group
+- Fix: Break Apart, Weld and Offset keep a picture that sits in a group
+- Fix: A start point on a moved path stays where you clicked
+- Fix: A corner radius on a virtual array stays when the array is edited
+- Fix: Two drags on the same number field are two undo steps
+- Fix: A corner handle can make a straight line shorter
+- Fix: New or Open no longer puts the old project's settings or text into the new one
+- Fix: Refresh Image no longer tries to read an SVG as the picture
+- Fix: Names typed for two shapes are two undo steps
+- Fix: Cut libraries you save, open or start new are there again after a restart
+- Fix: A camera target or test mark that can't be drawn is refused instead of eating all memory
+- Fix: Cut library commands refuse a layer number that doesn't exist
+- Fix: With the Offset or array window open, the preview follows a shape you drag
+- Fix: Check for Updates right after start-up shows its answer
+- Fix: Warp and Deform handles follow a shape moved with the arrow keys
+- Fix: Dragging a number in the Text toolbar is one undo step
+- Fix: Dragging a Variable Text number is one undo step
+- Fix: New or Open closes the Boolean Assistant, Convert to Bitmap, Trace and QR windows so they can't change the new project
+- Fix: Selecting a giant shape no longer crashes
+- Fix: Convert to Bitmap of a giant shape says it's too large instead of crashing
+- Fix: Shapes that would land too far out are refused with a message instead of reported as made
+- Fix: Outlines that sit exactly on the edge of a clipping shape are no longer thrown away on import
+- Fix: Perforating a line with an odd start value no longer hangs
+- Fix: Filling an enormous area with an array no longer crashes or gives a single copy
+- Fix: Offsetting by an absurd distance no longer crashes
+- Fix: A layer name with odd characters can no longer slip extra commands into the G-code
+- Fix: Cross-hatched fills plan their travel moves a little better
+- Fix: Open lines no longer get lead-ins and lead-outs
+- Fix: Converting a huge shape to a bitmap no longer crashes
+- Fix: A picture placed absurdly far away no longer crashes the image processing
+- Fix: Very long Code 128 barcodes get the right check character
+- Fix: Text on a path with a broken start value no longer crashes
+- Fix: A barcode or QR code with an absurd size no longer crashes
+- Fix: Pictures inside array originals are no longer lost when saving
+- Fix: Pasted shapes always land on a real layer
+- Fix: Pasting a giant bracketed sum into a number box no longer crashes the program
+- Fix: An AI agent's request with an option out of range or misspelt is now turned down instead of running with the wrong values
+- Fix: PLT files that skip the semicolon before a rectangle no longer lose that rectangle and the last line
+- Fix: A simulated Gweike run that an alarm stopped is no longer reported as finished
+- Fix: The remote-control link now hangs up on clients that dawdle over logging in
+- Fix: HPGL files that start with printer codes no longer lose their first move
+- Fix: Blank camera frames no longer crash the camera view
+- Fix: Camera alignment now tells you when the three marks you clicked are in a line, instead of quietly giving a broken overlay
+- Fix: Lens calibration now asks you to tilt the target instead of guessing when every photo was taken straight on
+- Fix: Print and cut now catches marks that were measured in a line instead of cutting a squashed design
+- Fix: Number boxes now accept a value typed with its own unit after it, like '20 mm'
+- Fix: Middle-aligned text from DXF files now lands where it should instead of sitting a bit high
+- Fix: Typing a weird S max like infinity no longer slips through; you get told to fix it
+- Fix: Saving a library with no file name now asks for a name instead of making a nameless file
+- Fix: Pressing undo while dragging no longer scrambles your undo history
+- Fix: Closing a shape by dropping one end on the other now always counts as a change, so auto-save catches it
+- Fix: Stars, circles and arcs drawn impossibly far out are refused instead of crashing the app
+- Fix: Camera, rotary, cylinder and feeder settings now cope with nonsense values instead of crashing, blacking out the picture or losing your saved camera setup
+- Fix: Pasting a colour code with a stray space or line break works now
+- Fix: Fine-tuning a colour no longer drops it from your recent colours
+- Fix: Resizing a column in one table no longer resets widths you set in a wider one
+- Fix: Tables with odd column settings no longer crash the layout
+- Fix: DXF exports now keep each shape's own colour, AI exports keep non-Latin layer names, exports no longer write broken numbers or stray line breaks, and odd DXF splines and text codes import cleanly
+- Fix: Warp and Deform with a point absurdly far out are refused instead of eating all memory
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another
 - Fix: cut settings from a project file or an AI agent are held to the same ranges as the Cut Settings window (no more millions of tabs or pauses of years)
 - Fix: Copy Along Path no longer crashes on a path with absurdly large coordinates

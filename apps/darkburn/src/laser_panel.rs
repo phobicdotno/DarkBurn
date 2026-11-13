@@ -225,16 +225,24 @@ fn fire_button(ui: &mut Ui, app: &mut DarkBurn, enabled: bool) {
         .inner;
     let down = r.is_pointer_button_down_on();
     let on = app.machine.handle.snapshot().fire_on;
-    // One fire per press: the machine reports the laser on a little later, and a held button
-    // must not send a second fire in between, nor after the laser went off by itself.
-    let sent = ui.data(|d| d.get_temp::<bool>(r.id)).unwrap_or(false);
-    if down && !on && enabled && !sent {
-        let (p, s) = (app.machine.fire_percent, app.machine.fire_secs.clamp(1.0, 10.0));
-        go(app, "machine.fire", json!({ "percent": p, "secs": s }));
-        ui.data_mut(|d| d.insert_temp(r.id, true));
-    } else if !down {
-        if sent {
-            ui.data_mut(|d| d.remove::<bool>(r.id));
+    // This press: when fire was last sent, and whether the laser has been on. The machine reports
+    // the laser on a little later, so a held button waits for it before asking again, and once
+    // the laser was on it never fires again in the same press.
+    let now = ui.input(|i| i.time);
+    let (sent_at, was_on) = ui.data(|d| d.get_temp::<(Option<f64>, bool)>(r.id)).unwrap_or((None, false));
+    if down {
+        let was_on = was_on || on;
+        let waiting = sent_at.is_some_and(|t| now - t < 0.5);
+        let mut sent_at = sent_at;
+        if !on && !was_on && !waiting && enabled {
+            let (p, s) = (app.machine.fire_percent, app.machine.fire_secs.clamp(1.0, 10.0));
+            go(app, "machine.fire", json!({ "percent": p, "secs": s }));
+            sent_at = Some(now);
+        }
+        ui.data_mut(|d| d.insert_temp(r.id, (sent_at, was_on)));
+    } else {
+        if sent_at.is_some() || was_on {
+            ui.data_mut(|d| d.remove::<(Option<f64>, bool)>(r.id));
         }
         if on {
             go(app, "machine.fire_off", json!({}));

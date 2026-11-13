@@ -98,6 +98,57 @@ fn parse_params(s: &str) -> Vec<f64> {
         .collect()
 }
 
+/// The index just past the device escape that starts at `chars[i]` (an ESC), so that only the
+/// escape itself is skipped, never the instruction after it.
+///
+/// - HP-GL device control, `ESC.` and one letter: plotter on/off (`(`, `Y`, `)`, `Z`) and the
+///   output and abort requests (`A`, `B`, `E`, `J`, `K`, `L`, `O`, `R`) end there; the others
+///   take numbers separated by `;` and end with `:` (`ESC.@1024;0:`, `ESC.I81;;17:`).
+/// - PCL with parameters, `ESC` then a character from `!` to `/`, an optional group letter
+///   from `` ` `` to `~`, then values, each followed by a lowercase letter (more follow) or by an
+///   uppercase letter from `@` to `^` (the end): `ESC%0B`, `ESC%-12345X`, `ESC&l1o0E`.
+/// - Two-character PCL escapes, `ESC` and one character from `0` to `~`: `ESCE` (reset).
+fn skip_escape(chars: &[char], mut i: usize) -> usize {
+    let at = |k: usize| chars.get(k).copied().unwrap_or('\0');
+    i += 1;
+    match at(i) {
+        '.' => {
+            i += 1;
+            let kind = at(i);
+            if i < chars.len() {
+                i += 1;
+            }
+            if !matches!(kind, '(' | 'Y' | ')' | 'Z' | 'A' | 'B' | 'E' | 'J' | 'K' | 'L' | 'O' | 'R') {
+                while at(i).is_ascii_digit() || matches!(at(i), ';' | '+' | '-' | '.' | ' ') {
+                    i += 1;
+                }
+                if at(i) == ':' {
+                    i += 1;
+                }
+            }
+            i
+        }
+        '!'..='/' => {
+            i += 1;
+            if matches!(at(i), '`'..='~') {
+                i += 1;
+            }
+            loop {
+                while at(i).is_ascii_digit() || matches!(at(i), '+' | '-' | '.') {
+                    i += 1;
+                }
+                match at(i) {
+                    '`'..='~' => i += 1,
+                    '@'..='^' => return i + 1,
+                    _ => return i,
+                }
+            }
+        }
+        '0'..='~' => i + 1,
+        _ => i,
+    }
+}
+
 /// Imports HPGL text.
 pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError> {
     let upm = if opts.units_per_mm.is_finite() && opts.units_per_mm > 0.0 { opts.units_per_mm } else { 40.0 };
@@ -110,12 +161,7 @@ pub fn import(bytes: &[u8], opts: &HpglOptions) -> Result<Imported, ImportError>
     while i < chars.len() {
         let c = chars[i];
         if c == '\u{1b}' {
-            // Device-control escape: skip to its terminator.
-            i += 1;
-            while i < chars.len() && !matches!(chars[i], ':' | ';' | '\n') {
-                i += 1;
-            }
-            i += 1;
+            i = skip_escape(&chars, i);
             continue;
         }
         if !c.is_ascii_alphabetic() || i + 1 >= chars.len() || !chars[i + 1].is_ascii_alphabetic() {

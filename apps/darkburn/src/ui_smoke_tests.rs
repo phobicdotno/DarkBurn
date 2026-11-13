@@ -793,7 +793,8 @@ fn closing_a_docked_window_brings_back_the_tab_it_covered() {
 
     // The Laser panel moved up here, behind the first tab; the window's tab picked by hand.
     for (id, area, visible) in [("laser", Area::RightTop, true), ("camera", Area::RightTop, false), ("variable_text", Area::RightTop, false)] {
-        let panel = g.app().prefs.panels.get_mut(id).expect(id);
+        let mut app = g.app();
+        let panel = app.prefs.panels.get_mut(id).expect(id);
         (panel.area, panel.visible) = (area, visible);
     }
     g.app().prefs.active_tab.insert(Area::RightTop, "laser".into());

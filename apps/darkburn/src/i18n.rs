@@ -361,6 +361,45 @@ mod tests {
         assert_eq!(sv["library.assign"], "Tilldela till lager");
     }
 
+    /// Review corrections for Finnish, Polish and Czech: Czech Nest packs shapes ("naskládat",
+    /// not "vnořit", put inside) and its hotkey conflict lines make the key the subject
+    /// ("Ctrl+S je už přiřazena příkazu ..."); a linked Polish library entry (wpis) is
+    /// masculine; Finnish Dock pushes a shape ("työnnä"; "telakoida" is docking a window) and
+    /// layer output is "ajo", never "tulostus", which is Print.
+    #[test]
+    fn finnish_polish_and_czech_keep_the_review_wording() {
+        let fi = locale("fi");
+        let pl = locale("pl");
+        let cs = locale("cs");
+        assert_eq!(cs["cmd.arrange.nest"], "Naskládat vybrané");
+        assert_eq!(cs["hotkeys.taken_by"], "je už přiřazena příkazu");
+        assert_eq!(cs["hotkeys.clash"], "přiřazena více příkazům");
+        assert!(cs.values().all(|v| !v.to_lowercase().contains("vnoř")), "cs: a text still says vnořit");
+        assert_eq!(pl["library.linked"], "połączony");
+        for (key, want) in [
+            ("cmd.arrange.dock_left", "Työnnä vasemmalle"),
+            ("cmd.arrange.dock_right", "Työnnä oikealle"),
+            ("cmd.arrange.dock_up", "Työnnä ylös"),
+            ("cmd.arrange.dock_down", "Työnnä alas"),
+            ("menu.Dock", "Työnnä"),
+            ("ribbon.group.Docking", "Työntö"),
+            ("toolbar.docking", "Työntö"),
+            ("settings.output_tolerance", "Ajon käyrätoleranssi"),
+        ] {
+            assert_eq!(fi[key], want, "fi {key}");
+        }
+        assert!(fi.values().all(|v| !v.to_lowercase().contains("telak")), "fi: a text still says telakoida");
+        // Output is never the Print word, and the help names the column by its header.
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (key, english) in &en {
+            let lower = english.to_lowercase();
+            if lower.contains("output") && !lower.contains("print") {
+                assert!(!fi[key].to_lowercase().contains("tulost"), "fi {key} uses the Print word: {:?}", fi[key]);
+            }
+        }
+        assert!(fi["help.cuts.p2"].contains(&format!("({})", fi["cuts.col.out"])), "fi help.cuts.p2: {:?}", fi["help.cuts.p2"]);
+    }
+
     /// The two Spanish files are not copies of each other: each uses the words of its own
     /// region, such as "Edición" and "Ajustes" in Spain against "Editar" and "Configuración"
     /// in Latin America, and "ordenador" against "computadora".

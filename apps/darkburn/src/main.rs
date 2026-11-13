@@ -3,6 +3,7 @@
 
 mod a11y;
 mod actions;
+mod agent_limits;
 mod api;
 #[cfg(test)]
 mod arrange_hunt_tests;

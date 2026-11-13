@@ -451,6 +451,20 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
     true
 }
 
+impl FileIo {
+    /// Whether a file window (a picker, the export window or the print window) waits to open.
+    pub fn file_window_waiting(&self) -> bool {
+        self.pick.is_some() || self.export.is_some() || self.print.is_some()
+    }
+
+    /// Forget a file window that is waiting to open.
+    pub fn drop_file_window(&mut self) {
+        self.pick = None;
+        self.export = None;
+        self.print = None;
+    }
+}
+
 /// File > Import: pick files and read them in the background.
 pub fn request_import_dialog(app: &mut DarkBurn) {
     app.fio.pick = Some(Pick::Import);

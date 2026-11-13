@@ -232,6 +232,7 @@ pub const REDIRECTS: &[Redirect] = &[
     Redirect { id: "file.prefs_export", target: "project.prefs_export", fixed: None },
     Redirect { id: "file.prefs_import", target: "project.prefs_import", fixed: None },
     Redirect { id: "file.save_bitmap", target: "image.save_bitmap", fixed: None },
+    Redirect { id: "help.support_data", target: "support.write", fixed: None },
 ];
 
 /// Commands that stay out of reach of agents, with the reason.

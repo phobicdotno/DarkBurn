@@ -28,7 +28,8 @@ fn hunt10b_a_negative_dwell_does_not_turn_time_back() {
 /// An acceleration of zero, below zero or NaN falls back to the default one, so the job time is a real number.
 #[test]
 fn hunt10b_a_bad_acceleration_uses_the_default() {
-    let ops = vec![Op::Cut { to: Point::new(100.0, 0.0), speed: 10.0, power: 50.0 }, Op::Cut { to: Point::new(100.0, 50.0), speed: 10.0, power: 50.0 }];
+    let ops =
+        vec![Op::Cut { to: Point::new(100.0, 0.0), speed: 10.0, power: 50.0 }, Op::Cut { to: Point::new(100.0, 50.0), speed: 10.0, power: 50.0 }];
     let good = simulate(&tp(ops.clone()), &MotionSettings::default()).total_time;
     assert!(good.is_finite() && good > 0.0);
     for a in [0.0, -500.0, f64::NAN, f64::INFINITY] {
@@ -48,7 +49,9 @@ fn hunt10b_a_bad_acceleration_uses_the_default() {
 fn hunt10b_a_nan_speed_is_not_the_top_speed() {
     let m = MotionSettings::default();
     let line = |speed| simulate(&tp(vec![Op::Cut { to: Point::new(10.0, 0.0), speed, power: 50.0 }]), &m).total_time;
-    let arc = |speed| simulate(&tp(vec![Op::Arc { to: Point::new(10.0, 0.0), center: Point::new(5.0, 0.0), clockwise: true, speed, power: 50.0 }]), &m).total_time;
+    let arc = |speed| {
+        simulate(&tp(vec![Op::Arc { to: Point::new(10.0, 0.0), center: Point::new(5.0, 0.0), clockwise: true, speed, power: 50.0 }]), &m).total_time
+    };
     for (name, f) in [("line", &line as &dyn Fn(f64) -> f64), ("arc", &arc)] {
         let zero = f(0.0);
         let nan = f(f64::NAN);
@@ -69,4 +72,45 @@ fn hunt10b_a_slow_job_timeline_stays_small() {
     assert!((tl.last().unwrap().t - s.total_time).abs() < 1e-6);
     assert!(tl.windows(2).all(|w| w[1].t >= w[0].t));
     assert!(started.elapsed().as_secs() < 5, "took {:?}", started.elapsed());
+}
+
+/// An empty open or closed shape has nothing to cut: plan() leaves it out instead of panicking,
+/// and the other shapes come out in the same order as without it.
+#[test]
+fn hunt10b_plan_skips_empty_items() {
+    use darkburn_job::PlannerSettings;
+    use darkburn_job::Progress;
+    use darkburn_job::planner::{ItemGeom, PlanItem, plan};
+    let square = |x: f64| ItemGeom::Closed(vec![Point::new(x, 0.0), Point::new(x + 10.0, 0.0), Point::new(x + 10.0, 10.0), Point::new(x, 10.0)]);
+    let line = |x: f64| ItemGeom::Open(vec![Point::new(x, 0.0), Point::new(x + 5.0, 5.0)]);
+    let mut forced = PlanItem::new(ItemGeom::Closed(Vec::new()));
+    forced.forced_start = Some(3);
+    let full = vec![
+        PlanItem::new(square(50.0)),
+        PlanItem::new(ItemGeom::Open(Vec::new())),
+        PlanItem::new(line(0.0)),
+        forced,
+        PlanItem::new(ItemGeom::Closed(Vec::new())),
+        PlanItem::new(square(20.0)),
+    ];
+    // Index in `full` of each item of `kept`.
+    let map = [0usize, 2, 5];
+    let kept: Vec<PlanItem> = map.iter().map(|&i| full[i].clone()).collect();
+    let fast = PlannerSettings { time_budget_ms: 50, ..Default::default() };
+    let all_off = PlannerSettings {
+        optimize: true,
+        best_start: false,
+        best_direction: false,
+        reduce_travel: false,
+        inner_first: false,
+        time_budget_ms: 50,
+        ..Default::default()
+    };
+    for (name, s) in [("default", fast), ("not optimised", PlannerSettings { optimize: false, ..Default::default() }), ("toggles off", all_off)] {
+        let got = plan(&full, &s, Point::ZERO, &mut Progress::none()).unwrap();
+        let want = plan(&kept, &s, Point::ZERO, &mut Progress::none()).unwrap();
+        let got: Vec<(usize, usize, bool)> = got.iter().map(|p| (p.item, p.start, p.reversed)).collect();
+        let want: Vec<(usize, usize, bool)> = want.iter().map(|p| (map[p.item], p.start, p.reversed)).collect();
+        assert_eq!(got, want, "{name}");
+    }
 }

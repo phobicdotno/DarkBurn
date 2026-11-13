@@ -200,15 +200,20 @@ fn forced_reversal(item: &PlanItem) -> Option<bool> {
 }
 
 /// Plan the cut order.
+///
+/// An empty open or closed item has nothing to cut and no start point, so it is left out of the
+/// plan; the other items come out as if it were not there.
 pub fn plan(items: &[PlanItem], s: &PlannerSettings, start: Point, progress: &mut Progress) -> Result<Vec<Planned>, Cancelled> {
+    let has_points = |i: &usize| !matches!(&items[*i].geom, ItemGeom::Closed(p) | ItemGeom::Open(p) if p.is_empty());
     if !s.optimize {
         return Ok((0..items.len())
+            .filter(has_points)
             .map(|i| Planned { item: i, start: items[i].forced_start.unwrap_or(0), reversed: forced_reversal(&items[i]).unwrap_or(false) })
             .collect());
     }
     let deadline = Instant::now() + Duration::from_millis(s.time_budget_ms);
-    let idx: Vec<usize> = (0..items.len()).collect();
-    let mut walk = Walk { deadline, total: items.len().max(1) as f32, pos: start, heading: Vec2::ZERO, out: Vec::with_capacity(items.len()) };
+    let idx: Vec<usize> = (0..items.len()).filter(has_points).collect();
+    let mut walk = Walk { deadline, total: idx.len().max(1) as f32, pos: start, heading: Vec2::ZERO, out: Vec::with_capacity(items.len()) };
     plan_keys(items, &idx, &s.order_by, s, &mut walk, progress)?;
     progress.report(1.0)?;
     Ok(walk.out)

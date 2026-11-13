@@ -140,7 +140,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
     // A number that is not a number is written as `null`, and a file with one never opens again.
     // So what is written is read back first; shapes that do not survive that are left out (they
     // cannot be drawn or burned either), and anything else that stops it refuses the save.
-    if serde_json::from_slice::<ProjectJson>(&text).is_err() {
+    if from_json::<ProjectJson>(&text).is_err() {
         json.shapes = json.shapes.iter().filter_map(readable).collect();
         for l in &mut json.layers {
             for s in &mut l.settings {
@@ -148,8 +148,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
             }
         }
         text = serde_json::to_vec_pretty(&json).map_err(|e| ProjectError::Damaged(e.to_string()))?;
-        serde_json::from_slice::<ProjectJson>(&text)
-            .map_err(|e| ProjectError::Damaged(format!("the project holds a value that cannot be written ({e})")))?;
+        from_json::<ProjectJson>(&text).map_err(|e| ProjectError::Damaged(format!("the project holds a value that cannot be written ({e})")))?;
     }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -171,7 +170,7 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
 /// `shape` as it can be written and read back: a group keeps its readable children, anything
 /// else that does not come back from its own JSON (a coordinate that is not a number) is `None`.
 fn readable(shape: &Shape) -> Option<Shape> {
-    let round_trips = |s: &Shape| serde_json::to_vec(s).ok().is_some_and(|t| serde_json::from_slice::<Shape>(&t).is_ok());
+    let round_trips = |s: &Shape| serde_json::to_vec(s).ok().is_some_and(|t| from_json::<Shape>(&t).is_ok());
     if round_trips(shape) {
         return Some(shape.clone());
     }
@@ -184,6 +183,43 @@ fn readable(shape: &Shape) -> Option<Shape> {
         }
     }
     None
+}
+
+/// How deep brackets may nest in a project or clipboard text. The reader's own limit (128) is
+/// reached by a shape grouped about 40 times over, which the editor makes without complaint; this
+/// one is still far from running out of stack, and a text nested deeper is refused unread.
+const MAX_NESTING: usize = 512;
+
+/// Read JSON written by DarkBurn: nested up to [`MAX_NESTING`] deep, refused when deeper.
+pub(crate) fn from_json<T: serde::de::DeserializeOwned>(text: &[u8]) -> serde_json::Result<T> {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for &b in text {
+        if in_string {
+            match b {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > MAX_NESTING {
+                    return Err(serde::de::Error::custom("nested too deep"));
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    let mut de = serde_json::Deserializer::from_slice(text);
+    de.disable_recursion_limit();
+    let value = T::deserialize(&mut de)?;
+    de.end()?;
+    Ok(value)
 }
 
 /// The most a project may unpack to (its description and every image together). A file's
@@ -210,7 +246,7 @@ fn load_within(bytes: &[u8], max_unpacked: u64) -> Result<Loaded, ProjectError> 
     let mut budget = max_unpacked;
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| ProjectError::NotAProject(e.to_string()))?;
     let text = read_entry(zip.by_name("project.json").map_err(|_| ProjectError::NotAProject("no project.json".into()))?, &mut budget)?;
-    let json: ProjectJson = serde_json::from_slice(&text).map_err(|e| ProjectError::Damaged(e.to_string()))?;
+    let json: ProjectJson = from_json(&text).map_err(|e| ProjectError::Damaged(e.to_string()))?;
     if json.format != FORMAT_NAME {
         return Err(ProjectError::NotAProject(format!("format is {:?}", json.format)));
     }
@@ -285,7 +321,22 @@ fn tidy(s: &mut Shape, ids: &mut Vec<u64>) {
     }
     if let Some(a) = &mut s.array {
         for c in &mut a.source {
-            c.layer = c.layer.min(LAYER_COUNT - 1);
+            on_real_layers(c);
+        }
+    }
+}
+
+/// Put `s`, its children and the originals of its arrays on layers that exist, at every depth.
+pub(crate) fn on_real_layers(s: &mut Shape) {
+    s.layer = s.layer.min(LAYER_COUNT - 1);
+    if let crate::shape::ShapeKind::Group { children } = &mut s.kind {
+        for c in children {
+            on_real_layers(c);
+        }
+    }
+    if let Some(a) = &mut s.array {
+        for c in &mut a.source {
+            on_real_layers(c);
         }
     }
 }

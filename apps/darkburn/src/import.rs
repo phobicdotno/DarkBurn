@@ -142,15 +142,17 @@ pub fn is_svg_text(text: &str) -> bool {
 
 /// Read a file's bytes as artwork (SVG or bitmap, by extension, else by content) and place it.
 pub fn import_bytes(name: &Path, bytes: &[u8], opts: &Options, at: Option<Point>) -> Result<Imported, String> {
-    let mut out = match kind_of(name) {
-        FileKind::Svg => svg(bytes, opts)?,
-        FileKind::Bitmap => bitmap(bytes, opts, None)?,
+    // Only a picture file is the file of its picture: a picture inside an SVG has none, and
+    // Refresh from File must not read the SVG as if it were the picture.
+    let (mut out, picture_file) = match kind_of(name) {
+        FileKind::Svg => (svg(bytes, opts)?, false),
+        FileKind::Bitmap => (bitmap(bytes, opts, None)?, true),
         FileKind::Project => return Err("a project opens with Open, not Import".into()),
         FileKind::Other => {
             if image::guess_format(bytes).is_ok() {
-                bitmap(bytes, opts, None)?
+                (bitmap(bytes, opts, None)?, true)
             } else if std::str::from_utf8(&bytes[..bytes.len().min(4096)]).is_ok_and(is_svg_text) {
-                svg(bytes, opts)?
+                (svg(bytes, opts)?, false)
             } else {
                 return Err("this kind of file cannot be imported".into());
             }
@@ -159,7 +161,9 @@ pub fn import_bytes(name: &Path, bytes: &[u8], opts: &Options, at: Option<Point>
     if out.is_empty() {
         return Err("there is nothing in it to import".into());
     }
-    out.set_source(&name.to_string_lossy());
+    if picture_file {
+        out.set_source(&name.to_string_lossy());
+    }
     out.place(opts.page, at);
     Ok(out)
 }

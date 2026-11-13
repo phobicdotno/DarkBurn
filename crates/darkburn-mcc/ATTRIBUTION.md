@@ -18,6 +18,10 @@ owner's work and a separate project of theirs. It was read (never modified) and 
 | `src/nexcut/mcc/fifo.py`, `11-static-findings.md` section 5 | FIFO item grammar (12-byte tick), frame packing rule, flow control |
 | `src/nexcut/mcc/safety.py` | Arming state machine, alarm reactions, comm-loss watchdog, soft limits, deadman lease |
 | `src/nexcut/mcc/simulator.py` | The behaviour of the card simulator and its fault injection |
+| `src/nexcut/mcc/dissector.py` | The plain-text dissector (`dissect.rs`): names of the command, misc and FIFO opcodes, vector descriptions, request classes. Decode only |
+| `src/nexcut/mcc/commands.py` (`do_set`, `da_set`, `pwm_set`, `StopVariant`, `pause_sequence`, `estop_sequence`), `docs/analysis/11-static/A1-motion-commands.md` | Output switch for the lamp and gas ports, analogue and PWM constructors that only build zero, the three stop deceleration clamps, the pause and emergency-stop sequences |
+| `src/nexcut/mcc/registers.py` (`SystemRW`, `AxisRO`, `AxisStatus`, `AxisRW`, `di_active`, `next_frame_id`, the polling schedule), `docs/analysis/11-static/A5-zf-laser-blocks.md` | Typed views of the system, axis, fast and version blocks, axis fault bits, follower word names, the input-type rule, the polling schedule |
+| `src/nexcut/mcc/safety.py` (`stop`, `estop`, `_send`) | Connect, disconnect, pause and emergency stop on the loopback link |
 | `docs/analysis/03-chf-format.md`, `src/nexcut/io/chf.py`, `src/nexcut/model/` | The `.chf` grammar, reader and writer, number formatting, version gates |
 | `docs/analysis/02-layer-params.md` | The fibre and CO2 craft parameter model |
 | `docs/analysis/99-gaps.md` | The list of facts that still need a capture on the real card |

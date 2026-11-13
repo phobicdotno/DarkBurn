@@ -153,11 +153,17 @@ fn lex(text: &str) -> Result<Vec<(usize, Tok)>, ExprError> {
     Ok(out)
 }
 
+/// How deep brackets and signs may nest. Far more than anybody writes, and far less than runs a
+/// thread out of stack (each level is a few calls deep).
+const MAX_DEPTH: usize = 500;
+
 struct Parser {
     toks: Vec<(usize, Tok)>,
     pos: usize,
     end: usize,
     bare_mm: f64,
+    /// Nesting of brackets and signs so far.
+    depth: usize,
 }
 
 impl Parser {
@@ -242,6 +248,17 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Quantity, ExprError> {
+        // Every bracket and every sign comes through here one level deeper.
+        if self.depth >= MAX_DEPTH {
+            return Err(ExprError::Unexpected(self.at()));
+        }
+        self.depth += 1;
+        let q = self.unary_inner();
+        self.depth -= 1;
+        q
+    }
+
+    fn unary_inner(&mut self) -> Result<Quantity, ExprError> {
         match self.peek() {
             Some(Tok::Minus) => {
                 self.pos += 1;
@@ -300,7 +317,7 @@ pub fn eval_with(text: &str, bare_mm: f64) -> Result<Quantity, ExprError> {
     if toks.is_empty() {
         return Err(ExprError::Empty);
     }
-    let mut p = Parser { toks, pos: 0, end: text.len(), bare_mm };
+    let mut p = Parser { toks, pos: 0, end: text.len(), bare_mm, depth: 0 };
     let q = p.expr()?;
     if p.pos < p.toks.len() {
         return Err(ExprError::Unexpected(p.at()));

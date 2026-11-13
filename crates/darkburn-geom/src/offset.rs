@@ -6,7 +6,7 @@
 //! results are straight-line contours, outer CCW and holes CW). Kerf offsets use
 //! cavalier_contours, which offsets lines and true circular arcs, so circles stay circles.
 
-use crate::boolean::{Ring, normalized_rings, path_to_rings, shapes_to_paths, usable_point};
+use crate::boolean::{MAX_COORD, Ring, normalized_rings, path_to_rings, shapes_to_paths, usable_point};
 use crate::path::{Contour, FillRule, contour_with_start, contours, flatten_contour, from_contours, nearest_on_contour};
 use crate::query::{containment, measure_arc};
 use cavalier_contours::polyline::{PlineCreation, PlineSource, PlineSourceMut, PlineVertex, Polyline as CPline, seg_arc_radius_and_center};
@@ -171,7 +171,8 @@ fn outline_rings(rings: &[Ring], signed: f64, join: Join, tol: f64) -> Vec<BezPa
 /// Offsets open paths by `distance` to both sides with end caps (the outline of a stroke
 /// of width `2 * distance`). Closed subpaths are offset as rings (both sides, giving a band).
 pub fn offset_open(path: &BezPath, distance: f64, join: Join, cap: Cap, tol: f64) -> Vec<BezPath> {
-    if distance <= 0.0 {
+    // A distance beyond any machine (or not a number) has no outline that could be worked out.
+    if !(distance > 0.0 && distance <= MAX_COORD) {
         return Vec::new();
     }
     let mut all = Vec::new();
@@ -201,7 +202,8 @@ pub fn offset_open(path: &BezPath, distance: f64, join: Join, cap: Cap, tol: f64
 /// contour. Open subpaths are offset to both sides with caps and merged into `outward`.
 pub fn offset(paths: &[BezPath], opts: &OffsetOptions) -> OffsetResult {
     let d = opts.distance;
-    if !(d > 0.0) || !d.is_finite() {
+    // A distance beyond any machine puts the result out of the overlay's reach: nothing.
+    if !(d > 0.0 && d <= MAX_COORD) {
         return OffsetResult::default();
     }
     let tol = opts.tol.max(1e-6);

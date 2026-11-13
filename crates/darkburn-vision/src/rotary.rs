@@ -58,6 +58,7 @@ pub enum RotaryError {
     InvalidObjectSize,
     InvalidRollerDiameter,
     InvalidSliceSize,
+    InvalidRevolutions,
 }
 
 impl std::fmt::Display for RotaryError {
@@ -68,6 +69,7 @@ impl std::fmt::Display for RotaryError {
             Self::InvalidObjectSize => "object diameter or circumference must be above zero",
             Self::InvalidRollerDiameter => "roller diameter must be above zero",
             Self::InvalidSliceSize => "slice size must be above zero",
+            Self::InvalidRevolutions => "revolutions must be a number",
         })
     }
 }
@@ -109,13 +111,14 @@ impl RotaryParams {
         if !self.enabled {
             return Err(RotaryError::Disabled);
         }
-        if !(self.steps_per_rotation > 0.0) || !(self.axis_steps_per_mm > 0.0) {
+        let positive = |v: f64| v > 0.0 && v.is_finite();
+        if !positive(self.steps_per_rotation) || !positive(self.axis_steps_per_mm) {
             return Err(RotaryError::InvalidStepsPerRotation);
         }
-        if !(self.object_circumference() > 0.0) {
+        if !positive(self.object_circumference()) {
             return Err(RotaryError::InvalidObjectSize);
         }
-        if self.kind == RotaryKind::Roller && !(self.roller_diameter > 0.0) {
+        if self.kind == RotaryKind::Roller && !positive(self.roller_diameter) {
             return Err(RotaryError::InvalidRollerDiameter);
         }
         Ok(())
@@ -212,6 +215,9 @@ pub struct TestRotationPlan {
 
 pub fn test_rotation_plan(params: &RotaryParams, revolutions: f64) -> Result<TestRotationPlan, RotaryError> {
     params.validate()?;
+    if !revolutions.is_finite() {
+        return Err(RotaryError::InvalidRevolutions);
+    }
     let dist = revolutions * params.axis_units_per_rotation() * if params.mirror { -1.0 } else { 1.0 };
     Ok(TestRotationPlan {
         revolutions,
@@ -332,6 +338,9 @@ fn y_extent(paths: &[BezPath]) -> Option<(f64, f64)> {
     e
 }
 
+/// The most slices [`split_by_slice`] makes.
+pub const MAX_SLICES: usize = 100_000;
+
 /// Cut the design into equal bands no taller than `max_size` mm (galvo field limit), one rotation per band.
 pub fn split_by_slice(paths: &[BezPath], max_size: f64, params: &RotaryParams) -> Result<Vec<RotarySlice>, RotaryError> {
     if !(max_size > 0.0) {
@@ -339,7 +348,12 @@ pub fn split_by_slice(paths: &[BezPath], max_size: f64, params: &RotaryParams) -
     }
     params.validate()?;
     let Some((ymin, ymax)) = y_extent(paths) else { return Ok(Vec::new()) };
-    let n = (((ymax - ymin) / max_size) - 1e-9).ceil().max(1.0) as usize;
+    let n = (((ymax - ymin) / max_size) - 1e-9).ceil().max(1.0);
+    // More slices than any design needs: a typing slip, and too many to build.
+    if !(n <= MAX_SLICES as f64) {
+        return Err(RotaryError::InvalidSliceSize);
+    }
+    let n = n as usize;
     let size = (ymax - ymin) / n as f64;
     let mut out = Vec::with_capacity(n);
     for i in 0..n {

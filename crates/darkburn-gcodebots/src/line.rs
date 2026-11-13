@@ -345,6 +345,11 @@ impl LineMachine {
         if !(0.0..=self.cfg.max_fire_percent).contains(&percent) {
             return Err(MachineError::InvalidArgument(format!("Fire power must be between 0 and {} %.", self.cfg.max_fire_percent)));
         }
+        // An endless S max would ask for the largest number there is, which a board takes as
+        // full power.
+        if !positive(self.cfg.s_max) {
+            return Err(MachineError::InvalidArgument("The S value of full power in the device settings is not a number above 0.".into()));
+        }
         Ok(percent / 100.0 * self.cfg.s_max)
     }
 
@@ -726,7 +731,8 @@ impl GcodeMachine for LineMachine {
                 if !ok_code || !ok_axis {
                     return Err(MachineError::InvalidArgument(format!("'{key}' is not a setting like M92.X.")));
                 }
-                if v.parse::<f64>().is_err() {
+                // "nan" and "inf" parse as numbers, here and on the board.
+                if !v.parse::<f64>().is_ok_and(f64::is_finite) {
                     return Err(MachineError::InvalidArgument(format!("{key}: '{value}' is not a number.")));
                 }
                 format!("{code} {axis}{v}")
@@ -1478,6 +1484,7 @@ impl Worker {
             let tok = tok.trim_start_matches("C:");
             if let Some((k, v)) = tok.split_once(':')
                 && let Ok(v) = v.parse::<f64>()
+                && v.is_finite()
             {
                 match k {
                     "X" => pos[0] = v,
@@ -1972,11 +1979,12 @@ fn floats_after(inner: &str, key: &str) -> Option<[f64; 3]> {
             break;
         }
         match tok.trim().parse::<f64>() {
-            Ok(v) => {
+            // "nan" and "inf" read as numbers; a position is neither.
+            Ok(v) if v.is_finite() => {
                 out[n] = v;
                 n += 1;
             }
-            Err(_) => break,
+            _ => break,
         }
     }
     (n >= 2).then_some(out)
@@ -1992,7 +2000,11 @@ pub fn parse_status(line: &str) -> Option<StatusParts> {
     let state = MachineState::parse(state_text);
     let mpos = floats_after(inner, "MPos:");
     let wpos = floats_after(inner, "WPos:");
-    let feed = inner.find("F:").and_then(|i| inner[i + 2..].split([',', '|', '>']).next()).and_then(|v| v.trim().parse::<f64>().ok());
+    let feed = inner
+        .find("F:")
+        .and_then(|i| inner[i + 2..].split([',', '|', '>']).next())
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite());
     Some((state, mpos, wpos, feed))
 }
 

@@ -268,7 +268,9 @@ fn apply_gaps(cs: &[Contour], per: Vec<Vec<(f64, f64)>>) -> TabResult {
 /// Perforation: cuts `cut_len`, skips `skip_len`, repeating along every subpath. The
 /// pattern starts `start_offset` mm along each subpath (negative values start mid-dash).
 /// Returns open dashes with curves kept. `cut_len <= 0` gives an empty path;
-/// `skip_len <= 0` returns the path unchanged.
+/// `skip_len <= 0` returns the path unchanged. Lengths or an offset that are not finite
+/// numbers give an empty path, and a subpath whose length is not finite gets no dashes: there
+/// is no telling where they would go.
 pub fn perforate(path: &BezPath, cut_len: f64, skip_len: f64, start_offset: f64) -> BezPath {
     if cut_len <= 0.0 {
         return BezPath::new();
@@ -277,14 +279,20 @@ pub fn perforate(path: &BezPath, cut_len: f64, skip_len: f64, start_offset: f64)
         return path.clone();
     }
     let period = cut_len + skip_len;
+    // The dash before the start of the path. Past 2^53 dashes away a step of one dash is lost
+    // in the rounding, and the loop below would stand still.
+    let first = ((-start_offset) / period).floor() - 1.0;
+    if !(period.is_finite() && start_offset.is_finite() && first.abs() < 9e15) {
+        return BezPath::new();
+    }
     let mut out = BezPath::new();
     for c in contours(path) {
         let lens = seg_lengths(&c);
         let l: f64 = lens.iter().sum();
-        if l <= EPS {
+        if l <= EPS || !l.is_finite() {
             continue;
         }
-        let mut k = ((-start_offset) / period).floor() - 1.0;
+        let mut k = first;
         loop {
             let a = start_offset + k * period;
             if a >= l {

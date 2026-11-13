@@ -61,6 +61,10 @@ commit for the Windows installer, and a job stops when the two differ.
   is built or tested reads them. The one exception is `docs/PARITY-CHECKLIST.md`, which is built into
   `darkburn-mcp`. Pull requests and tags always run. A release push (`main` and its tag together) builds the
   packages once, in the run for the tag.
+- A change to the web page (`site/`) starts neither of the two either. A third workflow,
+  `.github/workflows/site.yml`, builds and checks the page when it or what it shows changes: the pictures in
+  `docs/img`, the fonts, the icon. It publishes nothing. Once a day it compares the page on the host with
+  `main`. See "The web page" in `CONTRIBUTING.md`.
 - While the repository is private, the workflows do less by themselves, because a private repository has a
   small monthly allowance of runner time and of room for artifacts:
   a push to `main` builds no packages, a push or a pull request runs no macOS tests, and artifacts are kept

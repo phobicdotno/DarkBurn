@@ -199,10 +199,11 @@ pub fn code128_values(data: &str) -> Result<Vec<u32>> {
             }
         }
     }
-    let sum: u32 = start + codes.iter().enumerate().map(|(k, c)| c * (k as u32 + 1)).sum::<u32>();
+    // Summed modulo 103 as it goes: thousands of characters run over a 32-bit sum.
+    let sum = codes.iter().enumerate().fold(u64::from(start) % 103, |sum, (k, c)| (sum + u64::from(*c) * ((k as u64 + 1) % 103)) % 103);
     let mut out = vec![start];
     out.extend(&codes);
-    out.push(sum % 103);
+    out.push(sum as u32);
     out.push(106);
     Ok(out)
 }

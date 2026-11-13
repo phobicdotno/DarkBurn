@@ -338,7 +338,13 @@ pub fn drag_transform(kind: DragKind, bbox: Rect, start: Point, now: Point, mods
             let mut sy = if h.y != 0 { ratio(now.y, grip.y, anchor.y) } else { 1.0 };
             if h.is_corner() && !mods.shift {
                 // Keep the aspect: follow whichever axis moved further, keeping each one's flip.
-                let s = sx.abs().max(sy.abs());
+                // A box with no width or no height (a straight line) has one axis to follow.
+                let (flat_x, flat_y) = ((grip.x - anchor.x).abs() < 1e-9, (grip.y - anchor.y).abs() < 1e-9);
+                let s = match (flat_x, flat_y) {
+                    (true, false) => sy.abs(),
+                    (false, true) => sx.abs(),
+                    _ => sx.abs().max(sy.abs()),
+                };
                 sx = s.copysign(sx);
                 sy = s.copysign(sy);
             }

@@ -15,8 +15,18 @@ use crate::commands;
 use crate::shell::DarkBurn;
 
 /// Always allowed, whatever the policy says: they stop things.
-const STOP: &[&str] =
-    &["machine.pause", "machine.stop", "machine.emergency_stop", "job.pause", "job.stop", "machine.fire_off", "machine.jog_stop", "camera.stop"];
+const STOP: &[&str] = &[
+    "machine.pause",
+    "machine.stop",
+    "machine.emergency_stop",
+    "job.pause",
+    "job.stop",
+    "machine.fire_off",
+    "machine.jog_stop",
+    "camera.stop",
+    "mcc.stop",
+    "mcc.emergency_stop",
+];
 
 /// Start a job, resume it, run a file or raw lines, or fire the laser.
 const FIRE_OR_JOB: &[&str] = &[
@@ -50,6 +60,9 @@ const CONNECT: &[&str] = &[
     "machine.show_all",
     "laser.devices",
     "laser.controller_info",
+    "mcc.connect",
+    "mcc.disconnect",
+    "mcc.status",
 ];
 
 /// Write settings or files to a controller, or change a running job's overrides.
@@ -113,9 +126,9 @@ const DEVICE_SETUP: &[&str] = &[
 
 /// Whether the command acts on a connected machine: moves axes, fires the laser, sends a job,
 /// writes controller settings or talks to a device. The registry's rule plus the `machine.*`
-/// family, which is all hardware.
+/// family, which is all hardware, and every `mcc.*` command but the frame dissector.
 pub fn acts_on_machine(id: &str) -> bool {
-    commands::hardware(id) || id.starts_with("machine.") || id.starts_with("gweike.") || id.starts_with("mcc.")
+    commands::hardware(id) || id.starts_with("machine.") || id.starts_with("gweike.") || crate::gweike_card::is_hardware(id)
 }
 
 /// Whether the safety gate treats the command as hardware: it acts on a machine, or it changes

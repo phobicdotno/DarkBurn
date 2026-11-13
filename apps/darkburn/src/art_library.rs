@@ -233,6 +233,7 @@ impl Open {
 
     /// Save under a name the person gave: the file ending is added when it is not there.
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
+        crate::files::named(path)?;
         self.write_to(crate::files::with_ending(path, FILE_EXTENSION))
     }
 

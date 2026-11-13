@@ -574,7 +574,10 @@ fn mcp_monkey_with_machine_control_on_never_starts_a_job_by_itself() {
     }
 }
 
-const MCP_LINES: usize = 300;
+// The server checks every tool call against its whole schema, so many of the monkey's broken
+// envelopes are turned down before they reach a command. 600 lines keep more than 20 commands
+// running per seed.
+const MCP_LINES: usize = 600;
 
 /// Wider runs, by hand: `MCP_MONKEY_SEEDS=1000..1100 MCP_MONKEY_LINES=2000 cargo test -p darkburn
 /// mcp_monkey_explore -- --nocapture`; `MCP_MONKEY_HARDWARE=1` turns machine control on (still

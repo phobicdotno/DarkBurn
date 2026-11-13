@@ -115,6 +115,10 @@ pub fn fit_registration(design: &[Point], measured: &[Point], mode: PnCMode) -> 
         PnCMode::FullAffine => {
             let a = fit_affine(design, measured).ok_or(PnCError::Degenerate)?;
             let c = a.as_coeffs();
+            // Marks measured on one line squash the design flat onto it: a mis-measure, not a fit.
+            if !(a.determinant().abs() > 1e-9 * c[..4].iter().map(|v| v * v).sum::<f64>()) {
+                return Err(PnCError::Degenerate);
+            }
             let sx = c[0].hypot(c[1]);
             let sy = c[2].hypot(c[3]);
             (a, (sx * sy).sqrt(), c[1].atan2(c[0]).to_degrees(), (c[4], c[5]))

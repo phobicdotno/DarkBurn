@@ -637,11 +637,14 @@ impl Worker {
     }
 
     fn shutdown(&mut self) {
-        let was_busy = !matches!(self.state, State::Idle);
+        let was = std::mem::replace(&mut self.state, State::Idle);
         self.link.safe_off();
         self.sh.armed.store(false, Ordering::SeqCst);
-        if was_busy {
-            self.sh.emit(Event::JobStopped);
+        // As a stop does: a red-light frame that ends is not a job that was stopped.
+        match was {
+            State::Job(_) => self.sh.emit(Event::JobStopped),
+            State::Frame(_) => self.sh.emit(Event::FrameStopped),
+            State::Idle => {}
         }
         self.sh.update(|s| {
             s.activity = Activity::Idle;
@@ -842,10 +845,18 @@ impl Worker {
                     self.link.mo(false)?;
                     return Ok(());
                 }
-                if let State::Job(j) = &mut self.state {
-                    j.pause = None;
+                match &mut self.state {
+                    State::Job(j) => {
+                        j.pause = None;
+                        // A job that was waiting goes on waiting: say so, not that it runs.
+                        match j.phase {
+                            Phase::WaitFootFirst | Phase::WaitFoot => Activity::WaitingFoot,
+                            Phase::WaitDoor => Activity::WaitingDoor,
+                            _ => Activity::Job,
+                        }
+                    }
+                    _ => Activity::Job,
                 }
-                Activity::Job
             }
             State::Frame(f) => {
                 if f.pause.take().is_none() {
@@ -962,8 +973,14 @@ impl Worker {
         let st = self.sh.snapshot.lock().expect("snapshot").activity;
         if matches!(self.state, State::Idle) && st != Activity::Idle {
             self.idle_snapshot();
-        } else if matches!(self.state, State::Frame(_)) {
-            self.sh.update(|s| s.activity = Activity::Framing);
+        } else if let State::Frame(f) = &self.state {
+            // A frame held by a pause stays shown as held.
+            let a = match f.pause {
+                Some(Pause::Door) => Activity::PausedDoor,
+                Some(Pause::User) => Activity::Paused,
+                None => Activity::Framing,
+            };
+            self.sh.update(|s| s.activity = a);
         }
     }
 

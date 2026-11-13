@@ -9,11 +9,13 @@
 # a plain copy. Nothing is downloaded and nothing is changed.
 #
 # Then it checks the result: every file the page points to is there, nothing on the page is
-# fetched from another host, and every page carries its Content-Security-Policy line.
+# fetched from another host, every page carries its Content-Security-Policy line, and the
+# rules for the host (.htaccess) are line for line the ones this script knows.
 #
 # To look at the page:
 #   sh scripts/build-site.sh && python3 -m http.server -d target/site
-# .github/workflows/pages.yml runs this script and publishes the folder.
+# scripts/deploy-site.sh runs this script and uploads the folder to the host.
+# .github/workflows/site.yml runs it as a check.
 set -eu
 
 die() {
@@ -30,8 +32,8 @@ esac
 
 [ -f "$root/site/index.html" ] || die "site/index.html is not there."
 
-# Only plain files are published. A link could point at a file outside the repository, and what
-# packs the folder for GitHub Pages puts the file itself in the place of a link.
+# Only plain files are published. A link could point at a file outside the repository, and an
+# upload puts the file itself in the place of a link.
 fonts=$root/assets/fonts
 icons=$root/assets/icons
 for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
@@ -42,7 +44,7 @@ for f in "$root/site" "$root/docs/img" "$root"/docs/img/*.png \
 done
 odd=$(find "$root/site" ! -type f ! -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds something that is not a plain file: $odd"
-odd=$(find "$root/site" ! -path "$root/site" -type d | head -n 3)
+odd=$(cd "$root/site" && find . ! -name . -type d | head -n 3)
 [ -z "$odd" ] || die "site/ holds a folder: $odd"
 # No folder on the way to these files is a link either.
 real=$(CDPATH='' cd -- "$root" && pwd -P)
@@ -78,9 +80,10 @@ for p in "$out"/img/*.png; do
 done
 
 # Only these files are published. A page or a drawing anywhere else (a sub-folder of site/,
-# a .htm or .xhtml file) would be served without any of the checks below.
+# a .htm or .xhtml file) would be served without any of the checks below, and the host runs
+# PHP: a .php file would be a program on it.
 odd=$(cd "$out" && find . -type f ! -name "$mark" |
-    grep -Evx '\./(index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9_-]+\.png|fonts/(IBMPlexSans-Variable\.ttf|IBMPlexMono-Regular\.ttf|OFL\.txt))' |
+    grep -Evx '\./(\.htaccess|index\.html|404\.html|style\.css|site\.js|icon\.svg|icon-256\.png|favicon\.ico|img/[A-Za-z0-9_-]+\.png|fonts/(IBMPlexSans-Variable\.ttf|IBMPlexMono-Regular\.ttf|OFL\.txt))' |
     head -n 3 | tr '\n' ' ')
 [ -z "$odd" ] || die "not on the list of files this script publishes: $odd"
 
@@ -108,6 +111,37 @@ for svg in "$out"/*.svg; do
     fi
 done
 
+# The page's own files are plain ASCII text: a letter that only looks like another, or a mark
+# that turns the reading order round, would make a command on the page say one thing and do
+# another. Other letters are written as entities (&rarr;) or, in style.css, as "\2192".
+for f in "$out"/*.html "$out"/*.css "$out"/*.js; do
+    [ -f "$f" ] || continue
+    if [ "$(LC_ALL=C tr -d ' -~\n' <"$f" | wc -c | tr -d ' ')" -ne 0 ]; then
+        LC_ALL=C grep -n '[^ -~]' "$f" | cut -c 1-120 >&2 || true
+        die "${f##*/} holds something that is not plain ASCII text (see the lines above; a tab and a Windows line end count)."
+    fi
+done
+
+# The two commands a visitor copies and runs, as the page holds them. They are compared with
+# the lines here letter for letter, and the page has no other <pre>. To change a command,
+# change it here first, and in README.md.
+cat >"$out/.cmds" <<'EOF'
+<pre tabindex="0" role="group" aria-labelledby="cmd-unix"><code>curl -fsSL https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.sh | sh</code></pre>
+<pre tabindex="0" role="group" aria-labelledby="cmd-win"><code>irm https://raw.githubusercontent.com/phobicdotno/DarkBurn/main/scripts/install.ps1 | iex</code></pre>
+EOF
+tr '\n\r\t' '   ' <"$out/index.html" | grep -Eio '<pre[^>]*>([^<]|<[^/]|</[^p])*</pre>|<pre[^>]*>' |
+    grep -Ei '</pre>$|^<pre[^>]*>$' >"$out/.cmds-found" || true
+if ! cmp -s "$out/.cmds" "$out/.cmds-found"; then
+    diff "$out/.cmds" "$out/.cmds-found" >&2 || true
+    die "index.html does not show the two install commands this script knows, or has another <pre> (see the lines above: \"<\" is a line the script knows, \">\" a line the page holds)."
+fi
+rm -f "$out/.cmds" "$out/.cmds-found"
+
+# What this script does not judge: what style.css and site.js do. Both are the page's own
+# files, the policy allows them, and both can change what a visitor reads, the install
+# commands too (a style sheet can hide a line and show another). A change to either is read
+# like a change to a program.
+#
 # Each page carries a Content-Security-Policy line that allows the page's own files and nothing
 # else. A browser holds the page to it: nothing is fetched from another host and no script or
 # style inside the HTML runs, however it is written. The searches further down say the same
@@ -124,10 +158,11 @@ start='<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">'
 own="style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'"
+front="default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'"
 for page in "$out"/*.html; do
     name=${page##*/}
     case $name in
-        index.html) policy="default-src 'none'; script-src 'self'; $own; require-trusted-types-for 'script'; trusted-types 'none'" ;;
+        index.html) policy=$front ;;
         *) policy="default-src 'none'; $own" ;;
     esac
     printf '%s\n<meta http-equiv="Content-Security-Policy" content="%s">\n' "$start" "$policy" >"$out/.head"
@@ -139,6 +174,11 @@ for page in "$out"/*.html; do
     # no policy decides where a page goes next.
     [ "$(printf '%s\n' "$flat" | grep -Eio 'http-equiv|<base[[:space:]>/]' | wc -l | tr -d ' ')" -eq 1 ] ||
         die "$name has an http-equiv besides the policy line, or a <base>. Neither belongs on the page."
+    # A host can be set up to take such a line in a page as a program (PHP, includes). This
+    # host is not known to be, and the page needs neither.
+    if grep -n -e '<?' -e '<!--#' "$page"; then
+        die "$name holds \"<?\" or \"<!--#\" (see the lines above). A host can take that as a program: write &lt;? there."
+    fi
     # The policy allows every file of the page's own host as script. The page has one.
     if printf '%s\n' "$flat" | grep -Eio '<script[^>]*>?' | grep -vx '<script src="site.js">'; then
         die "$name has a <script> that is not exactly <script src=\"site.js\"> (see the lines above). A comment counts too: write &lt;script there."
@@ -146,11 +186,79 @@ for page in "$out"/*.html; do
 done
 rm -f "$out/.head"
 
+# The rules for the host, .htaccess. The host sends the policy once more, as a header on every
+# file, with the one thing a line in a page cannot say: no other site may show the page in a
+# frame. The header is built from the policy of the front page above, so the two cannot drift
+# apart.
+#
+# The file can do far more than that. The host runs PHP, and one line in .htaccess can make it
+# run a picture as a program, send every visitor elsewhere, take the headers away or ask for a
+# password. A line that looks harmless can too: a header that is set for no file at all, a
+# rule that catches every address. So the lines of the file, without its comments, are
+# compared one by one with the lines below, in this order. To change a rule, change it here
+# first.
+rules=$out/.htaccess
+[ -f "$rules" ] || die "site/.htaccess is not there."
+if [ "$(LC_ALL=C tr -d ' -~\n' <"$rules" | wc -c | tr -d ' ')" -ne 0 ]; then
+    LC_ALL=C grep -n '[^ -~]' "$rules" >&2 || true
+    die ".htaccess holds something that is not plain ASCII text (see the lines above; a tab and a Windows line end count)."
+fi
+# A line that ends with "\" goes on in the next one, also when it is a comment.
+if grep -n '\\$' "$rules"; then
+    die ".htaccess has a line that ends with a backslash (see the lines above)."
+fi
+{
+    printf '<IfModule mod_headers.c>\n<FilesMatch ".">\n'
+    printf 'Header set Content-Security-Policy "%s; frame-ancestors %s"\n' "$front" "'none'"
+    cat <<'EOF'
+Header set X-Frame-Options "DENY"
+Header set X-Content-Type-Options "nosniff"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+Header set Cache-Control "no-cache"
+Header set Strict-Transport-Security "max-age=31536000" "expr=%{HTTP_HOST} =~ /^darkburn\.phobic\.no(:[0-9]+)?$/"
+</FilesMatch>
+<FilesMatch "\.(png|ico)$">
+Header set Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+</FilesMatch>
+</IfModule>
+FileETag None
+AddDefaultCharset utf-8
+ErrorDocument 404 /404.html
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteCond %{HTTP:Service-Worker} .
+RewriteRule ^ - [F]
+RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no\.?(:[0-9]+)?$ [NC]
+RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+RewriteRule ^(img|fonts)/?$ - [R=404,L]
+RewriteCond %{THE_REQUEST} \s/+index(\.html)?[\s?#] [NC]
+RewriteRule ^ https://%{HTTP_HOST}/ [R=301,L]
+</IfModule>
+EOF
+} >"$out/.rules"
+# The file as the host reads it: without the spaces in front of a line, the comments and the
+# empty lines.
+sed 's/^ *//' "$rules" | grep -v '^#' | grep -v '^$' >"$out/.rules-found" || true
+if ! cmp -s "$out/.rules" "$out/.rules-found"; then
+    diff "$out/.rules" "$out/.rules-found" >&2 || true
+    die ".htaccess does not hold the rules this script knows (see the lines above: \"<\" is a line the script knows, \">\" a line the file holds). To change a rule, change it in this script first."
+fi
+rm -f "$out/.rules" "$out/.rules-found"
+
 # Nothing on the page may be fetched from another host: no script, picture, font or style
 # sheet. Ordinary links to other sites are fine.
-if grep -Ein "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\]|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\]" "$out"/*.html; then
-    die "the page fetches something from another host (see the lines above)."
-fi
+for page in "$out"/*.html; do
+    # On one line first: an address may stand on the line after its attribute.
+    if tr '\n\r\t' '   ' <"$page" |
+        grep -Eio "(src|poster|data)[[:space:]]*=[[:space:]]*[\"']?[[:space:]]*(https?:)?[/\\][/\\][^\"'> ]{0,60}|srcset[[:space:]]*=[[:space:]]*[\"']?[^\"'>]*(https?:)?[/\\][/\\][^\"'> ]{0,60}"; then
+        die "${page##*/} fetches something from another host (see the lines above)."
+    fi
+done
 for page in "$out"/*.html; do
     # On one line first: a <link> may be written over several.
     if tr '\n' ' ' <"$page" | grep -Eio '<link[^>]*>' |
@@ -163,6 +271,10 @@ for css in "$out"/*.css; do
     [ -f "$css" ] || continue
     if grep -Ein "@import|url\\([[:space:]]*[\"']?[[:space:]]*(https?:)?//|[\"'][[:space:]]*(https?:)?//" "$css"; then
         die "${css##*/} fetches something from another host (see the lines above)."
+    fi
+    # "\68ttps:" is "https:" to a browser.
+    if grep -Ein 'url\([^)]*[\]' "$css"; then
+        die "${css##*/} has an address with a backslash in it (see the lines above). Write the address out."
     fi
 done
 
@@ -192,9 +304,9 @@ check_refs() {
                 continue
                 ;;
             /*)
-                # 404.html needs such addresses: GitHub shows that page at any depth.
+                # 404.html needs such addresses: the host shows that page at any depth.
                 if [ "${1##*/}" != 404.html ]; then
-                    printf 'build-site: %s points to %s. An address that starts with "/" breaks under phobicdotno.github.io/DarkBurn/.\n' "${1##*/}" "$ref" >&2
+                    printf 'build-site: %s points to %s. An address that starts with "/" breaks when the page is not at the top of its name: opened as a file, or in a trial folder.\n' "${1##*/}" "$ref" >&2
                     missing=1
                     continue
                 fi

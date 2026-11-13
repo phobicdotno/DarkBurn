@@ -124,7 +124,9 @@ fn tone(img: &GrayF, linear: bool) -> Vec<f32> {
 fn apply_mode(img: &GrayF, grid: &ScanGrid, settings: &ImageSettings) -> PowerMap {
     let (w, h) = (img.width, img.height);
     let gx0 = grid.col0;
-    let gy0 = -grid.row_top;
+    // Only the phase of the screen: a row number pinned at the end of its range (a picture
+    // absurdly far away) may wrap here.
+    let gy0 = grid.row_top.wrapping_neg();
     let linear = settings.linear_light;
     let binary = |data: Vec<u8>| PowerMap { width: w, height: h, data, binary: true };
     match &settings.mode {

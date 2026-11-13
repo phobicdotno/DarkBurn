@@ -58,6 +58,9 @@ pub struct FileState {
     /// Hash of the bitmap last taken from the system clipboard.
     last_clip_image: Option<u64>,
     autosave: Autosave,
+    /// Counts the projects made or opened in this window: a window that holds on to one project
+    /// can tell that another has taken its place.
+    pub project_serial: u64,
 }
 
 #[derive(Default)]
@@ -177,11 +180,25 @@ fn last_dir(prefs: &Prefs) -> Option<PathBuf> {
     prefs.recent.first().and_then(|p| Path::new(p).parent()).filter(|d| d.is_dir()).map(Path::to_path_buf)
 }
 
+/// Another project has taken the place of the open one: the windows that worked on the old one
+/// close, and what they remember of it is not written into the new one.
+pub(crate) fn leave_project(app: &mut DarkBurn) {
+    app.files.project_serial += 1;
+    app.images.adjust = None;
+    app.images.trace = None;
+    app.images.convert = None;
+    app.text.edit.open = false;
+    app.text.qr.open = false;
+    // The shape tool windows: the Boolean Assistant's sets, an Auto-Join under way.
+    app.shape_ui.close();
+}
+
 /// A new empty project (the clipboard is kept).
 pub fn new_project(app: &mut DarkBurn) {
     let clipboard = std::mem::take(&mut app.editor.clipboard);
     app.editor = Editor::new();
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.project_path = None;
     app.notes_open = false;
     crate::settings_wiring::on_new_project(app);
@@ -200,6 +217,7 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     app.notes_open = loaded.doc.show_notes_on_load;
     app.editor = Editor::with_document(loaded.doc);
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.project_path = Some(path.to_path_buf());
     crate::settings_wiring::on_open_project(app);
     remember_recent(&mut app.prefs, path);
@@ -268,6 +286,12 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 /// `path` with the file ending `ext`: kept as it is when it ends in it already (in any case),
 /// otherwise the ending is put after the whole name. A dot in the name is part of the name
 /// ("Birch 3.5" becomes "Birch 3.5.dbclb", not "Birch 3.dbclb").
+/// A Save as path that names a file: an empty or blank one (which would save a file called only
+/// by its ending in the current folder) is refused.
+pub(crate) fn named(path: &Path) -> Result<(), String> {
+    if path.to_string_lossy().trim().is_empty() { Err("Give the file a name.".into()) } else { Ok(()) }
+}
+
 pub(crate) fn with_ending(path: &Path, ext: &str) -> PathBuf {
     if path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
         return path.to_path_buf();
@@ -353,7 +377,7 @@ pub fn show_message(app: &mut DarkBurn, title: &str, text: String) {
 pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: Vec<darkburn_core::layer::Layer>) -> Vec<ShapeId> {
     let (group, select) = (app.prefs.import_group, app.prefs.import_select);
     let mut new = Vec::new();
-    app.editor.edit("Import", |d, sel| {
+    let done = app.editor.edit("Import", |d, sel| {
         crate::formats::apply_layers(d, &layers, &Default::default(), |_| true);
         for imp in imported {
             for (k, data) in imp.images {
@@ -371,7 +395,8 @@ pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: V
         }
         !new.is_empty() || !layers.is_empty()
     });
-    new
+    // The editor refuses a drawing further out than a design can reach: nothing was added.
+    if done { new } else { Vec::new() }
 }
 
 /// Document point under the pointer on the canvas.
@@ -464,6 +489,7 @@ pub fn restore_autosave(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let clipboard = std::mem::take(&mut app.editor.clipboard);
     app.editor = Editor::with_document(loaded.doc);
     app.editor.clipboard = clipboard;
+    leave_project(app);
     app.editor.touch();
     app.project_path = original;
     Ok(())

@@ -144,13 +144,24 @@ fn write_item(s: &mut String, item: &Item, flip: Affine, opts: &SvgExportOptions
                     HAlign::Center => "middle",
                     HAlign::Right => "end",
                 };
+                // SVG viewers do not break lines on a newline: one tspan per line, spaced
+                // 1.2 x the height like the AI export (text space is Y down here).
+                let lines: Vec<&str> = t.text.lines().collect();
+                let body = if lines.len() > 1 {
+                    lines
+                        .iter()
+                        .enumerate()
+                        .map(|(li, line)| format!("<tspan x=\"0\" y=\"{}\">{}</tspan>", fmt_num(li as f64 * t.height * 1.2, dec), escape(line)))
+                        .collect::<String>()
+                } else {
+                    escape(&t.text)
+                };
                 s.push_str(&format!(
-                    "    <text transform=\"{}\" style=\"font-family:{};font-size:{}px;fill:{};text-anchor:{anchor}\">{}</text>\n",
+                    "    <text transform=\"{}\" style=\"font-family:{};font-size:{}px;fill:{};text-anchor:{anchor}\">{body}</text>\n",
                     matrix(m, dec),
                     escape(&t.font),
                     fmt_num(t.height, 4),
                     colour(Some(t.colour)),
-                    escape(&t.text)
                 ));
             }
         }

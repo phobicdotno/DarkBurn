@@ -630,7 +630,8 @@ fn band_pieces(pts: &[Point], win: &Window) -> Option<Vec<Vec<Point>>> {
 }
 
 fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOptions) -> Result<Vec<Window>, CompileError> {
-    if rc.max_size_mm <= 0.0 || rc.max_size_mm > field_size {
+    // Written so that "not a number" fails it.
+    if !(rc.max_size_mm > 0.0 && rc.max_size_mm <= field_size) {
         return Err(CompileError::Invalid(format!("The rotary band size must be between 0 and the field size ({field_size} mm).")));
     }
     let mut shapes: Vec<((usize, usize), Rect)> = Vec::new();
@@ -902,8 +903,14 @@ fn validate(job: &Job) -> Result<(), CompileError> {
         if l.passes == 0 {
             return Err(CompileError::Invalid(format!("Layer '{}' has zero passes.", l.name)));
         }
-        if !(0.0..=100.0).contains(&l.params.power_pct) || l.params.frequency_khz <= 0.0 || l.params.speed_mm_s <= 0.0 {
+        // "Not a number" fails no comparison, so it is asked for by name: as a speed it would be
+        // sent as 0, as a frequency it would count as the lowest one (the widest pulse).
+        let above_zero = |v: f64| v.is_finite() && v > 0.0;
+        if !(0.0..=100.0).contains(&l.params.power_pct) || !above_zero(l.params.frequency_khz) || !above_zero(l.params.speed_mm_s) {
             return Err(CompileError::Invalid(format!("Layer '{}' has invalid power, frequency or speed.", l.name)));
+        }
+        if l.params.timings.is_some_and(|t| !t.jump_speed_mm_s.is_finite()) {
+            return Err(CompileError::Invalid(format!("Layer '{}' has a jump speed that is not a number.", l.name)));
         }
         match &l.mode {
             LayerMode::Drill(d) if !(d.dwell_ms > 0.0 && d.dwell_ms <= 60_000.0 && d.spacing_mm >= 0.0) => {
@@ -912,7 +919,7 @@ fn validate(job: &Job) -> Result<(), CompileError> {
                     l.name
                 )));
             }
-            LayerMode::Fill(f) | LayerMode::Flood(f) if f.interval_mm <= 0.0 => {
+            LayerMode::Fill(f) | LayerMode::Flood(f) if !above_zero(f.interval_mm) => {
                 return Err(CompileError::Invalid(format!("Layer '{}' needs a line interval above zero.", l.name)));
             }
             LayerMode::Sliced(s)
@@ -920,7 +927,7 @@ fn validate(job: &Job) -> Result<(), CompileError> {
                     || s.width_px == 0
                     || s.height_px == 0
                     || s.slices == 0
-                    || s.interval_mm <= 0.0 =>
+                    || !above_zero(s.interval_mm) =>
             {
                 return Err(CompileError::Invalid(format!("Layer '{}' has an invalid 3D image.", l.name)));
             }
@@ -942,9 +949,25 @@ fn flush<'a>(w: &mut Writer<'a>, dev: &'a DeviceSettings, field: &'a Field, body
     }
 }
 
+/// Device settings a list cannot be written for: a port bit the 16-bit port does not have (the
+/// driver refuses those when it connects, but a job is compiled without it), a field size that
+/// is no size (an endless field puts every point in its centre, a negative one turns the job
+/// round), or a jump speed that is not a number.
+fn validate_device(dev: &DeviceSettings) -> Result<(), CompileError> {
+    dev.ports.validate().map_err(CompileError::Invalid)?;
+    if !(dev.field.size_mm.is_finite() && dev.field.size_mm > 0.0) {
+        return Err(CompileError::Invalid("The field size must be a number above zero.".into()));
+    }
+    if !dev.timings.jump_speed_mm_s.is_finite() {
+        return Err(CompileError::Invalid("The jump speed of the device is not a number.".into()));
+    }
+    Ok(())
+}
+
 /// Compiles a job.
 pub fn compile(job: &Job, dev: &DeviceSettings, opt: &CompileOptions) -> Result<CompiledJob, CompileError> {
     validate(job)?;
+    validate_device(dev)?;
     let field = Field::new(dev.field.clone());
     let bounds = job.bounds(opt.tolerance_mm).ok_or(CompileError::NothingToMark)?;
     let windows = match &job.rotary {
@@ -1128,6 +1151,10 @@ pub fn compile_frame(spec: &FrameSpec, dev: &DeviceSettings) -> Result<CompiledF
     }
     if !(1.0..=1000.0).contains(&spec.scale_pct) {
         return Err(CompileError::Invalid("Frame scale must be between 1 and 1000 percent.".into()));
+    }
+    validate_device(dev)?;
+    if !spec.speed_mm_s.unwrap_or(dev.light.speed_mm_s).is_finite() {
+        return Err(CompileError::Invalid("The frame speed is not a number.".into()));
     }
     let field = Field::new(dev.field.clone());
     let upmm = field.units_per_mm();

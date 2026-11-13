@@ -308,10 +308,7 @@ fn color_popover_with_opacity(ui: &mut Ui, rgb: &mut [u8; 3], mut opacity: Optio
     session.pass = pass;
     session.pending |= *rgb != before_rgb;
     if session.pending && !ui.input(|i| i.pointer.any_down()) {
-        let replacing = if picked_recent { None } else { session.entry };
-        remember_color(ui.ctx(), *rgb, replacing);
-        session.entry = if picked_recent { None } else { Some(*rgb) };
-        session.pending = false;
+        finish_pick(ui.ctx(), *rgb, picked_recent, &mut session);
     }
     ui.ctx().data_mut(|d| d.insert_temp(session_id, session));
     hex.sync(*rgb, opacity.as_deref().copied());
@@ -366,7 +363,7 @@ impl HexEdit {
 }
 
 fn parse_hex(text: &str) -> Option<([u8; 3], Option<u8>)> {
-    let digits = text.strip_prefix('#')?;
+    let digits = text.trim().strip_prefix('#')?;
     if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
@@ -494,6 +491,18 @@ struct RecentSession {
     entry: Option<[u8; 3]>,
 }
 
+/// Add a finished edit of the popover to the recent list, replacing the colour this opening
+/// added before.
+fn finish_pick(ctx: &egui::Context, rgb: [u8; 3], picked_recent: bool, session: &mut RecentSession) {
+    let replacing = if picked_recent { None } else { session.entry };
+    // A colour that was in the list before is moved, not added, so it is never this opening's
+    // own entry to replace later.
+    let was_recent = recent_colors(ctx).contains(&rgb);
+    remember_color(ctx, rgb, replacing);
+    session.entry = if picked_recent || was_recent { None } else { Some(rgb) };
+    session.pending = false;
+}
+
 /// The recent colours as a row of samples (empty slots outlined); returns the one clicked.
 /// Tokens: space_3/4/8, font_small, form_dim, control_radius/border, border, form_ink.
 fn recent_row(ui: &mut Ui, width: f32) -> Option<[u8; 3]> {
@@ -578,4 +587,35 @@ fn gradient(ui: &Ui, rect: egui::Rect, color: impl Fn(f32, f32) -> Color32) {
         Tokens::get().control_border_stroke(Tokens::get().control_border),
         egui::StrokeKind::Inside,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pasted hex value often brings a newline or spaces with it.
+    #[test]
+    fn hex_with_surrounding_whitespace_parses() {
+        assert_eq!(parse_hex("#ff0000 "), Some(([255, 0, 0], None)));
+        assert_eq!(parse_hex(" #00ff0080\n"), Some(([0, 255, 0], Some(0x80))));
+        assert_eq!(parse_hex("# ff0000"), None);
+    }
+
+    /// Fine-tuning a colour that was already in the recent list keeps that colour there.
+    #[test]
+    fn fine_tuning_keeps_a_colour_that_was_already_recent() {
+        let ctx = egui::Context::default();
+        let (blue, red, dark_red) = ([0, 0, 255], [255, 0, 0], [128, 0, 0]);
+        let mut saved = vec![blue, red];
+        super::super::recent_colors::share(&ctx, &mut saved);
+        let mut session = RecentSession::default();
+        finish_pick(&ctx, red, false, &mut session);
+        assert_eq!(recent_colors(&ctx), vec![red, blue]);
+        finish_pick(&ctx, dark_red, false, &mut session);
+        assert_eq!(recent_colors(&ctx), vec![dark_red, red, blue]);
+        // A colour new to the list is still replaced while the popover stays open.
+        let pink = [255, 128, 128];
+        finish_pick(&ctx, pink, false, &mut session);
+        assert_eq!(recent_colors(&ctx), vec![pink, red, blue]);
+    }
 }

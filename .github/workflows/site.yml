@@ -1,0 +1,197 @@
+# Builds and checks the web page, https://darkburn.phobic.no.
+#
+# The page is site/. scripts/build-site.sh puts it together with the pictures, the fonts and the
+# icon it shows, and checks it: the files it points to, its Content-Security-Policy and the
+# rules for the host (site/.htaccess). This workflow runs that script, so a change that breaks
+# the page shows on the pull request.
+#
+# Once a day, and when it is started by hand on main (Actions > site > Run workflow), it also
+# asks the host for every file of the page and compares it with what main builds, and it
+# looks at the headers and the "not found" page that the rules for the host give. On the host
+# the page can be changed by everything that can write there: the one login, the host's
+# control panel, a fault in a program of another site. A file of the page that was changed,
+# and rules that were taken away, show here the day after. A file that was added on the host
+# does not: only a list of the folder shows that, and scripts/deploy-site.sh prints one at
+# each upload. The run is also red while main holds a change to the page that is not uploaded
+# yet, which is worth knowing too. While the name darkburn.phobic.no does not answer in DNS
+# there is nothing to compare; the run says so in a warning and passes. That exception is
+# taken out once the page is up. (In a public repository GitHub switches schedules off after
+# 60 days without activity in the repository, and says so by mail.)
+#
+# Nothing is published from here. The page is hosted on the owner's own web host and gets
+# there by hand, from a checkout of main:
+#     sh scripts/deploy-site.sh USER
+# What that does, and the one thing that is set by hand at the host, is at the top of that
+# file. The login of the host is in no workflow and in no secret of this repository, and it
+# should stay that way: the same login reaches every other site on that host.
+#
+# The page is not on GitHub Pages. Settings > Pages stays off, and the DNS of phobic.no gets
+# no record that points darkburn at GitHub: a record that points at GitHub while no page of
+# this account holds the name can be claimed by somebody else's page. If any of that was set
+# up for an earlier plan, it is undone in this order: first the DNS record (darkburn CNAME
+# phobicdotno.github.io.), then, under Settings > Pages, the custom domain and the site itself
+# (Unpublish site). A TXT record _github-pages-challenge-phobicdotno.phobic.no stays: it keeps
+# other accounts from using phobic.no, or a name directly under it, on GitHub Pages.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - docs/img/**
+      - assets/fonts/**
+      - assets/icons/app/**
+      - assets/icons/ui/design/svg/model/db_app.svg
+      - scripts/build-site.sh
+      - scripts/deploy-site.sh
+      - .github/workflows/site.yml
+  pull_request:
+    # The same files as above. Because of this list "Build the page" must not be made a
+    # required check: a pull request that changes none of these files never gets it (see
+    # ci.yml).
+    paths:
+      - site/**
+      - docs/img/**
+      - assets/fonts/**
+      - assets/icons/app/**
+      - assets/icons/ui/design/svg/model/db_app.svg
+      - scripts/build-site.sh
+      - scripts/deploy-site.sh
+      - .github/workflows/site.yml
+  workflow_dispatch:
+  schedule:
+    # Daily. Not at the full hour, when GitHub is busiest and starts schedules late.
+    - cron: "23 4 * * *"
+
+# Nothing by default. Each job asks for what it needs.
+permissions: {}
+
+# A new run for the same branch or pull request takes the place of the run before it. A run
+# on the schedule, a run by hand and a run for a push do not get in each other's way.
+concurrency:
+  group: site-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build the page
+    # Not on the schedule: the job below builds the page itself.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Put the page together and check it
+        run: sh scripts/build-site.sh
+
+      # The script that uploads is not run here: it needs the login of the host.
+      - name: The upload script reads as a script
+        run: sh -n scripts/deploy-site.sh
+
+  live:
+    name: The page on the host is the page on main
+    # A run by hand on another branch would compare that branch with the host.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Put the page together
+        run: sh scripts/build-site.sh
+
+      - name: Compare it with what the host sends
+        run: |
+          url=https://darkburn.phobic.no
+          ask() { curl -sS --connect-timeout 10 -m 20 "$@"; }
+          # One try first: when nothing can be compared, the run says why in one line.
+          status=0
+          ask -o /dev/null "$url/" || status=$?
+          case $status in
+            0) ;;
+            6)
+              # Right while the name is not set up at the host. Once the page is up this
+              # branch is taken out: from then on a name that is gone is a fault.
+              echo "::warning title=Nothing to compare::The name darkburn.phobic.no does not answer in DNS. Before the page is set up at the host that is as it should be."
+              exit 0
+              ;;
+            35 | 51 | 60)
+              echo "::error title=The certificate of the page is not in order::curl ended with $status (its reason is the line above). A browser shows visitors a warning. Nothing was compared."
+              exit 1
+              ;;
+            *)
+              echo "::error title=The host does not answer::curl ended with $status (its reason is the line above). Nothing was compared."
+              exit 1
+              ;;
+          esac
+          differ='' count=0
+          # Every file of the page but the rules for the host, which a host does not hand out.
+          while IFS= read -r f; do
+            count=$((count + 1))
+            case $f in
+              index.html) address=$url/ ;;
+              *) address=$url/$f ;;
+            esac
+            code=$(ask -o live.tmp -w '%{http_code}' "$address") || code="nothing (curl ended with $?)"
+            if [ "$code" != 200 ]; then
+              echo "$f: the host answers $code"
+              differ="$differ$f "
+            elif ! cmp -s live.tmp "target/site/$f"; then
+              echo "$f: not the file main builds"
+              differ="$differ$f "
+            fi
+          done < <(cd target/site && find . -type f ! -name .made-by-build-site ! -name .htaccess | sed 's|^\./||' | LC_ALL=C sort)
+          # The rules are not handed out, but what they do shows: the headers they set for
+          # every file (the first block of .htaccess), the "not found" page and the two
+          # forwards. Rules that were taken away on the host show here. Rules that answer
+          # this check with the real files and a browser with others do not.
+          heads=$(ask -o /dev/null -D - "$url/" | tr -d '\r') || heads=''
+          while IFS= read -r want; do
+            if ! printf '%s\n' "$heads" | grep -qixF -- "$want"; then
+              echo "the header is not sent: $want"
+              differ="$differ.htaccess "
+            fi
+          done < <(sed -n '/<FilesMatch "\.">/,/<\/FilesMatch>/s/^ *Header set \([A-Za-z-]*\) "\([^"]*\)".*$/\1: \2/p' target/site/.htaccess)
+          code=$(ask -o live.tmp -w '%{http_code}' "$url/no-such-page") || code=none
+          if [ "$code" != 404 ] || ! cmp -s live.tmp target/site/404.html; then
+            echo "no-such-page: the host answers $code, or not with 404.html"
+            differ="$differ.htaccess "
+          fi
+          # What the host answers is not printed: it is the host's text.
+          got=$(ask -o /dev/null -w '%{http_code} %{redirect_url}' "http://darkburn.phobic.no/") || got=none
+          if [ "$got" != "301 $url/" ]; then
+            echo "plain http is not sent on to https"
+            differ="$differ.htaccess "
+          fi
+          got=$(ask -o /dev/null -w '%{http_code} %{redirect_url}' "https://phobic.no/darkburn/") || got=none
+          case $got in
+            "302 $url/" | 404* | 403* | 410*) ;;
+            *)
+              echo "phobic.no/darkburn/ is not sent on to the page's own name"
+              differ="$differ.htaccess "
+              ;;
+          esac
+          if [ "$count" -eq 0 ]; then
+            echo "::error title=Nothing was compared::The build left no files in target/site."
+            exit 1
+          fi
+          if [ -n "$differ" ]; then
+            differ=$(printf '%s' "$differ" | tr ' ' '\n' | LC_ALL=C sort -u | tr '\n' ' ')
+            echo "::error title=The page on the host is not the page on this commit::Not as built here: ${differ% } (the lines above say how). Either main holds a change that is not uploaded yet (sh scripts/deploy-site.sh USER), or the page was changed on the host."
+            exit 1
+          fi
+          echo "$count files and the headers are as built here."

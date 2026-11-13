@@ -87,9 +87,11 @@ impl PathSampler {
         } else if s >= total {
             n - 2
         } else {
+            // A distance that is not a number is past every entry: it must not point past
+            // the last segment.
             match self.cum.binary_search_by(|c| c.total_cmp(&s)) {
                 Ok(i) => i.min(n - 2),
-                Err(i) => i - 1,
+                Err(i) => i.saturating_sub(1).min(n - 2),
             }
         };
         let a = self.pts[seg];
@@ -136,11 +138,16 @@ fn flatten_fine(path: &BezPath, max_seg: f64) -> Vec<(Vec<Point>, bool)> {
         .collect()
 }
 
-/// Place a laid-out text on `path`. Returns new glyphs (same text/advance metadata, new outlines).
+/// Place a laid-out text on `path`. Returns new glyphs (same text/advance metadata, new outlines);
+/// none when the path has no length or the start or offset is not a number.
 pub fn text_on_path(layout: &TextLayout, path: &BezPath, opts: &PathTextOptions) -> Vec<GlyphOutline> {
     let Some(base) = PathSampler::new(path, 0.01) else { return Vec::new() };
     let sampler = if opts.flip { base.reversed() } else { base };
     let start = opts.start_offset + if opts.center_on_path { sampler.length() / 2.0 } else { 0.0 };
+    // A start or a distance from the path that is not a number has no place on the path.
+    if !(start.is_finite() && opts.offset.is_finite()) {
+        return Vec::new();
+    }
     let mut out = Vec::with_capacity(layout.glyphs.len());
     for g in &layout.glyphs {
         let mut ng = g.clone();

@@ -813,6 +813,7 @@ fn nodes_tool(
                             if j != p {
                                 crate::shape_ops::set_shape_path(&mut app.editor.doc, *id, j);
                                 st.nodes.retain(|(i, _)| i != id);
+                                app.editor.touch();
                             }
                         }
                     }
@@ -1130,7 +1131,12 @@ fn measure_tool(
         }
     });
     // Selection numbers, recomputed when the selection or document changes.
-    let key = app.editor.revision().wrapping_mul(31).wrapping_add(app.editor.selected().iter().map(|i| i.0).sum::<u64>());
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (app.editor.revision(), app.editor.selected().iter().map(|i| i.0).collect::<Vec<u64>>()).hash(&mut h);
+        h.finish()
+    };
     if st.sel_info.0 != key || st.sel_info.1.is_empty() {
         let lines = match crate::shape_ops::execute(app, "measure.selection", &Value::Null) {
             Some(Ok(v)) => selection_lines(&v, mem.inches),
@@ -1175,6 +1181,12 @@ pub fn measure_points(ctx: &egui::Context) -> Vec<Point> {
     ctx.data_mut(|d| d.get_temp::<MeasureMem>(measure_id())).map(|m| m.pts).unwrap_or_default()
 }
 
+/// The selection lines the measure tool shows (for tests).
+#[cfg(test)]
+pub fn measure_selection_lines(ctx: &egui::Context) -> Vec<String> {
+    ctx.data_mut(|d| d.get_temp::<State>(state_id())).map(|s| s.sel_info.1).unwrap_or_default()
+}
+
 fn selection_lines(v: &Value, inches: bool) -> Vec<String> {
     let f = |k: &str| v.get(k).and_then(Value::as_f64).unwrap_or(0.0);
     vec![
@@ -1198,9 +1210,11 @@ fn warp_tool(
 ) {
     let deform = app.tool == Tool::Deform;
     let ids = crate::shape_ops::in_draw_order(&app.editor.doc, &app.editor.selected());
-    if st.warp.as_ref().is_none_or(|w| w.ids != ids) {
+    let bbox = app.editor.doc.bbox_of(&ids).filter(|r| r.width() > 1e-9 && r.height() > 1e-9);
+    // The handles start again on the box of the shapes when they were moved or changed.
+    if st.warp.as_ref().is_none_or(|w| w.ids != ids || Some(w.src) != bbox) {
         st.warp = None;
-        if let Some(src) = app.editor.doc.bbox_of(&ids).filter(|r| r.width() > 1e-9 && r.height() > 1e-9) {
+        if let Some(src) = bbox {
             let pts = warp_points(src, deform);
             st.warp = Some(WarpState { ids: ids.clone(), src, preview: Vec::new(), pts, perspective: true });
         }

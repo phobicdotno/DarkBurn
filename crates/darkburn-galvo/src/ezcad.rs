@@ -54,7 +54,8 @@ fn normalise(k: &str) -> String {
 
 fn parse_f64(v: &str) -> Option<f64> {
     let t: String = v.trim().trim_matches('"').chars().take_while(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | ',' | 'e' | 'E')).collect();
-    t.replace(',', ".").parse().ok()
+    // "1e999" reads as infinity; no setting is that.
+    t.replace(',', ".").parse().ok().filter(|v: &f64| v.is_finite())
 }
 
 fn parse_bool(v: &str) -> Option<bool> {

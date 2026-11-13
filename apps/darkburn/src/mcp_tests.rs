@@ -1045,3 +1045,28 @@ fn a_region_screenshot_of_a_window_with_no_pixels_is_an_error_not_a_crash() {
     let small = egui::ColorImage::filled([40, 30], egui::Color32::BLACK);
     assert!(crate::mcp_backend::png_of(&small, region, 1.0).is_ok());
 }
+
+/// Restoring an agent's checkpoint puts another editor in place, the way New and Open do: the
+/// windows that hold shapes or settings of the replaced one close, so their OK cannot write the
+/// old state over the restored document (Edit Text, Convert to Bitmap, the shape tool windows).
+#[test]
+fn restoring_a_checkpoint_closes_the_windows_that_held_the_old_shapes() {
+    let app = shared();
+    let mut b = McpBackend::new(app.clone(), egui::Context::default(), true);
+    exec(&mut b, "shape.add_rect", json!({"x": 10, "y": 10, "width": 40, "height": 20, "layer": 0})).unwrap();
+    let cp = b.checkpoint().unwrap().expect("a checkpoint");
+    exec(&mut b, "shape.add_rect", json!({"x": 60, "y": 10, "width": 40, "height": 20, "layer": 0})).unwrap();
+    let serial = {
+        let mut a = app.borrow_mut();
+        a.text.edit.open = true;
+        a.text.qr.open = true;
+        a.shape_ui.open = Some("tools.boolean_assistant");
+        a.files.project_serial
+    };
+    b.restore(&cp).unwrap();
+    let a = app.borrow();
+    assert_eq!(a.editor.doc.len(), 1, "the checkpoint's document is back");
+    assert!(!a.text.edit.open && !a.text.qr.open, "the text windows still hold the replaced document");
+    assert!(a.shape_ui.open.is_none(), "the Boolean Assistant still holds the replaced document");
+    assert!(a.files.project_serial > serial, "work started on the replaced document is not cancelled");
+}

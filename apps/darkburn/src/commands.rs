@@ -612,6 +612,7 @@ pub fn works(id: &str) -> bool {
         || crate::key_cmds::works(id)
         || crate::misc_cmds::works(id)
         || crate::nest_cmds::works(id)
+        || crate::draw_more::works(id)
         || crate::vision_cmds::works(id)
         || crate::shape_ops::works(id)
         || crate::text_cmds::works(id)
@@ -695,6 +696,7 @@ pub fn find(id: &str) -> Option<&'static Cmd> {
         .chain(crate::machine_ext::COMMANDS)
         .chain(crate::motion_cmds::COMMANDS)
         .chain(crate::connections::COMMANDS)
+        .chain(crate::draw_more::COMMANDS)
         .find(|c| c.id == id)
 }
 
@@ -872,6 +874,7 @@ pub fn registry() -> &'static [Cmd] {
         v.extend_from_slice(crate::job_cmds::COMMANDS);
         v.extend_from_slice(crate::key_cmds::COMMANDS);
         v.extend_from_slice(crate::misc_cmds::COMMANDS);
+        v.extend_from_slice(crate::draw_more::COMMANDS);
         v.extend_from_slice(crate::layer_defaults::COMMANDS);
         v.extend_from_slice(crate::vision_cmds::COMMANDS);
         v.extend_from_slice(crate::text_cmds::commands());
@@ -1058,6 +1061,8 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("edit.convert_path"),
             C("edit.convert_bitmap"),
             C("edit.close_path"),
+            C("shape.open_gap"),
+            C("shape.break_at_tabs"),
             C("edit.close_tolerance"),
             C("edit.auto_join"),
             C("edit.optimize"),
@@ -1065,6 +1070,7 @@ pub const MENUS: &[(&str, &[Entry])] = &[
             C("edit.delete_overlapping"),
             C("shape.remove_rounded_corners"),
             S,
+            C("edit.select_similar"),
             C("edit.select_open"),
             C("edit.select_open_fill"),
             C("edit.select_layer"),

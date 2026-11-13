@@ -520,7 +520,8 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
         mode: cut_mode(s.mode),
         speed: s.speed.max(0.01),
         max_power: s.max_power.clamp(0.0, 100.0),
-        min_power: s.min_power.clamp(0.0, 100.0),
+        // A min power above the max is held to the max: the layer's max is never passed.
+        min_power: s.min_power.clamp(0.0, 100.0).min(s.max_power.clamp(0.0, 100.0)),
         passes: s.passes.max(1),
         air: layer.air,
         laser: if s.laser == LaserSelect::Laser2 { 2 } else { 1 },
@@ -529,7 +530,8 @@ pub fn map_settings_with(s: &CutSetting, layer: &Layer, z_enabled: bool, tuning:
             pwm_hz: s.pwm_override.then(|| (s.pwm_khz.clamp(0.1, 1000.0) * 1000.0).round() as u32),
             ppi: s.ppi_enabled.then_some(s.ppi.max(1.0)),
             u_offset: s.u_offset,
-            power2: (s.laser != LaserSelect::Laser1).then_some([s.min_power_2.clamp(0.0, 100.0), s.max_power_2.clamp(0.0, 100.0)]),
+            power2: (s.laser != LaserSelect::Laser1)
+                .then_some([s.min_power_2.clamp(0.0, 100.0).min(s.max_power_2.clamp(0.0, 100.0)), s.max_power_2.clamp(0.0, 100.0)]),
         },
         z: job::ZSettings { enabled: z_enabled && (s.z_offset != 0.0 || s.z_step != 0.0), offset: s.z_offset, step_per_pass: s.z_step },
         ..job::CutSettings::default()
@@ -1027,6 +1029,11 @@ pub fn fast_whitespace(tp: &Toolpath, speed: f64) -> Toolpath {
     out
 }
 
+/// True when some operation of `tp` fires the laser (a cut, arc or dwell above power 0).
+fn fires_anywhere(tp: &Toolpath) -> bool {
+    tp.ops.iter().any(|o| matches!(o, Op::Cut { power, .. } | Op::Arc { power, .. } | Op::Dwell { power, .. } if *power > 0.0))
+}
+
 /// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
@@ -1040,6 +1047,11 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
         Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
         Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
     };
+    // A job that fires the laser nowhere (every layer at power 0) is refused like an image at
+    // power 0, before anything reaches the machine or a file.
+    if !fires_anywhere(&toolpath) {
+        return Err(BuildError::NothingToBurn);
+    }
     let design = inverse_ops(&toolpath, origin.transform(bounds));
     let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
     let mut warnings = c.warnings;

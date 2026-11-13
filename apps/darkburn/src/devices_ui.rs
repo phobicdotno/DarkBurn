@@ -1008,6 +1008,10 @@ fn ruida_settings_body(ui: &mut Ui, app: &mut DarkBurn) {
 fn dsp_extras(ui: &mut Ui, app: &mut DarkBurn, snap: &crate::machine_api::Snapshot) {
     let connected = snap.connected();
     ui_kit::section_heading(ui, "Dual tube (laser 2)");
+    // Nothing connected, or nothing read from this controller: no draft Write could send.
+    if !connected || snap.ruida.laser2.is_none() {
+        app.machine.dlg.laser2 = None;
+    }
     if app.machine.dlg.laser2.is_none() {
         app.machine.dlg.laser2 = snap.ruida.laser2;
     }

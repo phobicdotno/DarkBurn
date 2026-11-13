@@ -107,7 +107,8 @@ pub fn rasterize_paths(
     if width == 0 || height == 0 {
         return Err(RasterError::Empty);
     }
-    if width * height > max_pixels || width > u64::from(u32::MAX) || height > u64::from(u32::MAX) {
+    // A size beyond counting is too large as well: the product must not run over.
+    if width.saturating_mul(height) > max_pixels || width > u64::from(u32::MAX) || height > u64::from(u32::MAX) {
         return Err(RasterError::TooLarge { width, height, max_pixels });
     }
     let (w, h) = (width as u32, height as u32);

@@ -188,7 +188,8 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
             deny("malformed stop vector (only [1,0x1F] or [1,mask,2,vd,10vd])")
         }
         CMD_HOME => {
-            if n == 3 && w[2] == 0 && cfg.home_slots.iter().any(|s| w[1] == 1 << s) {
+            // A slot past bit 31 of the mask names no axis (and must not overflow the shift).
+            if n == 3 && w[2] == 0 && cfg.home_slots.iter().any(|&s| 1u32.checked_shl(s) == Some(w[1])) {
                 return d(Policy::Motion);
             }
             deny("system, multi-axis and lift-table home are not supported")
@@ -257,7 +258,8 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
                     let dec = do_policy(newly_on | (value & allow), cfg)?;
                     return Ok(dec);
                 }
-                if mask & (mask - 1) != 0 || mask == 0 || mask > 0x200 {
+                // `mask == 0` first: `mask - 1` would overflow for it.
+                if mask == 0 || mask & (mask - 1) != 0 || mask > 0x200 {
                     return deny("DO write must address one port 1..10");
                 }
                 do_policy(value, cfg)
@@ -296,7 +298,7 @@ pub fn classify_write(addr: u32, words: &[u32], cfg: &SafetyConfig, do_word: Opt
                 return Err(Forbidden::FifoFrame("empty frame".into()));
             }
             let frame = fifo::parse_fifo_words(words).map_err(|e| Forbidden::FifoFrame(e.0))?;
-            let policy = fifo::classify_frame(&frame)?;
+            let policy = fifo::classify_frame_for(&frame, cfg)?;
             Ok(Decision { policy, needs_homed: false })
         }
         other => Err(plain_write_reason(other)),
@@ -457,12 +459,28 @@ pub fn connect_prologue() -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_9999, MISC_PROLOGUE, 0, 0], "connect_prologue")
 }
 
+/// A jog is a relative move: bit 31 of its axis word would make the card move to a position.
+fn relative_axis(axis_index: u32) -> Result<(), Forbidden> {
+    if axis_index & ABSOLUTE_BIT != 0 {
+        return deny(format!("jog axis index {axis_index:#x} has the absolute bit"));
+    }
+    Ok(())
+}
+
 /// Held jog `[3, i, v, a, 10a, +-d]`, relative, `d = trunc(20 * JogFastSpeed * K)`. When
 /// `soft_limit_remaining_mm` is given the distance is clipped to it.
+///
+/// A remaining distance that is not a number is refused: `min` would ignore it and the jog would
+/// go out with its full length. An axis index with bit 31 set is refused: on the card that bit
+/// makes the move absolute.
 pub fn jog_continuous(axis_index: u32, positive: bool, params: &MachineParams, soft_limit_remaining_mm: Option<f64>) -> Result<SafeWrite, Forbidden> {
+    relative_axis(axis_index)?;
     let (v, a) = params.jog_speed_acc()?;
     let mut dist = 20.0 * params.jog_fast_speed;
     if let Some(rem) = soft_limit_remaining_mm {
+        if rem.is_nan() {
+            return deny("distance to the soft limit is not a number");
+        }
         dist = dist.min(rem).max(0.0);
     }
     let d = trunc_int(dist * params.k as f64)?;
@@ -470,8 +488,10 @@ pub fn jog_continuous(axis_index: u32, positive: bool, params: &MachineParams, s
     SafeWrite::build(REG_COMMAND, vec![CMD_JOG, axis_index, v, a, a.wrapping_mul(10), word(d)?], "jog_continuous")
 }
 
-/// Step jog `[3, i, v, a, 10a, trunc(dist * K)]`, relative, signed distance in mm.
+/// Step jog `[3, i, v, a, 10a, trunc(dist * K)]`, relative, signed distance in mm. An axis index
+/// with bit 31 set is refused (that bit makes the move absolute).
 pub fn jog_step(axis_index: u32, distance_mm: f64, params: &MachineParams) -> Result<SafeWrite, Forbidden> {
+    relative_axis(axis_index)?;
     let (v, a) = params.jog_speed_acc()?;
     let d = trunc_int(distance_mm * params.k as f64)?;
     SafeWrite::build(REG_COMMAND, vec![CMD_JOG, axis_index, v, a, a.wrapping_mul(10), word(d)?], "jog_step")
@@ -512,19 +532,48 @@ pub fn home_axis(slot: u32) -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_HOME, 1u32.checked_shl(slot).unwrap_or(0), 0], "home_axis")
 }
 
+/// Which deceleration clamp a stop vector uses. The vendor has three in its main program and one
+/// in its command builder; they differ only in the bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum StopVariant {
+    /// Main program, no soft limit reached: `[2000, trunc(0.4 * max acceleration)]`.
+    #[default]
+    MainProgram,
+    /// Main program, stopping at a soft limit: `[5000, trunc(0.4 * max acceleration)]`.
+    MainProgramSoftLimit,
+    /// Hand pendant and the command builder: `[2000, 100000]`.
+    PendantOrBuilder,
+}
+
+/// Lower bound every stop deceleration word is held to.
+pub const STOP_VD_MIN: i64 = 2000;
+/// Upper bound every stop deceleration word is held to.
+pub const STOP_VD_MAX: i64 = 100_000;
+
 /// Deceleration word of the stop vectors: `clamp(F * 100000 / (v_last / K), 2000, 100000)`.
 /// `v_last_word <= 0` means 100000. Deviation from the vendor: a zero quotient uses the upper
 /// clamp instead of dividing by zero.
 pub fn stop_decel_word(v_last_word: i64, params: &MachineParams) -> u32 {
-    let (lo, hi) = (2000i64, 100_000i64);
-    let v = if v_last_word <= 0 { 100_000 } else { v_last_word };
-    let q = v / params.k.max(1);
-    let vd = if q == 0 { hi } else { (params.jog_stop_dcc_factor * 100_000) / q };
-    vd.clamp(lo, hi) as u32
+    stop_decel_word_for(v_last_word, params, StopVariant::PendantOrBuilder)
 }
 
-/// Jog key released: `[1, OR(1 << slot), 2, vd, 10 * vd]`.
-pub fn jog_release_stop(slots: &[u32], v_last_word: i64, params: &MachineParams) -> Result<SafeWrite, Forbidden> {
+/// [`stop_decel_word`] with the clamp of `variant`. The result always lies in
+/// `[STOP_VD_MIN, STOP_VD_MAX]`, whatever the parameters are: a stop must always be buildable.
+pub fn stop_decel_word_for(v_last_word: i64, params: &MachineParams, variant: StopVariant) -> u32 {
+    let lo = if variant == StopVariant::MainProgramSoftLimit { 5000 } else { STOP_VD_MIN };
+    let hi = match variant {
+        StopVariant::PendantOrBuilder => STOP_VD_MAX,
+        // `as` saturates, so a wild acceleration cannot overflow here.
+        _ => ((0.4 * params.fcp_max_acc as f64).trunc() as i64).min(STOP_VD_MAX),
+    };
+    let v = if v_last_word <= 0 { 100_000 } else { v_last_word };
+    let q = v / params.k.max(1);
+    let vd = if q == 0 { hi } else { params.jog_stop_dcc_factor.saturating_mul(100_000) / q };
+    // The lower bound wins when the two cross (a machine with a very small acceleration).
+    vd.min(hi).max(lo) as u32
+}
+
+fn stop_mask(slots: &[u32]) -> Result<u32, Forbidden> {
     let mut mask = 0u32;
     for &s in slots {
         if s >= 5 {
@@ -535,7 +584,19 @@ pub fn jog_release_stop(slots: &[u32], v_last_word: i64, params: &MachineParams)
     if mask == 0 {
         return deny("no axis to stop");
     }
-    let vd = stop_decel_word(v_last_word, params);
+    Ok(mask)
+}
+
+/// Jog key released: `[1, OR(1 << slot), 2, vd, 10 * vd]`, with the main program's clamp
+/// ([`StopVariant::MainProgram`]). Not sent after a step move.
+pub fn jog_release_stop(slots: &[u32], v_last_word: i64, params: &MachineParams) -> Result<SafeWrite, Forbidden> {
+    jog_release_stop_with(slots, v_last_word, params, StopVariant::MainProgram)
+}
+
+/// [`jog_release_stop`] with another deceleration clamp.
+pub fn jog_release_stop_with(slots: &[u32], v_last_word: i64, params: &MachineParams, variant: StopVariant) -> Result<SafeWrite, Forbidden> {
+    let mask = stop_mask(slots)?;
+    let vd = stop_decel_word_for(v_last_word, params, variant);
     SafeWrite::build(REG_COMMAND, vec![CMD_STOP, mask, 2, vd, vd * 10], "jog_release_stop")
 }
 
@@ -601,6 +662,53 @@ pub fn pwm_off(freq: u32, sub: u32) -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_9999, sub, freq, 0, 0], "pwm_off")
 }
 
+/// One digital output `[9999, 2, 1 << (port - 1), on << (port - 1)]`, ports 1..=10.
+///
+/// Off is a safety action and always allowed. On is offered for the lamp and gas ports only
+/// ([`SafetyConfig::motion_do_ports`]) and needs motion armed in the gate. Switching a laser port
+/// on is refused as laser data, and ports 11..=26 (the extended word, sub-command 13) are refused.
+pub fn do_set(port: u32, on: bool) -> Result<SafeWrite, Forbidden> {
+    if (11..=26).contains(&port) {
+        return deny(format!("DO port {port} is on the extended output word, which is never written"));
+    }
+    if !(1..=10).contains(&port) {
+        return deny(format!("DO port {port} outside 1..10"));
+    }
+    let bit = 1u32 << (port - 1);
+    SafeWrite::build(REG_COMMAND, vec![CMD_9999, MISC_DO, bit, if on { bit } else { 0 }], "do_set")
+}
+
+/// Millivolt word of an analogue output: `trunc(volts * 1000)`, 1..=49 raised to 50, capped at
+/// 10000. Negative and non-finite values are refused.
+pub fn da_millivolts(volts: f64) -> Result<u32, Forbidden> {
+    let mv = trunc_int(volts * 1000.0)?;
+    if mv < 0 {
+        return deny("negative analogue output");
+    }
+    Ok(match mv {
+        1..=49 => 50,
+        other => other.min(10_000) as u32,
+    })
+}
+
+/// Analogue output `[9999, 4, channel - 1, millivolts]`. Only zero volts can be built: a
+/// non-zero value is gas pressure or laser power, which stays with the vendor's own logic.
+pub fn da_set(channel: u32, volts: f64) -> Result<SafeWrite, Forbidden> {
+    if channel != 1 && channel != 2 {
+        return deny("DA channel must be 1 or 2");
+    }
+    SafeWrite::build(REG_COMMAND, vec![CMD_9999, MISC_DA, channel - 1, da_millivolts(volts)?], "da_set")
+}
+
+/// PWM without motion `[9999, 3 or 0x11, freq, duty]` (four words). Only duty 0 can be built;
+/// any other duty is laser data and refused.
+pub fn pwm_set(freq: u32, duty: u32, sub: u32) -> Result<SafeWrite, Forbidden> {
+    if sub != MISC_PWM && sub != MISC_PWM_5V {
+        return deny("PWM sub-command must be 3 or 0x11");
+    }
+    SafeWrite::build(REG_COMMAND, vec![CMD_9999, sub, freq, duty], "pwm_set")
+}
+
 /// A FIFO frame `0x66 <- [frame_id, items...]` made of dry items. Items that carry laser data are
 /// refused (none can be built through the public API anyway).
 pub fn fifo_frame(frame_id: u32, items: &[FifoItem]) -> Result<SafeWrite, Forbidden> {
@@ -616,9 +724,14 @@ pub fn fifo_packed_frame(frame_id: u32, frame: &fifo::PackedFrame) -> Result<Saf
     SafeWrite::build(REG_FIFO_DATA, frame.payload(frame_id), "fifo_frame")
 }
 
-/// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then outputs off. The follower stop
+/// Stop sequence: FIFO stop if the FIFO runs, else stop-all; then the laser outputs off, as the
+/// vendor does right after the motion stop; then PWM and analogue outputs off. The follower stop
 /// `[101]` of the vendor sequence is deliberately absent (project rule). Every write in it has
-/// [`Policy::Always`].
+/// [`Policy::Always`] and writes no 1 to any output.
+///
+/// The laser outputs switched off are `laser_ports` and, whatever they say, the default laser
+/// ports of [`SafetyConfig`] (5, 6 and 9): a machine configuration may add ports, never take the
+/// default ones out of a stop.
 ///
 /// A stop is never held back by one step: a step that cannot be built (a port number the card
 /// does not have, say) is left out and every other step is still returned. If the motion stop
@@ -627,21 +740,53 @@ pub fn stop_sequence(params: &MachineParams, fifo_running: bool, v_last_word: i6
     let mut seq = Vec::new();
     let motion = if fifo_running { fifo_stop() } else { stop_all(v_last_word, params) };
     seq.extend(motion.or_else(|_| stop_all_no_decel()));
+    let mut ports: Vec<u32> = SafetyConfig::default().laser_do_ports;
+    for &port in laser_ports {
+        if !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    // The bulk write `[9999, 2, 0xFFFF, keep]` rewrites every output from `current_do_word`, a
+    // word read up to a second ago. It is used only when it keeps nothing on: then it writes
+    // zeros alone and every gate lets it through. Otherwise an output that went off since that
+    // read would be switched on again, and keeping a lamp or gas port on is a motion write the
+    // gate refuses while disarmed. So the laser ports are then switched off one by one, which
+    // touches no other port and needs no arming.
+    match do_bulk_off(current_do_word, &ports) {
+        Ok(w) if w.policy() == Policy::Always && w.words()[3] == 0 => seq.push(w),
+        _ => {
+            for &port in &ports {
+                seq.extend(do_off(port));
+            }
+        }
+    }
     seq.extend(pwm_off(1234, MISC_PWM));
     seq.extend(pwm_off(1234, MISC_PWM_5V));
     seq.extend(da_zero(1));
     seq.extend(da_zero(2));
-    // Every step of a stop must be one the gate lets through in any arming state: after an alarm
-    // or an E-stop the gate is disarmed. The bulk write is that only while no lamp or gas port
-    // stays on in it (keeping one on counts as a motion write). With one on, the laser ports are
-    // switched off one by one instead, which touches no other port and needs no arming.
-    match do_bulk_off(current_do_word, laser_ports) {
-        Ok(w) if w.policy() == Policy::Always => seq.push(w),
-        _ => {
-            for &port in laser_ports {
-                seq.extend(do_off(port));
-            }
-        }
+    seq
+}
+
+/// Pause. The vendor's pause is its stop, step for step; what is unknown is how a paused job is
+/// continued, so this crate has no resume (see `docs/hardware-checks-mcc.md`).
+pub fn pause_sequence(params: &MachineParams, fifo_running: bool, v_last_word: i64, current_do_word: u32, laser_ports: &[u32]) -> Vec<SafeWrite> {
+    stop_sequence(params, fifo_running, v_last_word, current_do_word, laser_ports)
+}
+
+/// Operator emergency stop: the stop sequence with the laser-gate output switched off right after
+/// the motion stop. `laser_gate_port` 0 means the machine has none assigned and nothing extra is
+/// sent. The latch that follows lives in the gate ([`crate::gate::ArmingStateMachine::estop`]).
+pub fn estop_sequence(
+    params: &MachineParams,
+    fifo_running: bool,
+    v_last_word: i64,
+    current_do_word: u32,
+    laser_ports: &[u32],
+    laser_gate_port: u32,
+) -> Vec<SafeWrite> {
+    let mut seq = stop_sequence(params, fifo_running, v_last_word, current_do_word, laser_ports);
+    if let Ok(off) = do_set(laser_gate_port, false) {
+        seq.insert(1.min(seq.len()), off);
     }
     seq
 }
@@ -892,5 +1037,24 @@ mod tests {
         assert_eq!(trunc_int(-2.9).unwrap(), -2);
         assert_eq!(trunc_int(2.009 * 1000.0).unwrap(), 2009);
         assert!(jog_step(2, 1.0, &p()).is_err(), "axis index 2 is not a jog axis");
+    }
+
+    #[test]
+    fn a_jog_release_uses_the_main_program_deceleration_clamp() {
+        // 100000 / (10000 / 1000) = 10000, above the main program's ceiling trunc(0.4 * 20000).
+        let r = jog_release_stop(&[0], 10_000, &p()).unwrap();
+        assert_eq!(r.words(), &[1, 1, 2, 8000, 80_000]);
+        // the stop-all keeps the wider clamp of the command builder
+        assert_eq!(stop_all(10_000, &p()).unwrap().words(), &[1, 0x1f, 2, 10_000, 100_000]);
+    }
+
+    #[test]
+    fn a_stop_is_built_whatever_the_machine_parameters_say() {
+        let wild = MachineParams { jog_stop_dcc_factor: i64::MAX, k: 0, fcp_max_acc: i64::MIN, ..p() };
+        assert_eq!(stop_decel_word(5_000, &wild), 100_000);
+        assert!(stop_all(5_000, &wild).is_ok());
+        assert!(jog_release_stop(&[0], 5_000, &wild).is_ok());
+        let tiny = MachineParams { fcp_max_acc: 100, ..p() };
+        assert_eq!(jog_release_stop(&[1], 10_000, &tiny).unwrap().words(), &[1, 2, 2, 2000, 20_000]);
     }
 }

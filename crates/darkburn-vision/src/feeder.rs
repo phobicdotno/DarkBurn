@@ -22,7 +22,7 @@ impl std::error::Error for FeederError {}
 
 /// Distance the feed axis must cover so the material advances by `window_height - overlap`.
 pub fn distance_per_feed(window_height: f64, overlap: f64) -> Result<f64, FeederError> {
-    if !(window_height > 0.0) || overlap < 0.0 || overlap >= window_height {
+    if !(window_height > 0.0 && window_height.is_finite()) || !(overlap >= 0.0) || overlap >= window_height {
         return Err(FeederError::InvalidSize);
     }
     Ok(window_height - overlap)

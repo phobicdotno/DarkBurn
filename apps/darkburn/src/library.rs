@@ -405,6 +405,7 @@ impl LibraryState {
     }
 
     pub fn save_as(&mut self, path: &Path) -> Result<(), String> {
+        crate::files::named(path)?;
         let path = crate::files::with_ending(path, FILE_EXTENSION);
         self.lib.save(&path)?;
         self.path = Some(path);
@@ -571,6 +572,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             // Changed: the empty library replaces the one kept for this device.
             st.dirty_since = None;
             st.touch();
+            // The file of the library before is no longer the device's: else the next start
+            // opened it again, without what is put into this library.
+            app.prefs.library_paths.remove(&st.device);
         }
         if btn(ui, &tr("library.load", "Load"), &tr("library.load_tip", "Open a library file"), true)
             && let Some(p) = rfd::FileDialog::new().add_filter("Cut library", &[FILE_EXTENSION]).pick_file()

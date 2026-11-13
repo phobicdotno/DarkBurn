@@ -155,7 +155,8 @@ fn stop_does_not_wait_behind_an_unanswered_prompt_or_other_requests() {
     let stop = h.request(Request::Stop);
     assert_eq!(h.wait(stop, Duration::from_secs(3), &mut never), Ok(Response::Done), "Stop waited for the overwrite question");
 
-    // Replies in the order they were handled: the send is given up, Stop runs first, then the rest.
+    // The send is given up, and so are the moves asked before the Stop: done after it, they
+    // would undo it (bug hunt 10).
     let mut order = Vec::new();
     let end = Instant::now() + T;
     while order.len() < 3 && Instant::now() < end {
@@ -166,7 +167,7 @@ fn stop_does_not_wait_behind_an_unanswered_prompt_or_other_requests() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(order, vec![(send, Err(RuidaError::Cancelled)), (home, Ok(Response::Done)), (mv, Ok(Response::Done))]);
+    assert_eq!(order, vec![(send, Err(RuidaError::Cancelled)), (home, Err(RuidaError::Cancelled)), (mv, Err(RuidaError::Cancelled))]);
     assert_eq!(lock(&emu).files().len(), 1);
 }
 

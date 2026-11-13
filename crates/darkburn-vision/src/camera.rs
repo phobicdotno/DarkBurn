@@ -164,6 +164,17 @@ fn one() -> f64 {
     1.0
 }
 
+/// A zoom saved as `null` (JSON has no NaN) loads as the default instead of failing the whole file.
+/// Read a settings field, falling back to its default when the saved value is bad (for example a NaN saved as null),
+/// so one bad number does not lose the whole settings file.
+fn default_if_bad<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(d: D) -> Result<T, D::Error> {
+    Ok(T::deserialize(serde_json::Value::deserialize(d)?).unwrap_or_default())
+}
+
+fn one_if_null<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.filter(|v| v.is_finite()).unwrap_or(1.0))
+}
+
 /// Standard N-target layout: 4 targets at the corners of the work area inset by `margin`, extra ones along the edges.
 pub fn default_targets(bed: BedRect, margin: f64, count: usize) -> Vec<Point> {
     let (x0, y0, x1, y1) = (bed.x + margin, bed.y + margin, bed.x + bed.width - margin, bed.y + bed.height - margin);
@@ -197,7 +208,14 @@ impl CameraAlignment {
         let homography = if targets.len() >= 4 {
             fit_homography(&src, &dst).map_err(|_| AlignError::Degenerate)?
         } else {
-            Homography::from_affine(fit_affine(&src, &dst).ok_or(AlignError::Degenerate)?)
+            let a = fit_affine(&src, &dst).ok_or(AlignError::Degenerate)?;
+            // Bed points on one line squash the picture onto that line: it could never be turned round.
+            let c = a.as_coeffs();
+            let size = c[..4].iter().map(|v| v * v).sum::<f64>();
+            if !(a.determinant().abs() > 1e-9 * size) {
+                return Err(AlignError::Degenerate);
+            }
+            Homography::from_affine(a)
         };
         let rms = homography.rms_error(&src, &dst);
         if !rms.is_finite() {
@@ -449,8 +467,9 @@ pub fn mean_luma(img: &RgbaImage) -> f64 {
 
 /// Brightness and contrast, both in -1.0..=1.0 (0 leaves the image unchanged).
 pub fn adjust_brightness_contrast(img: &RgbaImage, brightness: f32, contrast: f32) -> RgbaImage {
-    let b = brightness.clamp(-1.0, 1.0);
-    let c = contrast.clamp(-1.0, 1.0);
+    // NaN would survive the clamp and turn every pixel black; treat it as no change.
+    let b = if brightness.is_nan() { 0.0 } else { brightness.clamp(-1.0, 1.0) };
+    let c = if contrast.is_nan() { 0.0 } else { contrast.clamp(-1.0, 1.0) };
     let factor = if c >= 0.0 { 1.0 / (1.0 - c * 0.99) } else { 1.0 + c };
     let mut out = img.clone();
     for p in out.pixels_mut() {
@@ -465,7 +484,9 @@ pub fn adjust_brightness_contrast(img: &RgbaImage, brightness: f32, contrast: f3
 /// Next exposure value to try: moves `current` towards a mean brightness of `target` (damped), clamped to `range`.
 pub fn suggest_exposure(current: f64, measured_mean: f64, target: f64, range: (f64, f64)) -> f64 {
     let ratio = (target / measured_mean.max(0.01)).clamp(0.25, 4.0);
-    (current * ratio.powf(0.8)).clamp(range.0, range.1)
+    // `f64::clamp` panics on a reversed or NaN range; min/max skip a NaN bound.
+    let (lo, hi) = (range.0.min(range.1), range.0.max(range.1));
+    (current * ratio.powf(0.8)).max(lo).min(hi)
 }
 
 // ---------------------------------------------------------------- settings
@@ -475,29 +496,29 @@ pub fn suggest_exposure(current: f64, measured_mean: f64, target: f64, range: (f
 pub struct CaptureSettings {
     pub version: u32,
     pub camera_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub kind: CameraKind,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub device_index: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub resolution: Option<(u32, u32)>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub exposure: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub brightness: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub lens: Option<LensModel>,
-    #[serde(default = "one")]
+    #[serde(default = "one", deserialize_with = "one_if_null")]
     pub focal_scale: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub alignment: Option<CameraAlignment>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub head: Option<HeadCameraCalibration>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub overlay: OverlayAdjust,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub state: OverlayState,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "default_if_bad")]
     pub crop_to_page: bool,
 }
 

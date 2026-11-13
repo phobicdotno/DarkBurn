@@ -125,6 +125,13 @@ pub const COMMANDS: &[Cmd] = &[
         "Use a Gweike Recipe on a Craft Slot",
         r#"{"type":"object","properties":{"recipe":{"type":"string"},"slot":{"type":"integer"}},"required":["recipe"]}"#,
     ),
+    // Gweike card commands on the in-memory card simulator (gweike_card.rs)
+    crate::gweike_card::CONNECT,
+    crate::gweike_card::DISCONNECT,
+    crate::gweike_card::STATUS,
+    crate::gweike_card::DISSECT,
+    crate::gweike_card::STOP,
+    crate::gweike_card::EMERGENCY_STOP,
 ];
 
 /// Whether `id` is handled here.
@@ -134,7 +141,7 @@ pub fn handles(id: &str) -> bool {
 
 /// Commands here that act on a machine.
 pub fn is_hardware(id: &str) -> bool {
-    id.starts_with("machine.")
+    id.starts_with("machine.") || crate::gweike_card::is_hardware(id)
 }
 
 /// Commands here that only edit documents, files or the device list, though their id starts
@@ -147,7 +154,7 @@ pub fn not_hardware(id: &str) -> bool {
 
 /// The command touches Gweike machine concepts (the MCP side reads this).
 pub fn gweike(id: &str) -> bool {
-    id.starts_with("gweike.") || matches!(id, "file.export_gweike_dxf" | "file.export_gweike_nc")
+    id.starts_with("gweike.") || id.starts_with("mcc.") || matches!(id, "file.export_gweike_dxf" | "file.export_gweike_nc")
 }
 
 /// The command writes a file.
@@ -179,6 +186,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "gweike.recipes_scan" | "gweike.recipes" | "gweike.recipe_use" => &["MCC-04"],
         "gweike.export_chf" => &["MCC-02"],
         "gweike.plan" | "gweike.simulate" => &["MCC-05"],
+        id if id.starts_with("mcc.") => &["MCC-05"],
         _ => &[],
     }
 }
@@ -208,6 +216,8 @@ pub struct ExtUi {
     pub galvo_estimate: Option<String>,
     /// The galvo Device Settings dialog's last EZCad import message.
     pub galvo_message: Option<String>,
+    /// The Gweike card simulator the `mcc.*` commands work on.
+    pub mcc: crate::gweike_card::CardState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -280,7 +290,11 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
     let null = json!({});
     let a = if a.is_null() { &null } else { a };
     Some(match id {
-        "machine.air" => flag(a, "on").and_then(|on| mach(app.machine.handle.command(MachineCommand::Air(on)))),
+        "machine.air" => flag(a, "on").and_then(|on| {
+            // The device's own air command, the one its jobs use.
+            let mist = app.machine.active().settings.gcode.air == darkburn_job::gcode::AirCommand::M7;
+            mach(app.machine.handle.command(MachineCommand::Air { on, mist }))
+        }),
         "machine.emergency_stop" => mach(app.machine.handle.command(MachineCommand::EmergencyStop)),
         "machine.persist_settings" => mach(app.machine.handle.command(MachineCommand::PersistSettings)),
         "machine.write_gcode_setting" => (|| {
@@ -344,6 +358,7 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
         "gweike.recipes_scan" => crate::gweike_recipes::scan_command(app, a),
         "gweike.recipes" => crate::gweike_recipes::list_command(app, a),
         "gweike.recipe_use" => crate::gweike_recipes::use_command(app, a),
+        id if id.starts_with("mcc.") => crate::gweike_card::run(app, id, a),
         other => Err(format!("{other} is not a machine command")),
     })
 }
@@ -407,6 +422,14 @@ pub fn galvo_start(app: &mut DarkBurn, send_only: bool) -> Result<Value, String>
     let armed = app.machine.handle.snapshot().galvo.as_ref().is_some_and(|g| g.armed);
     if !armed {
         return Err("Arm the laser first (Arm in the Laser panel). The laser is never enabled without it.".into());
+    }
+    // The board checks the frame with the rule it was connected with. "Require framing" counts
+    // from the moment it is switched on in the device, so it is checked here as well.
+    if dev.settings.galvo.require_framing
+        && let crate::machine_api::JobData::Galvo { job, .. } = &req.data
+        && app.machine.handle.snapshot().galvo.as_ref().and_then(|g| g.framed_key) != Some(job.frame_key)
+    {
+        return Err("Frame the job with the red light before starting it.".into());
     }
     let outcome = app.machine.begin_start(req)?;
     app.job_run.from_project = true;
@@ -496,12 +519,18 @@ fn galvo_import(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let path = text(a, "path")?;
     let bytes = std::fs::read(path).map_err(|e| format!("Could not read {path}: {e}"))?;
     let imp = darkburn_galvo::ezcad::import(&bytes).map_err(|e| e.to_string())?;
+    // Checked as a whole before anything is applied: a refused import changes nothing.
+    let mut s = dev.settings.galvo.clone();
+    s.apply_library(&imp.settings);
+    if let Some(c) = &imp.cor_file {
+        s.cor_path = c.clone();
+    }
+    if let Some(e) = s.validate().first() {
+        return Err(format!("The EZCad settings were not imported: {e}"));
+    }
     let id = dev.id;
     if let Some(d) = app.machine.devices.get_mut(id) {
-        d.settings.galvo.apply_library(&imp.settings);
-        if let Some(c) = &imp.cor_file {
-            d.settings.galvo.cor_path = c.clone();
-        }
+        d.settings.galvo = s;
     }
     Ok(json!({ "ok": true, "applied": imp.applied, "ignored": imp.ignored, "warnings": imp.warnings, "cor_file": imp.cor_file }))
 }

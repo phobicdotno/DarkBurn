@@ -518,6 +518,10 @@ fn expand_fill(unit: &Unit, p: &Planned, s: &CutSettings, pass: u32, from: Point
             if f.cross_hatch {
                 angles.push(base + 90.0);
             }
+            if p.reversed {
+                // Back to front as a whole: the second angle first.
+                angles.reverse();
+            }
             for deg in angles {
                 let a = deg.to_radians();
                 let mut rows = fill::scan_polygons_powers(&refs, &powers, f.fill_rule, f.interval, a);
@@ -1261,6 +1265,29 @@ mod tests {
                 .unwrap_or_else(|| panic!("lead-in start, options {bits:05b}: {:?}", tp.ops));
             assert_eq!(tp.ops[i + 1].target(), Some(Point::new(10.0, 4.0)), "options {bits:05b}");
             assert_eq!(tp.ops[i + 2].target(), Some(Point::new(10.0, 0.0)), "options {bits:05b}");
+        }
+    }
+
+    /// The planner joins fills up by their ends, and counts on a fill cut in reverse running
+    /// from where the forward one ends to where it starts. With two angles that means the
+    /// second angle first.
+    #[test]
+    fn a_cross_hatch_fill_in_reverse_runs_from_the_forward_end_to_the_forward_start() {
+        let poly = vec![Point::new(0.0, 0.0), Point::new(30.0, 0.0), Point::new(30.0, 10.0), Point::new(0.0, 10.0)];
+        for (bidirectional, cross_hatch) in [(true, true), (true, false)] {
+            let mut s = CutSettings::fill(100.0, 20.0, 1.0);
+            s.fill.bidirectional = bidirectional;
+            s.fill.cross_hatch = cross_hatch;
+            let unit = Unit { block: 0, kind: UnitKind::Fill { polys: vec![poly.clone()], scales: vec![1.0], reversible: bidirectional } };
+            let run = |reversed: bool| {
+                let mut ops = Vec::new();
+                expand_fill(&unit, &Planned { item: 0, start: 0, reversed }, &s, 1, Point::ZERO, &mut ops);
+                ends(&ops).unwrap()
+            };
+            let (entry, exit, _) = run(false);
+            let (rev_entry, rev_exit, _) = run(true);
+            assert!(rev_entry.distance(exit) < 1e-9, "cross hatch {cross_hatch}: in reverse it starts at {rev_entry:?}, forward it ends at {exit:?}");
+            assert!(rev_exit.distance(entry) < 1e-9, "cross hatch {cross_hatch}: in reverse it ends at {rev_exit:?}, forward it starts at {entry:?}");
         }
     }
 

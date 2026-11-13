@@ -293,8 +293,19 @@ impl<T: Transport> Worker<T> {
                 break;
             }
             let stop = self.queued.iter().position(|(_, r)| matches!(r, Request::Stop));
-            let next = if let Some(q) = stop.and_then(|i| self.queued.remove(i)) {
-                Some(q)
+            let next = if let Some(i) = stop {
+                // What was asked before the Stop and would move, fire or start a job is given
+                // up: done after the Stop, it would undo it (a Pulse key pressed after it).
+                let q = self.queued.remove(i);
+                let waiting = std::mem::take(&mut self.queued);
+                for (n, (id, r)) in waiting.into_iter().enumerate() {
+                    if n < i && acts(&r) {
+                        let _ = self.tx.send(Event::Reply { id, result: Err(RuidaError::Cancelled) });
+                    } else {
+                        self.queued.push_back((id, r));
+                    }
+                }
+                q
             } else if let Some(q) = self.queued.pop_front() {
                 Some(q)
             } else {
@@ -438,5 +449,28 @@ impl<T: Transport> Worker<T> {
             let _ = progress_tx.send(Event::Progress { id, sent, total });
         };
         m.send_logical_job(name, logical, options, &mut prompt, &mut progress)
+    }
+}
+
+/// Whether a request moves the head, presses a key, fires or starts a job.
+fn acts(r: &Request) -> bool {
+    use Request as R;
+    match r {
+        R::Start
+        | R::Resume
+        | R::Home(_)
+        | R::GoToOrigin
+        | R::MoveTo { .. }
+        | R::FrameRect { .. }
+        | R::FrameOutline { .. }
+        | R::FrameOnController
+        | R::JogStep { .. }
+        | R::JogStart { .. }
+        | R::RunJobNow(_)
+        | R::RunFile(_) => true,
+        R::PanelKey { down, .. } => *down,
+        R::SendJob { options, .. } | R::UploadRdFile { options, .. } => options.start_immediately,
+        R::Raw(cmds) => !cmds.iter().all(|c| matches!(c, Command::KeyUp(_))),
+        _ => false,
     }
 }

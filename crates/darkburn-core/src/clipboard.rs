@@ -94,7 +94,7 @@ impl Clipboard {
     /// project's are when it is opened.
     pub fn from_text(text: &str) -> Option<Clipboard> {
         let body = text.strip_prefix(CLIPBOARD_MARK)?.trim_start();
-        let mut body: ClipText = serde_json::from_str(body).ok()?;
+        let mut body: ClipText = crate::project::from_json(body.as_bytes()).ok()?;
         body.shapes.iter_mut().for_each(crate::project::on_real_layers);
         let mut images = ImageStore::new();
         for i in body.images {

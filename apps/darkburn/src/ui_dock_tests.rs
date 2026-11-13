@@ -344,6 +344,10 @@ const ONE_SHOT: &[&str] = &[
     "Macro 1",
     // Set up, then OK traces the picture once and closes the window.
     "Trace Image",
+    // Set up, then Trace Files traces the files once and closes the window.
+    "Trace Image Files",
+    // Set up, then Import makes the height picture once and closes the window.
+    "Import 3D Model",
     // Set up, then Nest packs the selection once (the window stays for another try).
     "Quick Nest",
     "True Nest",
@@ -462,6 +466,8 @@ const NOT_DOCKABLE: &[(&str, &str)] = &[
     ("db_print", "set up, then Print does it once"),
     ("db_qr_dialog", "set up, then OK makes the code once"),
     ("db_trace_image", "set up, then OK traces once"),
+    ("db_trace_files", "set up, then Trace Files traces the files once"),
+    ("db_model_depth", "set up, then Import makes the height picture once"),
     ("db_convert_bitmap", "set up, then Convert does it once"),
     ("db_taper_warp", "set up, then OK warps the artwork once"),
     ("db_tangent", "the tangent tool's own window: shows while the tool is on and goes with it"),

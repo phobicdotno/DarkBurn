@@ -367,16 +367,17 @@ impl SafetyGate {
             actions.push(GateAction::Stop(why));
         }
         self.last_alarm = alarm;
-        let water_was_ok = self.co2_water_ok;
         // An input number the card does not have is like no input at all: never OK. (It would
         // read low for ever, which must not pass for "OK" on a machine where low means OK.)
         self.co2_water_ok = self.config.safety.co2_water_input.and_then(|p| status.di_level_of(p)) == Some(self.config.safety.co2_water_ok_level);
         if !self.co2_water_ok {
+            // The alarm stops what uses the CO2 tube: a CO2 port that is on, or a running stream
+            // with CO2 output in it. It does not stop a job that has no CO2 output anywhere (a
+            // fibre cut with the CO2 chiller switched off). Whatever would bring the CO2 tube on
+            // after this is refused by `check_write`.
             let co2_on = self.config.safety.co2_do_ports.iter().any(|&p| status.do_is_on(p));
             let co2_queued = self.card_fifo_has_co2 && self.fifo_running;
-            if (co2_on || co2_queued || water_was_ok && self.arming.state() == ArmState::LaserArmed)
-                && !actions.iter().any(|a| matches!(a, GateAction::Estop))
-            {
+            if (co2_on || co2_queued) && !actions.iter().any(|a| matches!(a, GateAction::Estop)) {
                 self.arming.disarm("Water Cooling System alarm");
                 if !actions.iter().any(|a| matches!(a, GateAction::Stop(_))) {
                     actions.push(GateAction::Stop("Water Cooling System alarm: CO2 laser blocked".into()));
@@ -838,14 +839,25 @@ mod tests {
         assert!(g.observe_status(3, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
     }
 
+    /// The CO2 chiller is switched off in the middle of a fibre cut: laser armed, the fibre gate
+    /// (DO5) on, the stream running, no CO2 output anywhere. The cut goes on.
     #[test]
-    fn water_lost_while_laser_armed_disarms() {
+    fn losing_the_co2_water_does_not_stop_a_fibre_job() {
+        let mut g = SafetyGate::default();
+        laser_armed(&mut g);
+        assert!(g.observe_status(0, &status_io(0, 0, 1, 0, WATER_OK, 0x10)).is_empty());
+        assert!(g.observe_status(1, &status_io(0, 0, 1, 0, 0, 0x10)).is_empty(), "the water alarm stopped a job with no CO2 output");
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
+        // the fibre laser's power may still be set, and the CO2 port may not come on
+        let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
+        assert!(g.check_write(&pwm, 1).is_ok());
+        assert_eq!(g.check_write(&co2_on(), 1), Err(GateRefusal::Co2WaterAlarm));
+        // a laser-armed gate with nothing running and no CO2 output is left alone as well
         let mut g = SafetyGate::default();
         laser_armed(&mut g);
         g.observe_status(0, &status_io(0, 0, 0, 0, WATER_OK, 0));
-        let acts = g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0));
-        assert_eq!(acts.len(), 1);
-        assert_eq!(g.arming.state(), ArmState::Disarmed);
+        assert!(g.observe_status(1, &status_io(0, 0, 0, 0, 0, 0)).is_empty());
+        assert_eq!(g.arming.state(), ArmState::LaserArmed);
     }
 
     #[test]

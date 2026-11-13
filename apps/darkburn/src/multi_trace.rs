@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
-use darkburn_core::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Size, Vec2};
+use darkburn_core::kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Size};
 use darkburn_core::{Editor, Shape, ShapeId, ShapeKind};
 use darkburn_raster::GrayF;
 use darkburn_ui::ui_kit;
@@ -379,11 +379,13 @@ impl MultiTraceDialog {
     }
 
     /// Whether the preview of the shown file has been read (or found unreadable).
+    #[cfg(test)]
     pub fn preview_ready(&self) -> bool {
         self.preview.loading.is_none() && (self.preview.loaded.is_some() || self.preview.error.is_some())
     }
 
     /// Outlines in the preview.
+    #[cfg(test)]
     pub fn preview_outlines(&self) -> usize {
         self.preview.paths.len()
     }
@@ -673,7 +675,7 @@ mod tests {
         let mut sel = app.editor.selected();
         sel.sort();
         assert_eq!(sel, created.iter().map(|i| ShapeId(*i)).collect::<Vec<_>>());
-        assert_eq!(app.editor.undo_label(), Some("Trace files"));
+        assert_eq!(app.editor.history.undo_label(), Some("Trace files"));
         assert!(app.editor.undo());
         assert_eq!(app.editor.doc.len(), 0, "one undo takes all of it away");
     }
@@ -686,7 +688,7 @@ mod tests {
         let e = crate::api::execute_headless(&mut app, "image.trace_files", &json!({ "paths": [bad.display().to_string()] })).unwrap_err();
         assert!(e.contains("junk.jpg"), "{e}");
         assert_eq!(app.editor.doc.len(), 0);
-        assert!(!app.editor.can_undo());
+        assert!(!app.editor.history.can_undo());
         assert!(crate::api::execute_headless(&mut app, "image.trace_files", &json!({ "paths": [] })).is_err());
         assert!(crate::api::execute_headless(&mut app, "image.trace_files", &json!({})).is_err());
         assert!(crate::api::execute_headless(&mut app, "image.trace_files", &json!({ "paths": [3] })).is_err());
@@ -809,10 +811,13 @@ mod tests {
         g.screenshot("multi-trace");
         g.click_label("Trace Files");
         wait(&mut g, "the run", &|g: &mut Gui| g.app().images.multi.is_none());
-        let app = g.app();
-        assert_eq!(app.editor.doc.len(), 2, "one shape per readable file");
-        assert_eq!(app.editor.undo_label(), Some("Trace files"));
-        let (title, text) = app.files.message.clone().expect("the skipped file is reported");
-        assert!(title.contains("not traced") && text.contains("unreadable.png"), "{title}: {text}");
+        {
+            let app = g.app();
+            assert_eq!(app.editor.doc.len(), 2, "one shape per readable file");
+            assert_eq!(app.editor.history.undo_label(), Some("Trace files"));
+        }
+        g.frames(3);
+        assert!(g.window_titles().iter().any(|t| t.contains("not traced")), "{:?}", g.window_titles());
+        assert!(g.visible_texts().iter().any(|t| t.contains("unreadable.png")), "the skipped file is named: {:?}", g.visible_texts());
     }
 }

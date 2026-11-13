@@ -57,6 +57,7 @@ and settings are all commands; if you can click it, there is a command (find it 
 | `gcode.*` | G-code dialects for Smoothieware, Marlin, Snapmaker, LinuxCNC and custom devices: settings and `gcode.export` (writes a file) |
 | `galvo.*` | galvo (fibre, UV) devices: settings, lens correction files, red-light framing and repeat marking; actions that mark or arm are hardware |
 | `gweike.*` | the Gweike M3 Ultra file workflow: layer to material and craft mapping, `.chf`, DXF and `.nc` export, the planner dry run and the card simulator. There is no command that connects to the real card |
+| `mcc.*` | the in-memory Gweike card simulator: connect (reads only), status with the alarms in words, stop, emergency stop, disconnect (all hardware), and `mcc.dissect`, which explains a controller frame you paste. None reaches a real card |
 
 The dedicated tools (`new_design`, `open`, `save`, `import`, `export`, `undo`, `redo`,
 `set_setting`) are shortcuts for `file.new`, `file.open`, `file.save` / `file.save_as`,

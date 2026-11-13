@@ -74,10 +74,6 @@ impl ScanOffsetTable {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
     /// The offset at `speed`: linear between the neighbouring rows, the end rows' value beyond
     /// them, zero for an empty table.
     pub fn offset_at(&self, speed: f64) -> f64 {

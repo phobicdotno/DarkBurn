@@ -1,6 +1,6 @@
 //! More drawing and selection commands: select shapes like the selected ones, a star, a
-//! circle or an arc through three points, and a gap left in closed outlines. They are document
-//! edits and run without a window.
+//! circle or an arc through three points, a gap left in closed outlines, and a shape broken
+//! into the pieces its tabs leave. They are document edits and run without a window.
 
 use darkburn_core::kurbo::{Arc, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use darkburn_core::{CutDirection, Shape, ShapeId, ShapeKind};
@@ -418,13 +418,17 @@ fn break_at_tabs(app: &mut DarkBurn) -> Result<Value, String> {
     let doc = &app.editor.doc;
     let mut plan: Vec<(ShapeId, Vec<Shape>)> = Vec::new();
     let mut tabs_off: Vec<ShapeId> = Vec::new();
+    let mut in_groups = false;
     for id in &ids {
         let Some(s) = doc.get(*id) else { continue };
+        if s.is_group() && s.leaves().iter().any(|l| !l.tabs.is_empty()) {
+            in_groups = true;
+        }
         if s.tabs.is_empty() || s.is_group() || s.is_image() {
             continue;
         }
         let tabs = doc.layer(s.layer).main().tabs;
-        if !tabs.enabled || !(tabs.size > 0.0) {
+        if !tabs.enabled || tabs.size.is_nan() || tabs.size <= 0.0 {
             tabs_off.push(s.id);
             continue;
         }
@@ -445,10 +449,12 @@ fn break_at_tabs(app: &mut DarkBurn) -> Result<Value, String> {
         plan.push((s.id, pieces));
     }
     if plan.is_empty() {
-        return Err(if tabs_off.is_empty() {
-            "none of the selected shapes has tabs".into()
-        } else {
+        return Err(if !tabs_off.is_empty() {
             "tabs are turned off on the layer of the selected shapes: nothing was broken".into()
+        } else if in_groups {
+            "the tabs are on shapes inside a group: ungroup them first".into()
+        } else {
+            "none of the selected shapes has tabs".into()
         });
     }
     let mut new_ids: Vec<ShapeId> = Vec::new();
@@ -1019,6 +1025,15 @@ mod tests {
         let before = a.editor.doc.clone();
         let err = run(&mut a, "shape.break_at_tabs", Value::Null).unwrap_err();
         assert!(err.contains("off"), "{err}");
+        assert_eq!(a.editor.doc, before);
+        // Tabs on a shape in a group: it says to ungroup.
+        a.editor.doc.layer_mut(0).main_mut().tabs.enabled = true;
+        let other = square(&mut a);
+        run(&mut a, "selection.set", json!({ "ids": [sq.0, other.0] })).unwrap();
+        run(&mut a, "arrange.group", Value::Null).unwrap();
+        let before = a.editor.doc.clone();
+        let err = run(&mut a, "shape.break_at_tabs", Value::Null).unwrap_err();
+        assert!(err.contains("group"), "{err}");
         assert_eq!(a.editor.doc, before);
     }
 

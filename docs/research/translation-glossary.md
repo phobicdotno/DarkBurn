@@ -763,3 +763,98 @@ this». Russian changes the endings of its words, so the one-word check compares
   Подложка (a camera background capture stays снимок фона).
 - Flatten Image Crop: Окончательно обрезать изображение, so it does not read like Apply Crop
   Path (Применить контур обрезки к изображению).
+
+## Japanese (ja)
+
+Commands are short noun or verb forms as in Japanese programs ("保存", "開く", "貼り付け"); help
+texts use the polite です/ます form. Katakana loan words where Japanese laser and drawing
+programs use them, kanji where those do. English labels that are not translated yet are quoted
+「like this」. Japanese writes no spaces between words, so the one-word check looks for the term
+anywhere in the text, and a line may break between any two characters. A space stays on each
+side of a Latin name, a number or a key name ("Ctrl と Shift", "DarkBurn の"), so the key names
+remain words of their own. The ampersand is the full-width ＆, never "&".
+
+- Job: ジョブ. Cut (laser): カット, as in カット設定, カットライブラリ, カット方向, カットパレット.
+  Cut (clipboard): 切り取り. Cut shapes: 図形を切断.
+- Layer: レイヤー. Line / Fill / Image: ライン / 塗りつぶし / 画像. Engrave: 彫刻.
+- Power: パワー. Speed: 速度. Passes: 回数. Interval: 間隔. Thickness: 厚さ. Kerf: カーフ.
+  Overscan: オーバースキャン.
+- Air assist: エアアシスト (column エア). Frame: フレーム. Frame Selection (the view): 選択範囲に
+  ズーム.
+- Jog: ジョグ. Home (the machine): 原点復帰; ribbon tab Home: ホーム. Origin: 原点.
+  Start point: 開始点.
+- Tab: ブリッジ. Focus test: フォーカステスト. Material: 素材 (素材テスト, 素材ライブラリ).
+  Rotary: ロータリー. Galvo: ガルバノ. Print and cut: プリント＆カット; its targets: ターゲット.
+- Device / Machine / Controller: デバイス / マシン / コントローラー. Console: コンソール.
+  Preview: プレビュー. Nudge: 微移動.
+- Shape / Object: 図形 / オブジェクト. Selection: 選択範囲. Path: パス. Node: ノード. Weld: 溶接.
+- Boolean union / difference / intersection: ブール結合 / ブール差分 / ブール交差; the group:
+  ブール演算.
+- Offset: オフセット. Trace: トレース. Bitmap: ビットマップ.
+- Group / Ungroup: グループ化 / グループ解除. Break apart: 分解. Auto-join: 自動連結.
+- Array: 配列 (グリッド配列, 円形配列, 仮想配列).
+- Align / Alignment: 整列 / 位置合わせ. Distribute: 分布. Dock: 寄せる (the group: 寄せ).
+  Nest: ネスティング. Flip: 反転 (左右反転, 上下反転). Mirror: ミラー.
+- Snap: スナップ. Grid: グリッド. Lock: ロック. Crop: 切り抜き. Mask: マスク.
+  Variable text: 可変テキスト.
+- Page: ページ. Canvas: キャンバス. Work area: 作業領域. Bed: ベッド. Panel: パネル.
+- Toolbar: ツールバー. Hotkeys: ショートカットキー. Settings: 設定. Preferences: 環境設定.
+- Edit: 編集. Modify (ribbon tab): 変形. Arrange: 配置. Move: 移動. Theme: テーマ.
+- Art library: アートライブラリ; art item: アイテム. Library entry: エントリ.
+  Link / Unlink: リンク / リンク解除. Feeder: フィーダー.
+- Output: 出力. Cut table columns: レイヤー, モード, 速度/パワー, 出力, 表示, エア. Off would be
+  オフ.
+- Status bar count: 個 (one word for object and objects).
+- Width / Height: 幅 / 高さ. Reset: リセット. Backup (a saved copy of a file): バックアップ.
+  Backup path (the outline an image keeps after a crop): 予備パス.
+- Debug log: デバッグログ.
+- Start (the laser panel button, not translated yet): 「Start」 in help, Start in the setting.
+- Hotkey conflicts: "Ctrl+S キーは既に次のコマンドで使用されています ..."; "複数のコマンドで使用中";
+  Take the key: キーを引き継ぐ.
+- Choices: Small / Medium / Large: 小 / 中 / 大. Coarse / Normal / Fine: 粗い / 標準 / 細かい.
+  Dark / Light: ダーク / ライト.
+
+## Korean (ko)
+
+Commands are short noun forms as in Korean programs ("저장", "열기", "붙여넣기"); help texts use
+the formal 합니다 style. Loan words in Hangul where Korean laser and drawing programs use them.
+English labels that are not translated yet are quoted 'like this'. Korean attaches particles to
+the word before ("백업으로", "Shift를"), so the one-word check compares stems, and a key name is
+followed by 키 ("Ctrl 키와 Shift 키를") so it stays a word of its own.
+
+- Job: 작업. Cut (laser): 절단, as in 절단 설정, 절단 라이브러리, 절단 방향, 절단 팔레트.
+  Cut (clipboard): 잘라내기. Cut shapes: 도형 분할.
+- Layer: 레이어. Line / Fill / Image: 선 / 채우기 / 이미지. Engrave: 각인.
+- Power: 파워. Speed: 속도. Passes: 횟수. Interval: 간격. Thickness: 두께. Kerf: 커프.
+  Overscan: 오버스캔.
+- Air assist: 에어 어시스트 (column 에어). Frame: 프레임.
+- Jog: 조그. Home (the machine): 원점 복귀; ribbon tab Home: 홈. Origin: 원점.
+  Start point: 시작점.
+- Tab: 브리지. Focus test: 초점 테스트. Material: 재료. Rotary: 로터리. Galvo: 갈바노.
+  Print and cut: 인쇄 후 절단; its targets: 타깃.
+- Device / Machine / Controller: 장치 / 기계 / 컨트롤러. Console: 콘솔. Preview: 미리 보기.
+  Nudge: 미세 이동.
+- Shape / Object: 도형 / 개체. Selection: 선택 영역. Path: 경로. Node: 노드. Weld: 용접.
+- Boolean union / difference / intersection: 불리언 합집합 / 차집합 / 교집합; the group:
+  불리언 연산.
+- Offset: 오프셋. Trace: 추적. Bitmap: 비트맵.
+- Group / Ungroup: 그룹화 / 그룹 해제. Break apart: 분리. Auto-join: 자동 연결.
+- Array: 배열 (격자 배열, 원형 배열, 가상 배열).
+- Align / Alignment: 정렬 / 맞춤. Distribute: 분포. Dock: 붙이기. Nest: 네스팅.
+  Flip: 뒤집기 (좌우 뒤집기, 상하 뒤집기). Mirror: 미러.
+- Snap: 스냅. Grid: 격자. Lock: 잠금. Crop: 자르기. Mask: 마스크. Variable text: 가변 텍스트.
+- Page: 페이지. Canvas: 캔버스. Work area: 작업 영역. Bed: 베드. Panel: 패널.
+- Toolbar: 도구 모음. Hotkeys: 단축키. Settings: 설정. Preferences: 환경 설정.
+- Edit: 편집. Modify (ribbon tab): 수정. Arrange: 배치. Move: 이동. Theme: 테마.
+- Art library: 아트 라이브러리. Library entry and art item: 항목. Link / Unlink: 연결 / 연결 해제.
+  Feeder: 피더.
+- Output: 출력. Cut table columns: 레이어, 모드, 속도/파워, 출력, 표시, 에어. Off would be 끔.
+- Status bar count: 개 (one word for object and objects).
+- Width / Height: 너비 / 높이. Reset: 초기화. Backup (a saved copy of a file): 백업.
+  Backup path (the outline an image keeps after a crop): 백업 경로.
+- Debug log: 디버그 로그.
+- Start (the laser panel button, not translated yet): 'Start' in help, Start in the setting.
+- Hotkey conflicts: "Ctrl+S 키는 이미 다음 명령에 할당됨 ..."; "여러 명령에서 사용 중";
+  Take the key: 키 가져오기.
+- Choices agree with their label: Toolbar icons are 작게 / 중간 / 크게; Curve quality is 낮음 /
+  보통 / 높음; Theme is 어둡게 / 밝게. Nudge rows: 기본 / Shift 누름 / Ctrl 누름.

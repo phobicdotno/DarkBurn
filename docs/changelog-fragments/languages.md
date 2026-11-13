@@ -9,3 +9,4 @@
 - Fix: Turkish headings in capitals keep the dot on the İ, and the hotkey search finds Turkish words typed with or without ı
 - New: Greek and Russian (machine-translated; corrections are welcome)
 - Fix: Greek headings in capitals drop the accents, and the hotkey search finds Greek words typed with or without them
+- New: Japanese and Korean (machine-translated; corrections are welcome)

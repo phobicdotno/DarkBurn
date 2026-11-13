@@ -784,10 +784,11 @@ fn the_window_menus_follow_the_interface_language() {
     g.frames(3);
     g.click_id("dialog:place");
     g.frames(1);
-    for text in ["Åpne i eget vindu", "Fest som fane", "Venstre", "Høyre, øverst", "Høyre, nederst", "Nederst"] {
+    // (The menu heading over the areas is in capitals.)
+    for text in ["Åpne i eget vindu", "FEST SOM FANE", "Venstre", "Høyre, øverst", "Høyre, nederst", "Nederst"] {
         assert!(g.has_text(text), "{text}: {:?}", g.visible_texts());
     }
-    for text in ["Open in its own window", "Dock as tab", "Right, top"] {
+    for text in ["Open in its own window", "DOCK AS TAB", "Right, top"] {
         assert!(!g.has_text(text), "{text} in English: {:?}", g.visible_texts());
     }
     g.click_label("Høyre, øverst");

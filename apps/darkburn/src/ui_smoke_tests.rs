@@ -817,11 +817,12 @@ fn every_dockable_window_docks_in_each_area_detaches_and_closes() {
         let mut place = WindowPlace::default();
         place.detach();
         g.app().prefs.windows.insert(key.to_string(), place);
+        assert!(g.window_titles().is_empty(), "{:?}", g.window_titles());
         g.run_command(cmd);
-        assert!(g.rect_of("dialog:window").is_some(), "{key} in a window of its own");
+        assert!(!g.window_titles().is_empty(), "{key} in a window of its own");
         assert!(g.rect_of(&tab).is_none(), "{key}: no tab while in a window of its own");
         g.close_dialogs();
-        assert!(g.rect_of("dialog:window").is_none(), "{key}: closed");
+        assert!(g.window_titles().is_empty(), "{key}: closed: {:?}", g.window_titles());
     }
     assert!(footers > 0, "no window showed a footer");
 }

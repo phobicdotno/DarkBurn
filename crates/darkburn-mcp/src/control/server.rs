@@ -270,10 +270,30 @@ fn peer_gone(stream: &TcpStream) -> bool {
     gone
 }
 
+/// How long a new connection has to send its whole hello.
+const HELLO_TIME: Duration = Duration::from_secs(5);
+
+/// Reads from a stream until a fixed moment; a read after it fails as timed out.
+struct ByDeadline<'a> {
+    stream: &'a TcpStream,
+    end: Instant,
+}
+
+impl std::io::Read for ByDeadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        std::io::Read::read(&mut self.stream, buf)
+    }
+}
+
 fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicUsize, cfg: &ControlConfig) {
-    // Handshake: the first frame is a small hello with the token, within five seconds.
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let hello = read_frame(stream, HELLO_MAX);
+    // Handshake: the first frame is a small hello with the token, within five seconds in all
+    // (not per read, or a client sending a byte every few seconds keeps its slot for hours).
+    let hello = read_frame(&mut ByDeadline { stream: &*stream, end: Instant::now() + HELLO_TIME }, HELLO_MAX);
     let ok = match hello {
         Ok(Some(v)) => v["hello"]["token"].as_str().is_some_and(|t| ct_eq(t.as_bytes(), token.as_bytes())),
         _ => false,

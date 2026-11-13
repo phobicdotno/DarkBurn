@@ -715,11 +715,7 @@ fn at_first_point(h: HorizontalTextJustification, v: VerticalTextJustification) 
 
 fn text_align(h: HorizontalTextJustification, v: VerticalTextJustification) -> (HAlign, VAlign) {
     // "Middle" (72=4) comes with vertical 0 and centres the text both ways.
-    let v = if h == HorizontalTextJustification::Middle && v == VerticalTextJustification::Baseline {
-        VerticalTextJustification::Middle
-    } else {
-        v
-    };
+    let v = if h == HorizontalTextJustification::Middle && v == VerticalTextJustification::Baseline { VerticalTextJustification::Middle } else { v };
     let h = match h {
         HorizontalTextJustification::Left | HorizontalTextJustification::Aligned | HorizontalTextJustification::Fit => HAlign::Left,
         HorizontalTextJustification::Center | HorizontalTextJustification::Middle => HAlign::Center,

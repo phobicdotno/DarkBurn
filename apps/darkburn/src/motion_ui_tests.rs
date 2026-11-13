@@ -61,7 +61,6 @@ fn the_move_panel_turns_the_rotary_and_rotary_setup_runs_a_test() {
     g.click_label("Turn \u{2212}");
     until(&mut g, "back", |g| at(g, 50.0, 60.0));
 
-    g.exec("machine.show_all", json!({ "on": true }));
     g.run_command("laser.rotary");
     g.settle();
     assert!(g.dialog_open());
@@ -69,9 +68,8 @@ fn the_move_panel_turns_the_rotary_and_rotary_setup_runs_a_test() {
     g.frames(3);
     assert!(g.visible_texts().iter().any(|t| t.starts_with("Test rotation sent")), "Run test reports: {:?}", g.visible_texts());
     g.screenshot("rotary-setup-run-test");
+    // The lines sent are checked in motion_cmds_tests; here the head is back where it started.
     until(&mut g, "the turn there and back", |g| at(g, 50.0, 60.0));
-    let jogs: Vec<String> = g.app().machine.handle.console().iter().filter(|c| c.text.starts_with("$J=")).map(|c| c.text.clone()).collect();
-    assert!(jogs.iter().any(|l| l.contains(" Y20 ")) && jogs.iter().any(|l| l.contains(" Y-20 ")), "the test turn was sent: {jogs:?}");
 }
 
 /// With the laser connected, Set First Target takes the head's bed position, as the controller

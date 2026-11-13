@@ -70,7 +70,8 @@ fn the_move_panel_turns_the_rotary_and_rotary_setup_runs_a_test() {
     assert!(g.visible_texts().iter().any(|t| t.starts_with("Test rotation sent")), "Run test reports: {:?}", g.visible_texts());
     g.screenshot("rotary-setup-run-test");
     until(&mut g, "the turn there and back", |g| at(g, 50.0, 60.0));
-    assert!(g.app().machine.handle.console().iter().any(|c| c.text.starts_with("$J=") && c.text.contains(" Y20 ")), "the test turn was sent");
+    let jogs: Vec<String> = g.app().machine.handle.console().iter().filter(|c| c.text.starts_with("$J=")).map(|c| c.text.clone()).collect();
+    assert!(jogs.iter().any(|l| l.contains(" Y20 ")) && jogs.iter().any(|l| l.contains(" Y-20 ")), "the test turn was sent: {jogs:?}");
 }
 
 /// With the laser connected, Set First Target takes the head's bed position, as the controller

@@ -396,3 +396,29 @@ fn a_refused_job_over_a_paused_frame_still_shows_the_pause() {
     r.settle();
     r.laser_off("after the stop");
 }
+
+/// A resume and a stop queued together while paused: the stop is the last word, so the source
+/// never stays open and the list never runs again.
+#[test]
+fn a_stop_queued_behind_a_resume_leaves_the_laser_off() {
+    for p in [Phase::Paused, Phase::WaitFoot] {
+        let mut r = rig();
+        r.enter(p);
+        if p == Phase::WaitFoot {
+            r.m.pause().unwrap();
+            r.wait("the pause", |r| r.activity() == Activity::Paused);
+        }
+        let marks = r.emu(|e| e.emitting_marks());
+        {
+            let _held = r.emu.lock().unwrap();
+            r.m.resume().unwrap();
+            r.m.stop().unwrap();
+        }
+        r.wait("idle", |r| r.activity() == Activity::Idle);
+        r.settle();
+        r.laser_off(&format!("{p:?}"));
+        r.no_job(&format!("{p:?}"));
+        r.settle();
+        assert_eq!(r.emu(|e| e.emitting_marks()), marks, "{p:?}: marked after the stop");
+    }
+}

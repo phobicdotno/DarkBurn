@@ -94,6 +94,16 @@ fn latin1(s: &str) -> Vec<u8> {
     s.chars().map(|c| if (c as u32) < 256 { c as u8 } else { b'?' }).collect()
 }
 
+/// A PDF text string: Latin-1 when it fits, else UTF-16BE with a byte order mark.
+fn text_string(s: &str) -> Vec<u8> {
+    if s.chars().all(|c| (c as u32) < 256) {
+        return latin1(s);
+    }
+    let mut out = vec![0xFE, 0xFF];
+    out.extend(s.encode_utf16().flat_map(u16::to_be_bytes));
+    out
+}
+
 fn escape_pdf_string(b: &[u8]) -> String {
     let mut out = String::new();
     for &c in b {
@@ -134,7 +144,7 @@ pub fn export(items: &[Item], opts: &AiExportOptions) -> PdfExport {
     for (k, name) in layer_order.iter().enumerate() {
         let mut d = Dictionary::new();
         d.set("Type", Object::Name(b"OCG".to_vec()));
-        d.set("Name", Object::String(latin1(name), StringFormat::Literal));
+        d.set("Name", Object::String(text_string(name), StringFormat::Literal));
         let id = doc.add_object(d);
         let tag = format!("L{k}");
         properties.set(tag.clone(), Object::Reference(id));

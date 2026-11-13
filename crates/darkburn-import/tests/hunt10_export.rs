@@ -107,3 +107,19 @@ fn dxf_text_with_nan_size_writes_no_nan() {
     let bad: Vec<&str> = s.lines().map(str::trim).filter(|l| ["nan", "inf", "-inf"].contains(&l.to_lowercase().as_str())).collect();
     assert!(bad.is_empty(), "{bad:?}");
 }
+
+#[test]
+fn ai_export_keeps_layer_names_outside_latin1() {
+    // Layer names were written as Latin-1 with '?' for anything else, so "切割" and
+    // "雕刻" both came back as "??" and merged into one layer.
+    let items = vec![
+        Item::path(line(0.0, 0.0, 10.0, 0.0), Some(Rgb(255, 0, 0)), None).with_layer("切割"),
+        Item::path(line(0.0, 5.0, 10.0, 5.0), Some(Rgb(0, 0, 255)), None).with_layer("雕刻"),
+    ];
+    let ai = ai_export::export(&items, &ai_export::AiExportOptions::default());
+    let doc = pdf_import::import(&ai.bytes, &pdf_import::PdfOptions::default()).unwrap();
+    let mut layers: Vec<String> = doc.items.iter().filter_map(|i| i.layer.clone()).collect();
+    layers.sort();
+    layers.dedup();
+    assert_eq!(layers, vec!["切割".to_string(), "雕刻".to_string()]);
+}

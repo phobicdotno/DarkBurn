@@ -108,6 +108,8 @@ mod motion_read;
 mod motion_ui_tests;
 #[cfg(target_os = "windows")]
 mod native_frame;
+mod nest_cmds;
+mod nest_ui;
 mod node_tool;
 mod numeric;
 mod numeric_edits;

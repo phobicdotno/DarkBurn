@@ -997,27 +997,27 @@ impl RecipeName {
             // Focus: "F" and a signed number, possibly in the next word, possibly with gas glued on.
             if out.focus_mm.is_none() && (wl.starts_with('f')) {
                 let mut rest = wl[1..].to_string();
-                if rest.is_empty() {
-                    if let Some(next) = words.get(wi + 1) {
-                        rest = next.to_ascii_lowercase();
-                    }
+                if rest.is_empty()
+                    && let Some(next) = words.get(wi + 1)
+                {
+                    rest = next.to_ascii_lowercase();
                 }
                 let sign_len = usize::from(rest.starts_with(['+', '-']));
                 let num_len = rest[sign_len..].find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(rest.len() - sign_len);
-                if num_len > 0 {
-                    if let Some(v) = parse_number(&rest[..sign_len + num_len]) {
-                        out.focus_mm = Some(v);
-                        if let Some(g) = gas_word(&rest[sign_len + num_len..]) {
-                            out.gas = Some(g);
-                        }
+                if num_len > 0
+                    && let Some(v) = parse_number(&rest[..sign_len + num_len])
+                {
+                    out.focus_mm = Some(v);
+                    if let Some(g) = gas_word(&rest[sign_len + num_len..]) {
+                        out.gas = Some(g);
                     }
                 }
                 continue;
             }
-            if out.gas.is_none() {
-                if let Some(g) = gas_word(&wl) {
-                    out.gas = Some(g);
-                }
+            if out.gas.is_none()
+                && let Some(g) = gas_word(&wl)
+            {
+                out.gas = Some(g);
             }
         }
         out

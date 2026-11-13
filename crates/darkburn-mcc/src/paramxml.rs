@@ -157,7 +157,7 @@ pub fn format_g17(x: f64) -> Option<String> {
     let e_form = format!("{:.*e}", (P - 1) as usize, x);
     let (mantissa, exp) = e_form.split_once('e')?;
     let exp: i32 = exp.parse().ok()?;
-    if exp < -4 || exp >= P {
+    if !(-4..P).contains(&exp) {
         let m = strip_zeros(mantissa);
         let sign = if exp < 0 { '-' } else { '+' };
         Some(format!("{m}e{sign}{:02}", exp.abs()))

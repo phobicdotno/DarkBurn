@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.0.598 (build 7)
+## v0.0.603 (build 7)
 - New: wireless handheld pendant support (turn it on in Settings)
 - New: settings windows can be resized, popped out into their own window or docked as tabs
 - New: the shape tool windows, the camera windows and the job preview can be docked as tabs or popped out into their own window, and keep updating there
@@ -71,6 +71,11 @@
 - Fix: Greek headings in capitals drop the accents, and the hotkey search finds Greek words typed with or without them
 - New: Japanese and Korean (machine-translated; corrections are welcome)
 - New: Simplified and Traditional Chinese (machine-translated; corrections are welcome)
+- Fix: Another program on the computer can no longer keep AI agents from connecting
+- Fix: AI agents can no longer change where files, logs or update checks go; they ask you instead
+- Fix: AI agents can no longer save files into DarkBurn's own settings folder
+- Fix: AI agents no longer leave a file window waiting for you; they are asked for the file name
+- Fix: the licence list in the Mac download now has the licence of the code that talks to the wireless pendant
 
 ## v0.0.528 (build 6)
 - Fix: the automatic tab marks of the Add Tabs tool are now the tabs the job leaves, also with Min tabs above Max tabs, Max tabs at 0, shapes too small for their tabs and Skip inner shapes with one shape inside another

@@ -1,4 +1,0 @@
-- Fix: Another program on the computer can no longer keep AI agents from connecting
-- Fix: AI agents can no longer change where files, logs or update checks go; they ask you instead
-- Fix: AI agents can no longer save files into DarkBurn's own settings folder
-- Fix: AI agents no longer leave a file window waiting for you; they are asked for the file name

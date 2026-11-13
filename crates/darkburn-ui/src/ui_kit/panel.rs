@@ -1599,7 +1599,8 @@ impl Window<'_> {
         };
         let mut ui = Ui::new(ctx.clone(), self.id.with("docked"), egui::UiBuilder::new().layer_id(layer).max_rect(rect));
         ui.set_clip_rect(rect);
-        let chrome = Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None, escape: false, waiting };
+        let chrome =
+            Chrome { header: false, keys: false, body_height: Some(rect.height() - self.chrome_height(false)), place: None, escape: false, waiting };
         let shown = self.content_in(&mut ui, valid, body, left, chrome);
         solidcraft_ui_registry::publish_rect("dialog:window", rect);
         shown

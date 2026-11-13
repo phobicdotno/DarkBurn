@@ -704,7 +704,7 @@ check compares stems ("επαναφορ" finds "Επαναφορά" and "επα�
 - Status bar count: αντικείμενο / αντικείμενα.
 - Width / Height: Πλάτος / Ύψος. Reset: Επαναφορά. Backup (a saved copy of a file): αντίγραφο
   ασφαλείας. Backup path (the outline an image keeps after a crop): εφεδρική διαδρομή.
-- Debug log: καταγραφή σφαλμάτων.
+- Debug log: καταγραφή αποσφαλμάτωσης (debugging, not a log of errors only).
 - Start (the laser panel button, not translated yet): «Start».
 - Hotkey conflicts: "Ctrl+S χρησιμοποιείται ήδη από την εντολή ..."; Take the key: Μεταφορά
   πλήκτρου.
@@ -748,7 +748,8 @@ this». Russian changes the endings of its words, so the one-word check compares
 - Mode: режим. Art library: Библиотека графики. Library entry: запись (feminine: "связана").
   Art item: элемент. Link / Unlink: Связать / Отвязать.
 - Feeder: податчик. Camera control: Управление камерой. Output: вывод; Print: печать.
-- Cut table columns: Слой, Режим, Скор/Мощн, Вывод, Видим, Обдув. Off would be Выкл.
+- Cut table columns: Слой, Режим, Скор/Мощн, Вывод, Показ, Обдув
+  ("Видим" alone would read as "we see"). Off would be Выкл.
 - Status bar count: шт. (one word for object and objects).
 - Width / Height: Ширина / Высота. Reset: Сбросить. Backup (a saved copy of a file): резервная
   копия. Backup path (the outline an image keeps after a crop): запасной контур.
@@ -758,3 +759,7 @@ this». Russian changes the endings of its words, so the one-word check compares
   Take the key: Забрать клавишу.
 - Choices agree with their label: Toolbar icons (значки) are Маленькие / Средние / Большие;
   Curve quality (качество) is Низкое / Обычное / Высокое; Theme (тема) is Темная / Светлая.
+  The same Dark / Light choices fill the canvas Background row, so that row is the feminine
+  Подложка (a camera background capture stays снимок фона).
+- Flatten Image Crop: Окончательно обрезать изображение, so it does not read like Apply Crop
+  Path (Применить контур обрезки к изображению).

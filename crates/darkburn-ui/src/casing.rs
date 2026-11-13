@@ -1,22 +1,20 @@
-//! Upper and lower case that follow the interface language.
+//! Upper and lower case that follow the language of the text.
 //!
 //! Rust's own case mapping follows no language. Turkish and Azerbaijani write a dotted and a
 //! dotless i as two letters (i and İ, ı and I), so there "Birimler" must become "BİRİMLER", not
-//! "BIRIMLER". Captions and filters that change case go through this module, which asks the
-//! program for its language.
+//! "BIRIMLER". A text not translated yet is still English in a Turkish interface, and English
+//! "Settings" stays "SETTINGS". Captions that change case go through this module, which asks the
+//! program which language a text is written in.
 
 use std::sync::OnceLock;
 
-static SOURCE: OnceLock<fn() -> String> = OnceLock::new();
+static SOURCE: OnceLock<fn(&str) -> String> = OnceLock::new();
 
-/// Tell the widget kit where to read the interface language (a code such as "tr" or "de").
+/// Tell the widget kit how to find the language a shown text is written in (a code such as "tr"
+/// or "en"): the interface language for a translated text, English for one not translated yet.
 /// The first source given is kept; until one is given the case mapping is the plain one.
-pub fn set_language_source(source: fn() -> String) {
+pub fn set_text_language(source: fn(&str) -> String) {
     let _ = SOURCE.set(source);
-}
-
-fn language() -> String {
-    SOURCE.get().map(|source| source()).unwrap_or_default()
 }
 
 /// Whether `language` writes a dotted capital İ and a dotless small ı.
@@ -24,14 +22,13 @@ fn dotted_i(language: &str) -> bool {
     matches!(language.split(['-', '_']).next().unwrap_or_default(), "tr" | "az")
 }
 
-/// `text` in capitals, as the interface language writes them.
+/// `text` in capitals, as the language it is written in writes them.
 pub fn upper(text: &str) -> String {
-    upper_in(&language(), text)
-}
-
-/// `text` in small letters, as the interface language writes them.
-pub fn lower(text: &str) -> String {
-    lower_in(&language(), text)
+    // Only a small i maps differently, so most captions never ask for their language.
+    match SOURCE.get() {
+        Some(language_of) if text.contains('i') => upper_in(&language_of(text), text),
+        _ => text.to_uppercase(),
+    }
 }
 
 /// `text` in capitals, as `language` writes them.

@@ -4,7 +4,7 @@
 //! the program. `en.json` is generated from the code by a test and kept in step by it. The
 //! languages and their files are listed in `languages.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 #[cfg(not(test))]
 use std::sync::RwLock;
@@ -72,8 +72,21 @@ pub fn available(code: &str) -> bool {
 pub fn set_language(code: &str) {
     let code = if available(code) { code } else { "en" };
     set_active(code);
-    // Captions in capitals follow the language: Turkish writes "BİRİMLER", not "BIRIMLER".
-    darkburn_ui::casing::set_language_source(language);
+    // Captions in capitals follow their language: Turkish writes "BİRİMLER", not "BIRIMLER".
+    darkburn_ui::casing::set_text_language(text_language);
+}
+
+/// The language `text` is written in: the active language when `text` is one of its
+/// translations, English otherwise (a text not translated yet shows in English).
+pub fn text_language(text: &str) -> String {
+    let lang = language();
+    if lang != "en" && translated_texts(&lang).is_some_and(|texts| texts.contains(text)) { lang } else { "en".into() }
+}
+
+/// Every translated text of language `code`.
+fn translated_texts(code: &str) -> Option<&'static HashSet<String>> {
+    static TEXTS: OnceLock<HashMap<&'static str, HashSet<String>>> = OnceLock::new();
+    TEXTS.get_or_init(|| tables().iter().map(|(code, table)| (*code, table.values().cloned().collect())).collect()).get(code)
 }
 
 /// The language in use.
@@ -415,6 +428,21 @@ mod tests {
             }
         }
         assert!(fi["help.cuts.p2"].contains(&format!("({})", fi["cuts.col.out"])), "fi help.cuts.p2: {:?}", fi["help.cuts.p2"]);
+    }
+
+    /// A Turkish text is Turkish, and a text with no Turkish translation yet is still English,
+    /// so its capitals stay English ("SETTINGS", not "SETTİNGS").
+    #[test]
+    fn a_text_is_in_the_language_it_is_written_in() {
+        set_language("tr");
+        assert_eq!(text_language("Birimler"), "tr");
+        assert_eq!(text_language("Sesler ve iş günlüğü"), "tr");
+        assert_eq!(text_language("Layer 00 settings"), "en");
+        assert_eq!(darkburn_ui::casing::upper("Birimler"), "BİRİMLER");
+        assert_eq!(darkburn_ui::casing::upper("Layer 00 settings"), "LAYER 00 SETTINGS");
+        set_language("en");
+        assert_eq!(text_language("Birimler"), "en");
+        assert_eq!(darkburn_ui::casing::upper("Units"), "UNITS");
     }
 
     /// Review corrections for Hungarian, Slovenian and Turkish: the hotkey conflict lines make

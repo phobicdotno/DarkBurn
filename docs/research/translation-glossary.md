@@ -544,3 +544,109 @@ stems ("záloh" finds "záloha" and "zálohu").
 - Width / Height: Šířka / Výška. Reset: Resetovat. Backup (a saved copy of a file): záloha.
   Backup path (the outline an image keeps after a crop): záložní cesta.
 - Start (the laser panel button, not translated yet): „Start“.
+
+## Hungarian (hu)
+
+Commands are nouns ("Mentés", "Megnyitás", "Beillesztés"), as Hungarian programs name them; help
+texts use the formal imperative ("Kattintson", "Nyomja meg"). Key names stay as in English, with
+the ending joined by a hyphen ("Ctrl-lal"). Panel labels that are not translated yet are quoted
+„like this”. Hungarian adds endings to its words, so the one-word check compares stems
+("biztonsági mentés" finds "biztonsági mentésből").
+
+- Job: munka. Cut (laser): vágás, as in Vágási beállítások, vágási könyvtár, vágási irány,
+  Vágási paletta. Cut (clipboard): Kivágás. Cut shapes: Alakzatok darabolása.
+- Layer: réteg. Line / Fill / Image: Vonal / Kitöltés / Kép.
+- Power: teljesítmény. Speed: sebesség. Pass: menet. Interval: sorköz. Thickness: vastagság.
+- Air assist: légfúvás. Frame: körbejárás.
+- Home: alaphelyzet. Origin: nullpont. Start point: kezdőpont.
+- Tab: híd, hidak. Rotary: forgótengely. Print and cut: Nyomtatás és vágás; its targets: illesztőjel.
+- Device / Machine / Controller: eszköz / gép / vezérlő. Command: parancs. Preview: Előnézet.
+- Shape / Object: alakzat / objektum. Selection: kijelölés. Path: útvonal. Node: csomópont.
+  Weld: összeolvasztás.
+- Boolean union / difference / intersection: Logikai egyesítés / különbség / metszet.
+- Offset: eltolás. Trace: vektorizálás. Bitmap: bitkép. Break apart: Szétbontás.
+- Group / Ungroup: Csoportosítás / Csoportbontás. Array: tömb (Rácstömb, Körkörös tömb, Virtuális tömb).
+- Align / Distribute / Dock: Igazítás / Elosztás / Ütköztetés. Flip: átfordítás. Mirror: tükrözés.
+- Snap: illesztés. Grid: rács. Lock: zárolás. Crop: körülvágás. Mask: maszk. Pan: nézet mozgatása.
+- Page: lap. Canvas: rajzterület. Work area: munkaterület.
+- Toolbar: eszköztár. Ribbon tab Home: Kezdőlap. Ribbon group Setup: Előkészítés.
+  Hotkeys: gyorsbillentyűk. Settings and preferences: beállítások.
+- Edit: Szerkesztés. Modify (ribbon tab): Módosítás. Arrange: Elrendezés. File menu: Fájl.
+- Mode: mód. Library: könyvtár; Art library: Grafikakönyvtár; Material library: Anyagkönyvtár.
+  Library entry: bejegyzés. Art item: elem. Link / Unlink: Csatolás / Leválasztás.
+- Feeder: adagoló. Camera control: Kameravezérlés. Output: kimenet.
+- Cut table columns: Réteg, Mód, Seb/Telj, Kim., Lát, Lég. Output is "Kim.", never "Ki", which reads as Off.
+- Status bar count: objektum (one word for object and objects).
+- Width / Height: Szélesség / Magasság. Reset: visszaállítás. Backup (a saved copy of a file):
+  biztonsági mentés. Backup path (the outline an image keeps after a crop): tartalék útvonal.
+- Start (the laser panel button, not translated yet): „Start”.
+
+## Slovenian (sl)
+
+The imperative in commands ("Shrani", "Odpri", "Prilepi") and the formal imperative in help texts
+("Kliknite", "Pritisnite"). Key names stay as in English. Panel labels that are not translated
+yet are quoted »like this«. Slovenian words change their endings, so the one-word check compares
+stems ("varnostn kopij" finds "varnostna kopija" and "varnostne kopije").
+
+- Job: opravilo. Cut (laser): rez, rezanje, as in Nastavitve rezanja, knjižnica rezanja, smer reza,
+  Paleta rezov. Cut (clipboard): Izreži. Cut shapes: Razdeli oblike.
+- Layer: plast. Line / Fill / Image: Črta / Polnilo / Slika.
+- Power: moč. Speed: hitrost. Pass: prehod. Interval: razmik vrstic. Thickness: debelina.
+- Air assist: pihanje zraka. Frame: obhod obrisa.
+- Home: referenčna lega. Origin: izhodišče. Start point: začetna točka.
+- Tab: mostiček, mostički. Rotary: rotacijska os. Print and cut: Tiskanje in rezanje; its targets: oznake.
+- Device / Machine / Controller: naprava / stroj / krmilnik. Command: ukaz. Preview: Predogled.
+- Shape / Object: oblika / objekt. Selection: izbor. Path: pot. Node: vozlišče. Weld: zvari.
+- Boolean union / difference / intersection: Logična unija / razlika / Logični presek.
+- Offset: odmik (Odmakni oblike). Trace: vektoriziraj. Bitmap: bitna slika. Break apart: Razbij.
+- Group / Ungroup: Združi / Razdruži. Array: polje (Mrežno, Krožno, Navidezno polje).
+- Align / Distribute / Dock: Poravnaj / Razporedi / Prisloni. Flip: obrni. Mirror: zrcali.
+- Snap: pripenjanje. Grid: mreža. Lock: zakleni. Crop: obrezovanje. Mask: maska. Pan: premik pogleda.
+- Page: stran. Canvas: platno. Work area: delovno območje.
+- Toolbar: orodna vrstica. Ribbon tab Home: Osnovno. Ribbon group Setup: Priprava.
+  Hotkeys: bližnjice. Settings and preferences: nastavitve.
+- Edit: Urejanje. Modify (ribbon tab): Spremeni. Arrange: Postavitev. File menu: Datoteka.
+- Mode: način. Art library: Knjižnica grafik. Library entry: vnos (masculine: "povezan").
+  Art item: element. Link / Unlink: Poveži / Prekini povezavo.
+- Feeder: podajalnik. Camera control: Upravljanje kamere. Output: izhod; Print: tisk.
+- Cut table columns: Plast, Način, Hit/Moč, Izh, Vid, Zrak.
+- Status bar count: obj. (one word for object and objects).
+- Width / Height: Širina / Višina. Reset: Ponastavi. Backup (a saved copy of a file):
+  varnostna kopija. Backup path (the outline an image keeps after a crop): rezervna pot.
+- Start (the laser panel button, not translated yet): »Start«.
+
+## Turkish (tr)
+
+The imperative in commands ("Kaydet", "Aç", "Yapıştır") and the formal imperative in help texts
+("Tıklayın", "Basın"). Key names stay as in English. Panel labels that are not translated yet are
+quoted “like this”. Turkish adds suffixes to its words, so the one-word check compares stems
+("genişlik" finds "Genişlikleri"); forms that change the last letter ("yedeği") are avoided.
+
+- Job: iş. Cut (laser): kesim, as in Kesim ayarları, kesim kütüphanesi, kesim yönü, Kesim paleti.
+  Cut (clipboard): Kes. Cut shapes: Şekilleri böl.
+- Layer: katman. Line / Fill / Image: Çizgi / Dolgu / Görüntü.
+- Power: güç. Speed: hız. Pass: geçiş. Interval: aralık. Thickness: kalınlık.
+- Air assist: hava desteği. Frame: çerçeveleme.
+- Home: referans. Origin: orijin. Start point: başlangıç noktası.
+- Tab: köprü. Rotary: döner eksen. Print and cut: Yazdır ve kes; its targets: hedef işaretleri.
+- Device / Machine / Controller: cihaz / makine / denetleyici. Command: komut. Preview: Önizleme.
+- Shape / Object: şekil / nesne. Selection: seçim. Path: yol. Node: düğüm. Weld: kaynakla.
+- Boolean union / difference / intersection: Boole birleşimi / farkı / kesişimi.
+- Offset: ofset. Trace: vektörleştir. Bitmap: bit eşlem. Break apart: Parçala.
+- Group / Ungroup: Grupla / Grubu çöz. Array: dizi (Izgara dizisi, Dairesel dizi, Sanal dizi).
+- Align / Distribute / Dock: Hizala / Dağıt / Yasla. Nest: iç içe yerleştir. Flip: çevir.
+  Mirror: aynala.
+- Snap: kenetleme, never "yapıştır", which is Paste. Grid: ızgara. Lock: kilitle. Crop: kırpma.
+  Mask: maske. Pan: kaydır.
+- Page: sayfa. Canvas: tuval. Work area: çalışma alanı.
+- Toolbar: araç çubuğu. Ribbon tab Home: Giriş. Ribbon group Setup: Hazırlık.
+  Hotkeys: kısayol tuşları. Settings: Ayarlar. Preferences (the settings file): tercihler.
+- Edit: Düzen. Modify (ribbon tab): Değiştir. Arrange: Yerleştir. File menu: Dosya.
+- Mode: mod. Library: kütüphane; Art library: Grafik kütüphanesi. Library entry: kayıt.
+  Art item: öğe. Link / Unlink: Bağla / Bağlantıyı kes.
+- Feeder: besleyici. Camera control: Kamera kontrolü. Output: çıkış; Print: yazdır.
+- Cut table columns: Katman, Mod, Hız/Güç, Çıkış, Gör, Hava.
+- Status bar count: nesne (one word for object and objects).
+- Width / Height: Genişlik / Yükseklik. Reset: Sıfırla. Backup (a saved copy of a file): yedek.
+  Backup path (the outline an image keeps after a crop): yedek yol.
+- Start (the laser panel button, not translated yet): “Start”.

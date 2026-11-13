@@ -337,6 +337,21 @@ mod tests {
         set_language("en");
     }
 
+    /// Hungarian, Slovenian and Turkish translate the English texts, and the Language menu
+    /// offers them [I18N-04].
+    #[test]
+    fn hungarian_slovenian_and_turkish_are_translated_and_offered() {
+        let en: BTreeMap<String, String> = serde_json::from_str(english_file()).unwrap();
+        for (code, file) in [("hu", "Fájl"), ("sl", "Datoteka"), ("tr", "Dosya")] {
+            let gaps = translation_gaps(&en, &locale(code));
+            assert!(gaps.is_empty(), "{code}.json: {gaps:?}");
+            assert!(crate::languages::is_offered(code), "{code} is not in the Language menu");
+            set_language(code);
+            assert_eq!(tr("menu.File", "File"), file, "{code}");
+        }
+        set_language("en");
+    }
+
     /// Review corrections: Danish aligns "nederst"/"øverst"/"midt" (not the plurals "bunde",
     /// "toppe", "midter"), the library button puts settings *on* a layer ("til lag", not
     /// "assign a layer"), and the Move help says "kør hjem".
@@ -429,7 +444,7 @@ mod tests {
         for i in 0..8 {
             en.insert(format!("settings.added_later_{i}"), format!("Added later {i}"));
         }
-        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs"] {
+        for code in ["de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr"] {
             assert_eq!(translation_gaps(&en, &locale(code)), Vec::<String>::new(), "{code}");
         }
         // The check still catches a file that is mostly missing, a key English lacks and an empty text.
@@ -472,6 +487,9 @@ mod tests {
             ("fi", "Pois"),
             ("pl", "Wył"),
             ("cs", "Vyp"),
+            ("hu", "Ki"),
+            ("sl", "Izklop"),
+            ("tr", "Kapalı"),
             ("en", "Off"),
         ];
         for (code, word) in off {
@@ -566,6 +584,17 @@ mod tests {
         assert_one_stem_per_term(&[
             ("pl", ["szerokość", "wysokość", "resetuj", "kopi zapasow", "ścieżk zapasow"]),
             ("cs", ["šířka", "výška", "resetovat", "záloh", "záložní cest"]),
+        ]);
+    }
+
+    /// Hungarian, Slovenian and Turkish add endings to their words ("biztonsági mentésből",
+    /// "varnostne kopije", "Genişlikleri"), so their terms are given as stems too.
+    #[test]
+    fn hungarian_slovenian_and_turkish_use_one_word_per_term() {
+        assert_one_stem_per_term(&[
+            ("hu", ["szélesség", "magasság", "visszaállít", "biztonsági mentés", "tartalék útvonal"]),
+            ("sl", ["širin", "višin", "ponastavi", "varnostn kopij", "rezervn pot"]),
+            ("tr", ["genişlik", "yükseklik", "sıfırla", "yedek", "yedek yol"]),
         ]);
     }
 

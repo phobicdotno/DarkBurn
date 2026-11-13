@@ -1,5 +1,5 @@
 //! The interface in German, French, Italian, Spanish (Spain and Latin America), Portuguese,
-//! Dutch, Danish, Swedish, Finnish, Polish and Czech: with every panel open, in the settings and in a long help topic, the translated text fits
+//! Dutch, Danish, Swedish, Finnish, Polish, Czech, Hungarian, Slovenian and Turkish: with every panel open, in the settings and in a long help topic, the translated text fits
 //! where the English text fits [I18N-04].
 use crate::ui_harness::Gui;
 
@@ -130,6 +130,21 @@ fn czech_fits_the_window() {
     fits_like_english("cs", "Úpravy", "Obecné", "Výběr kamery");
 }
 
+#[test]
+fn hungarian_fits_the_window() {
+    fits_like_english("hu", "Szerkesztés", "Általános", "Kamera kiválasztása");
+}
+
+#[test]
+fn slovenian_fits_the_window() {
+    fits_like_english("sl", "Urejanje", "Splošno", "Izbira kamere");
+}
+
+#[test]
+fn turkish_fits_the_window() {
+    fits_like_english("tr", "Düzen", "Genel", "Kamera seçimi");
+}
+
 /// The cut table's column headers in `code`, left to right as painted, with the overlaps
 /// between neighbours. A header longer than its narrow column runs into the next one.
 fn cut_header_overlaps(code: &str) -> Vec<String> {
@@ -176,7 +191,7 @@ fn cut_header_overlaps(code: &str) -> Vec<String> {
 /// next column's header begins [I18N-04].
 #[test]
 fn cut_table_headers_fit_their_columns_in_every_language() {
-    let bad: Vec<String> = ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs"]
+    let bad: Vec<String> = ["en", "nb", "de", "fr", "it", "es-ES", "es-LA", "pt", "nl", "da", "sv", "fi", "pl", "cs", "hu", "sl", "tr"]
         .iter()
         .flat_map(|c| cut_header_overlaps(c))
         .collect();

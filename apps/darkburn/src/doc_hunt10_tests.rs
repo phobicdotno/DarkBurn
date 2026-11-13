@@ -779,7 +779,7 @@ fn a_mark_that_cannot_be_drawn_is_refused() {
     ] {
         let r = run(&mut a, id, args.clone());
         assert!(r.is_err(), "{id} {args} was reported as done: {r:?}");
-        assert!(a.editor.doc.is_empty() && a.editor.history.len() == 0, "{id} {args} left something behind");
+        assert!(a.editor.doc.is_empty() && a.editor.history.is_empty(), "{id} {args} left something behind");
     }
     // What a person asks for is still drawn.
     assert!(run(&mut a, "camera.align_generate", json!({ "size": 8 })).is_ok());

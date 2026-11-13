@@ -457,7 +457,8 @@ Key names stay as in English. Panel labels that are not translated yet are quote
 - Boolean union / difference / intersection: Boolen yhdiste / erotus / leikkaus.
 - Offset: siirtymä. Trace: vektoroida. Bitmap: bittikartta.
 - Group / Ungroup: Ryhmitä / Pura ryhmitys. Array: sarja (Ruudukkosarja, Ympyräsarja, Virtuaalisarja).
-- Align / Distribute / Dock: Tasaa / Levitä / Telakoi. Flip: kääntää. Mirror: peilata.
+- Align / Distribute / Dock: Tasaa / Levitä / Työnnä (push a shape until it touches; the
+  ribbon group and toolbar: Työntö). Not "telakoida", which is docking a window or panel. Flip: kääntää. Mirror: peilata.
 - Snap: kiinnitys. Grid: ruudukko. Lock: lukita. Crop: rajaus. Pan: panoroida.
 - Page: sivu. Canvas: piirtoalue. Work area: työalue.
 - Toolbar: työkalurivi. Ribbon tab Home: Aloitus. Hotkeys: pikanäppäimet. Settings and
@@ -465,6 +466,8 @@ Key names stay as in English. Panel labels that are not translated yet are quote
 - Edit: Muokkaa. Modify (ribbon tab): Muunna. Arrange: Järjestä. File menu: Tiedosto.
 - Mode: tila. Art library: Kuvakirjasto. Library entry: merkintä. Art item: kohde.
 - Feeder: syötin. Camera control: Kameran ohjaus.
+- Output (a layer or job sent to the laser): ajo, as in Ajon käyrätoleranssi. The cut table
+  column is headed Ulos; the help names it "ajo (Ulos)". Never "tulostus", which is Print.
 - Cut table columns: Taso, Tila, Nop/Teho, Ulos, Näk, Ilma.
 - Width / Height: Leveys / Korkeus. Reset: Nollaa. Backup (a saved copy of a file): varmuuskopio.
   Backup path (the outline an image keeps after a crop): varapolku.
@@ -496,7 +499,8 @@ quoted „like this”. Polish words change their endings, so the one-word check
 - Toolbar: pasek narzędzi. Ribbon tab Home: Start. Hotkeys: skróty klawiszowe.
   Settings: Ustawienia. Preferences (the settings file): preferencje.
 - Edit: Edycja. Modify (ribbon tab): Modyfikuj. Arrange: Rozmieść. File menu: Plik.
-- Mode: tryb. Art library: Biblioteka grafik. Library entry: wpis. Art item: element.
+- Mode: tryb. Art library: Biblioteka grafik. Library entry: wpis (masculine, so a linked
+  entry is "połączony"). Art item: element.
 - Feeder: podajnik. Camera control: Sterowanie kamerą.
 - Cut table columns: Warstwa, Tryb, Pręd/Moc, Wyj, Wid, Nadm.
 - Status bar count: szt. (one word for object and objects).
@@ -523,7 +527,8 @@ stems ("záloh" finds "záloha" and "zálohu").
 - Boolean union / difference / intersection: Booleovské sjednocení / Booleovský rozdíl / Booleovský průnik.
 - Offset: odsazení. Trace: vektorizovat. Bitmap: bitmapa. Break apart: Rozložit.
 - Group / Ungroup: Seskupit / Zrušit seskupení. Array: pole (pravoúhlé, kruhové, virtuální).
-- Align / Distribute / Dock: Zarovnat / Rozmístit / Přisunout. Flip: překlopit. Mirror: zrcadlit.
+- Align / Distribute / Dock: Zarovnat / Rozmístit / Přisunout. Nest (pack shapes onto the
+  sheet): Naskládat, never "vnořit", which means put one thing inside another. Flip: překlopit. Mirror: zrcadlit.
 - Snap: přichytávání. Grid: mřížka. Lock: zamknout. Crop: oříznutí. Pan: posunout zobrazení.
 - Page: stránka. Canvas: plátno. Work area: pracovní plocha.
 - Toolbar: panel nástrojů. Ribbon tab Home: Domů. Ribbon group Setup: Příprava.
@@ -534,6 +539,8 @@ stems ("záloh" finds "záloha" and "zálohu").
 - Feeder: podavač. Camera control: Ovládání kamery.
 - Cut table columns: Vrstva, Režim, Rych/Výk, Výst, Zobr, Ofuk.
 - Status bar count: ks (one word for object and objects).
+- Hotkey conflicts name the key first, so the key is the subject: "je už přiřazena příkazu",
+  "přiřazena více příkazům".
 - Width / Height: Šířka / Výška. Reset: Resetovat. Backup (a saved copy of a file): záloha.
   Backup path (the outline an image keeps after a crop): záložní cesta.
 - Start (the laser panel button, not translated yet): „Start“.

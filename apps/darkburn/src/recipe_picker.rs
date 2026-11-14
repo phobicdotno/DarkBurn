@@ -181,7 +181,12 @@ pub fn apply_to_layer(s: &mut GweikeSettings, doc: &Document, layer: usize, e: &
     let head = head_of(e.craft());
     let slot = slot_for(s, doc, layer, head);
     let mut next = s.clone();
-    let (_, warnings) = use_recipe(&mut next, e, slot)?;
+    let (_, mut warnings) = use_recipe(&mut next, e, slot)?;
+    let shared: Vec<usize> = doc.used_layers().into_iter().filter(|&l| l != layer).filter(|&l| s.map_of(l, doc).head == head && s.map_of(l, doc).slot as usize == slot).collect();
+    if !shared.is_empty() {
+        let names: Vec<String> = shared.iter().map(|&l| darkburn_core::layer::layer_label(l)).collect();
+        warnings.push(format!("Every {} craft slot is in use: slot {slot} is shared with layer {}, which now cuts with this recipe too.", head.label(), names.join(", ")));
+    }
     let mut m = next.map_of(layer, doc);
     m.head = head;
     m.slot = slot as u8;

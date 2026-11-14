@@ -172,12 +172,7 @@ pub fn check(api_url: &str, current: &str, os: &str, arch: &str) -> Result<Optio
         return Ok(None);
     }
     let version = tag.trim_start_matches(['v', 'V']).to_string();
-    let page = json
-        .get("html_url")
-        .and_then(|u| u.as_str())
-        .and_then(updates::safe_link)
-        .unwrap_or(updates::RELEASES_PAGE)
-        .to_string();
+    let page = json.get("html_url").and_then(|u| u.as_str()).and_then(updates::safe_link).unwrap_or(updates::RELEASES_PAGE).to_string();
     let asset = pick_asset(&json, &version, os, arch);
     // The notes of the release's own CHANGELOG.md; without them the link still works.
     let notes = updates::safe_link(&format!("https://raw.githubusercontent.com/{REPO}/{tag}/CHANGELOG.md"))
@@ -429,7 +424,6 @@ pub fn link_clicked(app: &mut DarkBurn) {
         u.ask_open = true;
     }
 }
-
 
 /// Once a frame: the timed checks and their answers.
 pub fn frame(ctx: &Context, app: &mut DarkBurn) {
@@ -687,8 +681,12 @@ mod tests {
     #[test]
     fn a_release_without_an_archive_for_this_platform_opens_its_page() {
         let mut app = DarkBurn::new(crate::prefs::Prefs::default());
-        app.extras.updater.available =
-            Some(Release { version: "9.0.0".into(), page: "https://github.com/phobicdotno/DarkBurn/releases/tag/v9.0.0".into(), asset: None, notes: vec![] });
+        app.extras.updater.available = Some(Release {
+            version: "9.0.0".into(),
+            page: "https://github.com/phobicdotno/DarkBurn/releases/tag/v9.0.0".into(),
+            asset: None,
+            notes: vec![],
+        });
         crate::help::take_opened();
         link_clicked(&mut app);
         assert_eq!(crate::help::take_opened(), ["https://github.com/phobicdotno/DarkBurn/releases/tag/v9.0.0"]);

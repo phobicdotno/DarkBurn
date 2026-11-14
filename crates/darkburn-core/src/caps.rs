@@ -50,7 +50,7 @@ impl GweikeModel {
     pub fn work_area(self) -> (f64, f64) {
         match self {
             GweikeModel::M3 | GweikeModel::M3Pro => (620.0, 620.0),
-            GweikeModel::M3Max | GweikeModel::M3Ultra => (1380.0, 920.0),
+            GweikeModel::M3Max | GweikeModel::M3Ultra => (1371.0, 950.0),
         }
     }
 }
@@ -181,6 +181,6 @@ mod tests {
             let co2 = CutSetting { gweike: Some(GweikeLayer { source: GweikeSource::Co2, ..Default::default() }), ..Default::default() };
             assert_eq!(caps.layer_fields(&co2), LayerFields { source_select: true, ..Default::default() });
         }
-        assert_eq!(GweikeModel::M3Ultra.work_area(), (1380.0, 920.0));
+        assert_eq!(GweikeModel::M3Ultra.work_area(), (1371.0, 950.0));
     }
 }

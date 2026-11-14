@@ -1015,6 +1015,13 @@ mod tests {
             assert_eq!(caps.layer_fields(&CutSetting::default()).any(), gweike, "{kind:?}: fibre sections only on Gweike");
         }
         assert!(D::Ruida.caps().dual_laser);
+        assert_eq!(D::GweikeM3Ultra.caps().gweike, Some(darkburn_core::GweikeModel::M3Ultra));
+        assert_eq!(D::GweikeM3Pro.caps().gweike, Some(darkburn_core::GweikeModel::M3Pro));
+        for k in [D::GweikeM3Ultra, D::GweikeM3Max, D::GweikeM3Pro, D::GweikeM3] {
+            assert_eq!(k.family(), crate::machine_api::Family::FileOnly);
+            assert!(crate::devices::Device::new(k).link(&[]).is_err(), "{k:?} never connects");
+            assert!(k.label().starts_with("Gweike"));
+        }
         assert!(D::SimulatorGalvo.caps().sources.galvo);
     }
 

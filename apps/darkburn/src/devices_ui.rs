@@ -214,7 +214,7 @@ fn wizard_dialog(ctx: &Context, app: &mut DarkBurn) {
                         ui,
                         "Greyed entries need a capture from real hardware before DarkBurn can support them. The simulators run with no hardware.",
                     );
-                    if w.draft.kind == DeviceType::GweikeCardSimulator {
+                    if w.draft.kind.is_gweike() {
                         note(ui, crate::gweike_workflow::DIRECT_CONTROL_NOTE);
                     }
                     if w.draft.kind == DeviceType::LinuxCnc {

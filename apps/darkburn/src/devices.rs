@@ -50,6 +50,11 @@ pub enum DeviceType {
     // Galvo [GALVO-01]
     Galvo,
     SimulatorGalvo,
+    // Gweike M-series (M LASER): file output only (Gweike DXF/NC), never a live link.
+    GweikeM3Ultra,
+    GweikeM3Max,
+    GweikeM3Pro,
+    GweikeM3,
     // Gweike M3 Ultra: files only, plus the card simulator [MCC-05]
     GweikeCardSimulator,
     // Listed so people can see they are planned: each needs a capture from real hardware first.
@@ -61,7 +66,7 @@ pub enum DeviceType {
 }
 
 impl DeviceType {
-    pub const ALL: [DeviceType; 28] = [
+    pub const ALL: [DeviceType; 32] = [
         DeviceType::Grbl,
         DeviceType::GrblM3,
         DeviceType::GrblLpc,
@@ -76,6 +81,10 @@ impl DeviceType {
         DeviceType::CustomGcode,
         DeviceType::Ruida,
         DeviceType::Galvo,
+        DeviceType::GweikeM3Ultra,
+        DeviceType::GweikeM3Max,
+        DeviceType::GweikeM3Pro,
+        DeviceType::GweikeM3,
         DeviceType::GweikeCardSimulator,
         DeviceType::SimulatorGrbl,
         DeviceType::SimulatorRuida,
@@ -115,6 +124,10 @@ impl DeviceType {
             Self::SimulatorCustom => "Simulator (custom G-code)",
             Self::Galvo => "Galvo (EZCad2 board)",
             Self::SimulatorGalvo => "Simulator (galvo)",
+            Self::GweikeM3Ultra => "Gweike M3 Ultra (fiber + CO2, file output)",
+            Self::GweikeM3Max => "Gweike M3 Max (fiber + CO2, file output)",
+            Self::GweikeM3Pro => "Gweike M3 Pro (fiber + CO2, file output)",
+            Self::GweikeM3 => "Gweike M3 (fiber + CO2, file output)",
             Self::GweikeCardSimulator => "Gweike M3 Ultra: card simulator (files only)",
             Self::SnapmakerNetwork => "Snapmaker over the network",
             Self::EmblaserWifi => "Emblaser 2 over Wi-Fi",
@@ -144,7 +157,7 @@ impl DeviceType {
             | Self::SimulatorCustom => Family::Grbl,
             Self::Ruida | Self::SimulatorRuida => Family::Ruida,
             Self::Galvo | Self::SimulatorGalvo => Family::Galvo,
-            Self::GweikeCardSimulator => Family::FileOnly,
+            Self::GweikeCardSimulator | Self::GweikeM3Ultra | Self::GweikeM3Max | Self::GweikeM3Pro | Self::GweikeM3 => Family::FileOnly,
             Self::DesignOnly | Self::SnapmakerNetwork | Self::EmblaserWifi | Self::Cubiio | Self::Trocen | Self::TopWisdom => Family::DesignOnly,
         }
     }
@@ -206,13 +219,24 @@ impl DeviceType {
     }
     /// Gweike machine concepts (files and the card simulator only).
     pub fn is_gweike(self) -> bool {
-        self == Self::GweikeCardSimulator
+        self.gweike_model().is_some()
+    }
+    /// The Gweike M-series model of this type (the card simulator is an M3 Ultra).
+    pub fn gweike_model(self) -> Option<darkburn_core::GweikeModel> {
+        use darkburn_core::GweikeModel as M;
+        Some(match self {
+            Self::GweikeM3Ultra | Self::GweikeCardSimulator => M::M3Ultra,
+            Self::GweikeM3Max => M::M3Max,
+            Self::GweikeM3Pro => M::M3Pro,
+            Self::GweikeM3 => M::M3,
+            _ => return None,
+        })
     }
     /// What this kind of machine can do; it decides which cut-setting sections show.
     pub fn caps(self) -> darkburn_core::MachineCaps {
         use darkburn_core::MachineCaps as C;
         match self {
-            Self::GweikeCardSimulator => C::gweike_m(darkburn_core::GweikeModel::M3Ultra),
+            k if k.gweike_model().is_some() => C::gweike_m(k.gweike_model().unwrap_or_default()),
             Self::Galvo | Self::SimulatorGalvo => C::galvo(),
             Self::Ruida | Self::SimulatorRuida => C::ruida(),
             Self::DesignOnly => C::design_only(),
@@ -249,7 +273,8 @@ impl DeviceType {
             Self::Ruida | Self::SimulatorRuida => (600.0, 400.0),
             Self::Snapmaker | Self::SimulatorSnapmaker => (320.0, 350.0),
             Self::Galvo | Self::SimulatorGalvo => (110.0, 110.0),
-            Self::GweikeCardSimulator => (1371.0, 950.0),
+            Self::GweikeCardSimulator | Self::GweikeM3Ultra | Self::GweikeM3Max => (1371.0, 950.0),
+            Self::GweikeM3Pro | Self::GweikeM3 => (620.0, 620.0),
             Self::Smoothie | Self::SimulatorSmoothie | Self::Marlin | Self::SimulatorMarlin => (300.0, 200.0),
             _ => (400.0, 400.0),
         }
@@ -613,6 +638,10 @@ impl Device {
             (DeviceType::SimulatorGalvo, _) => Ok(Link::SimulatorGalvo),
             (DeviceType::Galvo, _) => Ok(Link::GalvoUsb),
             (DeviceType::LinuxCnc, _) => Err("LinuxCNC is file output only. Use Save G-code and open the file in LinuxCNC.".into()),
+            (k, _) if k.is_gweike() && k != DeviceType::GweikeCardSimulator => Err(format!(
+                "The {} is file output only. Export the Gweike DXF/NC files and run them with the machine's own software.",
+                k.label()
+            )),
             (DeviceType::GweikeCardSimulator, _) => {
                 Err("The Gweike machine is a file workflow. Use the Gweike window to export files or run the card simulator.".into())
             }

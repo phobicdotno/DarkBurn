@@ -1071,20 +1071,7 @@ impl DarkBurn {
         if self.about_open {
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("about"), "db_app", &crate::i18n::tr("cmd.help.about", "About DarkBurn"))
                 .actions("", &crate::i18n::tr("ui.close", "Close"), None)
-                .show(ctx, true, |ui| {
-                let t = Tokens::get();
-                ui.label(egui::RichText::new(format!("DarkBurn {}", env!("CARGO_PKG_VERSION"))).font(fonts::semibold(t.font_subtitle)));
-                ui.label(crate::i18n::tr("about.tagline", "A laser cutter and engraver program."));
-                if ui.link(crate::i18n::tr("about.docs", "Online documentation")).clicked() {
-                    crate::help::open_url(crate::help::DOCS_URL);
-                }
-                ui.add_space(t.space_8);
-                ui.label(egui::RichText::new("Licensed under the MIT License or the Apache License 2.0.").color(t.text_dim));
-                ui.label(
-                    egui::RichText::new("Widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.")
-                        .color(t.text_dim),
-                );
-            });
+                .show(ctx, true, crate::about::body);
             if closed || action != ui_kit::Action::None {
                 self.about_open = false;
             }

@@ -1,6 +1,10 @@
 {
+  "about.build": "构建",
   "about.docs": "在线文档",
+  "about.source": "GitHub 上的源代码",
   "about.tagline": "激光切割与雕刻软件。",
+  "about.version": "版本",
+  "about.whats_new": "新功能",
   "area.bottom": "底部",
   "area.left": "左侧",
   "area.right_bottom": "右侧，下方",

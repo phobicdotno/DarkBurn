@@ -1,6 +1,10 @@
 {
+  "about.build": "δόμηση",
   "about.docs": "Τεκμηρίωση στο διαδίκτυο",
+  "about.source": "Πηγαίος κώδικας στο GitHub",
   "about.tagline": "Πρόγραμμα κοπής και χάραξης με λέιζερ.",
+  "about.version": "Έκδοση",
+  "about.whats_new": "Τι νέο υπάρχει",
   "area.bottom": "Κάτω",
   "area.left": "Αριστερά",
   "area.right_bottom": "Δεξιά, κάτω",

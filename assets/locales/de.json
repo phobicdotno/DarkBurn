@@ -1,6 +1,10 @@
 {
+  "about.build": "Build",
   "about.docs": "Online-Dokumentation",
+  "about.source": "Quellcode auf GitHub",
   "about.tagline": "Ein Programm zum Laserschneiden und -gravieren.",
+  "about.version": "Version",
+  "about.whats_new": "Neuigkeiten",
   "area.bottom": "Unten",
   "area.left": "Links",
   "area.right_bottom": "Rechts, unten",

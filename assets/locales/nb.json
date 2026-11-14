@@ -1,6 +1,10 @@
 {
+  "about.build": "bygg",
   "about.docs": "Nettdokumentasjon",
+  "about.source": "Kildekode på GitHub",
   "about.tagline": "Et program for laserkuttere og gravering.",
+  "about.version": "Versjon",
+  "about.whats_new": "Hva er nytt",
   "area.bottom": "Nederst",
   "area.left": "Venstre",
   "area.right_bottom": "Høyre, nederst",

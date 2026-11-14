@@ -1,6 +1,10 @@
 {
+  "about.build": "koontiversio",
   "about.docs": "Verkko-ohjeet",
+  "about.source": "Lähdekoodi GitHubissa",
   "about.tagline": "Ohjelma laserleikkureille ja -kaivertimille.",
+  "about.version": "Versio",
+  "about.whats_new": "Uutta",
   "area.bottom": "Alhaalla",
   "area.left": "Vasemmalla",
   "area.right_bottom": "Oikealla, alhaalla",

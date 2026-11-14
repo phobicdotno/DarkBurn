@@ -1,6 +1,10 @@
 {
+  "about.build": "bygge",
   "about.docs": "Onlinedokumentation",
+  "about.source": "Källkod på GitHub",
   "about.tagline": "Ett program för laserskärning och lasergravering.",
+  "about.version": "Version",
+  "about.whats_new": "Nyheter",
   "area.bottom": "Nederst",
   "area.left": "Vänster",
   "area.right_bottom": "Höger, nederst",

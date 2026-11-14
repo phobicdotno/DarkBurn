@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod a11y;
+mod about;
 mod actions;
 mod agent_limits;
 mod api;

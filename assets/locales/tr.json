@@ -1,6 +1,10 @@
 {
+  "about.build": "derleme",
   "about.docs": "Çevrimiçi belgeler",
+  "about.source": "GitHub'da kaynak kodu",
   "about.tagline": "Lazer kesim ve kazıma programı.",
+  "about.version": "Sürüm",
+  "about.whats_new": "Yenilikler",
   "area.bottom": "Alt",
   "area.left": "Sol",
   "area.right_bottom": "Sağ, alt",

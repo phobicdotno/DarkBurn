@@ -1,6 +1,10 @@
 {
+  "about.build": "sestavení",
   "about.docs": "Online dokumentace",
+  "about.source": "Zdrojový kód na GitHubu",
   "about.tagline": "Program pro laserové řezačky a gravírky.",
+  "about.version": "Verze",
+  "about.whats_new": "Co je nového",
   "area.bottom": "Dole",
   "area.left": "Vlevo",
   "area.right_bottom": "Vpravo dole",

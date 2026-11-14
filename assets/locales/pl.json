@@ -1,6 +1,10 @@
 {
+  "about.build": "kompilacja",
   "about.docs": "Dokumentacja online",
+  "about.source": "Kod źródłowy na GitHubie",
   "about.tagline": "Program do laserów tnących i grawerujących.",
+  "about.version": "Wersja",
+  "about.whats_new": "Co nowego",
   "area.bottom": "Na dole",
   "area.left": "Po lewej",
   "area.right_bottom": "Po prawej, na dole",

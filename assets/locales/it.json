@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Documentazione online",
+  "about.source": "Codice sorgente su GitHub",
   "about.tagline": "Un programma per il taglio e l'incisione laser.",
+  "about.version": "Versione",
+  "about.whats_new": "Novità",
   "area.bottom": "In basso",
   "area.left": "A sinistra",
   "area.right_bottom": "A destra, in basso",

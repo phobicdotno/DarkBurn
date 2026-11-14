@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::devices::{Device, DeviceStore, DeviceType};
 
-const TYPES: [DeviceType; 29] = [
+const TYPES: [DeviceType; 33] = [
     DeviceType::Grbl,
     DeviceType::GrblM3,
     DeviceType::GrblLpc,

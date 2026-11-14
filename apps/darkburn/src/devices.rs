@@ -638,10 +638,9 @@ impl Device {
             (DeviceType::SimulatorGalvo, _) => Ok(Link::SimulatorGalvo),
             (DeviceType::Galvo, _) => Ok(Link::GalvoUsb),
             (DeviceType::LinuxCnc, _) => Err("LinuxCNC is file output only. Use Save G-code and open the file in LinuxCNC.".into()),
-            (k, _) if k.is_gweike() && k != DeviceType::GweikeCardSimulator => Err(format!(
-                "The {} is file output only. Export the Gweike DXF/NC files and run them with the machine's own software.",
-                k.label()
-            )),
+            (k, _) if k.is_gweike() && k != DeviceType::GweikeCardSimulator => {
+                Err(format!("The {} is file output only. Export the Gweike DXF/NC files and run them with the machine's own software.", k.label()))
+            }
             (DeviceType::GweikeCardSimulator, _) => {
                 Err("The Gweike machine is a file workflow. Use the Gweike window to export files or run the card simulator.".into())
             }

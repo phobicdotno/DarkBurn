@@ -167,7 +167,15 @@ pub struct PierceStep {
 
 impl Default for PierceStep {
     fn default() -> Self {
-        PierceStep { height_mm: 5.0, duty_pct: 50.0, freq_hz: 500.0, peak_current_pct: 100.0, gas: GasKind::Air, gas_pressure_bar: 5.0, time_ms: 1000.0 }
+        PierceStep {
+            height_mm: 5.0,
+            duty_pct: 50.0,
+            freq_hz: 500.0,
+            peak_current_pct: 100.0,
+            gas: GasKind::Air,
+            gas_pressure_bar: 5.0,
+            time_ms: 1000.0,
+        }
     }
 }
 

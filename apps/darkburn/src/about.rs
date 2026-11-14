@@ -29,11 +29,7 @@ pub fn parse_changelog(markdown: &str) -> Vec<Release> {
             let head = head.trim();
             let head = head.strip_prefix('v').unwrap_or(head);
             let (version, rest) = head.split_once(char::is_whitespace).unwrap_or((head, ""));
-            let build = rest
-                .trim()
-                .strip_prefix("(build ")
-                .and_then(|r| r.split(')').next())
-                .and_then(|n| n.trim().parse().ok());
+            let build = rest.trim().strip_prefix("(build ").and_then(|r| r.split(')').next()).and_then(|n| n.trim().parse().ok());
             out.push(Release { version: version.to_string(), build, lines: Vec::new() });
             continue;
         }
@@ -116,8 +112,10 @@ pub fn body(ui: &mut egui::Ui) {
     ui.add_space(t.space_8);
     ui.label(egui::RichText::new("Licensed under the MIT License or the Apache License 2.0.").color(t.text_dim));
     ui.label(
-        egui::RichText::new("Widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.")
-            .color(t.text_dim),
+        egui::RichText::new(
+            "Widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.",
+        )
+        .color(t.text_dim),
     );
 }
 

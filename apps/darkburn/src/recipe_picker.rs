@@ -128,6 +128,7 @@ fn score(e: &RecipeEntry, lab: &str, hay: &str, words: &[String]) -> Option<u32>
 
 /// The picker's list for `filter`: the recently used recipes first (most recent on top), then
 /// the best matches, ties in the order the scan found them. Every word of the filter must match.
+#[cfg(test)]
 pub fn picks(lib: &Library, filter: &str, recents: &[String]) -> Vec<Pick> {
     picks_of(lib, filter, "", recents)
 }
@@ -278,7 +279,7 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut close = false;
     let title = format!("Recipe for layer {}", darkburn_core::layer::layer_label(layer));
     let shelf = &mut app.machine.ext.gweike_recipes;
-    egui::Window::new(title).id(egui::Id::new("db_recipe_picker")).collapsible(false).resizable(false).default_width(420.0).open(&mut open).show(
+    egui::Window::new(title).id(egui::Id::unique("db_recipe_picker")).collapsible(false).resizable(false).default_width(420.0).open(&mut open).show(
         ctx,
         |ui| {
             let Some(lib) = &shelf.library else {

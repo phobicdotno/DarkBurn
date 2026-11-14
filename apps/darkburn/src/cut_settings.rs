@@ -70,7 +70,13 @@ pub fn apply_change(before: &CutSetting, after: &CutSetting, target: &mut CutSet
             (_, a, t) => *t = a.clone(),
         }
     }
-    let (Ok(b), Ok(a), Ok(mut t)) = (serde_json::to_value(before), serde_json::to_value(after), serde_json::to_value(&*target)) else {
+    // A target with no Gweike values starts from the defaults, so only the changed Gweike field
+    // is copied over rather than every value of the edited layer.
+    let mut base = target.clone();
+    if base.gweike.is_none() && before.gweike != after.gweike {
+        base.gweike = Some(Default::default());
+    }
+    let (Ok(b), Ok(a), Ok(mut t)) = (serde_json::to_value(before), serde_json::to_value(after), serde_json::to_value(&base)) else {
         return;
     };
     merge(&b, &a, &mut t);
@@ -1023,6 +1029,21 @@ mod tests {
             assert!(k.label().starts_with("Gweike"));
         }
         assert!(D::SimulatorGalvo.caps().sources.galvo);
+    }
+
+    #[test]
+    fn a_gweike_edit_copies_only_the_changed_field_to_other_layers() {
+        let mine = darkburn_core::layer::GweikeLayer { gas_pressure_bar: 12.0, ..Default::default() };
+        let before = CutSetting { gweike: Some(mine.clone()), ..Default::default() };
+        let after = CutSetting { gweike: Some(darkburn_core::layer::GweikeLayer { cut_height_mm: 0.5, ..mine }), ..Default::default() };
+        let mut target = CutSetting::default();
+        apply_change(&before, &after, &mut target);
+        let g = target.gweike.expect("the edit reaches the other layer");
+        assert_eq!(g.cut_height_mm, 0.5);
+        assert_eq!(g.gas_pressure_bar, darkburn_core::layer::GweikeLayer::default().gas_pressure_bar, "unchanged fields are not copied");
+        let mut untouched = CutSetting::default();
+        apply_change(&before, &CutSetting { speed: 40.0, ..before.clone() }, &mut untouched);
+        assert_eq!(untouched.gweike, None, "a non-Gweike edit adds no Gweike values");
     }
 
     #[test]

@@ -36,11 +36,12 @@ pub fn parse_changelog(markdown: &str) -> Vec<Release> {
         let Some(release) = out.last_mut() else { continue };
         if let Some(bullet) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
             release.lines.push(bullet.trim().to_string());
-        } else if line.starts_with("  ") && !line.trim().is_empty() {
-            if let Some(last) = release.lines.last_mut() {
-                last.push(' ');
-                last.push_str(line.trim());
-            }
+        } else if line.starts_with("  ")
+            && !line.trim().is_empty()
+            && let Some(last) = release.lines.last_mut()
+        {
+            last.push(' ');
+            last.push_str(line.trim());
         }
     }
     out
@@ -57,7 +58,7 @@ fn releases() -> &'static [Release] {
 }
 
 fn logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let id = egui::Id::new("db_about_logo");
+    let id = egui::Id::unique("db_about_logo");
     if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
         return Some(t);
     }

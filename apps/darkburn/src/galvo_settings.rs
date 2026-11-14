@@ -351,14 +351,31 @@ impl GalvoDeviceSettings {
         if self.cal1.is_x == self.cal2.is_x {
             v.push("One galvo must be X and the other Y.".into());
         }
-        if self.timings.jump_speed_mm_s <= 0.0 {
+        for (n, c) in [("Galvo 1", &self.cal1), ("Galvo 2", &self.cal2)] {
+            if !(c.skew.is_finite() && c.bulge.is_finite() && c.trapezoid.is_finite()) {
+                v.push(format!("{n} skew, bulge and trapezoid must be numbers."));
+            }
+        }
+        if !(self.offset_x_mm.is_finite() && self.offset_y_mm.is_finite()) {
+            v.push("The field offsets must be numbers.".into());
+        }
+        if !(self.timings.jump_speed_mm_s.is_finite() && self.timings.jump_speed_mm_s > 0.0) {
             v.push("Jump speed must be above zero.".into());
+        }
+        if !(self.timings.jump_distance_limit_mm.is_finite() && self.timings.jump_distance_limit_mm >= 0.0) {
+            v.push("Jump distance limit must be zero or more.".into());
+        }
+        if !(self.light_speed_mm_s.is_finite() && self.light_speed_mm_s > 0.0) {
+            v.push("Light speed must be above zero.".into());
         }
         if self.repeat.count == 0 {
             v.push("Repeat count must be at least 1.".into());
         }
-        if self.default_frequency_khz <= 0.0 {
+        if !(self.default_frequency_khz.is_finite() && self.default_frequency_khz > 0.0) {
             v.push("Frequency must be above zero.".into());
+        }
+        if !(self.default_q_pulse_ns.is_finite() && self.default_q_pulse_ns >= 0.0) {
+            v.push("Pulse width must be zero or more.".into());
         }
         v
     }

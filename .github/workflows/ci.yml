@@ -13,11 +13,12 @@ on:
   push:
     branches: [main]
     # Not for a push that changes only the front page, the documents, the web page or the
-    # workflow that publishes it: nothing that is built or tested reads them (pages.yml builds
-    # the web page). scripts/build-site.sh stays in, because the Format job checks every script.
+    # workflow that checks it: nothing that is built or tested reads them (site.yml builds
+    # the web page). scripts/build-site.sh and scripts/deploy-site.sh stay in, because the
+    # Format job checks every script.
     # The one exception is docs/PARITY-CHECKLIST.md, which is built into darkburn-mcp. Other
     # .md files stay in, because some are built in or packaged.
-    paths: ["**", "!README.md", "!docs/**", "!site/**", "!.github/workflows/pages.yml", "docs/PARITY-CHECKLIST.md"]
+    paths: ["**", "!README.md", "!docs/**", "!site/**", "!.github/workflows/site.yml", "docs/PARITY-CHECKLIST.md"]
   # No paths here. A check that is required for merging must report on every pull request,
   # and one that is filtered away never does.
   pull_request:

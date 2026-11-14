@@ -13,7 +13,7 @@
 //! full grammar can be decoded for the simulator, but a frame carrying laser data or any
 //! out-of-grammar item is refused by [`crate::command::SafeWrite`].
 
-use crate::command::Policy;
+use crate::command::{Policy, SafetyConfig};
 use crate::registers::{FIFO_MARGIN_EMPTY, FIFO_SEND_HEADROOM_BYTES, Forbidden};
 use std::collections::VecDeque;
 
@@ -131,11 +131,20 @@ impl FifoItem {
     /// the vendor gate) but no public constructor creates one and [`crate::command::SafeWrite`]
     /// refuses frames containing one.
     pub fn is_laser(&self) -> bool {
+        self.is_laser_with(LASER_DO_MASK)
+    }
+
+    /// [`is_laser`](Self::is_laser) judged by the laser ports of `cfg` instead of the default ones.
+    pub fn is_laser_for(&self, cfg: &SafetyConfig) -> bool {
+        self.is_laser_with(SafetyConfig::port_mask(&cfg.laser_do_ports))
+    }
+
+    fn is_laser_with(&self, laser_do_mask: u32) -> bool {
         match self.opcode {
             OP_TICK => self.as_tick().is_some_and(|t| t.duty != 0),
             OP_MISC => match self.payload.first() {
-                // DO: any laser port bit switched on (5 fibre gate, 6 pointer, 9 CO2).
-                Some(2) => self.payload.get(2).is_some_and(|v| v & LASER_DO_MASK != 0),
+                // DO: any laser port bit switched on (by default 5 fibre gate, 6 pointer, 9 CO2).
+                Some(2) => self.payload.get(2).is_some_and(|v| v & laser_do_mask != 0),
                 // PWM: always laser data in a stream.
                 Some(3) | Some(0x11) => true,
                 // DA: non-zero value.
@@ -207,13 +216,23 @@ pub fn parse_fifo_words(words: &[u32]) -> Result<FifoFrame, FifoParseError> {
 /// Classify a parsed frame for the gate: `Motion` for dry content, `Laser` if any item carries
 /// laser data or is a follower or pierce record, or an error for items outside the allow-list.
 pub fn classify_frame(frame: &FifoFrame) -> Result<Policy, Forbidden> {
+    classify_frame_with(frame, LASER_DO_MASK, ALLOWED_DO_MASK)
+}
+
+/// [`classify_frame`] with the laser, lamp and gas ports of `cfg` instead of the default ones.
+pub fn classify_frame_for(frame: &FifoFrame, cfg: &SafetyConfig) -> Result<Policy, Forbidden> {
+    let laser = SafetyConfig::port_mask(&cfg.laser_do_ports);
+    classify_frame_with(frame, laser, laser | SafetyConfig::port_mask(&cfg.motion_do_ports))
+}
+
+fn classify_frame_with(frame: &FifoFrame, laser_do_mask: u32, allowed_do_mask: u32) -> Result<Policy, Forbidden> {
     let mut laser = false;
     for item in &frame.items {
         if item.opcode == OP_MISC {
             let sub = item.payload[0];
             match sub {
                 2 => {
-                    if (item.payload[1] | item.payload[2]) & !ALLOWED_DO_MASK != 0 {
+                    if (item.payload[1] | item.payload[2]) & !allowed_do_mask != 0 {
                         return Err(Forbidden::FifoFrame(format!("DO record {:?} addresses a port outside the allow-list", item.payload)));
                     }
                 }
@@ -234,7 +253,7 @@ pub fn classify_frame(frame: &FifoFrame) -> Result<Policy, Forbidden> {
         // vendor's height-follower and pierce logic. Like laser data they decode, so a simulator
         // can model them, but they take the level no public constructor reaches.
         let vendor_only = !matches!(item.opcode, OP_TICK | OP_BOUNDARY | OP_MODE | OP_MISC);
-        if item.is_laser() || vendor_only {
+        if item.is_laser_with(laser_do_mask) || vendor_only {
             laser = true;
         }
     }

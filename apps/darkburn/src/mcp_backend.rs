@@ -433,7 +433,18 @@ impl McpBackend {
         v
     }
 
+    /// Hand the active device's settings to the job builder, as every frame of the window does
+    /// (`machine_ui::sync_job_state`). An agent's commands run one after the other with no frame
+    /// between them, and without a window there is never one: a job built right after another
+    /// device was picked would be written with the settings of the device before it.
+    fn sync_device(&self) {
+        if let Ok(mut app) = self.app.try_borrow_mut() {
+            crate::machine_ui::sync_job_state(&mut app);
+        }
+    }
+
     fn start_build(&mut self, what: &str, work: Work, only_layers: Option<Vec<usize>>) -> Result<Value, CommandError> {
+        self.sync_device();
         let input = {
             let app = self.app.try_borrow().map_err(|_| CommandError::failed("the app is busy: try again"))?;
             let mut input = crate::job_cmds::build_input(&app);
@@ -534,6 +545,8 @@ impl Backend for McpBackend {
         }
         app.editor = editor;
         app.project_path = path;
+        // Another editor stands in place: what the windows hold of the replaced one goes.
+        crate::files::leave_project(&mut app);
         Ok(())
     }
 
@@ -730,6 +743,7 @@ impl McpBackend {
         if let Some(n) = number_out_of_range(&args) {
             return Err(CommandError::invalid(format!("`{id}`: {n:e} is out of range: numbers go from -{MAX_NUMBER:e} to {MAX_NUMBER:e}")));
         }
+        self.sync_device();
         if id == "job.generate" {
             return self.start_build("generating the job", Work::Generate, None);
         }

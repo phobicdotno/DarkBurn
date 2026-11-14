@@ -76,6 +76,11 @@ fn path_ops(path: &BezPath, s: &mut String) {
     }
 }
 
+/// A PDF real; PDF has no spelling for NaN or the infinities.
+fn real(v: f64) -> Object {
+    Object::Real(if v.is_nan() { 0.0 } else { v.clamp(f64::from(f32::MIN), f64::from(f32::MAX)) as f32 })
+}
+
 fn rgb_op(c: Rgb, op: &str) -> String {
     format!("{} {} {} {op}\n", n(f64::from(c.0) / 255.0), n(f64::from(c.1) / 255.0), n(f64::from(c.2) / 255.0))
 }
@@ -87,6 +92,16 @@ fn cm(a: Affine) -> String {
 
 fn latin1(s: &str) -> Vec<u8> {
     s.chars().map(|c| if (c as u32) < 256 { c as u8 } else { b'?' }).collect()
+}
+
+/// A PDF text string: Latin-1 when it fits, else UTF-16BE with a byte order mark.
+fn text_string(s: &str) -> Vec<u8> {
+    if s.chars().all(|c| (c as u32) < 256) {
+        return latin1(s);
+    }
+    let mut out = vec![0xFE, 0xFF];
+    out.extend(s.encode_utf16().flat_map(u16::to_be_bytes));
+    out
 }
 
 fn escape_pdf_string(b: &[u8]) -> String {
@@ -129,7 +144,7 @@ pub fn export(items: &[Item], opts: &AiExportOptions) -> PdfExport {
     for (k, name) in layer_order.iter().enumerate() {
         let mut d = Dictionary::new();
         d.set("Type", Object::Name(b"OCG".to_vec()));
-        d.set("Name", Object::String(latin1(name), StringFormat::Literal));
+        d.set("Name", Object::String(text_string(name), StringFormat::Literal));
         let id = doc.add_object(d);
         let tag = format!("L{k}");
         properties.set(tag.clone(), Object::Reference(id));
@@ -251,7 +266,7 @@ pub fn export(items: &[Item], opts: &AiExportOptions) -> PdfExport {
     let mut page = Dictionary::new();
     page.set("Type", Object::Name(b"Page".to_vec()));
     page.set("Parent", Object::Reference(pages_id));
-    page.set("MediaBox", Object::Array(vec![0.into(), 0.into(), Object::Real(w as f32), Object::Real(h as f32)]));
+    page.set("MediaBox", Object::Array(vec![0.into(), 0.into(), real(w), real(h)]));
     page.set("Contents", Object::Reference(content_id));
     page.set("Resources", Object::Dictionary(resources));
     let page_id = doc.add_object(page);

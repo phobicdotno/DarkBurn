@@ -231,6 +231,12 @@ impl State {
     /// Start a check on a thread. Does nothing when one is running.
     pub fn start(&mut self, url: String, asked: bool) {
         if self.rx.is_some() {
+            // One is on its way already (the check made at the start): asked for now, its
+            // answer is shown when it comes.
+            if asked {
+                self.asked = true;
+                self.open = true;
+            }
             return;
         }
         if cfg!(test) && !url.starts_with("http://127.0.0.1") {

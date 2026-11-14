@@ -369,6 +369,10 @@ impl DarkBurn {
             return;
         }
         let mut run = self.shortcut_command(ctx);
+        // No step through the history while a drag holds a checkpoint of its own [EDIT-01].
+        if matches!(run, Some("edit.undo" | "edit.redo")) && ctx.input(|i| i.pointer.primary_down()) {
+            run = None;
+        }
         let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
         if run.is_none() && !crate::escape::window_open(ctx) {
             if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::NONE, Key::Plus) || pressed(Modifiers::NONE, Key::Equals) {

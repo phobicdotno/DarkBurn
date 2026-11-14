@@ -103,10 +103,49 @@ pub fn resolve(paths: &[BezPath], rule: FillRule, tol: f64) -> Vec<BezPath> {
     shapes_to_paths(&rings.simplify_shape(ifill(rule)))
 }
 
-/// General boolean between two sets of paths. Each input path is filled by `rule`.
+/// Each path filled by `rule` on its own, as properly oriented rings: one group per path.
+fn normalized_groups(paths: &[BezPath], rule: FillRule, tol: f64) -> Vec<Vec<Ring>> {
+    paths
+        .iter()
+        .map(|p| {
+            let rings = path_to_rings(p, tol);
+            if rings.is_empty() {
+                return Vec::new();
+            }
+            let shapes: Vec<IShape> = rings.simplify_shape(ifill(rule));
+            shapes.into_iter().flatten().collect()
+        })
+        .filter(|g: &Vec<Ring>| !g.is_empty())
+        .collect()
+}
+
+/// The union of `groups`, merged two by two. Done in one step, every crossing of every shape is
+/// worked through at once: a few hundred shapes stacked on one spot (Duplicate, then Align
+/// centres) took minutes that way. Merged in pairs, each step works on what the shapes cover so
+/// far, which stays small when they overlap.
+fn union_groups(mut groups: Vec<Vec<Ring>>) -> Vec<Ring> {
+    while groups.len() > 1 {
+        let mut next = Vec::with_capacity(groups.len().div_ceil(2));
+        let mut it = groups.into_iter();
+        while let Some(a) = it.next() {
+            match it.next() {
+                Some(b) => {
+                    let shapes: Vec<IShape> = a.overlay(&b, OverlayRule::Union, IFill::NonZero);
+                    next.push(shapes.into_iter().flatten().collect());
+                }
+                None => next.push(a),
+            }
+        }
+        groups = next;
+    }
+    groups.pop().unwrap_or_default()
+}
+
+/// General boolean between two sets of paths. Each input path is filled by `rule`; each set is
+/// the union of its paths.
 pub fn boolean(subject: &[BezPath], clip: &[BezPath], op: BoolOp, rule: FillRule, tol: f64) -> Vec<BezPath> {
-    let s = normalized_rings(subject, rule, tol);
-    let c = normalized_rings(clip, rule, tol);
+    let s = union_groups(normalized_groups(subject, rule, tol));
+    let c = union_groups(normalized_groups(clip, rule, tol));
     boolean_rings(&s, &c, op)
 }
 
@@ -128,7 +167,7 @@ pub(crate) fn boolean_rings(s: &[Ring], c: &[Ring], op: BoolOp) -> Vec<BezPath> 
 
 /// Union of all `paths`. Returns one path per separate piece (with its holes).
 pub fn union(paths: &[BezPath], rule: FillRule, tol: f64) -> Vec<BezPath> {
-    let rings = normalized_rings(paths, rule, tol);
+    let rings = union_groups(normalized_groups(paths, rule, tol));
     if rings.is_empty() {
         return Vec::new();
     }

@@ -13,6 +13,11 @@ pub fn within(v: f32, lo: f32, hi: f32) -> f32 {
     if lo <= hi { v.clamp(lo, hi) } else { lo }
 }
 
+/// Clamp `v` into `lo..=hi`, keeping it as it is when the bounds are not numbers (a viewport not laid out yet).
+fn keep_within(v: f32, lo: f32, hi: f32) -> f32 {
+    if lo <= hi { v.clamp(lo, hi) } else { v }
+}
+
 /// Shared active-tab hover tint for the browser and collapsible panel chrome.
 pub fn panel_header_hover(painter: &egui::Painter, rect: egui::Rect) {
     let t = Tokens::get();
@@ -717,7 +722,8 @@ impl<'a> Panel<'a> {
         let gap = super::Container::new(ctx, super::Surface::Feature).gap();
         let width = self.width.min(viewport.width().max(0.0));
         let x = match self.side {
-            crate::frame::Side::Right => self.anchor.x.clamp(
+            crate::frame::Side::Right => keep_within(
+                self.anchor.x,
                 viewport.left() + width,
                 (viewport.right() - if gap > 0.0 { Tokens::get().space_8 } else { 0.0 }).max(viewport.left() + width),
             ),
@@ -725,7 +731,7 @@ impl<'a> Panel<'a> {
         };
         let t = Tokens::get();
         let chrome = t.form_header_height + t.form_footer_height + t.form_gap_y * 2.0 + self.frame.total_margin().sum().y + gap;
-        egui::pos2(x, self.anchor.y.clamp(viewport.top(), (viewport.bottom() - chrome).max(viewport.top())))
+        egui::pos2(x, keep_within(self.anchor.y, viewport.top(), (viewport.bottom() - chrome).max(viewport.top())))
     }
 
     /// One positioned frame supplies both the outer surface and its footer corners.

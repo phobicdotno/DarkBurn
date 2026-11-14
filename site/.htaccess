@@ -1,0 +1,72 @@
+# The rules of the web page for the host that serves it (Apache). The page is hosted the way
+# the other pages on phobic.no are: the folder that scripts/build-site.sh makes is uploaded as
+# it is, this file with it. scripts/deploy-site.sh does both.
+#
+# scripts/build-site.sh holds every rule of this file and refuses the file when a line differs
+# (comments are free). To change a rule, change it there first.
+
+<IfModule mod_headers.c>
+  # The headers stand in a block for every file ("."), not as plain lines: the host also reads
+  # the rules of the folder above, and a block there for certain files would otherwise take
+  # the place of a plain line here.
+  <FilesMatch ".">
+    # The same policy as the line in index.html, and one thing a line in a page cannot say:
+    # no other site may show the page in a frame.
+    Header set Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'"
+    Header set X-Frame-Options "DENY"
+    Header set X-Content-Type-Options "nosniff"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    # A browser asks again for every file each time, so an upload shows at once, the pictures
+    # and the fonts too. A file that has not changed is not sent again.
+    Header set Cache-Control "no-cache"
+    # A browser that has been here over https never asks over plain http again, for a year.
+    # Said under the page's own name only: under any other name that shows this folder the
+    # line would bind that name, and the page cannot take that back.
+    Header set Strict-Transport-Security "max-age=31536000" "expr=%{HTTP_HOST} =~ /^darkburn\.phobic\.no(:[0-9]+)?$/"
+  </FilesMatch>
+  # A picture that is opened by itself is shown by the browser on a page of its own making,
+  # which carries style of its own. The policy above would refuse that style, and the picture
+  # would sit in a corner. A picture runs nothing, so its policy allows that much.
+  <FilesMatch "\.(png|ico)$">
+    Header set Content-Security-Policy "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+  </FilesMatch>
+</IfModule>
+
+# A browser asks again by the date of a file alone. With the host's second mark for a file
+# (ETag), a host that compresses what it sends would send the whole file each time.
+FileETag None
+
+# The licence text of the fonts holds a copyright sign.
+AddDefaultCharset utf-8
+
+# The page's own "not found". Its addresses start with "/", so it works at any depth, as long
+# as the folder is the top of a name. Under the main name the first rule below sends every
+# address on to the page's own name; a trial needs a name of its own.
+ErrorDocument 404 /404.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  # A browser marks the request for a script that is to stay behind in it and answer for the
+  # page from then on (a service worker). The page has none, and none is handed out: such a
+  # script would go on answering for the page after a bad site.js was put right.
+  RewriteCond %{HTTP:Service-Worker} .
+  RewriteRule ^ - [F]
+  # The host also serves this folder under the main name, as phobic.no/darkburn/. There the
+  # page would share everything a browser keeps apart by name with all else on phobic.no. So
+  # that address is sent on to the page's own name. Any other name (a trial) is left alone.
+  RewriteCond %{HTTP_HOST} ^(www\.)?phobic\.no\.?(:[0-9]+)?$ [NC]
+  RewriteRule ^(.*)$ https://darkburn.phobic.no/$1 [R=302,L]
+  # Plain http is sent to https first, so the page and the install commands it shows always
+  # arrive encrypted.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+  # The two folders are not pages: no list of their files.
+  RewriteRule ^(img|fonts)/?$ - [R=404,L]
+  # One address for the front page. THE_REQUEST is the browser's own request line, so this
+  # does not fire when the server itself looks for index.html.
+  RewriteCond %{THE_REQUEST} \s/+index(\.html)?[\s?#] [NC]
+  RewriteRule ^ https://%{HTTP_HOST}/ [R=301,L]
+</IfModule>

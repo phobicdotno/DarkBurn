@@ -131,6 +131,10 @@ fn handle_at(xf: &Xf, bbox: kurbo::Rect, s: Pos2) -> Option<Handle> {
 pub fn interact(ui: &Ui, app: &mut DarkBurn, response: &Response, canvas: Rect, xf: &Xf, panning: bool) {
     let ctx = ui.ctx().clone();
     let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
+    // Typing ends when another tool is picked, as it does with Escape.
+    if app.tool != Tool::Text {
+        crate::text_ui::finish_typing(app);
+    }
     if st.tool != app.tool {
         cancel(app, &mut st);
         st.pen = Pen::default();
@@ -341,6 +345,9 @@ fn select_tool(ui: &Ui, app: &mut DarkBurn, st: &mut State, response: &Response,
                             s.transform = a * *t;
                         }
                     }
+                    // What follows the document by its revision (a dialog's preview, the
+                    // auto-save) must see each step of the drag, not only its start.
+                    app.editor.touch();
                 }
             }
             if !ui.input(|i| i.pointer.primary_down()) {
@@ -678,7 +685,9 @@ pub fn paint_overlays(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &egui::Painter,
     {
         let r = xf.rect(b);
         let outline = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-        painter.extend(egui::Shape::dashed_line(&outline, Stroke::new(1.0, accent.gamma_multiply(0.7)), 4.0, 4.0));
+        let mut dashes = Vec::new();
+        crate::render::dashed_line_in(&outline, painter.clip_rect(), Stroke::new(1.0, accent.gamma_multiply(0.7)), 4.0, 4.0, &mut dashes);
+        painter.extend(dashes);
         let mode = st.mode;
         for (h, p) in handle_points(xf, b) {
             let locked = app.locks[DragKind::for_handle(h, mode).lock()];

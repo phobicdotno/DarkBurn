@@ -147,7 +147,11 @@ pub fn apply_results(app: &mut DarkBurn, results: Results, at: Option<Point>) ->
             Err(e) => report.errors.push(format!("{name}: {e}")),
         }
     }
+    let had_shapes = imports.iter().any(|i| !i.shapes.is_empty());
     report.ids = crate::files::insert_with_layers(app, imports, layers);
+    if had_shapes && report.ids.is_empty() {
+        report.errors.push(crate::shape_ops::OUT_OF_REACH.to_string());
+    }
     report
 }
 

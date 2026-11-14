@@ -714,6 +714,8 @@ fn at_first_point(h: HorizontalTextJustification, v: VerticalTextJustification) 
 }
 
 fn text_align(h: HorizontalTextJustification, v: VerticalTextJustification) -> (HAlign, VAlign) {
+    // "Middle" (72=4) comes with vertical 0 and centres the text both ways.
+    let v = if h == HorizontalTextJustification::Middle && v == VerticalTextJustification::Baseline { VerticalTextJustification::Middle } else { v };
     let h = match h {
         HorizontalTextJustification::Left | HorizontalTextJustification::Aligned | HorizontalTextJustification::Fit => HAlign::Left,
         HorizontalTextJustification::Center | HorizontalTextJustification::Middle => HAlign::Center,
@@ -787,7 +789,8 @@ pub fn strip_mtext(s: &str) -> String {
             '\\' if i + 1 < chars.len() => {
                 let n = chars[i + 1];
                 match n {
-                    'P' | 'n' => {
+                    // \X splits dimension text above and below the line; it takes no argument.
+                    'P' | 'n' | 'X' => {
                         out.push('\n');
                         i += 2;
                     }
@@ -812,10 +815,22 @@ pub fn strip_mtext(s: &str) -> String {
                     }
                     'U' if chars.get(i + 2) == Some(&'+') => {
                         let hex: String = chars.iter().skip(i + 3).take(4).collect();
-                        if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
-                            out.push(ch);
+                        let code = if hex.chars().count() == 4 && hex.chars().all(|h| h.is_ascii_hexdigit()) {
+                            u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                        } else {
+                            None
+                        };
+                        match code {
+                            Some(ch) => {
+                                out.push(ch);
+                                i += 7;
+                            }
+                            // Not a code: keep the text as written.
+                            None => {
+                                out.push('\\');
+                                i += 1;
+                            }
                         }
-                        i += 7;
                     }
                     // Codes with an argument ending in ';' (font, height, colour, width ...).
                     _ => {
@@ -854,7 +869,11 @@ fn spline_path(s: &dxf::entities::Spline) -> (BezPath, bool) {
     let n = cps.len();
     let p = degree.min(n - 1);
     let knots: Vec<f64> =
-        if s.knot_values.len() == n + p + 1 && s.knot_values.windows(2).all(|w| w[1] >= w[0]) { s.knot_values.clone() } else { clamped_knots(n, p) };
+        if s.knot_values.len() == n + p + 1 && s.knot_values.iter().all(|k| k.is_finite()) && s.knot_values.windows(2).all(|w| w[1] >= w[0]) {
+            s.knot_values.clone()
+        } else {
+            clamped_knots(n, p)
+        };
     let hom: Vec<[f64; 3]> = cps.iter().zip(&weights).map(|(c, w)| [c.0 * w, c.1 * w, *w]).collect();
     let mut path = BezPath::new();
     let mut approx = false;

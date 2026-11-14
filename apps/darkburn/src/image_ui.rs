@@ -969,7 +969,7 @@ impl ConvertDialog {
     /// Why the result would be refused, if so.
     pub fn problem(&self) -> Option<String> {
         let (w, h) = self.pixels?;
-        (w * h > image_ops::CONVERT_MAX_PIXELS).then(|| format!("{w} x {h} pixels is too large: lower the DPI"))
+        (w.saturating_mul(h) > image_ops::CONVERT_MAX_PIXELS).then(|| format!("{w} x {h} pixels is too large: lower the DPI"))
     }
 }
 

@@ -65,7 +65,17 @@ sh scripts/build-site.sh
 python3 -m http.server -d target/site
 ```
 
-The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there, that nothing is fetched from another host and that every page carries its Content-Security-Policy line. That line allows only the page's own files, so script and style go in `site/site.js` and `site/style.css`, never inside the HTML. `site/` holds four files and the script publishes a fixed list of files: a new file, a new font among them, is named in `scripts/build-site.sh` first. A new picture in `docs/img` needs no such line. A push to `main` that changes the page, the pictures, the fonts or the icon publishes it, once GitHub Pages is switched on for the repository. What the owner sets by hand for that is listed at the top of `.github/workflows/pages.yml`.
+The script puts the page together in `target/site` with copies of the pictures in `docs/img`, the fonts and the icon, and checks that every file the page points to is there, that nothing is fetched from another host and that every page carries its Content-Security-Policy line. That line allows only the page's own files, so script and style go in `site/site.js` and `site/style.css`, never inside the HTML. The script does not judge what those two files do: both can change what a visitor reads, the install commands too, so a change to either is read like a change to a program. The script also holds the two install commands the page shows and refuses the page when they differ, so a change to a command is made in two places. `site/` holds five files and the script publishes a fixed list of files: a new file, a new font among them, is named in `scripts/build-site.sh` first. A new picture in `docs/img` needs no such line.
+
+The fifth file, `site/.htaccess`, holds the rules for the web host: the same policy as a header, that a browser asks again for every file, the "not found" page, https, and one name for the page. The host runs PHP, and one line in that file could make it run an uploaded file as a program, so the script holds the same rules and refuses the file when a line differs. A rule is changed in `scripts/build-site.sh` first, then in the file.
+
+The page is hosted on the owner's own web host, the way the other pages on phobic.no are: a folder of plain files, uploaded over SFTP. Nothing publishes it by itself. After a change to the page is on `main`, the owner uploads it, with this script and nothing else (`site/` is not the folder that goes up, and a program that skips files whose names start with a dot would leave `.htaccess` out):
+
+```sh
+sh scripts/deploy-site.sh USER
+```
+
+`USER` is the SFTP user of the host; the password is typed each time and is stored nowhere in the repository or its settings. The script uploads from `main` with nothing uncommitted: it builds the folder, uploads it, names what the folder on the host holds besides the page and says what the page then answers. `.github/workflows/site.yml` builds and checks the page on pull requests and on `main`. Once a day it also compares the page on the host with what `main` builds, so it is red while a change to the page waits for its upload, and when a file was changed on the host.
 
 The picture at the top of the README, `docs/readme-banner.png`, shows the top of the page: status, headline and the line under it. When one of those changes on the page, the picture is drawn again from `tools/readme-banner.html`; the two commands are at the top of that file.
 

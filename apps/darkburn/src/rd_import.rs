@@ -92,11 +92,12 @@ fn to_imported(job: &RdJob) -> (di::Imported, Vec<LayerCuts>) {
     let at = |p: Point| Point::new(p.x, top - p.y);
     let mut out = di::Imported::default();
     let mut cuts = Vec::new();
+    // The head stays where a layer left it: the next layer may cut on from there.
+    let mut here = Point::ZERO;
     for layer in &job.layers {
         let s = &layer.settings;
         let mut paths: Vec<BezPath> = Vec::new();
         let mut cur: Option<BezPath> = None;
-        let mut here = Point::ZERO;
         for op in &layer.ops {
             match *op {
                 RdOp::Move(p) => {

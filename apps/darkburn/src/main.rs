@@ -34,8 +34,13 @@ mod cuts_panel;
 mod device_file_tests;
 mod devices;
 mod devices_ui;
+#[cfg(test)]
+mod doc_hunt10_tests;
+#[cfg(test)]
+mod doc_hunt10b_tests;
 mod dock_geom;
 mod dock_layout;
+mod draw_more;
 mod escape;
 mod extras;
 mod file_io;
@@ -52,6 +57,9 @@ mod galvo_machine;
 mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
+mod gweike_card;
+#[cfg(test)]
+mod gweike_card_ui_tests;
 mod gweike_recipes;
 #[cfg(test)]
 mod gweike_recipes_tests;
@@ -76,10 +84,14 @@ mod job_hunt5_tests;
 #[cfg(test)]
 mod job_plan_tests;
 mod job_ui;
+#[cfg(test)]
+mod jobs_hunt10_tests;
 mod key_cmds;
 mod keymap;
 #[cfg(test)]
 mod keys_tests;
+#[cfg(test)]
+mod known_hunt10_tests;
 mod language_fonts;
 mod languages;
 mod laser_panel;
@@ -94,6 +106,10 @@ mod machine_ext;
 mod machine_ext_tests;
 #[cfg(test)]
 mod machine_ext_ui_tests;
+#[cfg(test)]
+mod machine_hunt10_tests;
+#[cfg(test)]
+mod machine_hunt10b_tests;
 mod machine_job;
 mod machine_ui;
 #[cfg(test)]

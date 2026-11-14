@@ -492,13 +492,22 @@ impl Shape {
         }
     }
 
-    /// The keys of every image this shape uses.
+    /// The keys of every image this shape uses: its own, its children's, and those of a virtual
+    /// array's originals (the copies are made from them again).
     pub fn image_keys(&self) -> Vec<String> {
-        match &self.kind {
+        let mut keys = match &self.kind {
             ShapeKind::Image(img) => vec![img.image.clone()],
             ShapeKind::Group { children } => children.iter().flat_map(Shape::image_keys).collect(),
             _ => Vec::new(),
+        };
+        if let Some(a) = &self.array {
+            for k in a.source.iter().flat_map(Shape::image_keys) {
+                if !keys.contains(&k) {
+                    keys.push(k);
+                }
+            }
         }
+        keys
     }
 
     /// Node points of the outline (end points of every segment), for snapping and editing.

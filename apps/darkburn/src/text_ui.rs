@@ -839,6 +839,12 @@ fn apply(app: &mut DarkBurn, ids: &[ShapeId], mut args: Value) {
     }
 }
 
+/// [`apply`] for what number field `field` set: `drag` when the change goes on a drag of the
+/// field that is under way, so the whole drag is one undo step.
+fn apply_number(app: &mut DarkBurn, ctx: &Context, field: &str, drag: bool, ids: &[ShapeId], args: Value) {
+    numeric::commit_command(app, ctx, Id::unique(("text_number", field)), drag, |app| apply(app, ids, args));
+}
+
 /// The Text Options toolbar groups drawn in the ribbon: `kind` is text_font, text_style,
 /// text_spacing, text_align or text_variable. Returns the right edge.
 pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut DarkBurn) -> f32 {
@@ -855,6 +861,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
         "text_font" => {
             let area = Rect::from_min_size(at, vec2(210.0, height));
             let mut next = None;
+            let mut drag = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.horizontal(|ui| {
@@ -879,6 +886,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                     if ed.changed {
                         if live {
                             next = Some(json!({ "height": h.max(0.1) }));
+                            drag = Some(ed.continues());
                         } else {
                             app.prefs.fonts.default_size = h.max(0.1);
                         }
@@ -886,7 +894,9 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                 });
             });
             if let Some(a) = next {
-                if live {
+                if let Some(d) = drag {
+                    apply_number(app, &ui.ctx().clone(), "height", d, &ids, a);
+                } else if live {
                     apply(app, &ids, a);
                 } else if let Some(f) = a.get("font").and_then(Value::as_str) {
                     app.prefs.fonts.default_family = f.to_string();
@@ -937,14 +947,14 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                                 .inner;
                             crate::a11y::number(ui, &ed.response, &format!("{name} spacing"));
                             if ed.changed {
-                                next = Some(json!({ key: x }));
+                                next = Some((key, ed.continues(), json!({ key: x })));
                             }
                         });
                     }
                 });
             });
-            if let Some(a) = next {
-                apply(app, &ids, a);
+            if let Some((key, d, a)) = next {
+                apply_number(app, &ui.ctx().clone(), key, d, &ids, a);
             }
             area.right()
         }
@@ -984,6 +994,7 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
         "text_variable" => {
             let area = Rect::from_min_size(at, vec2(190.0, height));
             let mut next = None;
+            let mut drag = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(area).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
                 ui.add_enabled_ui(live, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
@@ -1007,12 +1018,15 @@ pub fn ribbon_item(ui: &mut Ui, kind: &str, at: Pos2, height: f32, app: &mut Dar
                         crate::a11y::number(ui, &ed.response, "Index offset");
                         if ed.changed {
                             next = Some(json!({ "offset": numeric::whole(o) }));
+                            drag = Some(ed.continues());
                         }
                     });
                 });
             });
-            if let Some(a) = next {
-                apply(app, &ids, a);
+            match (next, drag) {
+                (Some(a), Some(d)) => apply_number(app, &ui.ctx().clone(), "offset", d, &ids, a),
+                (Some(a), None) => apply(app, &ids, a),
+                _ => {}
             }
             area.right()
         }
@@ -1033,6 +1047,7 @@ pub fn properties_extra(ui: &mut Ui, app: &mut DarkBurn) {
     let (ids, first) = selected_texts(app);
     let Some(t) = first else { return };
     let mut next = None;
+    let mut drag = None;
     ui_kit::row(ui, "Font", |ui| {
         let shx = app.prefs.shx_fonts.clone();
         let mut prefs = app.prefs.fonts.clone();
@@ -1058,6 +1073,7 @@ pub fn properties_extra(ui: &mut Ui, app: &mut DarkBurn) {
         let ed = ui.push_id("sp_var_offset", |ui| numeric::field(ui, &mut o, &Num::new(-100_000.0..=100_000.0, 0, ""))).inner;
         if ed.changed {
             next = Some(json!({ "offset": numeric::whole(o) }));
+            drag = Some(ed.continues());
         }
     });
     if ui_kit::button(ui, "Edit text shapes...", ui_kit::Button::Small).clicked() {
@@ -1066,8 +1082,10 @@ pub fn properties_extra(ui: &mut Ui, app: &mut DarkBurn) {
     if t.on_path.is_some() && ui_kit::button(ui, "Take off the path", ui_kit::Button::Small).clicked() {
         let _ = crate::api::execute_headless(app, "text.detach_path", &json!({ "ids": ids.iter().map(|i| i.0).collect::<Vec<_>>() }));
     }
-    if let Some(a) = next {
-        apply(app, &ids, a);
+    match (next, drag) {
+        (Some(a), Some(d)) => apply_number(app, &ui.ctx().clone(), "sp_offset", d, &ids, a),
+        (Some(a), None) => apply(app, &ids, a),
+        _ => {}
     }
 }
 
@@ -1443,11 +1461,14 @@ pub fn variable_panel(ui: &mut Ui, app: &mut DarkBurn) {
     ui.label(RichText::new("Serial numbers and CSV rows used by variable text, QR codes and barcodes.").size(t.font_small).color(t.text_dim));
     ui.add_space(t.space_6);
     let mut set: Option<Value> = None;
-    let mut int_row = |ui: &mut Ui, label: &str, key: &str, value: i64, range: std::ops::RangeInclusive<f64>| {
+    // The field that set it, and whether a drag of it goes on (one undo step per drag).
+    let mut drag: Option<(&'static str, bool)> = None;
+    let mut int_row = |ui: &mut Ui, label: &str, key: &'static str, value: i64, range: std::ops::RangeInclusive<f64>| {
         let mut x = value as f64;
         let ed = ui.push_id(("vt", key), |ui| numeric::row(ui, label, &mut x, &Num::new(range, 0, ""))).inner;
         if ed.changed {
             set = Some(json!({ key: numeric::whole(x) }));
+            drag = Some((key, ed.continues()));
         }
     };
     int_row(ui, "Start", "start", v.serial.start, -1e12..=1e12);
@@ -1458,9 +1479,14 @@ pub fn variable_panel(ui: &mut Ui, app: &mut DarkBurn) {
     let mut auto = v.auto_advance;
     if ui_kit::checkbox(ui, "Auto-advance after a job", &mut auto).changed() {
         set = Some(json!({ "auto_advance": auto }));
+        drag = None;
     }
-    if let Some(a) = set {
-        run_cmd(app, "variable.set", &a);
+    match (set, drag) {
+        (Some(a), Some((key, d))) => {
+            numeric::commit_command(app, &ui.ctx().clone(), Id::unique(("vt_number", key)), d, |app| run_cmd(app, "variable.set", &a));
+        }
+        (Some(a), None) => run_cmd(app, "variable.set", &a),
+        _ => {}
     }
     ui.horizontal_wrapped(|ui| {
         for (label, cmd) in [("Previous", "variable.previous"), ("Next", "variable.next"), ("Reset", "variable.reset"), ("Bake", "variable.bake")] {

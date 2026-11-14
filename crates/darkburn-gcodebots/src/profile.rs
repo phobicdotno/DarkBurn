@@ -555,7 +555,8 @@ impl DeviceProfile {
                 out.push(format!("The work area {what} must be between 0 and 5000 mm."));
             }
         }
-        if !(self.gcode.s_max > 0.0) {
+        // Not endless either: every power would be written as the largest number there is.
+        if !(self.gcode.s_max > 0.0 && self.gcode.s_max.is_finite()) {
             out.push("S-value max must be above 0.".to_owned());
         }
         if !(1200..=2_000_000).contains(&self.gcode.baud) {
@@ -564,8 +565,11 @@ impl DeviceProfile {
         if self.gcode.tool_index > 9 {
             out.push("The tool index must be 0 to 9.".to_owned());
         }
-        if self.gcode.max_fire_percent < 0.0 || self.gcode.max_fire_percent > 100.0 {
+        if !(0.0..=100.0).contains(&self.gcode.max_fire_percent) {
             out.push("The fire button power limit must be 0 to 100 %.".to_owned());
+        }
+        if !(self.gcode.max_fire_seconds >= 0.0 && self.gcode.max_fire_seconds.is_finite()) {
+            out.push("The fire button time limit must be a number of seconds, 0 or more.".to_owned());
         }
         if let Connection::Tcp { host, port } = &self.connection
             && (host.trim().is_empty() || *port == 0)
@@ -595,7 +599,9 @@ impl DeviceProfile {
     }
 
     pub fn fire_duration(&self) -> Duration {
-        Duration::from_secs_f64(self.gcode.max_fire_seconds.clamp(0.0, 600.0))
+        // "Not a number" stays what it is through `clamp`, and a duration cannot be made of it.
+        let seconds = self.gcode.max_fire_seconds;
+        Duration::from_secs_f64(if seconds.is_nan() { 0.0 } else { seconds.clamp(0.0, 600.0) })
     }
 
     /// Pretty JSON for one device (DEV-05).

@@ -553,10 +553,18 @@ impl MachineUi {
     /// Switch device: remember the old one's state, adopt the new one's [DEV-07]. A Connect
     /// question still waiting was about the device active before, so it goes.
     pub fn select_device(&mut self, id: u64) -> bool {
+        // The device in use already: nothing changes, and its connection (with the job it may be
+        // running) stays.
+        if self.devices.active == Some(id) && self.devices.get(id).is_some() {
+            return true;
+        }
         if !self.devices.select(id) {
             return false;
         }
         self.dlg.confirm_connect = None;
+        // Laser 2 and U axis drafts belong to the controller they were read from.
+        self.dlg.laser2 = None;
+        self.dlg.u_axis = None;
         if self.handle.is_connected() || self.handle.is_real_machine() {
             self.handle.disconnect();
         }
@@ -706,12 +714,17 @@ fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
     }
 }
 
-fn num(a: &Value, k: &str) -> Option<f64> {
-    a.get(k).and_then(Value::as_f64).filter(|v| v.is_finite())
+/// Argument `k` as a number: `None` when it is not given, an error when it is given but is not a
+/// number. A machine command never runs with its default in place of a value it could not read.
+fn num(a: &Value, k: &str) -> Result<Option<f64>, String> {
+    match a.get(k) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_f64().filter(|v| v.is_finite()).map(Some).ok_or_else(|| format!("argument {k} must be a number")),
+    }
 }
 
 fn need(a: &Value, k: &str) -> Result<f64, String> {
-    num(a, k).ok_or_else(|| format!("argument {k} must be a number"))
+    num(a, k)?.ok_or_else(|| format!("argument {k} must be a number"))
 }
 
 fn mach(r: Result<(), MachineError>) -> Result<Value, String> {
@@ -859,6 +872,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         // ----- connection
         "machine.connect" => {
+            if a.get("device").is_some_and(|d| !d.is_null() && !d.is_u64()) {
+                return Err("argument device must be a device id (a whole number)".into());
+            }
             if let Some(dev) = a.get("device").and_then(Value::as_u64)
                 && !m.select_device(dev)
             {
@@ -900,7 +916,12 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
                 Family::Ruida if from_head => Some(Point::new(s.machine_pos[0], s.machine_pos[1])),
                 _ => None,
             };
-            let spec = FrameSpec { feed: num(a, "feed").unwrap_or(3000.0), laser_percent: num(a, "laser_percent"), return_to };
+            let spec = FrameSpec { feed: num(a, "feed")?.unwrap_or(3000.0), laser_percent: num(a, "laser_percent")?, return_to };
+            // The limit the device has now, as for Fire.
+            let limit = m.active().settings.fire_max_percent;
+            if s.family == Family::Grbl && spec.laser_percent.is_some_and(|p| p > limit) {
+                return Err(format!("Fire power must be between 0 and {limit} %."));
+            }
             mach(m.handle.frame_rect(r, spec))
         }
         "machine.home" => mach(m.handle.home()),
@@ -909,18 +930,23 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         // ----- moves
         "machine.jog" => {
             let spec = JogSpec {
-                dx: num(a, "dx").unwrap_or(0.0),
-                dy: num(a, "dy").unwrap_or(0.0),
-                dz: num(a, "dz").unwrap_or(0.0),
-                du: num(a, "du").unwrap_or(0.0),
-                feed: num(a, "feed").unwrap_or(m.jog.speed * 60.0),
+                dx: num(a, "dx")?.unwrap_or(0.0),
+                dy: num(a, "dy")?.unwrap_or(0.0),
+                dz: num(a, "dz")?.unwrap_or(0.0),
+                du: num(a, "du")?.unwrap_or(0.0),
+                feed: num(a, "feed")?.unwrap_or(m.jog.speed * 60.0),
             };
             mach(m.handle.jog_step(spec))
         }
         "machine.jog_start" => {
-            let d = |k: &str| a.get(k).and_then(Value::as_i64).unwrap_or(0).clamp(-1, 1) as i8;
+            let d = |k: &str| match a.get(k) {
+                None | Some(Value::Null) => Ok(0),
+                Some(v) => v.as_i64().map(|v| v.clamp(-1, 1) as i8).ok_or_else(|| format!("argument {k} must be -1, 0 or 1")),
+            };
+            let dirs = [d("x")?, d("y")?, d("z")?, d("u")?];
+            let feed = num(a, "feed")?.unwrap_or(m.jog.speed * 60.0);
             m.jog.holding = true;
-            mach(m.handle.jog_start([d("x"), d("y"), d("z"), d("u")], num(a, "feed").unwrap_or(m.jog.speed * 60.0)))
+            mach(m.handle.jog_start(dirs, feed))
         }
         "machine.jog_stop" => {
             m.jog.holding = false;
@@ -928,11 +954,11 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "machine.move_to" => {
             let spec = MoveSpec {
-                x: num(a, "x"),
-                y: num(a, "y"),
-                z: num(a, "z"),
+                x: num(a, "x")?,
+                y: num(a, "y")?,
+                z: num(a, "z")?,
                 machine_coords: a.get("machine_coords").and_then(Value::as_bool).unwrap_or(false),
-                feed: num(a, "feed").unwrap_or(m.jog.speed * 60.0),
+                feed: num(a, "feed")?.unwrap_or(m.jog.speed * 60.0),
             };
             mach(m.handle.move_to(spec))
         }
@@ -944,14 +970,26 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
             if d.family() == Family::Grbl && !d.settings.gcode.fire_button {
                 return Err("The Fire button is switched off for this device. Switch it on in Device Settings first.".into());
             }
-            let percent = num(a, "percent").unwrap_or(m.fire_percent);
-            let secs = num(a, "secs").unwrap_or(m.fire_secs);
+            let percent = num(a, "percent")?.unwrap_or(m.fire_percent);
+            let secs = num(a, "secs")?.unwrap_or(m.fire_secs);
+            // The driver holds the limit it was connected with; the device's limit counts from
+            // the moment it is set (a frame with the laser on keeps to it the same way).
+            let limit = d.settings.fire_max_percent;
+            if d.family() == Family::Grbl && percent > limit {
+                return Err(format!("Fire power must be between 0 and {limit} %."));
+            }
             mach(m.handle.fire(percent, secs))
         }
         "machine.fire_off" => mach(m.handle.fire_off()),
         "machine.overrides" => {
-            let g = |k: &str| a.get(k).and_then(Value::as_u64).and_then(|v| u16::try_from(v).ok());
-            mach(m.handle.set_overrides(g("feed"), g("power"), g("rapid")))
+            // A value that is no whole percentage is an error, not an override left as it was.
+            let g = |k: &str| match a.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => {
+                    v.as_u64().and_then(|v| u16::try_from(v).ok()).map(Some).ok_or_else(|| format!("argument {k} must be a whole number of percent"))
+                }
+            };
+            mach(m.handle.set_overrides(g("feed")?, g("power")?, g("rapid")?))
         }
         // ----- console and settings
         "machine.console" => mach(m.handle.send_console(a.get("line").and_then(Value::as_str).ok_or("argument line must be text")?)),
@@ -1039,6 +1077,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         "device.read_motion" => {
             let snap = m.handle.snapshot().clone();
             let base = m.active().settings.additional;
+            if !snap.connected() {
+                return Err("No controller is connected. Connect and read the machine settings first.".into());
+            }
             let new = crate::motion_read::from_snapshot(&snap, base)
                 .ok_or("The controller has not reported its settings yet. Connect and read the machine settings first.")?;
             if let Some(dev) = m.devices.active_mut() {
@@ -1311,6 +1352,11 @@ pub fn family_of(m: &MachineUi) -> Family {
 /// corner, G-code settings, motion numbers and scan offsets flow from it into `app.job`. Edits made
 /// in the job builder's own G-code window or the images window flow back into the profile.
 pub fn sync_job_state(app: &mut DarkBurn) {
+    // What `job.json` holds is read before the first hand-over. Read after it (the job windows
+    // load it later in the frame), it looked like an edit made in the job builder and replaced
+    // the active device's own G-code settings at every start.
+    let dir = app.settings_dir.clone();
+    app.job.ensure_loaded(dir.as_deref());
     let Some(active) = app.machine.devices.active else { return };
     let scan_now = crate::scan_offsets::current();
     let same_device = app.machine.job_synced.as_ref().is_some_and(|s| s.0 == active);

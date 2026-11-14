@@ -42,6 +42,9 @@ pub struct Env {
 
 pub type R = Result<Value, String>;
 
+/// What a command that would make shapes further out than a design can reach answers.
+pub const OUT_OF_REACH: &str = "That lies further out than a design can reach: nothing was made.";
+
 // ---------------------------------------------------------------- argument helpers
 
 pub fn num(a: &Value, key: &str, default: f64) -> f64 {
@@ -104,10 +107,17 @@ pub fn path_shape(path: BezPath, layer: usize, name: &str) -> Shape {
 }
 
 /// Take `consumed` out of the document and put `new` where the lowest of them was; the new
-/// shapes become the selection.
+/// shapes become the selection. A picture inside a group that is used up has no outline that
+/// took part: it stays, out of its group, under the new shapes.
 pub fn replace(doc: &mut Document, sel: &mut Selection, consumed: &[ShapeId], new: Vec<Shape>) -> Vec<ShapeId> {
-    let at = consumed.iter().filter_map(|i| doc.index_of(*i)).min().unwrap_or(doc.len());
+    let mut at = consumed.iter().filter_map(|i| doc.index_of(*i)).min().unwrap_or(doc.len());
+    let pictures: Vec<Shape> =
+        consumed.iter().filter_map(|i| doc.get(*i)).filter(|s| s.is_group()).flat_map(Shape::leaves).filter(Shape::is_image).collect();
     doc.remove(consumed);
+    for p in pictures {
+        doc.insert(at, p);
+        at += 1;
+    }
     let out: Vec<ShapeId> = new.into_iter().enumerate().map(|(k, s)| doc.insert(at + k, s)).collect();
     sel.set(out.iter().copied());
     out
@@ -167,6 +177,45 @@ pub fn map_shapes(doc: &mut Document, ids: &[ShapeId], f: &mut dyn FnMut(&Shape)
     n
 }
 
+/// [`map_shapes`] for work that is measured in the document (a warp to given corners, a radius
+/// or a tolerance in millimetres): `f` gets each shape and its outline where it lies in the
+/// document and answers there, also for a shape in a group that was moved, turned or scaled
+/// after it was made.
+pub fn map_shapes_in_doc(doc: &mut Document, ids: &[ShapeId], f: &mut dyn FnMut(&Shape, &BezPath) -> Option<BezPath>) -> usize {
+    fn walk(s: &mut Shape, parent: Affine, f: &mut dyn FnMut(&Shape, &BezPath) -> Option<BezPath>) -> usize {
+        if let ShapeKind::Group { children } = &mut s.kind {
+            let own = parent * s.transform;
+            let n = children.iter_mut().map(|c| walk(c, own, f)).sum();
+            if n > 0 {
+                s.array = None;
+            }
+            return n;
+        }
+        if parent == Affine::IDENTITY {
+            return map_shape(s, &mut |s| f(s, &s.outline()));
+        }
+        // A group squashed flat has no way back from the document: its shapes are left alone.
+        if !parent.is_finite() || parent.determinant().abs() < 1e-12 {
+            return 0;
+        }
+        let back = parent.inverse();
+        map_shape(s, &mut |s| {
+            let mut p = s.outline();
+            p.apply_affine(parent);
+            let mut q = f(s, &p)?;
+            q.apply_affine(back);
+            Some(q)
+        })
+    }
+    let mut n = 0;
+    for id in ids {
+        if let Some(s) = doc.get_mut(*id) {
+            n += walk(s, Affine::IDENTITY, f);
+        }
+    }
+    n
+}
+
 /// The outline of a plain shape in document coordinates (None for groups and images).
 pub fn shape_path(doc: &Document, id: ShapeId) -> Option<BezPath> {
     let s = doc.get(id)?;
@@ -214,13 +263,12 @@ fn close_path(e: &mut Editor, a: &Value, tolerance: bool) -> R {
     let tol = num(a, "tolerance", 0.1).clamp(1e-6, 1000.0);
     let mut n = 0;
     let done = e.edit("Close path", |d, _| {
-        n = map_shapes(d, &ids, &mut |s| {
+        n = map_shapes_in_doc(d, &ids, &mut |s, p| {
             if !matches!(s.kind, ShapeKind::Path { .. }) {
                 return None;
             }
-            let p = s.outline();
-            let q = if tolerance { cleanup::close_paths_with_tolerance(&p, tol) } else { cleanup::close_path(&p) };
-            (q != p).then_some(q)
+            let q = if tolerance { cleanup::close_paths_with_tolerance(p, tol) } else { cleanup::close_path(p) };
+            (q != *p).then_some(q)
         });
         n > 0
     });
@@ -280,15 +328,14 @@ fn optimize(e: &mut Editor, a: &Value) -> R {
     let tol = num(a, "tolerance", 0.01).clamp(1e-6, 100.0);
     let (mut before, mut after) = (0, 0);
     let done = e.edit("Optimize", |d, _| {
-        let n = map_shapes(d, &ids, &mut |s| {
+        let n = map_shapes_in_doc(d, &ids, &mut |s, p| {
             if !matches!(s.kind, ShapeKind::Path { .. }) {
                 return None;
             }
-            let p = s.outline();
-            let (q, r) = cleanup::optimize(&p, tol);
+            let (q, r) = cleanup::optimize(p, tol);
             before += r.nodes_before;
             after += r.nodes_after;
-            (q != p).then_some(q)
+            (q != *p).then_some(q)
         });
         n > 0
     });
@@ -746,14 +793,13 @@ fn resize_slots_cmd(e: &mut Editor, a: &Value) -> R {
     }
     let mut count = 0;
     let done = e.edit("Resize slots", |d, _| {
-        let n = map_shapes(d, &ids, &mut |s| {
-            let p = s.outline();
-            let found = slots::find_slots(&p, &q);
+        let n = map_shapes_in_doc(d, &ids, &mut |_, p| {
+            let found = slots::find_slots(p, &q);
             if found.is_empty() {
                 return None;
             }
             count += found.len();
-            Some(slots::resize_slots(&p, &found, nw, nd))
+            Some(slots::resize_slots(p, &found, nw, nd))
         });
         n > 0
     });
@@ -776,11 +822,16 @@ fn select_smaller(e: &mut Editor, _a: &Value) -> R {
         .map(|s| s.id)
         .collect();
     e.selection.set(found.iter().copied());
-    e.touch();
     ok(false, &found)
 }
 
 // ---------------------------------------------------------------- warp, deform, corners
+
+/// A point a design can reach: finite and no further out than the editor allows.
+fn within_reach(p: Point) -> bool {
+    let max = darkburn_core::editor::MAX_COORD;
+    p.x.is_finite() && p.y.is_finite() && p.x.abs() <= max && p.y.abs() <= max
+}
 
 fn warp(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
@@ -796,12 +847,14 @@ fn warp(e: &mut Editor, a: &Value) -> R {
         }
         _ => return Err("corners must list four [x, y] points: bottom-left, bottom-right, top-right, top-left".into()),
     };
+    if !corners.iter().all(|p| within_reach(*p)) {
+        return Err(OUT_OF_REACH.into());
+    }
     let perspective = word(a, "mode", "perspective") == "perspective";
     let mut failed = false;
     let done = e.edit("Warp", |d, _| {
-        map_shapes(d, &ids, &mut |s| {
-            let p = s.outline();
-            let r = if perspective { gxf::warp_perspective(&p, src, corners, TOL) } else { gxf::warp_bilinear(&p, src, corners, TOL) };
+        map_shapes_in_doc(d, &ids, &mut |_, p| {
+            let r = if perspective { gxf::warp_perspective(p, src, corners, TOL) } else { gxf::warp_bilinear(p, src, corners, TOL) };
             failed |= r.is_none();
             r
         }) > 0
@@ -816,7 +869,7 @@ fn warp(e: &mut Editor, a: &Value) -> R {
 /// would be refused anyway, after a long time spent bending the shapes towards it.
 fn reachable(p: Point) -> Result<Point, String> {
     let max = darkburn_core::editor::MAX_COORD;
-    if p.x.abs() <= max && p.y.abs() <= max { Ok(p) } else { Err("the points must lie within the work area's reach".into()) }
+    if p.x.abs() <= max && p.y.abs() <= max { Ok(p) } else { Err(OUT_OF_REACH.into()) }
 }
 
 fn deform(e: &mut Editor, a: &Value) -> R {
@@ -831,7 +884,12 @@ fn deform(e: &mut Editor, a: &Value) -> R {
         let arr = v.as_array().filter(|x| x.len() == 2).ok_or("grid points are [x, y]")?;
         grid[i / 4][i % 4] = reachable(Point::new(arr[0].as_f64().ok_or("bad point")?, arr[1].as_f64().ok_or("bad point")?))?;
     }
-    let done = e.edit("Deform", |d, _| map_shapes(d, &ids, &mut |s| gxf::deform_grid(&s.outline(), src, grid, TOL)) > 0);
+    // A point beyond reach could only give a shape nobody can reach, and flattening the mapping
+    // of such a point asks for gigabytes.
+    if !grid.iter().flatten().all(|p| within_reach(*p)) {
+        return Err(OUT_OF_REACH.into());
+    }
+    let done = e.edit("Deform", |d, _| map_shapes_in_doc(d, &ids, &mut |_, p| gxf::deform_grid(p, src, grid, TOL)) > 0);
     ok(done, &ids)
 }
 
@@ -851,15 +909,14 @@ fn round_corners(e: &mut Editor, a: &Value, env: &Env) -> R {
             .collect()
     });
     let done = e.edit("Round corners", |d, _| {
-        map_shapes(d, &ids, &mut |s| {
-            let p = s.outline();
+        map_shapes_in_doc(d, &ids, &mut |_, p| {
             let q = match (&nodes, chamfer) {
-                (None, false) => fillet::round_corners(&p, radius, TOL),
-                (Some(n), false) => fillet::round_corners_at(&p, n, radius, TOL),
-                (None, true) => fillet::chamfer(&p, radius.abs(), TOL),
-                (Some(n), true) => fillet::chamfer_at(&p, n, radius.abs(), TOL),
+                (None, false) => fillet::round_corners(p, radius, TOL),
+                (Some(n), false) => fillet::round_corners_at(p, n, radius, TOL),
+                (None, true) => fillet::chamfer(p, radius.abs(), TOL),
+                (Some(n), true) => fillet::chamfer_at(p, n, radius.abs(), TOL),
             };
-            (q != p).then_some(q)
+            (q != *p).then_some(q)
         }) > 0
     });
     ok(done, &ids)

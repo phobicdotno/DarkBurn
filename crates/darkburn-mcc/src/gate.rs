@@ -10,7 +10,7 @@
 //! No write that this crate can build publicly needs the laser level; the level exists so the model
 //! matches the owner's gate and so a simulator test can show that laser-class data is refused.
 
-use crate::command::{Policy, SafeWrite, SafetyConfig};
+use crate::command::{CMD_STOP, FIFO_STOP, Policy, SafeWrite, SafetyConfig, classify_write};
 use crate::registers::{REG_COMMAND, REG_FIFO_CONTROL, REG_FIFO_DATA, Status, StatusBlock, check_read};
 use std::collections::BTreeMap;
 
@@ -217,6 +217,11 @@ pub enum GateRefusal {
     /// port on or start a FIFO holding CO2 output, or it is a laser write or a stream start
     /// while a CO2 port is on (or no status has shown it to be off). No arming level lifts this.
     Co2WaterAlarm,
+    /// The write breaks a limit of this gate's own configuration (bed size, ceilings, ports).
+    Limit(String),
+    /// `0x67 <- [2]` refused: the card still holds frames of a job that was stopped. How a stopped
+    /// job is continued is not known, so the queue has to be cleared first.
+    QueueHeld,
 }
 
 impl std::fmt::Display for GateRefusal {
@@ -233,6 +238,8 @@ impl std::fmt::Display for GateRefusal {
             GateRefusal::LaserFramesQueued => write!(f, "card FIFO holds frames queued while laser armed: clear it first"),
             GateRefusal::ReadNotAllowed(s) => write!(f, "{s}"),
             GateRefusal::Co2WaterAlarm => write!(f, "Water Cooling System alarm: CO2 laser blocked"),
+            GateRefusal::Limit(s) => write!(f, "outside this machine's limits: {s}"),
+            GateRefusal::QueueHeld => write!(f, "the card still holds a stopped job: clear the queue first"),
         }
     }
 }
@@ -297,6 +304,8 @@ pub struct SafetyGate {
     pub co2_output_on: Option<bool>,
     last_alarm: (u32, u32),
     leases: BTreeMap<u32, u64>,
+    frames_since_clear: bool,
+    queue_held: bool,
 }
 
 impl Default for SafetyGate {
@@ -323,6 +332,22 @@ impl SafetyGate {
             co2_output_on: None,
             last_alarm: (0, 0),
             leases: BTreeMap::new(),
+            frames_since_clear: false,
+            queue_held: false,
+        }
+    }
+
+    /// True while the card holds frames of a job that was stopped (by the operator, an alarm or
+    /// an emergency stop) and the queue was not cleared since. A start is refused until then.
+    pub fn queue_held(&self) -> bool {
+        self.queue_held
+    }
+
+    /// A stop was asked for or is going out. Frames queued since the last clear now belong to a
+    /// stopped job.
+    pub fn note_stop(&mut self) {
+        if self.frames_since_clear {
+            self.queue_held = true;
         }
     }
 
@@ -391,6 +416,9 @@ impl SafetyGate {
                 }
             }
         }
+        if !actions.is_empty() {
+            self.note_stop();
+        }
         actions
     }
 
@@ -421,9 +449,21 @@ impl SafetyGate {
 
     /// Decide whether `w` may be sent now.
     pub fn check_write(&mut self, w: &SafeWrite, now_ms: u64) -> Result<(), GateRefusal> {
+        // A write is classified against the default limits when it is built. This gate may be
+        // set up for a smaller bed, lower ceilings or other ports, so it classifies the write
+        // again with its own limits and the output word it last read, and the stricter answer
+        // counts. Stopping is the exception: no limit of this gate holds a stop back.
+        let (mut policy, mut needs_homed) = (w.policy(), w.needs_homed());
+        let limit = match classify_write(w.register(), w.words(), &self.config.safety, self.last_do_word) {
+            Ok(d) => {
+                policy = policy.max(d.policy);
+                needs_homed |= d.needs_homed;
+                None
+            }
+            Err(e) => Some(e),
+        };
         // HARD block first, ahead of every arming and fault check: the CO2 tube never fires
         // without its cooling water. Nothing (arming, operator confirmation) overrides this.
-        let policy = w.policy();
         if !self.co2_water_ok {
             let fifo_start = w.register() == REG_FIFO_CONTROL && w.words() == [crate::command::FIFO_START];
             // Switching a CO2 port on, directly or from the queue.
@@ -439,10 +479,17 @@ impl SafetyGate {
                 return Err(GateRefusal::Co2WaterAlarm);
             }
         }
+        if let Some(e) = limit {
+            let stops = (w.register() == REG_COMMAND && w.words().first() == Some(&CMD_STOP))
+                || (w.register() == REG_FIFO_CONTROL && w.words() == [FIFO_STOP]);
+            if !stops {
+                return Err(GateRefusal::Limit(e.to_string()));
+            }
+        }
         if !self.arming.allows(policy) {
             return Err(GateRefusal::NeedsArming { policy, state: self.arming.state(), estop_latched: self.arming.estop_latched() });
         }
-        if w.needs_homed() && !self.homed {
+        if needs_homed && !self.homed {
             return Err(GateRefusal::NotHomed);
         }
         if !matches!(policy, Policy::Always | Policy::Connect)
@@ -478,7 +525,7 @@ impl SafetyGate {
         let streaming = w.register() == REG_FIFO_DATA || (w.register() == REG_FIFO_CONTROL && words == [2]);
         if streaming && !self.comm_ok(now_ms) {
             if self.fifo_running || self.arming.job_token().is_some() {
-                self.arming.disarm("comm loss");
+                self.give_up_job();
             }
             return Err(GateRefusal::CommLoss);
         }
@@ -490,6 +537,9 @@ impl SafetyGate {
         if w.register() == REG_FIFO_CONTROL && words == [2] && self.card_fifo_has_laser && self.arming.state() != ArmState::LaserArmed {
             return Err(GateRefusal::LaserFramesQueued);
         }
+        if w.register() == REG_FIFO_CONTROL && words == [2] && self.queue_held {
+            return Err(GateRefusal::QueueHeld);
+        }
         self.note_what_may_be_queued(w);
         Ok(())
     }
@@ -499,7 +549,8 @@ impl SafetyGate {
     fn note_what_may_be_queued(&mut self, w: &SafeWrite) {
         match w.register() {
             REG_FIFO_DATA => {
-                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser())) {
+                if crate::fifo::parse_fifo_words(w.words()).is_ok_and(|f| f.items.iter().any(|i| i.is_laser() || i.is_laser_for(&self.config.safety)))
+                {
                     self.card_fifo_has_laser = true;
                 }
                 if self.turns_co2_on(w) {
@@ -526,13 +577,19 @@ impl SafetyGate {
         }
         self.note_what_may_be_queued(w);
         match w.register() {
+            REG_FIFO_DATA => self.frames_since_clear = true,
             REG_FIFO_CONTROL => match words.first() {
                 Some(2) => self.fifo_running = true,
-                Some(3) => self.fifo_running = false,
+                Some(3) => {
+                    self.fifo_running = false;
+                    self.note_stop();
+                }
                 Some(1) => {
                     self.fifo_running = false;
                     self.card_fifo_has_laser = false;
                     self.card_fifo_has_co2 = false;
+                    self.frames_since_clear = false;
+                    self.queue_held = false;
                 }
                 _ => {}
             },
@@ -553,6 +610,49 @@ impl SafetyGate {
         }
     }
 
+    /// Track a write that went out but was not acknowledged (no answer, or one that could not be
+    /// read). The card may have acted on it, so the gate assumes the dangerous half: a held jog
+    /// gets its deadman lease, a start counts as running, a frame counts as queued. Nothing is
+    /// assumed done that would relax the gate: a stop or a clear that was not acknowledged leaves
+    /// the tracking as it was.
+    pub fn after_unconfirmed(&mut self, w: &SafeWrite, now_ms: u64) {
+        let words = w.words();
+        match (w.register(), words.first()) {
+            (REG_COMMAND, Some(&crate::command::CMD_JOG)) => {
+                self.positions_word.remove(&(words.get(1).copied().unwrap_or(0) & 0x7FFF_FFFF));
+                if words.len() == 6 && words[1] & 0x8000_0000 == 0 {
+                    let (v, dist) = (words[2] as u64, (words[5] as i32 as i64).unsigned_abs());
+                    if dist * 1000 > v * self.config.deadman_timeout_ms {
+                        self.leases.insert(words[1], now_ms + self.config.deadman_timeout_ms);
+                    }
+                }
+            }
+            (REG_COMMAND, Some(&(crate::command::CMD_HOME | crate::command::CMD_GOTO))) => self.positions_word.clear(),
+            (REG_FIFO_CONTROL, Some(&crate::command::FIFO_START)) => {
+                self.positions_word.clear();
+                self.fifo_running = true;
+            }
+            (REG_FIFO_CONTROL, Some(&FIFO_STOP)) => self.note_stop(),
+            (REG_FIFO_DATA, _) => {
+                self.frames_since_clear = true;
+                if crate::fifo::parse_fifo_words(words).is_ok_and(|f| f.items.iter().any(|i| i.is_laser_for(&self.config.safety))) {
+                    self.card_fifo_has_laser = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Forget what was read from the card (status age, output word, positions, homed). After a
+    /// disconnect or a card restart nothing that needs a fresh status passes until the next poll.
+    pub fn forget_card_state(&mut self) {
+        self.last_status_ms = None;
+        self.last_do_word = None;
+        self.positions_word.clear();
+        self.homed = false;
+        self.leases.clear();
+    }
+
     /// Key still held: extend the lease of `axis_index`. False if there is no live lease.
     pub fn jog_keepalive(&mut self, axis_index: u32, now_ms: u64) -> bool {
         match self.leases.get_mut(&axis_index) {
@@ -562,6 +662,14 @@ impl SafetyGate {
             }
             None => false,
         }
+    }
+
+    /// The release stop for `axis_index` that [`service`](Self::service) asked for did not reach the
+    /// card (no answer, or one that could not be read). The lease comes back, already due, so the
+    /// next call of [`service`](Self::service) asks for the stop again. A card that answered, even
+    /// with an exception, has the stop and needs no second one.
+    pub fn release_stop_not_confirmed(&mut self, axis_index: u32, now_ms: u64) {
+        self.leases.entry(axis_index).or_insert(now_ms);
     }
 
     /// Axis indices whose deadman lease ran out; each needs a release stop. The leases are removed.
@@ -577,10 +685,17 @@ impl SafetyGate {
     /// status poll is stale.
     pub fn watchdog(&mut self, now_ms: u64) -> bool {
         if (self.fifo_running || self.arming.job_token().is_some()) && !self.comm_ok(now_ms) {
-            self.arming.disarm("comm loss");
+            self.give_up_job();
             return true;
         }
         false
+    }
+
+    /// Contact was lost during a job: disarm, and treat the job as stopped. Whatever the card
+    /// still holds of it is not run on by a bare start ([`GateRefusal::QueueHeld`]).
+    fn give_up_job(&mut self) {
+        self.arming.disarm("comm loss");
+        self.note_stop();
     }
 }
 
@@ -1044,5 +1159,98 @@ mod tests {
         let g = SafetyGate::default();
         assert!(g.check_read(1000, 36).is_ok());
         assert!(g.check_read(59500, 1).is_err());
+    }
+
+    #[test]
+    fn the_gate_applies_its_own_limits_not_only_the_defaults() {
+        let mut cfg = GateConfig::default();
+        cfg.safety.soft_limits_word = [(0, 500_000), (0, 300_000)];
+        cfg.safety.max_speed_word = 100_000;
+        cfg.safety.laser_do_ports = vec![2, 5, 6, 9];
+        cfg.safety.motion_do_ports = vec![1, 3, 7];
+        cfg.safety.home_slots = vec![0];
+        let mut g = SafetyGate::new(cfg);
+        g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
+        g.homed = true;
+        let p = MachineParams::default();
+        // a go-to and an absolute move past this gate's bed (inside the default one)
+        assert!(g.check_write(&command::go_to(1000.0, 900.0, &p).unwrap(), 0).is_err());
+        assert!(g.check_write(&command::move_axis_absolute(0, 1000.0, &p).unwrap(), 0).is_err());
+        // a jog faster than this gate's ceiling
+        assert!(g.check_write(&command::jog_step(0, -1.0, &p).unwrap(), 0).is_err());
+        // a slot this gate does not home
+        assert!(g.check_write(&command::home_axis(1).unwrap(), 0).is_err());
+        assert!(g.check_write(&command::home_axis(0).unwrap(), 0).is_ok());
+        // port 2 is a laser port here: switching it on needs the laser level
+        let on = SafeWrite::try_from_raw(0x65, &[9999, 2, 0b10, 0b10]).unwrap();
+        assert!(matches!(g.check_write(&on, 0), Err(GateRefusal::NeedsArming { policy: Policy::Laser, .. })));
+        // stops and switch-offs pass whatever the limits are
+        g.config.safety.stop_vd_range = (50_000, 60_000);
+        assert!(g.check_write(&command::stop_all(0, &p).unwrap(), 0).is_ok());
+        assert!(g.check_write(&command::do_off(2).unwrap(), 0).is_ok());
+        assert!(g.check_write(&command::fifo_stop().unwrap(), 0).is_ok());
+    }
+
+    #[test]
+    fn an_output_record_in_the_stream_is_judged_by_this_gates_ports() {
+        // Port 2 is a laser port on this machine. A stream record that switches it on is laser
+        // data here, although the default port list calls it gas.
+        let mut cfg = GateConfig::default();
+        cfg.safety.laser_do_ports = vec![2, 5, 6, 9];
+        cfg.safety.motion_do_ports = vec![1, 3, 7];
+        let mut g = SafetyGate::new(cfg);
+        g.arming.arm_motion().unwrap();
+        g.observe_status(0, &status(0, 0, 0, 0));
+        let mut words = vec![1u32];
+        words.extend(FifoItem::tick(1, 0).words());
+        words.extend([0x000C_270F, 2, 0b10, 0b10]);
+        let frame = SafeWrite::try_from_raw(0x66, &words).unwrap();
+        assert!(matches!(g.check_write(&frame, 0), Err(GateRefusal::NeedsArming { policy: Policy::Laser, .. })));
+        // and once such a frame is on the card, a start needs the laser level too
+        g.after_send(&frame, 0);
+        assert!(g.card_fifo_has_laser);
+        // port 3 stays a gas port: fine with motion armed
+        let mut words = vec![2u32];
+        words.extend([0x000C_270F, 2, 0b100, 0b100]);
+        let frame = SafeWrite::try_from_raw(0x66, &words).unwrap();
+        assert!(g.check_write(&frame, 0).is_ok());
+    }
+
+    #[test]
+    fn every_limit_of_the_configuration_is_honoured_by_the_gate() {
+        // One field tightened at a time; each write passes a gate with the default limits.
+        let p = MachineParams::default();
+        let ready = |change: &dyn Fn(&mut SafetyConfig)| {
+            let mut cfg = GateConfig::default();
+            change(&mut cfg.safety);
+            let mut g = SafetyGate::new(cfg);
+            g.arming.arm_motion().unwrap();
+            g.observe_status(0, &status(0, 0, 0, 0));
+            g.homed = true;
+            g.positions_word.insert(0, 100_000);
+            g.positions_word.insert(1, 100_000);
+            g
+        };
+        let gas_on = SafeWrite::try_from_raw(0x65, &[9999, 2, 0b100, 0b100]).unwrap();
+        let cases: Vec<(&str, Box<dyn Fn(&mut SafetyConfig)>, SafeWrite)> = vec![
+            ("laser_do_ports", Box::new(|c| c.laser_do_ports.push(3)), gas_on.clone()),
+            ("motion_do_ports", Box::new(|c| c.motion_do_ports.retain(|&p| p != 3)), gas_on),
+            ("jog_axis_indices", Box::new(|c| c.jog_axis_indices = vec![0]), command::jog_step(1, 1.0, &p).unwrap()),
+            ("home_slots", Box::new(|c| c.home_slots = vec![1]), command::home_axis(0).unwrap()),
+            ("goto_axis_mask", Box::new(|c| c.goto_axis_mask = 0x1), command::go_to(10.0, 10.0, &p).unwrap()),
+            ("max_speed_word", Box::new(|c| c.max_speed_word = 150_000), command::jog_step(0, 1.0, &p).unwrap()),
+            ("max_acc", Box::new(|c| c.max_acc = 1000), command::jog_step(0, 1.0, &p).unwrap()),
+            ("max_jog_distance_word", Box::new(|c| c.max_jog_distance_word = 1000), command::jog_step(0, 5.0, &p).unwrap()),
+            ("soft_limits_word", Box::new(|c| c.soft_limits_word = [(0, 50_000), (0, 50_000)]), command::go_to(60.0, 10.0, &p).unwrap()),
+        ];
+        for (field, change, w) in &cases {
+            assert!(ready(&|_| {}).check_write(w, 0).is_ok(), "{field}: passes the default gate");
+            assert!(ready(change.as_ref()).check_write(w, 0).is_err(), "{field} is not honoured");
+        }
+        // The tenth field bounds the stop deceleration. A stop is the one write no limit holds back.
+        let mut g = ready(&|c| c.stop_vd_range = (90_000, 95_000));
+        assert!(g.check_write(&command::stop_all(0, &p).unwrap(), 0).is_ok());
+        assert!(g.check_write(&command::jog_release_stop(&[0], 0, &p).unwrap(), 0).is_ok());
     }
 }

@@ -261,9 +261,22 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
     ];
     for port in 1..=10 {
         all.push(command::do_off(port).unwrap());
+        all.push(command::do_set(port, false).unwrap());
+        all.extend(command::do_set(port, true));
     }
+    for variant in [command::StopVariant::MainProgram, command::StopVariant::MainProgramSoftLimit, command::StopVariant::PendantOrBuilder] {
+        all.push(command::jog_release_stop_with(&[0, 1, 2, 3, 4], 10_000, &p, variant).unwrap());
+    }
+    all.push(command::da_set(1, 0.0).unwrap());
+    all.push(command::da_set(2, 0.0).unwrap());
+    all.push(command::pwm_set(1234, 0, 3).unwrap());
+    all.push(command::pwm_set(1234, 0, 0x11).unwrap());
+    all.extend(command::da_set(1, 5.0));
+    all.extend(command::pwm_set(1234, 50, 3));
     all.extend(command::stop_sequence(&p, false, 0, 0, &[5, 6, 9]));
     all.extend(command::stop_sequence(&p, true, 0, 0b100, &[5, 6, 9]));
+    all.extend(command::pause_sequence(&p, true, 0, 0b1_0111_0111, &[5, 6, 9]));
+    all.extend(command::estop_sequence(&p, false, 0, 0b1_0111_0111, &[5, 6, 9], 9));
     for w in all {
         assert_ne!(w.policy(), Policy::Laser, "{}", w.name());
         assert!(matches!(w.register(), 0x65..=0x67), "{}", w.name());

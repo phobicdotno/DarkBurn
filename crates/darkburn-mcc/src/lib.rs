@@ -51,6 +51,7 @@
 //! | [`library`] | folder scanner: recipes, settings, small files and unreadable files ([`library::scan`]) |
 //! | [`gate`] | arming state machine and PC-side checks |
 //! | [`sim`] | [`sim::CardSimulator`] (MCC-05) and the loopback [`sim::SimLink`] |
+//! | [`dissect`] | plain-text description of any frame or request vector, decode only |
 //!
 //! DXF with one layer per material and the `.nc` export live in `darkburn-import`.
 
@@ -58,6 +59,7 @@ pub mod chf;
 pub mod command;
 pub mod craft;
 pub mod crc;
+pub mod dissect;
 pub mod fifo;
 pub mod frame;
 pub mod gate;

@@ -209,6 +209,22 @@ impl RdJob {
             if l.settings.index >= 0x80 {
                 return std::result::Result::Err(RuidaError::Encode(format!("layer index {} must be < 128", l.settings.index)));
             }
+            // "Not a number" would be written as 0 and infinity as the largest number there is.
+            sendable(l.settings.speed_mm_s, "layer speed")?;
+            if let Some(d) = l.settings.dot_mode {
+                sendable(d.dot_time_ms, "dot time")?;
+                sendable(d.spacing_mm, "dot spacing")?;
+            }
+            for op in &l.ops {
+                match *op {
+                    RdOp::Move(p) => sendable(p.x, "position").and(sendable(p.y, "position"))?,
+                    RdOp::Cut { to, speed, .. } => {
+                        sendable(to.x, "position").and(sendable(to.y, "position"))?;
+                        sendable(speed.unwrap_or(0.0), "cut speed")?;
+                    }
+                    RdOp::Z(v) | RdOp::U(v) => sendable(v, "axis position")?,
+                }
+            }
         }
         let mut c = Vec::new();
         let (min_x, min_y, max_x, max_y) = Self::bounds_um(self.layers.iter().flat_map(|l| l.ops.iter().copied()));
@@ -350,11 +366,22 @@ pub fn file_sum(cmds: &[Command]) -> Result<u32> {
     Ok(sum)
 }
 
+/// A length, position, speed or time of a job must be a number whose thousandth (µm, µm/s, µs)
+/// fits the wire format.
+fn sendable(v: f64, what: &str) -> Result<()> {
+    if v.is_finite() && (i32::MIN as f64..=i32::MAX as f64).contains(&(v * 1000.0).round()) {
+        Ok(())
+    } else {
+        std::result::Result::Err(RuidaError::Encode(format!("the {what} {v} cannot be sent to the controller")))
+    }
+}
+
 fn motion(cur: Option<(i32, i32)>, to: (i32, i32), cut: bool) -> Command {
     use Command::*;
-    let fits = |v: i32| (REL_MIN..=REL_MAX).contains(&v);
+    // The difference of two coordinates can be twice the range of one.
+    let fits = |to: i32, from: i32| (REL_MIN as i64..=REL_MAX as i64).contains(&(to as i64 - from as i64));
     match cur {
-        Some((cx, cy)) if fits(to.0 - cx) && fits(to.1 - cy) => {
+        Some((cx, cy)) if fits(to.0, cx) && fits(to.1, cy) => {
             let (dx, dy) = (to.0 - cx, to.1 - cy);
             match (dx, dy, cut) {
                 (0, 0, false) => MoveRel { dx, dy },
@@ -447,7 +474,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
                     c if c.is_motion() => {
                         // A file without CA 03: treat the first motion as the start of the body.
                         phase = Phase::Body;
-                        body_motion(c, l, &mut pos, &mut pending_speed, &mut pending_power);
+                        body_motion(c, l, &mut pos, &mut pending_speed, &mut pending_power)?;
                     }
                     _ => {}
                 }
@@ -461,7 +488,7 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
                         layers.push(current.take().expect("layer"));
                         phase = Phase::Header;
                     }
-                    c => body_motion(c, l, &mut pos, &mut pending_speed, &mut pending_power),
+                    c => body_motion(c, l, &mut pos, &mut pending_speed, &mut pending_power)?,
                 }
             }
             EndOfFile => saw_eof = true,
@@ -477,28 +504,33 @@ fn read_job(cmds: &[Command]) -> Result<RdJob> {
     Ok(RdJob { layers, reference: reference.unwrap_or_default() })
 }
 
-fn body_motion(c: &Command, l: &mut RdLayer, pos: &mut (i32, i32), speed: &mut Option<f64>, power: &mut Option<f64>) {
+fn body_motion(c: &Command, l: &mut RdLayer, pos: &mut (i32, i32), speed: &mut Option<f64>, power: &mut Option<f64>) -> Result<()> {
     use Command::*;
     let pt = |p: (i32, i32)| Point::new(um_to_mm(p.0), um_to_mm(p.1));
+    // A relative step from the edge of the number range (a damaged file) has no target.
+    let rel = |dx: i32, dy: i32| match (pos.0.checked_add(dx), pos.1.checked_add(dy)) {
+        (Some(x), Some(y)) => Ok((x, y)),
+        _ => std::result::Result::Err(RuidaError::Decode("a relative move leaves the coordinate range".into())),
+    };
     let (target, cut) = match *c {
         MoveAbs { x, y } => ((x, y), false),
-        MoveRel { dx, dy } => ((pos.0 + dx, pos.1 + dy), false),
-        MoveRelX(dx) => ((pos.0 + dx, pos.1), false),
-        MoveRelY(dy) => ((pos.0, pos.1 + dy), false),
+        MoveRel { dx, dy } => (rel(dx, dy)?, false),
+        MoveRelX(dx) => (rel(dx, 0)?, false),
+        MoveRelY(dy) => (rel(0, dy)?, false),
         CutAbs { x, y } => ((x, y), true),
-        CutRel { dx, dy } => ((pos.0 + dx, pos.1 + dy), true),
-        CutRelX(dx) => ((pos.0 + dx, pos.1), true),
-        CutRelY(dy) => ((pos.0, pos.1 + dy), true),
+        CutRel { dx, dy } => (rel(dx, dy)?, true),
+        CutRelX(dx) => (rel(dx, 0)?, true),
+        CutRelY(dy) => (rel(0, dy)?, true),
         RapidXY { option: RapidOption::None | RapidOption::Light, x, y } => ((x, y), false),
         AxisMove { axis: Axis::Z, pos: z } => {
             l.ops.push(RdOp::Z(um_to_mm(z)));
-            return;
+            return Ok(());
         }
         AxisMove { axis: Axis::U, pos: u } => {
             l.ops.push(RdOp::U(um_to_mm(u)));
-            return;
+            return Ok(());
         }
-        _ => return,
+        _ => return Ok(()),
     };
     *pos = target;
     if cut {
@@ -506,6 +538,7 @@ fn body_motion(c: &Command, l: &mut RdLayer, pos: &mut (i32, i32), speed: &mut O
     } else {
         l.ops.push(RdOp::Move(pt(target)));
     }
+    Ok(())
 }
 
 #[cfg(test)]

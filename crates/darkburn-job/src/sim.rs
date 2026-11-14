@@ -125,8 +125,18 @@ pub fn simulate(tp: &Toolpath, m: &MotionSettings) -> Simulation {
     let mut per: BTreeMap<(usize, u32), f64> = BTreeMap::new();
     let accel_for = |layer: Option<usize>, rapid: bool| {
         let raster = layer.and_then(|l| tp.layers.get(l)).is_some_and(|l| l.raster);
-        if raster && !rapid { m.engrave_accel } else { m.accel }
+        let a = if raster && !rapid { m.engrave_accel } else { m.accel };
+        // Zero, negative or NaN acceleration would make every duration NaN: use the default instead.
+        if a.is_finite() && a > 0.0 {
+            a
+        } else if raster && !rapid {
+            MotionSettings::default().engrave_accel
+        } else {
+            MotionSettings::default().accel
+        }
     };
+    // A NaN speed counts as speed 0 (f64::min would turn it into the top speed).
+    let cut_speed = |speed: f64| if speed.is_nan() { 0.0 } else { speed.min(m.max_speed) };
     for (i, op) in tp.ops.iter().enumerate() {
         match op {
             Op::LayerStart { layer: l } => {
@@ -137,8 +147,8 @@ pub fn simulate(tp: &Toolpath, m: &MotionSettings) -> Simulation {
             Op::Rapid { to } | Op::Cut { to, .. } | Op::Overscan { to, .. } => {
                 let (v, power, rapid) = match op {
                     Op::Rapid { .. } => (m.rapid_speed, 0.0, true),
-                    Op::Cut { speed, power, .. } => (speed.min(m.max_speed), *power, false),
-                    Op::Overscan { speed, .. } => (speed.min(m.max_speed), 0.0, false),
+                    Op::Cut { speed, power, .. } => (cut_speed(*speed), *power, false),
+                    Op::Overscan { speed, .. } => (cut_speed(*speed), 0.0, false),
                     _ => unreachable!(),
                 };
                 let len = pos.distance(*to);
@@ -194,7 +204,7 @@ pub fn simulate(tp: &Toolpath, m: &MotionSettings) -> Simulation {
                     length: len,
                     dir_in: tangent(pos),
                     dir_out: tangent(*to),
-                    v_max: speed.min(m.max_speed).max(EPS),
+                    v_max: cut_speed(*speed).max(EPS),
                     accel: accel_for(layer, false),
                     power: *power,
                     rapid: false,
@@ -210,7 +220,7 @@ pub fn simulate(tp: &Toolpath, m: &MotionSettings) -> Simulation {
             }
             Op::Dwell { ms, power } => {
                 t = flush(&mut chain, m, t, &mut sim, &mut per);
-                let d = ms / 1000.0;
+                let d = (ms / 1000.0).max(0.0);
                 sim.segments.push(still(i, t, d, pos, *power, layer, pass));
                 if let Some(l) = layer {
                     *per.entry((l, pass)).or_default() += d;
@@ -326,7 +336,7 @@ impl SimSegment {
     /// Distance travelled `dt` seconds into the segment.
     fn distance_at(&self, dt: f64) -> f64 {
         let a = self.accel;
-        if self.length <= 0.0 || a <= 0.0 {
+        if self.length <= 0.0 || !(a.is_finite() && a > 0.0) {
             return 0.0;
         }
         let t_acc = (self.v_peak - self.v0) / a;
@@ -367,6 +377,9 @@ impl SimSegment {
     }
 }
 
+/// Most states [`Simulation::timeline`] returns, besides the end.
+pub const MAX_TIMELINE_STATES: usize = 100_000;
+
 impl Simulation {
     /// Machine state at time `t` seconds (clamped to the job).
     pub fn state_at(&self, t: f64) -> Option<SimState> {
@@ -381,8 +394,9 @@ impl Simulation {
 
     /// Evenly sampled timeline for the preview slider, `dt` seconds apart (end included).
     pub fn timeline(&self, dt: f64) -> Vec<SimState> {
-        let dt = dt.max(1e-3);
-        let n = (self.total_time / dt).ceil() as usize;
+        // A very slow job (speed 0) can last millions of seconds: cap the states and widen the step.
+        let dt = dt.max(1e-3).max(self.total_time / MAX_TIMELINE_STATES as f64);
+        let n = ((self.total_time / dt).ceil() as usize).min(MAX_TIMELINE_STATES);
         (0..=n).filter_map(|k| self.state_at((k as f64 * dt).min(self.total_time))).collect()
     }
 

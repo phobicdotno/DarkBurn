@@ -43,6 +43,9 @@ impl std::fmt::Display for CylinderError {
 }
 impl std::error::Error for CylinderError {}
 
+/// The most pieces one straight line is split into; a longer line gets a wider step.
+pub const MAX_SEGMENTS_PER_LINE: usize = 100_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CylinderCorrection {
     pub radius: f64,
@@ -84,7 +87,7 @@ impl CylinderCorrection {
     }
 
     fn check(&self) -> Result<(), CylinderError> {
-        if self.radius > 0.0 { Ok(()) } else { Err(CylinderError::InvalidRadius) }
+        if self.radius > 0.0 && self.radius.is_finite() && self.centre.is_finite() { Ok(()) } else { Err(CylinderError::InvalidRadius) }
     }
 
     /// Map a flat design point to the bed position that lands there on the surface.
@@ -115,7 +118,8 @@ impl CylinderCorrection {
         let mut err: Option<CylinderError> = None;
         kurbo::flatten(path.elements().iter().copied(), 0.01, |el| {
             let line_to = |from: Point, to: Point, out: &mut BezPath, err: &mut Option<CylinderError>| {
-                let n = ((to - from).hypot() / step).ceil().max(1.0) as usize;
+                // Capped: a very long line gets a wider step instead of billions of points.
+                let n = ((to - from).hypot() / step).ceil().clamp(1.0, MAX_SEGMENTS_PER_LINE as f64) as usize;
                 for i in 1..=n {
                     match self.map_point(from.lerp(to, i as f64 / n as f64)) {
                         Ok(m) => out.line_to(m),

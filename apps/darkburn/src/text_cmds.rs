@@ -438,12 +438,15 @@ pub fn add_text(app: &mut DarkBurn, at: Point, layer: usize, a: &Value) -> Resul
     app.prefs.fonts.touch(&t.font);
     let shape = Shape::new(ShapeKind::Text(t), Affine::translate(at.to_vec2()), layer);
     let mut id = ShapeId(0);
-    app.editor.edit("Add text", |d, sel| {
+    let made = app.editor.edit("Add text", |d, sel| {
         id = d.add(shape);
         sel.set([id]);
         render::refresh(d);
         true
     });
+    if !made {
+        return Err(crate::shape_ops::OUT_OF_REACH.into());
+    }
     Ok(id)
 }
 

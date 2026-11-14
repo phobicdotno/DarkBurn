@@ -89,6 +89,8 @@ pub fn sanitize_layer_name(name: &str) -> String {
 }
 
 fn round(v: f64, decimals: Option<u32>) -> f64 {
+    // DXF has no spelling for NaN or the infinities.
+    let v = if v.is_finite() { v } else { 0.0 };
     match decimals {
         Some(d) => {
             let f = 10f64.powi(d.min(12) as i32);
@@ -113,7 +115,7 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
     let r = |p: Point| dxf::Point::new(round(p.x, opts.decimals), round(p.y, opts.decimals), 0.0);
     let mut images = 0;
     let mut entities: Vec<Entity> = Vec::new();
-    let mut polylines_r12: Vec<(Polyline, Vec<Vertex>, String, Rgb)> = Vec::new();
+    let mut polylines_r12: Vec<(Polyline, Vec<Vertex>, String, Rgb, Rgb)> = Vec::new();
 
     for item in items.iter().filter(|i| !i.hidden) {
         let colour = item.colour().unwrap_or(Rgb::BLACK);
@@ -121,7 +123,7 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
             (LayerNaming::ByItemLayer, Some(l)) if !l.trim().is_empty() => sanitize_layer_name(l),
             _ => format!("C_{}", colour.hex()),
         };
-        layers.entry(layer.clone()).or_insert(colour);
+        let layer_colour = *layers.entry(layer.clone()).or_insert(colour);
         let path: Option<&BezPath> = match &item.kind {
             ItemKind::Path(p) => Some(&p.path),
             ItemKind::Text(t) => match &t.outline {
@@ -130,11 +132,11 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
                     let origin = t.transform * Point::ZERO;
                     let x = t.transform * Point::new(1.0, 0.0) - origin;
                     let y = t.transform * Point::new(0.0, 1.0) - origin;
-                    let mut text = Text { location: r(origin), value: t.text.replace('\n', " "), ..Default::default() };
-                    text.text_height = t.height * y.hypot();
-                    text.rotation = x.atan2().to_degrees();
+                    let mut text = Text { location: r(origin), value: t.text.replace("\r\n", " ").replace(['\r', '\n'], " "), ..Default::default() };
+                    text.text_height = round(t.height * y.hypot(), None);
+                    text.rotation = round(x.atan2().to_degrees(), None);
                     let mut e = Entity::new(EntityType::Text(text));
-                    set_common(&mut e, &layer, colour, opts.version);
+                    set_common(&mut e, &layer, layer_colour, colour, opts.version);
                     entities.push(e);
                     None
                 }
@@ -150,7 +152,7 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
                 && let Some((c, rad)) = geom::as_circle(&sub, tol)
             {
                 let mut e = Entity::new(EntityType::Circle(Circle::new(r(c), round(rad, opts.decimals))));
-                set_common(&mut e, &layer, colour, opts.version);
+                set_common(&mut e, &layer, layer_colour, colour, opts.version);
                 entities.push(e);
                 continue;
             }
@@ -169,7 +171,7 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
                         v
                     })
                     .collect();
-                polylines_r12.push((pl, vs, layer.clone(), colour));
+                polylines_r12.push((pl, vs, layer.clone(), layer_colour, colour));
             } else {
                 let mut pl = LwPolyline::default();
                 pl.set_is_closed(closed);
@@ -178,7 +180,7 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
                     .map(|(p, b)| LwPolylineVertex { x: round(p.x, opts.decimals), y: round(p.y, opts.decimals), bulge: *b, ..Default::default() })
                     .collect();
                 let mut e = Entity::new(EntityType::LwPolyline(pl));
-                set_common(&mut e, &layer, colour, opts.version);
+                set_common(&mut e, &layer, layer_colour, colour, opts.version);
                 entities.push(e);
             }
         }
@@ -193,12 +195,12 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
     for e in entities {
         drawing.add_entity(e);
     }
-    for (mut pl, vs, layer, colour) in polylines_r12 {
+    for (mut pl, vs, layer, layer_colour, colour) in polylines_r12 {
         for v in vs {
             pl.add_vertex(&mut drawing, v);
         }
         let mut e = Entity::new(EntityType::Polyline(pl));
-        set_common(&mut e, &layer, colour, opts.version);
+        set_common(&mut e, &layer, layer_colour, colour, opts.version);
         drawing.add_entity(e);
     }
     let mut bytes = Vec::new();
@@ -208,10 +210,14 @@ pub fn export(items: &[Item], opts: &DxfExportOptions) -> DxfExport {
     DxfExport { bytes, warnings }
 }
 
-fn set_common(e: &mut Entity, layer: &str, colour: Rgb, version: DxfVersion) {
+fn set_common(e: &mut Entity, layer: &str, layer_colour: Rgb, colour: Rgb, version: DxfVersion) {
     e.common.layer = layer.to_string();
     let aci = nearest_aci(colour);
     e.common.color = Color::by_layer();
+    if aci != nearest_aci(layer_colour) {
+        // Another item made this layer with a different colour.
+        e.common.color = Color::from_index(aci);
+    }
     if version == DxfVersion::R2007 && aci_to_rgb(aci) != colour {
         e.common.color = Color::from_index(aci);
         e.common.color_24_bit = (i32::from(colour.0) << 16) | (i32::from(colour.1) << 8) | i32::from(colour.2);

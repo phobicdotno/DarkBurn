@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Online documentation",
+  "about.source": "Source code on GitHub",
   "about.tagline": "A laser cutter and engraver program.",
+  "about.version": "Version",
+  "about.whats_new": "What's new",
   "area.bottom": "Bottom",
   "area.left": "Left",
   "area.right_bottom": "Right, bottom",

@@ -1,6 +1,10 @@
 {
+  "about.build": "ビルド",
   "about.docs": "オンラインドキュメント",
+  "about.source": "GitHub のソースコード",
   "about.tagline": "レーザーカッター・彫刻機用のプログラムです。",
+  "about.version": "バージョン",
+  "about.whats_new": "新機能",
   "area.bottom": "下",
   "area.left": "左",
   "area.right_bottom": "右下",

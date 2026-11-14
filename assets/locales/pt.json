@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Documentação online",
+  "about.source": "Código-fonte no GitHub",
   "about.tagline": "Um programa de corte e gravação a laser.",
+  "about.version": "Versão",
+  "about.whats_new": "Novidades",
   "area.bottom": "Embaixo",
   "area.left": "Esquerda",
   "area.right_bottom": "Direita, embaixo",

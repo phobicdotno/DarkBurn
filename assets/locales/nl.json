@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Online documentatie",
+  "about.source": "Broncode op GitHub",
   "about.tagline": "Een programma voor lasersnijden en -graveren.",
+  "about.version": "Versie",
+  "about.whats_new": "Wat is er nieuw",
   "area.bottom": "Onder",
   "area.left": "Links",
   "area.right_bottom": "Rechts, onder",

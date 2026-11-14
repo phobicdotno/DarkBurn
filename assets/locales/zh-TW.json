@@ -1,6 +1,10 @@
 {
+  "about.build": "組建",
   "about.docs": "線上說明文件",
+  "about.source": "GitHub 上的原始碼",
   "about.tagline": "雷射切割與雕刻軟體。",
+  "about.version": "版本",
+  "about.whats_new": "新功能",
   "area.bottom": "底端",
   "area.left": "左邊",
   "area.right_bottom": "右邊，下方",

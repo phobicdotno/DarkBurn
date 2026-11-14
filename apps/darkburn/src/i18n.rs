@@ -169,6 +169,7 @@ mod tests {
     const SOURCES: &[(&str, &str)] = &[
         ("settings.rs", include_str!("settings.rs")),
         ("shell.rs", include_str!("shell.rs")),
+        ("about.rs", include_str!("about.rs")),
         ("ribbon.rs", include_str!("ribbon.rs")),
         ("panels.rs", include_str!("panels.rs")),
         ("library.rs", include_str!("library.rs")),

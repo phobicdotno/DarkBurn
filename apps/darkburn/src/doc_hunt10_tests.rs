@@ -715,6 +715,14 @@ fn commands_the_monkey_leaves_out_take_odd_arguments() {
         let mut a = fresh(odd);
         for info in &commands {
             for args in arg_sets(info) {
+                // Without a path these open the system file dialog, which waits for a person on
+                // a machine with a desktop (agents are refused them for the same reason).
+                let text = |v: &Value| v.as_str().is_some_and(|s| !s.trim().is_empty());
+                let has_path = args.get("path").is_some_and(text)
+                    || args.get("paths").and_then(Value::as_array).is_some_and(|l| !l.is_empty() && l.iter().all(text));
+                if crate::agent_limits::needs_a_path(&info.id) && !has_path {
+                    continue;
+                }
                 ran += 1;
                 let _ = std::fs::write(dir.join("last-command"), format!("{} {args}", info.id));
                 let before = a.editor.doc.clone();

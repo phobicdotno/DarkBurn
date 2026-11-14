@@ -1,6 +1,7 @@
 # Changelog
 
-## v0.0.763 (build 7)
+## v0.0.764 (build 7)
+- Fix: Warp and Deform say the same thing as the other tools when a point is out of reach
 - Fix: disconnecting a Ruida while firing always lets go of its Pulse key
 - Fix: holding the Fire button never fires twice when the machine is slow to answer
 - Fix: the new windows, tools and texts are translated into every language

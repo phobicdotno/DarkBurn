@@ -869,7 +869,7 @@ fn warp(e: &mut Editor, a: &Value) -> R {
 /// would be refused anyway, after a long time spent bending the shapes towards it.
 fn reachable(p: Point) -> Result<Point, String> {
     let max = darkburn_core::editor::MAX_COORD;
-    if p.x.abs() <= max && p.y.abs() <= max { Ok(p) } else { Err("the points must lie within the work area's reach".into()) }
+    if p.x.abs() <= max && p.y.abs() <= max { Ok(p) } else { Err(OUT_OF_REACH.into()) }
 }
 
 fn deform(e: &mut Editor, a: &Value) -> R {

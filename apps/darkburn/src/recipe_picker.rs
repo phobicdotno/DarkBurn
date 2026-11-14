@@ -279,9 +279,11 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut close = false;
     let title = format!("Recipe for layer {}", darkburn_core::layer::layer_label(layer));
     let shelf = &mut app.machine.ext.gweike_recipes;
-    egui::Window::new(title).id(egui::Id::unique("db_recipe_picker")).collapsible(false).resizable(false).default_width(420.0).open(&mut open).show(
+    let (closed, _) = ui_kit::Window::new(egui::Id::unique("db_recipe_picker"), "db_material_test", &title).actions("", "", None).show(
         ctx,
+        true,
         |ui| {
+            ui.set_min_width(420.0);
             let Some(lib) = &shelf.library else {
                 ui.label(
                     RichText::new("Pick the Gweike software's settings folder (or a copy of it) once; it is remembered.")
@@ -385,6 +387,9 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
             }
         },
     );
+    if closed {
+        open = false;
+    }
     if !open || close {
         app.machine.ext.gweike_recipes.picker = None;
     }

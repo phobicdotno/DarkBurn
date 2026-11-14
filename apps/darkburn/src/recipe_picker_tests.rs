@@ -66,7 +66,7 @@ fn search_finds_material_and_thickness_and_ranks_the_exact_thickness_first() {
     let all = picks(lib, "", &[]);
     assert_eq!(all.len(), 5);
     let p = &all.iter().find(|p| p.row.key == ACR24).unwrap();
-    assert_eq!(p.label, "Acrylic · 24 mm · CO2 · air");
+    assert_eq!(p.label, "Acrylic · 24 mm · CO2 · air (high)");
     assert!(p.values.starts_with("2 mm/s (0.12 m/min)"), "{}", p.values);
 
     let acr = picks(lib, "acr 24", &[]);

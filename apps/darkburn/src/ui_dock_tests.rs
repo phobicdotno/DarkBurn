@@ -455,6 +455,7 @@ const NOT_DOCKABLE: &[(&str, &str)] = &[
     ("db_updates", "read once and closed"),
     ("db_updater_ask", "asked before an update is installed"),
     ("db_updater_install", "shows while an update installs, then the program restarts"),
+    ("db_recipe_picker", "picks one recipe for one layer and closes"),
     ("db_file_message", "a message and its one button"),
     ("db_job_message", "a message and its one button"),
     ("db_import_warnings", "a message and its one button"),

@@ -746,5 +746,8 @@
   "updates.title": "Se etter oppdateringer",
   "updates.unreadable": "Svaret fra oppdateringstjenesten kunne ikke leses:",
   "updates.up_to_date": "DarkBurn er oppdatert, versjon",
-  "updates.you_have": "du har"
+  "updates.you_have": "du har",
+  "updater.link": "Installer",
+  "updater.this_is": "dette er",
+  "updater.tip": "Klikk for å installere"
 }

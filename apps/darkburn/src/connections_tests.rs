@@ -877,7 +877,10 @@ fn common_diode_lasers_are_recognised_on_connect() {
         assert_eq!(run(&mut a, "device.detected", Value::Null).unwrap()["detected"], Value::Null, "nothing before connecting");
         assert!(run(&mut a, "device.adopt_detected", Value::Null).is_err());
         run(&mut a, "machine.connect", json!({})).unwrap();
-        wait(&mut a, "detected", |a| a.machine.handle.snapshot().detected.is_some() && state(a) == LaserState::Ready);
+        // The snapshot can show the laser between two frame ticks, before a tick has told the
+        // user, so wait for the message too.
+        let told = |a: &DarkBurn| a.machine.message.as_ref().is_some_and(|m| m.text.contains("This looks like"));
+        wait(&mut a, "detected", |a| a.machine.handle.snapshot().detected.is_some() && state(a) == LaserState::Ready && told(a));
         let d = a.machine.handle.snapshot().detected.clone().unwrap();
         assert_eq!((d.brand, d.model.as_str()), (brand, model), "{fw:?}");
         assert!(a.machine.message.as_ref().is_some_and(|m| m.text.contains("This looks like") && m.text.contains(model)), "{fw:?}: the user is told");

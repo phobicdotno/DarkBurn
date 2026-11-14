@@ -160,14 +160,8 @@ pub fn picks_of(lib: &Library, filter: &str, material: &str, recents: &[String])
 /// that head uses (counting from the layer's number), else the layer's default slot.
 pub fn slot_for(s: &GweikeSettings, doc: &Document, layer: usize, head: Head) -> usize {
     let n = darkburn_mcc::craft::LAYERS_PER_HEAD;
-    let taken: Vec<usize> = doc
-        .used_layers()
-        .into_iter()
-        .filter(|&l| l != layer)
-        .map(|l| s.map_of(l, doc))
-        .filter(|m| m.head == head)
-        .map(|m| m.slot as usize)
-        .collect();
+    let taken: Vec<usize> =
+        doc.used_layers().into_iter().filter(|&l| l != layer).map(|l| s.map_of(l, doc)).filter(|m| m.head == head).map(|m| m.slot as usize).collect();
     let cur = s.map_of(layer, doc);
     if cur.head == head && !taken.contains(&(cur.slot as usize)) {
         return cur.slot as usize;
@@ -182,10 +176,19 @@ pub fn apply_to_layer(s: &mut GweikeSettings, doc: &Document, layer: usize, e: &
     let slot = slot_for(s, doc, layer, head);
     let mut next = s.clone();
     let (_, mut warnings) = use_recipe(&mut next, e, slot)?;
-    let shared: Vec<usize> = doc.used_layers().into_iter().filter(|&l| l != layer).filter(|&l| s.map_of(l, doc).head == head && s.map_of(l, doc).slot as usize == slot).collect();
+    let shared: Vec<usize> = doc
+        .used_layers()
+        .into_iter()
+        .filter(|&l| l != layer)
+        .filter(|&l| s.map_of(l, doc).head == head && s.map_of(l, doc).slot as usize == slot)
+        .collect();
     if !shared.is_empty() {
         let names: Vec<String> = shared.iter().map(|&l| darkburn_core::layer::layer_label(l)).collect();
-        warnings.push(format!("Every {} craft slot is in use: slot {slot} is shared with layer {}, which now cuts with this recipe too.", head.label(), names.join(", ")));
+        warnings.push(format!(
+            "Every {} craft slot is in use: slot {slot} is shared with layer {}, which now cuts with this recipe too.",
+            head.label(),
+            names.join(", ")
+        ));
     }
     let mut m = next.map_of(layer, doc);
     m.head = head;
@@ -239,7 +242,9 @@ pub fn layer_command(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let msg = format!("{title} is on layer {} ({} slot {slot}).", darkburn_core::layer::layer_label(layer), head.label());
     app.machine.ext.gweike_message = Some(msg.clone());
     app.machine.ext.gweike_recipes.pick_message = Some(msg.clone());
-    Ok(json!({ "ok": true, "layer": layer, "slot": slot, "head": match head { Head::Co2 => "co2", _ => "fibre" }, "message": msg, "warnings": warnings }))
+    Ok(
+        json!({ "ok": true, "layer": layer, "slot": slot, "head": match head { Head::Co2 => "co2", _ => "fibre" }, "message": msg, "warnings": warnings }),
+    )
 }
 
 /// `gweike.recipe_undo`: take back the last recipe put on a layer.
@@ -277,7 +282,11 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
         ctx,
         |ui| {
             let Some(lib) = &shelf.library else {
-                ui.label(RichText::new("Pick the Gweike software's settings folder (or a copy of it) once; it is remembered.").size(t.font_small).color(t.text_dim));
+                ui.label(
+                    RichText::new("Pick the Gweike software's settings folder (or a copy of it) once; it is remembered.")
+                        .size(t.font_small)
+                        .color(t.text_dim),
+                );
                 if ui_kit::button(ui, "Choose package folder", Button::Small).clicked()
                     && let Some(dir) = rfd::FileDialog::new().pick_folder()
                 {
@@ -285,7 +294,8 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
                 }
                 return;
             };
-            let edit = ui.add(egui::TextEdit::singleline(&mut shelf.pick_filter).hint_text("Search: acr 24, ply 3, mild 2 ...").desired_width(f32::INFINITY));
+            let edit = ui
+                .add(egui::TextEdit::singleline(&mut shelf.pick_filter).hint_text("Search: acr 24, ply 3, mild 2 ...").desired_width(f32::INFINITY));
             crate::a11y::text(ui, &edit, "Search recipes");
             if !edit.has_focus() && !edit.lost_focus() {
                 edit.request_focus();
@@ -308,7 +318,12 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
             }
             let list = picks_of(lib, &shelf.pick_filter, &shelf.pick_material, &recents);
             let (down, up, enter, esc) = ui.input(|i| {
-                (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape))
+                (
+                    i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::Enter),
+                    i.key_pressed(egui::Key::Escape),
+                )
             });
             if down {
                 shelf.pick_index = (shelf.pick_index + 1).min(list.len().saturating_sub(1));
@@ -336,7 +351,11 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
                     let usable = p.row.errors.is_empty();
                     let text = format!("{}{}\n{}", if p.recent { "\u{21ba} " } else { "" }, p.label, p.values);
                     let r = ui.add_enabled(usable, egui::Button::selectable(i == sel, text));
-                    let r = if usable { r.backing_on_hover_text(p.row.title.as_str()) } else { r.backing_on_disabled_hover_text(p.row.errors.join("\n").as_str()) };
+                    let r = if usable {
+                        r.backing_on_hover_text(p.row.title.as_str())
+                    } else {
+                        r.backing_on_disabled_hover_text(p.row.errors.join("\n").as_str())
+                    };
                     if i == sel && (down || up) {
                         r.scroll_to_me(None);
                     }
@@ -349,7 +368,9 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
                 }
             });
             ui.horizontal(|ui| {
-                if !shelf.undo.is_empty() && ui_kit::button(ui, "Undo", Button::Small).backing_on_hover_text("Take back the last recipe put on a layer").clicked() {
+                if !shelf.undo.is_empty()
+                    && ui_kit::button(ui, "Undo", Button::Small).backing_on_hover_text("Take back the last recipe put on a layer").clicked()
+                {
                     cmd = Some(("gweike.recipe_undo", json!({})));
                 }
                 if ui_kit::button(ui, "Other folder...", Button::Small).clicked()

@@ -96,7 +96,7 @@ pub fn newer_notes(changelog: &str, current: &str) -> Vec<String> {
     let mut version: Option<String> = None;
     let mut first: Option<String> = None;
     let mut more = 0usize;
-    let mut flush = |version: &mut Option<String>, first: &mut Option<String>, more: &mut usize, out: &mut Vec<String>| {
+    let flush = |version: &mut Option<String>, first: &mut Option<String>, more: &mut usize, out: &mut Vec<String>| {
         if let Some(v) = version.take() {
             let mut line = format!("v{v} \u{2014} {}", first.take().unwrap_or_default());
             if *more > 0 {
@@ -213,6 +213,8 @@ pub struct State {
     pub job: Option<Arc<Mutex<Progress>>>,
     pub details: bool,
     restart_sent: bool,
+    /// The newer version the Help menu's check last reported, so it is followed up once.
+    seen_manual: Option<String>,
 }
 
 impl State {
@@ -222,7 +224,7 @@ impl State {
 
     /// Start a check on a thread unless one is running.
     pub fn start_check(&mut self, api_url: String) {
-        if self.rx.is_some() || cfg!(test) && !api_url.starts_with("http://127.0.0.1") {
+        if self.rx.is_some() || (cfg!(test) && !api_url.starts_with("http://127.0.0.1")) {
             return;
         }
         let (tx, rx) = std::sync::mpsc::channel();
@@ -250,10 +252,6 @@ impl State {
             Err(TryRecvError::Disconnected) => self.rx = None,
             Err(TryRecvError::Empty) => {}
         }
-    }
-
-    pub fn installing(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| j.lock().map(|p| p.finished.is_none()).unwrap_or(false))
     }
 }
 
@@ -381,7 +379,7 @@ fn install(asset: &Asset, version: &str, progress: &Arc<Mutex<Progress>>) -> Res
     say("Unpacked".into());
     let exe_name = exe.file_name().and_then(|n| n.to_str()).ok_or("no program name")?.to_string();
     let program = if cfg!(windows) { "darkburn.exe" } else { "darkburn" };
-    let new_exe = find_file(&unpacked, program, 2).ok_or(format!("{program} is not in the archive"))?;
+    let new_exe = find_file(&unpacked, program, 2).ok_or_else(|| format!("{program} is not in the archive"))?;
     replace_file(&exe, &new_exe)?;
     say(format!("Replaced {exe_name}"));
     // The MCP helper beside it, when this install has one.
@@ -425,11 +423,6 @@ pub fn link_clicked(app: &mut DarkBurn) {
     }
 }
 
-/// The command "Check for updates now": the Help dialog's check, and this one for the link.
-pub fn check_now(app: &mut DarkBurn) {
-    let url = updates::address(&app.prefs.opts.update_url);
-    app.extras.updater.start_check(url);
-}
 
 /// Once a frame: the timed checks and their answers.
 pub fn frame(ctx: &Context, app: &mut DarkBurn) {
@@ -440,6 +433,14 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
         u.next_check = Some(now + EVERY);
         let url = updates::address(&app.prefs.opts.update_url);
         u.start_check(url);
+    }
+    // "Check for updates now" found a newer version: look up its archive and notes for the link.
+    if let Some(updates::Outcome::Available { latest, .. }) = &app.extras.updates.result
+        && u.seen_manual.as_deref() != Some(latest.as_str())
+        && u.available.is_none()
+    {
+        u.seen_manual = Some(latest.clone());
+        u.start_check(updates::address(&app.prefs.opts.update_url));
     }
     if u.checking() {
         u.poll();
@@ -486,10 +487,8 @@ fn start_install(app: &mut DarkBurn) {
 /// The question and the install dialog.
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     let Some(rel) = app.extras.updater.available.clone() else {
-        if app.extras.updater.job.is_none() {
-            return;
-        }
-        return install_dialog(ctx, app, "");
+        install_dialog(ctx, app, "");
+        return;
     };
     if app.extras.updater.ask_open {
         let title = tr("updater.title", "Update");

@@ -156,10 +156,7 @@ pub fn run(app: &mut DarkBurn, ctx: &Context, id: &str) -> bool {
             app.extras.help_topic = "camera_selection".into();
             app.extras.help_open = true;
         }
-        "help.updates" | "help.check_updates" => {
-            crate::updates::run_command(app);
-            crate::updater::check_now(app);
-        }
+        "help.updates" | "help.check_updates" => crate::updates::run_command(app),
         "help.debug_log" => {
             let on = !help::debug_on();
             help::set_debug(on, app.settings_dir.as_deref());

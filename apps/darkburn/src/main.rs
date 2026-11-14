@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod a11y;
+mod about;
 mod actions;
 mod agent_limits;
 mod api;
@@ -158,6 +159,9 @@ mod races_hunt8_tests;
 mod rd_import;
 #[cfg(test)]
 mod readme_shots;
+mod recipe_picker;
+#[cfg(test)]
+mod recipe_picker_tests;
 mod render;
 mod ribbon;
 mod rotary_read;
@@ -211,6 +215,7 @@ mod ui_hunt_tests;
 mod ui_language_tests;
 #[cfg(test)]
 mod ui_smoke_tests;
+mod updater;
 mod updates;
 mod view;
 mod vision_cmds;
@@ -497,7 +502,7 @@ fn main() -> eframe::Result {
         persist_window: !safe_mode,
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         APP_NAME,
         options,
         Box::new(move |cc| {
@@ -530,7 +535,10 @@ fn main() -> eframe::Result {
             let mcp = mcp_ui::Host::new(app.clone());
             Ok(Box::new(App { app, writer, frames: 0, mcp }))
         }),
-    )
+    );
+    // An install finished: the window has closed (after the save question), start the new one.
+    updater::restart_if_installed();
+    result
 }
 
 #[cfg(test)]

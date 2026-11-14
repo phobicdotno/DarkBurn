@@ -1,9 +1,11 @@
-//! The update check (SHELL-13). Off unless the user turns on `Settings > Check for updates`;
-//! the command `help.check_updates` always runs one check when asked.
+//! The update check asked for from the Help menu (SHELL-13): the command `help.check_updates`
+//! runs one check and shows the answer in a dialog. The checks made by the setting
+//! `Check for updates` (a few seconds after start, then hourly) and the install itself are in
+//! `crate::updater`.
 //!
 //! One HTTPS GET of a small JSON document (by default the GitHub releases API of the DarkBurn
 //! repository), the version in it compared with this one, and the answer shown in a dialog with
-//! a link. Nothing is downloaded or installed, and nothing identifying is sent: the only header
+//! a link. This check downloads nothing, and nothing identifying is sent: the only header
 //! of its own is the generic user agent `DarkBurn`. The repository may be private, in which case
 //! GitHub answers 404 or 401 and the dialog says that the check could not see any release.
 //!
@@ -93,7 +95,7 @@ pub fn safe_link(url: &str) -> Option<&str> {
     ok.then_some(url)
 }
 
-fn allowed_address(url: &str) -> bool {
+pub(crate) fn allowed_address(url: &str) -> bool {
     if url.starts_with("https://") {
         return true;
     }
@@ -113,7 +115,7 @@ fn allowed_address(url: &str) -> bool {
 /// Where a redirect from `from` to `location` leads, when the check may go there: the address
 /// rule holds for every hop, and a secure address never steps down to plain http (not to this
 /// computer either: a server on the internet has no business pointing the check at it).
-fn next_hop(from: &str, location: &str) -> Result<String, String> {
+pub(crate) fn next_hop(from: &str, location: &str) -> Result<String, String> {
     let location = location.trim();
     let to = if location.starts_with('/') && !location.starts_with("//") {
         let after_scheme = from.find("://").map_or(0, |i| i + 3);
@@ -149,26 +151,31 @@ pub fn parse_release(body: &str, current: &str) -> Outcome {
     Outcome::Available { current: current.to_string(), latest: latest.trim_start_matches(['v', 'V']).to_string(), url, notes }
 }
 
+/// The HTTPS client: platform certificates, the generic user agent, no redirects of its own
+/// (callers follow them one hop at a time through `next_hop`), and `timeout` for the whole call.
+pub(crate) fn agent(timeout: Duration) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .unversioned_rustls_crypto_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
+        .build();
+    ureq::Agent::config_builder()
+        .tls_config(tls)
+        .http_status_as_error(false)
+        .timeout_global(Some(timeout))
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .user_agent(USER_AGENT)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .build()
+        .into()
+}
+
 /// Do one check, blocking (call it from a thread). `url` is the document's address.
 pub fn check(url: &str, current: &str) -> Outcome {
     if !allowed_address(url) {
         return Outcome::Failed("the update address must start with https://".into());
     }
-    let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .unversioned_rustls_crypto_provider(std::sync::Arc::new(rustls::crypto::ring::default_provider()))
-        .build();
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(10)))
-        .timeout_connect(Some(Duration::from_secs(5)))
-        .user_agent(USER_AGENT)
-        // Redirects are followed here, one at a time, so every hop is checked (`next_hop`).
-        .max_redirects(0)
-        .max_redirects_will_error(false)
-        .build()
-        .into();
+    let agent = agent(Duration::from_secs(10));
     let mut url = url.to_owned();
     let mut hops = 0;
     let mut response = loop {
@@ -220,7 +227,6 @@ pub struct State {
     /// The running check was started by the command (show any answer), not by the setting
     /// (show only a newer version).
     asked: bool,
-    started_at_launch: bool,
 }
 
 impl State {
@@ -287,15 +293,9 @@ pub fn run_command(app: &mut DarkBurn) {
     app.note = Some(tr("updates.checking", "Checking for updates..."));
 }
 
-/// Once a frame: start the launch check if the setting is on, collect answers.
+/// Once a frame: collect the answer of a check that was asked for. The checks made by the
+/// setting (at start and then hourly) belong to `crate::updater`, which shows a link, not this dialog.
 pub fn frame(ctx: &Context, app: &mut DarkBurn) {
-    if !app.extras.updates.started_at_launch {
-        app.extras.updates.started_at_launch = true;
-        if app.prefs.opts.check_updates && !app.safe_mode {
-            let url = address(&app.prefs.opts.update_url);
-            app.extras.updates.start(url, false);
-        }
-    }
     if app.extras.updates.running() {
         ctx.request_repaint_after(Duration::from_millis(200));
         if app.extras.updates.poll()
@@ -581,78 +581,6 @@ mod tests {
         }
         assert!(matches!(app.extras.updates.result, Some(Outcome::Available { .. })));
         assert!(app.extras.updates.open);
-    }
-
-    #[test]
-    fn the_setting_is_off_by_default() {
-        assert!(!crate::prefs::Prefs::default().opts.check_updates);
-    }
-
-    /// Run frames until the check that `frame` started has answered.
-    fn frames_until_answer(app: &mut DarkBurn) {
-        let ctx = Context::default();
-        let end = std::time::Instant::now() + Duration::from_secs(10);
-        frame(&ctx, app);
-        while app.extras.updates.running() {
-            assert!(std::time::Instant::now() < end, "no answer");
-            std::thread::sleep(Duration::from_millis(20));
-            frame(&ctx, app);
-        }
-    }
-
-    #[test]
-    fn with_the_setting_on_a_start_checks_once_and_only_a_newer_version_opens_the_dialog() {
-        // A newer release: the dialog opens by itself.
-        let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0","html_url":"https://github.com/phobicdotno/DarkBurn/releases/tag/v99.0.0"}"#, 1);
-        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
-        app.prefs.opts.check_updates = true;
-        app.prefs.opts.update_url = url;
-        frames_until_answer(&mut app);
-        assert!(matches!(app.extras.updates.result, Some(Outcome::Available { .. })));
-        assert!(app.extras.updates.open, "a newer version is shown");
-        assert!(app.note.is_none(), "no status note for a check nobody asked for");
-        // Later frames do not check again.
-        frames_until_answer(&mut app);
-        assert_eq!(seen.lock().unwrap().len(), 1);
-
-        // The same version: the answer is kept, nothing pops up.
-        let body: &'static str = Box::leak(format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION")).into_boxed_str());
-        let (url, seen) = serve("200 OK", body, 1);
-        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
-        app.prefs.opts.check_updates = true;
-        app.prefs.opts.update_url = url;
-        frames_until_answer(&mut app);
-        assert_eq!(seen.lock().unwrap().len(), 1);
-        assert!(matches!(app.extras.updates.result, Some(Outcome::UpToDate { .. })));
-        assert!(!app.extras.updates.open, "up to date: no dialog at start");
-
-        // A server that cannot be reached, or a private repository: silence at start.
-        let (url, _) = serve("404 Not Found", r#"{"message":"Not Found"}"#, 1);
-        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
-        app.prefs.opts.check_updates = true;
-        app.prefs.opts.update_url = url;
-        frames_until_answer(&mut app);
-        assert!(matches!(app.extras.updates.result, Some(Outcome::NotVisible { status: 404 })));
-        assert!(!app.extras.updates.open);
-    }
-
-    #[test]
-    fn no_check_at_start_with_the_setting_off_or_in_safe_mode() {
-        for (setting, safe) in [(false, false), (true, true)] {
-            let (url, seen) = serve("200 OK", r#"{"tag_name":"v99.0.0"}"#, 1);
-            let mut app = DarkBurn::new(crate::prefs::Prefs::default());
-            app.prefs.opts.check_updates = setting;
-            app.safe_mode = safe;
-            app.prefs.opts.update_url = url;
-            let ctx = Context::default();
-            for _ in 0..5 {
-                frame(&ctx, &mut app);
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            assert!(!app.extras.updates.running() && app.extras.updates.result.is_none());
-            assert!(!app.extras.updates.open);
-            assert!(seen.lock().unwrap().is_empty(), "nothing was asked of the server");
-        }
     }
 
     #[test]

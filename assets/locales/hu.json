@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Online dokumentáció",
+  "about.source": "Forráskód a GitHubon",
   "about.tagline": "Lézervágó és -gravírozó program.",
+  "about.version": "Verzió",
+  "about.whats_new": "Újdonságok",
   "area.bottom": "Lent",
   "area.left": "Bal oldalt",
   "area.right_bottom": "Jobbra lent",

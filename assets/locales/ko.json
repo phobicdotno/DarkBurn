@@ -1,6 +1,10 @@
 {
+  "about.build": "빌드",
   "about.docs": "온라인 문서",
+  "about.source": "GitHub의 소스 코드",
   "about.tagline": "레이저 커터 및 각인기용 프로그램입니다.",
+  "about.version": "버전",
+  "about.whats_new": "새로운 기능",
   "area.bottom": "아래",
   "area.left": "왼쪽",
   "area.right_bottom": "오른쪽 아래",

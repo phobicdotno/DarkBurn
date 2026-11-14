@@ -1,6 +1,10 @@
 {
+  "about.build": "сборка",
   "about.docs": "Документация в интернете",
+  "about.source": "Исходный код на GitHub",
   "about.tagline": "Программа для лазерной резки и гравировки.",
+  "about.version": "Версия",
+  "about.whats_new": "Что нового",
   "area.bottom": "Внизу",
   "area.left": "Слева",
   "area.right_bottom": "Справа внизу",

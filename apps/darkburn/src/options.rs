@@ -146,7 +146,7 @@ impl Default for Options {
             grid_snap_mm: 0.0,
             object_snap_px: 8.0,
             click_tolerance_px: crate::canvas_input::CLICK_TOLERANCE_PX,
-            check_updates: false,
+            check_updates: true,
             update_url: String::new(),
             default_cut_selected: false,
             default_use_selection_origin: false,

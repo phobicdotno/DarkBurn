@@ -1,6 +1,10 @@
 {
+  "about.build": "gradnja",
   "about.docs": "Spletna dokumentacija",
+  "about.source": "Izvorna koda na GitHubu",
   "about.tagline": "Program za lasersko rezanje in graviranje.",
+  "about.version": "Različica",
+  "about.whats_new": "Novosti",
   "area.bottom": "Spodaj",
   "area.left": "Levo",
   "area.right_bottom": "Desno spodaj",

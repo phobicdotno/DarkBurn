@@ -1,6 +1,10 @@
 {
+  "about.build": "build",
   "about.docs": "Documentation en ligne",
+  "about.source": "Code source sur GitHub",
   "about.tagline": "Un programme de découpe et de gravure laser.",
+  "about.version": "Version",
+  "about.whats_new": "Nouveautés",
   "area.bottom": "Bas",
   "area.left": "Gauche",
   "area.right_bottom": "Droite, bas",

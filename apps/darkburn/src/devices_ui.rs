@@ -43,6 +43,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     macro_dialog(ctx, app);
     crate::galvo_ui::dialogs(ctx, app);
     crate::gweike_ui::dialogs(ctx, app);
+    crate::recipe_picker::dialog(ctx, app);
     crate::connections::dialogs(ctx, app);
 }
 
@@ -214,7 +215,7 @@ fn wizard_dialog(ctx: &Context, app: &mut DarkBurn) {
                         ui,
                         "Greyed entries need a capture from real hardware before DarkBurn can support them. The simulators run with no hardware.",
                     );
-                    if w.draft.kind == DeviceType::GweikeCardSimulator {
+                    if w.draft.kind.is_gweike() {
                         note(ui, crate::gweike_workflow::DIRECT_CONTROL_NOTE);
                     }
                     if w.draft.kind == DeviceType::LinuxCnc {

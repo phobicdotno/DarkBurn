@@ -7,6 +7,7 @@
 //! - [`project`] reads and writes `.dbrn` project files.
 
 pub mod arrange;
+pub mod caps;
 pub mod clipboard;
 pub mod document;
 pub mod editor;
@@ -19,6 +20,7 @@ pub mod shape;
 pub mod snap;
 pub mod varray;
 
+pub use caps::{GweikeModel, LayerFields, MachineCaps};
 pub use clipboard::{Clipboard, PasteAt};
 pub use document::{Document, ImageData, ImageStore};
 pub use editor::{Editor, History, RedoSteps, Selection};

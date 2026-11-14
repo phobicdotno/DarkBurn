@@ -465,6 +465,7 @@ impl DarkBurn {
         let panel = host.edge("db_appbar", Edge::Top).exact_size(APP_BAR_HEIGHT).show_separator_line(false);
         let frame = host.edge_frame(t.app_bar);
         let custom = self.custom_titlebar;
+        let mut update_clicked = false;
         host.show_edge(ui, panel, frame, |ui| {
             let r = ui.max_rect();
             if custom {
@@ -536,18 +537,47 @@ impl DarkBurn {
             // The version gives way when the window is too narrow for it beside the menus.
             let version_room = (rx - x) > 120.0;
             if version_room {
-                ui.painter().text(
+                let vr = ui.painter().text(
                     pos2(rx + 4.0, r.center().y),
                     Align2::RIGHT_CENTER,
                     version,
                     FontId::proportional(t.font_small),
                     t.app_bar_text.gamma_multiply(0.7),
                 );
+                // A newer release: "↑ Install vX" in amber, left of the version.
+                if let Some(rel) = &self.extras.updater.available
+                    && (vr.left() - x) > 120.0
+                {
+                    let label = format!("\u{2191} {} v{}", crate::i18n::tr("updater.link", "Install"), rel.version);
+                    let galley = ui.painter().layout_no_wrap(label, FontId::proportional(t.font_small), crate::updater::AMBER);
+                    let lr = Rect::from_min_size(pos2(vr.left() - 10.0 - galley.size().x, r.center().y - galley.size().y / 2.0), galley.size());
+                    let resp = ui.interact(lr.expand(3.0), ui.scope_id().with("update_link"), Sense::click());
+                    let color = if resp.hovered() { crate::updater::AMBER.gamma_multiply(1.2) } else { crate::updater::AMBER };
+                    ui.painter().galley(lr.min, galley, color);
+                    let mut tip = format!(
+                        "{} v{} ({} v{})",
+                        crate::i18n::tr("updater.tip", "Click to install"),
+                        rel.version,
+                        crate::i18n::tr("updater.this_is", "this is"),
+                        env!("CARGO_PKG_VERSION")
+                    );
+                    if !rel.notes.is_empty() {
+                        tip.push_str("\n\n");
+                        tip.push_str(&rel.notes.join("\n"));
+                    }
+                    solidcraft_ui_registry::publish_target("appbar:update", lr);
+                    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                        update_clicked = true;
+                    }
+                }
             }
             if custom {
                 titlebar::caption_buttons(ui, r);
             }
         });
+        if update_clicked {
+            crate::updater::link_clicked(self);
+        }
     }
 
     fn menu_entries(&self, ui: &mut Ui, entries: &[Entry], clicked: &mut Option<String>) {
@@ -1071,20 +1101,7 @@ impl DarkBurn {
         if self.about_open {
             let (closed, action) = ui_kit::Window::new(egui::Id::unique("about"), "db_app", &crate::i18n::tr("cmd.help.about", "About DarkBurn"))
                 .actions("", &crate::i18n::tr("ui.close", "Close"), None)
-                .show(ctx, true, |ui| {
-                let t = Tokens::get();
-                ui.label(egui::RichText::new(format!("DarkBurn {}", env!("CARGO_PKG_VERSION"))).font(fonts::semibold(t.font_subtitle)));
-                ui.label(crate::i18n::tr("about.tagline", "A laser cutter and engraver program."));
-                if ui.link(crate::i18n::tr("about.docs", "Online documentation")).clicked() {
-                    crate::help::open_url(crate::help::DOCS_URL);
-                }
-                ui.add_space(t.space_8);
-                ui.label(egui::RichText::new("Licensed under the MIT License or the Apache License 2.0.").color(t.text_dim));
-                ui.label(
-                    egui::RichText::new("Widgets, icons and themes from SolidCraft (MIT OR Apache-2.0). Interface font IBM Plex (SIL OFL 1.1). See ATTRIBUTION.md.")
-                        .color(t.text_dim),
-                );
-            });
+                .show(ctx, true, crate::about::body);
             if closed || action != ui_kit::Action::None {
                 self.about_open = false;
             }

@@ -309,14 +309,7 @@ pub fn replace_file(target: &Path, new: &Path) -> Result<(), String> {
     if had_old {
         std::fs::rename(target, &old).map_err(|e| format!("cannot move {} aside: {e}", target.display()))?;
     }
-    let copied = std::fs::copy(new, target).map(|_| ()).and_then(|()| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o755))?;
-        }
-        Ok(())
-    });
+    let copied = std::fs::copy(new, target).map(|_| ()).and_then(|()| make_runnable(target));
     if let Err(e) = copied {
         let _ = std::fs::remove_file(target);
         if had_old {
@@ -325,6 +318,20 @@ pub fn replace_file(target: &Path, new: &Path) -> Result<(), String> {
         return Err(format!("cannot write {}: {e}", target.display()));
     }
     Ok(())
+}
+
+/// Let the program run (Unix: mode 755; elsewhere nothing to do).
+fn make_runnable(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
 }
 
 /// The install, blocking: download, unpack, replace. Reports through `progress`.
@@ -493,7 +500,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     if app.extras.updater.ask_open {
         let title = tr("updater.title", "Update");
         let install = tr("updater.install", "Install");
-        let (closed, action) = ui_kit::Window::new(egui::Id::new("db_updater_ask"), "help", &title)
+        let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_updater_ask"), "help", &title)
             .actions(&install, &tr("ui.cancel", "Cancel"), None)
             .show(ctx, true, |ui| {
                 let t = Tokens::get();
@@ -537,7 +544,7 @@ fn install_dialog(ctx: &Context, app: &mut DarkBurn, version: &str) {
     let title = format!("{} v{version}", tr("updater.installing", "Installing"));
     let mut close = false;
     let mut details = app.extras.updater.details;
-    let (closed, _) = ui_kit::Window::new(egui::Id::new("db_updater_install"), "help", &title).actions("", "", None).show(ctx, true, |ui| {
+    let (closed, _) = ui_kit::Window::new(egui::Id::unique("db_updater_install"), "help", &title).actions("", "", None).show(ctx, true, |ui| {
         let t = Tokens::get();
         ui.set_min_width(480.0);
         ui.add(egui::Label::new(RichText::new(&head).strong()).wrap());

@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::api::execute_headless;
 use crate::gweike_workflow::Head;
 use crate::prefs::Prefs;
-use crate::recipe_picker::{RECENTS, picks};
+use crate::recipe_picker::{RECENTS, materials, picks, picks_of};
 use crate::shell::DarkBurn;
 
 const MILD: &str = "Cutting parameters/1200W/Mild steel/Mild 2.0mm 1.5S F-2 O2.xml";
@@ -67,7 +67,7 @@ fn search_finds_material_and_thickness_and_ranks_the_exact_thickness_first() {
     assert_eq!(all.len(), 5);
     let p = &all.iter().find(|p| p.row.key == ACR24).unwrap();
     assert_eq!(p.label, "Acrylic · 24 mm · CO2 · air");
-    assert!(p.values.starts_with("2 mm/s"), "{}", p.values);
+    assert!(p.values.starts_with("2 mm/s (0.12 m/min)"), "{}", p.values);
 
     let acr = picks(lib, "acr 24", &[]);
     assert_eq!(acr.iter().map(|p| p.row.key.as_str()).collect::<Vec<_>>(), [ACR24]);
@@ -166,5 +166,19 @@ fn undo_takes_back_the_recipe_and_the_folder_is_remembered() {
     crate::recipe_picker::open(&mut a, 3);
     assert_eq!(a.machine.ext.gweike_recipes.picker, Some(3));
     assert!(a.machine.ext.gweike_recipes.library.is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_material_filter_keeps_one_material() {
+    let (a, dir) = app_with_package("material");
+    let lib = a.machine.ext.gweike_recipes.library.as_ref().unwrap();
+    let mats = materials(lib);
+    assert!(mats.iter().any(|m| m == "Acrylic") && mats.iter().any(|m| m == "Plywood"), "{mats:?}");
+    let acr = picks_of(lib, "", "acrylic", &[]);
+    assert_eq!(acr.len(), 2);
+    assert!(acr.iter().all(|p| p.material == "Acrylic"));
+    assert_eq!(picks_of(lib, "3", "Acrylic", &[]).iter().map(|p| p.row.key.as_str()).collect::<Vec<_>>(), [ACR3]);
+    assert_eq!(picks_of(lib, "", "", &[]).len(), picks(lib, "", &[]).len());
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -33,6 +33,8 @@ pub struct Pick {
     pub values: String,
     /// Used lately: shown at the top.
     pub recent: bool,
+    /// The material the material filter goes by ("Acrylic").
+    pub material: String,
 }
 
 fn gas_label(g: GasType) -> &'static str {
@@ -58,9 +60,27 @@ fn num(v: f64) -> String {
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
 }
 
+/// The recipe's material, else its title.
+pub fn material_of(e: &RecipeEntry) -> String {
+    e.material.as_deref().map(str::trim).filter(|m| !m.is_empty()).map_or_else(|| e.title(), str::to_owned)
+}
+
+/// The materials of the package, sorted, each once (case is ignored), for the material filter.
+pub fn materials(lib: &Library) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in &lib.recipes {
+        let m = material_of(e);
+        if !out.iter().any(|o| o.eq_ignore_ascii_case(&m)) {
+            out.push(m);
+        }
+    }
+    out.sort_by_key(|m| m.to_lowercase());
+    out
+}
+
 /// "Acrylic · 24 mm · CO2 · air": material, thickness, head, gas.
 pub fn label(e: &RecipeEntry) -> String {
-    let mut parts = vec![e.material.clone().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| e.title())];
+    let mut parts = vec![material_of(e)];
     if let Some(t) = e.name.thickness_mm {
         parts.push(format!("{} mm", num(t)));
     }
@@ -79,7 +99,8 @@ pub fn values(e: &RecipeEntry) -> String {
         Craft::Co2(c) => (c.speed_mm_s, c.duty_pct),
     };
     let (gas, bar) = gas_of(e.craft());
-    format!("{} mm/s · {} % · {} {} bar", num(speed), num(power), gas_label(gas), num(bar))
+    // The Gweike software shows speeds in m/min; the recipe files hold mm/s.
+    format!("{} mm/s ({} m/min) · {} % · {} {} bar", num(speed), num(speed * 0.06), num(power), gas_label(gas), num(bar))
 }
 
 /// How well `words` fit a recipe; `None` when a word is missing. A word at the start of the
@@ -108,18 +129,25 @@ fn score(e: &RecipeEntry, lab: &str, hay: &str, words: &[String]) -> Option<u32>
 /// The picker's list for `filter`: the recently used recipes first (most recent on top), then
 /// the best matches, ties in the order the scan found them. Every word of the filter must match.
 pub fn picks(lib: &Library, filter: &str, recents: &[String]) -> Vec<Pick> {
+    picks_of(lib, filter, "", recents)
+}
+
+/// [`picks`] for one material only (case is ignored); an empty `material` means every material.
+pub fn picks_of(lib: &Library, filter: &str, material: &str, recents: &[String]) -> Vec<Pick> {
+    let material = material.trim();
     let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
     let mut out: Vec<(usize, u32, usize, Pick)> = lib
         .recipes
         .iter()
         .enumerate()
+        .filter(|(_, e)| material.is_empty() || material_of(e).eq_ignore_ascii_case(material))
         .filter_map(|(i, e)| {
             let r = row(e);
             let lab = label(e);
             let hay = format!("{} {} {} {}", lab, r.title, r.key, r.detail).to_lowercase();
             let s = score(e, &lab, &hay, &words)?;
             let recent_at = recents.iter().position(|k| *k == r.key);
-            let pick = Pick { label: lab, values: values(e), recent: recent_at.is_some(), row: r };
+            let pick = Pick { label: lab, values: values(e), recent: recent_at.is_some(), material: material_of(e), row: r };
             Some((recent_at.unwrap_or(usize::MAX), s, i, pick))
         })
         .collect();
@@ -260,7 +288,20 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
             if edit.changed() {
                 shelf.pick_index = 0;
             }
-            let list = picks(lib, &shelf.pick_filter, &recents);
+            let before = shelf.pick_material.clone();
+            let all = "All materials";
+            egui::ComboBox::from_id_salt("db_recipe_pick_material")
+                .selected_text(if shelf.pick_material.is_empty() { all } else { shelf.pick_material.as_str() })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut shelf.pick_material, String::new(), all);
+                    for m in materials(lib) {
+                        ui.selectable_value(&mut shelf.pick_material, m.clone(), m);
+                    }
+                });
+            if shelf.pick_material != before {
+                shelf.pick_index = 0;
+            }
+            let list = picks_of(lib, &shelf.pick_filter, &shelf.pick_material, &recents);
             let (down, up, enter, esc) = ui.input(|i| {
                 (i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape))
             });

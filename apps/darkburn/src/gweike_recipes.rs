@@ -39,6 +39,8 @@ pub struct RecipeShelf {
     /// The quick picker's search text and highlighted line.
     pub pick_filter: String,
     pub pick_index: usize,
+    /// The quick picker's material filter; empty means every material.
+    pub pick_material: String,
     /// The last thing the quick picker did, shown under the layer list.
     pub pick_message: Option<String>,
     /// Device and its Gweike settings before each recipe put on a layer, for `gweike.recipe_undo`.

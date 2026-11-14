@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.0.769 (build 8)
+- New: click a layer's colour on a Gweike machine to pick a material recipe from a short searchable list
+- New: About shows the build number, a link to GitHub and what's new
+- New: Gweike M3, M3 Pro, M3 Max and M3 Ultra in the device list
+- New: Gweike layers get the fiber settings: cut height, gas, piercing, frequency and more
+- New: DarkBurn tells you when a new version is out and installs it with one click
+
 ## v0.0.764 (build 7)
 - Fix: Warp and Deform say the same thing as the other tools when a point is out of reach
 - Fix: disconnecting a Ruida while firing always lets go of its Pulse key

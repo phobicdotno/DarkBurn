@@ -331,6 +331,7 @@ const ONE_SHOT: &[&str] = &[
     // A message and its one button.
     "Could not open",
     "No job",
+    "Cannot run the job",
     "Things to know about this file",
     // Asked before going on: answered, the step goes on.
     "Save changes?",

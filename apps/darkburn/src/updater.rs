@@ -193,6 +193,11 @@ pub struct Progress {
     pub log: Vec<String>,
     /// Set when it stopped: Ok (the program to start) or what went wrong.
     pub finished: Option<Result<PathBuf, String>>,
+    /// The program could not be replaced for lack of permission (e.g. an MSI install in
+    /// Program Files): the release page is opened instead.
+    pub no_permission: bool,
+    /// The release page has been opened for `no_permission`.
+    pub page_opened: bool,
 }
 
 /// The update check and install state.
@@ -295,14 +300,20 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
 /// running program may be renamed on every system), then the new one is copied in. On failure
 /// the old one is put back.
 pub fn replace_file(target: &Path, new: &Path) -> Result<(), String> {
-    let mut old_name = target.file_name().ok_or("no file name")?.to_os_string();
+    replace_checked(target, new).map_err(|(e, _)| e)
+}
+
+/// [`replace_file`], also telling whether it failed for lack of permission.
+fn replace_checked(target: &Path, new: &Path) -> Result<(), (String, bool)> {
+    let denied = |e: &std::io::Error| e.kind() == std::io::ErrorKind::PermissionDenied;
+    let mut old_name = target.file_name().ok_or(("no file name".to_string(), false))?.to_os_string();
     old_name.push(".old");
     let old = target.with_file_name(old_name);
     // Left by an earlier update; on Windows it may still be running, then it stays.
     let _ = std::fs::remove_file(&old);
     let had_old = target.exists();
     if had_old {
-        std::fs::rename(target, &old).map_err(|e| format!("cannot move {} aside: {e}", target.display()))?;
+        std::fs::rename(target, &old).map_err(|e| (format!("cannot move {} aside: {e}", target.display()), denied(&e)))?;
     }
     let copied = std::fs::copy(new, target).map(|_| ()).and_then(|()| make_runnable(target));
     if let Err(e) = copied {
@@ -310,7 +321,7 @@ pub fn replace_file(target: &Path, new: &Path) -> Result<(), String> {
         if had_old {
             let _ = std::fs::rename(&old, target);
         }
-        return Err(format!("cannot write {}: {e}", target.display()));
+        return Err((format!("cannot write {}: {e}", target.display()), denied(&e)));
     }
     Ok(())
 }
@@ -382,7 +393,12 @@ fn install(asset: &Asset, version: &str, progress: &Arc<Mutex<Progress>>) -> Res
     let exe_name = exe.file_name().and_then(|n| n.to_str()).ok_or("no program name")?.to_string();
     let program = if cfg!(windows) { "darkburn.exe" } else { "darkburn" };
     let new_exe = find_file(&unpacked, program, 2).ok_or_else(|| format!("{program} is not in the archive"))?;
-    replace_file(&exe, &new_exe)?;
+    if let Err((e, no_permission)) = replace_checked(&exe, &new_exe) {
+        if no_permission && let Ok(mut p) = progress.lock() {
+            p.no_permission = true;
+        }
+        return Err(e);
+    }
     say(format!("Replaced {exe_name}"));
     // The MCP helper beside it, when this install has one.
     let mcp = if cfg!(windows) { "darkburn-mcp.exe" } else { "darkburn-mcp" };
@@ -520,8 +536,19 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
             app.extras.updater.ask_open = false;
         }
     }
+    open_page_if_denied(app, &rel.page);
     if app.extras.updater.job.is_some() {
         install_dialog(ctx, app, &rel.version);
+    }
+}
+
+/// An install that had no permission to replace the program opens the release page, once.
+fn open_page_if_denied(app: &mut DarkBurn, page: &str) {
+    let Some(job) = &app.extras.updater.job else { return };
+    let Ok(mut p) = job.lock() else { return };
+    if p.no_permission && !p.page_opened {
+        p.page_opened = true;
+        crate::help::open_url(updates::safe_link(page).unwrap_or(updates::RELEASES_PAGE));
     }
 }
 
@@ -533,6 +560,10 @@ fn install_dialog(ctx: &Context, app: &mut DarkBurn, version: &str) {
         None if p.stage == 0 => format!("{} v{version}\u{2026}", tr("updater.downloading", "Downloading")),
         None => format!("{} v{version}\u{2026}", tr("updater.installing", "Installing")),
         Some(Ok(_)) => format!("v{version} {}", tr("updater.installed", "installed \u{2014} restarting")),
+        Some(Err(_)) if p.no_permission => tr(
+            "updater.no_permission",
+            "DarkBurn may not replace itself in this folder (for example when installed in Program Files). The release page is open: install the new version from there.",
+        ),
         Some(Err(e)) => format!("{} {e}", tr("updater.failed", "The update stopped; this version is unchanged:")),
     };
     let title = format!("{} v{version}", tr("updater.installing", "Installing"));
@@ -694,6 +725,40 @@ mod tests {
         app.extras.updater.available.as_mut().unwrap().asset = Some(Asset { name: "a".into(), url: "https://x/a".into() });
         link_clicked(&mut app);
         assert!(app.extras.updater.ask_open, "with an archive it asks first");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_without_write_permission_is_reported_as_such() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("darkburn-updater-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ro")).unwrap();
+        let target = dir.join("ro").join("darkburn");
+        let new = dir.join("new");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(&new, b"new").unwrap();
+        std::fs::set_permissions(dir.join("ro"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let r = replace_checked(&target, &new);
+        std::fs::set_permissions(dir.join("ro"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Root may write anyway; then there is nothing to check.
+        if let Err((_, no_permission)) = r {
+            assert!(no_permission);
+            assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_permission_opens_the_release_page_once() {
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let page = "https://github.com/phobicdotno/DarkBurn/releases/tag/v9.0.0";
+        let progress = Progress { finished: Some(Err("cannot move aside".into())), no_permission: true, ..Default::default() };
+        app.extras.updater.job = Some(Arc::new(Mutex::new(progress)));
+        crate::help::take_opened();
+        open_page_if_denied(&mut app, page);
+        open_page_if_denied(&mut app, page);
+        assert_eq!(crate::help::take_opened(), [page]);
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     macro_dialog(ctx, app);
     crate::galvo_ui::dialogs(ctx, app);
     crate::gweike_ui::dialogs(ctx, app);
+    crate::recipe_picker::dialog(ctx, app);
     crate::connections::dialogs(ctx, app);
 }
 

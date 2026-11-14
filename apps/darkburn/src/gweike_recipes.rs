@@ -34,6 +34,17 @@ pub struct RecipeShelf {
     pub library: Option<Library>,
     /// The list's text filter.
     pub filter: String,
+    /// The quick picker is open for this layer (`recipe_picker.rs`).
+    pub picker: Option<usize>,
+    /// The quick picker's search text and highlighted line.
+    pub pick_filter: String,
+    pub pick_index: usize,
+    /// The quick picker's material filter; empty means every material.
+    pub pick_material: String,
+    /// The last thing the quick picker did, shown under the layer list.
+    pub pick_message: Option<String>,
+    /// Device and its Gweike settings before each recipe put on a layer, for `gweike.recipe_undo`.
+    pub undo: Vec<(u64, GweikeSettings)>,
 }
 
 /// One recipe as the list shows it.
@@ -204,6 +215,10 @@ pub fn scan_command(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {
     let mut out = summary(&lib);
     out["ok"] = json!(true);
     out["path"] = json!(dir.display().to_string());
+    let id = app.machine.active().id;
+    if let Some(d) = app.machine.devices.get_mut(id) {
+        d.settings.gweike.recipe_folder = dir.display().to_string();
+    }
     let shelf = &mut app.machine.ext.gweike_recipes;
     shelf.folder = Some(dir);
     shelf.library = Some(lib);

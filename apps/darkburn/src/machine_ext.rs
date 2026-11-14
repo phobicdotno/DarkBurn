@@ -125,6 +125,12 @@ pub const COMMANDS: &[Cmd] = &[
         "Use a Gweike Recipe on a Craft Slot",
         r#"{"type":"object","properties":{"recipe":{"type":"string"},"slot":{"type":"integer"}},"required":["recipe"]}"#,
     ),
+    a(
+        "gweike.recipe_layer",
+        "Put a Gweike Recipe on a Layer",
+        r#"{"type":"object","properties":{"recipe":{"type":"string"},"layer":{"type":"integer"}},"required":["recipe"]}"#,
+    ),
+    a("gweike.recipe_undo", "Take Back the Last Gweike Recipe", ""),
     // Gweike card commands on the in-memory card simulator (gweike_card.rs)
     crate::gweike_card::CONNECT,
     crate::gweike_card::DISCONNECT,
@@ -183,7 +189,7 @@ pub fn checklist(id: &str) -> &'static [&'static str] {
         "galvo.lens_test" | "laser.lens_test" => &["LT-18", "GALVO-17"],
         "galvo.repeat_marking" | "laser.repeat_marking" => &["LT-17", "GALVO-13", "GALVO-14"],
         "gweike.open" | "gweike.layer_map" | "gweike.set_craft" | "gweike.crafts" => &["MCC-04"],
-        "gweike.recipes_scan" | "gweike.recipes" | "gweike.recipe_use" => &["MCC-04"],
+        "gweike.recipes_scan" | "gweike.recipes" | "gweike.recipe_use" | "gweike.recipe_layer" | "gweike.recipe_undo" => &["MCC-04"],
         "gweike.export_chf" => &["MCC-02"],
         "gweike.plan" | "gweike.simulate" => &["MCC-05"],
         id if id.starts_with("mcc.") => &["MCC-05"],
@@ -358,6 +364,8 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
         "gweike.recipes_scan" => crate::gweike_recipes::scan_command(app, a),
         "gweike.recipes" => crate::gweike_recipes::list_command(app, a),
         "gweike.recipe_use" => crate::gweike_recipes::use_command(app, a),
+        "gweike.recipe_layer" => crate::recipe_picker::layer_command(app, a),
+        "gweike.recipe_undo" => crate::recipe_picker::undo_command(app, a),
         id if id.starts_with("mcc.") => crate::gweike_card::run(app, id, a),
         other => Err(format!("{other} is not a machine command")),
     })

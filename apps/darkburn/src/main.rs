@@ -158,6 +158,9 @@ mod races_hunt8_tests;
 mod rd_import;
 #[cfg(test)]
 mod readme_shots;
+mod recipe_picker;
+#[cfg(test)]
+mod recipe_picker_tests;
 mod render;
 mod ribbon;
 mod rotary_read;

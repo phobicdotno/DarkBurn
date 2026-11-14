@@ -185,6 +185,8 @@ enum Act {
     Paste,
     Header(HeaderCmd),
     Run(&'static str),
+    /// Open the quick recipe picker for a layer (Gweike machines).
+    Recipe(usize),
 }
 
 fn rename_id() -> Id {
@@ -303,6 +305,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
     // Rows.
     let list_top = ui.cursor().top();
     let mut drop_line: Option<f32> = None;
+    let gweike = app.machine.active().kind.is_gweike();
     for (row_i, &l) in used.iter().enumerate() {
         let (r, resp) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::click_and_drag());
         let layer = app.editor.doc.layer(l).clone();
@@ -384,9 +387,12 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             let on_name = resp.interact_pointer_pos().is_some_and(|p| name_rect.contains(p));
             acts.push(if on_name { Act::StartRename(l) } else { Act::Open(l) });
         } else if resp.clicked() {
-            acts.push(Act::Select(l));
+            let on_swatch = resp.interact_pointer_pos().is_some_and(|p| sw.expand(3.0).contains(p));
+            acts.push(if gweike && on_swatch && !layer.is_tool() { Act::Recipe(l) } else { Act::Select(l) });
         }
-        if resp.hovered() {
+        if gweike && resp.hover_pos().is_some_and(|p| sw.expand(3.0).contains(p)) {
+            app.hint = Some("Click the colour: pick a Gweike recipe for this layer.".into());
+        } else if resp.hovered() {
             app.hint = Some("Click: make current. Double-click: cut settings (on the name: rename). Drag: change the output order.".into());
         }
         // Drag to reorder.
@@ -405,6 +411,9 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
         ui.painter().hline((ui.max_rect().left())..=(ui.max_rect().left() + width), y, Stroke::new(2.0, t.accent));
     }
 
+    if gweike && let Some(m) = &app.machine.ext.gweike_recipes.pick_message {
+        ui_kit::status_line(ui, m, ui_kit::StatusTone::Dim);
+    }
     ui.add_space(t.space_12);
     quick_settings(ui, app);
 
@@ -419,6 +428,10 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
                 e.current_layer = l;
                 app.cut_settings_open = Some(l);
                 ui_kit::window_host::raise(&ctx, crate::cut_settings::WINDOW_KEY);
+            }
+            Act::Recipe(l) => {
+                e.current_layer = l;
+                crate::recipe_picker::open(app, l);
             }
             Act::StartRename(l) => {
                 e.current_layer = l;

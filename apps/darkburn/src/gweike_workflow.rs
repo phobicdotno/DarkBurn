@@ -73,6 +73,10 @@ pub struct GweikeSettings {
     /// Planner values for the card simulator.
     pub accel_mm_s2: f64,
     pub rapid_mm_s: f64,
+    /// The recipe package folder read last, read again when the quick picker opens.
+    pub recipe_folder: String,
+    /// The recipes put on a layer lately, most recent first (paths below the package folder).
+    pub recipe_recents: Vec<String>,
 }
 
 /// Read a craft table and fill it up to the eleven slots per head, so that a slot number that
@@ -91,7 +95,14 @@ fn full_craft_table<'de, D: serde::Deserializer<'de>>(d: D) -> Result<mcc::Craft
 impl Default for GweikeSettings {
     fn default() -> Self {
         let p = mcc::PlanConfig::default();
-        GweikeSettings { layers: BTreeMap::new(), crafts: mcc::CraftTable::default(), accel_mm_s2: p.accel_mm_s2, rapid_mm_s: p.rapid_speed_mm_s }
+        GweikeSettings {
+            layers: BTreeMap::new(),
+            crafts: mcc::CraftTable::default(),
+            accel_mm_s2: p.accel_mm_s2,
+            rapid_mm_s: p.rapid_speed_mm_s,
+            recipe_folder: String::new(),
+            recipe_recents: Vec::new(),
+        }
     }
 }
 

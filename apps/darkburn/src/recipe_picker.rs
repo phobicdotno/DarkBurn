@@ -279,10 +279,8 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
     let mut close = false;
     let title = format!("Recipe for layer {}", darkburn_core::layer::layer_label(layer));
     let shelf = &mut app.machine.ext.gweike_recipes;
-    let (closed, _) = ui_kit::Window::new(egui::Id::unique("db_recipe_picker"), "db_material_test", &title).actions("", "", None).show(
-        ctx,
-        true,
-        |ui| {
+    let (closed, _) =
+        ui_kit::Window::new(egui::Id::unique("db_recipe_picker"), "db_material_test", &title).actions("", "", None).show(ctx, true, |ui| {
             ui.set_min_width(420.0);
             let Some(lib) = &shelf.library else {
                 ui.label(
@@ -385,8 +383,7 @@ pub fn dialog(ctx: &Context, app: &mut DarkBurn) {
             if let Some(m) = &shelf.pick_message {
                 ui_kit::status_line(ui, m, StatusTone::Dim);
             }
-        },
-    );
+        });
     if closed {
         open = false;
     }

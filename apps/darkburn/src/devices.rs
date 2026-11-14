@@ -208,6 +208,17 @@ impl DeviceType {
     pub fn is_gweike(self) -> bool {
         self == Self::GweikeCardSimulator
     }
+    /// What this kind of machine can do; it decides which cut-setting sections show.
+    pub fn caps(self) -> darkburn_core::MachineCaps {
+        use darkburn_core::MachineCaps as C;
+        match self {
+            Self::GweikeCardSimulator => C::gweike_m(darkburn_core::GweikeModel::M3Ultra),
+            Self::Galvo | Self::SimulatorGalvo => C::galvo(),
+            Self::Ruida | Self::SimulatorRuida => C::ruida(),
+            Self::DesignOnly => C::design_only(),
+            _ => C::gcode(),
+        }
+    }
     pub fn flavor(self) -> Flavor {
         match self {
             Self::GrblHal => Flavor::GrblHal,

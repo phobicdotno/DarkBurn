@@ -81,7 +81,8 @@ pub fn apply_change(before: &CutSetting, after: &CutSetting, target: &mut CutSet
 
 /// Settings back to their defaults, keeping the name, mode and whether the sub-layer is on.
 pub fn reset_setting(s: &CutSetting) -> CutSetting {
-    CutSetting { name: s.name.clone(), mode: s.mode, enabled: s.enabled, ..CutSetting::default() }
+    // Gweike values hidden on other devices are kept: a reset there must not wipe them.
+    CutSetting { name: s.name.clone(), mode: s.mode, enabled: s.enabled, gweike: s.gweike.clone(), ..CutSetting::default() }
 }
 
 /// A small sample of how `mode` turns a grey ramp (dark on the left) into dots: `w` by `h`
@@ -431,6 +432,8 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let before = app.editor.doc.layer(l).settings[s.sub].clone();
     // The galvo-only fields show on the Advanced tab when the selected device is a galvo.
     let galvo_device = app.machine.active().family() == crate::machine_api::Family::Galvo;
+    // Machine-specific sections (Gweike fibre cutting) follow the active device's caps.
+    let caps = app.machine.active().kind.caps();
     let mut c = before.clone();
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
@@ -446,6 +449,9 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         }
         if galvo_device && s.advanced {
             galvo(ui, &mut c);
+        }
+        if s.advanced {
+            machine_sections(ui, &caps, &mut c);
         }
     });
     if c != before {
@@ -755,6 +761,93 @@ fn lead(ui: &mut Ui, label: &str, l: &mut darkburn_core::layer::Lead) {
     }
 }
 
+/// The sections only some machines have (Gweike M-series fibre cutting). What the device lacks
+/// is not shown, but stays in the layer untouched. The values are stored and written to the
+/// Gweike files only; nothing here drives a machine.
+fn machine_sections(ui: &mut Ui, caps: &darkburn_core::MachineCaps, c: &mut CutSetting) {
+    use darkburn_core::layer::{GasKind, GweikeLayer, GweikeSource, PierceStep};
+    let f = caps.layer_fields(c);
+    if !f.any() {
+        return;
+    }
+    let mut g = c.gweike.clone().unwrap_or_default();
+    if f.source_select {
+        ui_kit::section_heading(ui, "Source");
+        pick(ui, "Laser source", &mut g.source, &[(GweikeSource::Fibre, "Fibre"), (GweikeSource::Co2, "CO2")]);
+    }
+    // The pick above may have changed the source: recompute what shows.
+    let f = caps.layer_fields(&CutSetting { gweike: Some(g.clone()), ..CutSetting::default() });
+    if f.source_freq {
+        ui_kit::section_heading(ui, "Fibre source");
+        num(ui, "Frequency", &mut g.freq_hz, Num::new(1.0..=100_000.0, 0, " Hz").speed(10.0));
+        num(ui, "Peak current", &mut g.peak_current_pct, pct());
+        num(ui, "Duty", &mut g.duty_pct, pct());
+    }
+    if f.follower {
+        ui_kit::section_heading(ui, "Height follower");
+        ui_kit::checkbox(ui, "Follow the sheet", &mut g.follow);
+        if g.follow {
+            num(ui, "Cut height", &mut g.cut_height_mm, mm(0.0, 30.0));
+        } else {
+            num(ui, "Cut position", &mut g.fixed_height_mm, mm(0.0, 60.0));
+        }
+        ui_kit::checkbox(ui, "Frog-jump lift", &mut g.frog_jump);
+        num(ui, "Lift height", &mut g.lift_height_mm, mm(0.0, 60.0));
+        ui_kit::checkbox(ui, "No lift on short moves", &mut g.short_distance_no_lift);
+    }
+    if f.gas_control {
+        ui_kit::section_heading(ui, "Assist gas");
+        let gases: Vec<(GasKind, &str)> = GasKind::ALL.iter().map(|k| (*k, k.label())).collect();
+        pick(ui, "Gas", &mut g.gas, &gases);
+        num(ui, "Gas pressure", &mut g.gas_pressure_bar, Num::new(0.0..=30.0, 1, " bar").speed(0.1));
+        let ms = || Num::new(0.0..=60_000.0, 0, " ms").speed(1.0);
+        num(ui, "Laser-on delay", &mut g.laser_on_delay_ms, ms());
+        num(ui, "Delay before laser off", &mut g.laser_off_before_delay_ms, ms());
+        num(ui, "Gas after laser off", &mut g.laser_off_after_delay_ms, ms());
+        ui_kit::checkbox(ui, "Gas on during short moves", &mut g.gas_on_short_moves);
+        ui_kit::checkbox(ui, "Gas on for the whole job", &mut g.gas_on_whole_job);
+    }
+    if f.piercing {
+        ui_kit::section_heading(ui, "Piercing");
+        ui_kit::checkbox(ui, "Pre-drill all start points", &mut g.pre_drill);
+        ui_kit::checkbox(ui, "Pierce again before the cut", &mut g.pierce_again_before_cut);
+        let mut stages = g.pierce.len() as u32;
+        count(ui, "Pierce stages", &mut stages, 0, 5);
+        g.pierce.resize_with(stages as usize, PierceStep::default);
+        for (i, st) in g.pierce.iter_mut().enumerate() {
+            let n = i + 1;
+            num(ui, &format!("Stage {n} height"), &mut st.height_mm, mm(0.0, 30.0));
+            num(ui, &format!("Stage {n} time"), &mut st.time_ms, Num::new(0.0..=60_000.0, 0, " ms").speed(1.0));
+            num(ui, &format!("Stage {n} duty"), &mut st.duty_pct, pct());
+            num(ui, &format!("Stage {n} frequency"), &mut st.freq_hz, Num::new(1.0..=100_000.0, 0, " Hz").speed(10.0));
+            num(ui, &format!("Stage {n} peak current"), &mut st.peak_current_pct, pct());
+            num(ui, &format!("Stage {n} gas pressure"), &mut st.gas_pressure_bar, Num::new(0.0..=30.0, 1, " bar").speed(0.1));
+        }
+        ui_kit::checkbox(ui, "Slow start", &mut g.slow_start);
+        if g.slow_start {
+            num(ui, "Slow start length", &mut g.slow_start_length_mm, mm(0.0, 100.0));
+            num(ui, "Slow start speed", &mut g.slow_start_speed_mm_s, Num::new(0.1..=1000.0, 1, " mm/s").speed(0.5));
+        }
+    }
+    if f.micro_joints || f.film_removal {
+        ui_kit::section_heading(ui, "Contours");
+    }
+    if f.micro_joints {
+        ui_kit::checkbox(ui, "Micro-joints", &mut g.micro_joints);
+        if g.micro_joints {
+            num(ui, "Joint length", &mut g.micro_joint_length_mm, mm(0.0, 10.0));
+            num(ui, "Joint spacing", &mut g.micro_joint_spacing_mm, mm(1.0, 1000.0));
+        }
+    }
+    if f.film_removal {
+        ui_kit::checkbox(ui, "Film-removal pass first", &mut g.film_removal);
+    }
+    // Only a layer the user actually touched gets Gweike values.
+    if c.gweike.is_some() || g != GweikeLayer::default() {
+        c.gweike = Some(g);
+    }
+}
+
 /// Galvo settings (only shown for galvo devices).
 fn galvo(ui: &mut Ui, c: &mut CutSetting) {
     let g = &mut c.galvo;
@@ -910,6 +1003,30 @@ mod tests {
         assert_eq!(other.tabs.size, 2.0);
         assert_eq!(other.max_power, 80.0, "untouched fields stay");
         assert_eq!(other.tabs.spacing, 9.0, "nested untouched fields stay");
+    }
+
+    #[test]
+    fn caps_follow_the_device_kind() {
+        use crate::devices::DeviceType as D;
+        for kind in D::ALL {
+            let caps = kind.caps();
+            let gweike = kind.is_gweike();
+            assert_eq!(caps.gweike.is_some(), gweike, "{kind:?}");
+            assert_eq!(caps.layer_fields(&CutSetting::default()).any(), gweike, "{kind:?}: fibre sections only on Gweike");
+        }
+        assert!(D::Ruida.caps().dual_laser);
+        assert!(D::SimulatorGalvo.caps().sources.galvo);
+    }
+
+    #[test]
+    fn hidden_gweike_values_survive_a_change_on_another_device() {
+        let g = darkburn_core::layer::GweikeLayer { gas_pressure_bar: 12.0, ..Default::default() };
+        let before = CutSetting { gweike: Some(g.clone()), ..Default::default() };
+        let after = CutSetting { speed: 40.0, ..before.clone() };
+        let mut target = before.clone();
+        apply_change(&before, &after, &mut target);
+        assert_eq!(target.speed, 40.0);
+        assert_eq!(target.gweike, Some(g));
     }
 
     #[test]

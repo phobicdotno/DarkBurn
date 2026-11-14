@@ -43,6 +43,7 @@ pub struct Extras {
     last_hover: Option<&'static str>,
     pub support_status: Option<String>,
     pub updates: crate::updates::State,
+    pub updater: crate::updater::State,
     locks_loaded: bool,
 }
 
@@ -86,6 +87,7 @@ pub fn frame(ctx: &Context, app: &mut DarkBurn) {
     art_library::frame(app);
     app.extras.last_hover = app.extras.hover_topic.take();
     crate::updates::frame(ctx, app);
+    crate::updater::frame(ctx, app);
     if app.extras.library.is_dirty() || !app.extras.art.libs.is_empty() {
         ctx.request_repaint_after(std::time::Duration::from_secs(5));
     }
@@ -341,6 +343,7 @@ pub fn set_option(app: &mut DarkBurn, key: &str, value: &Value) -> Result<(), St
 /// The hotkey editor and the help window.
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     crate::updates::dialog(ctx, app);
+    crate::updater::dialogs(ctx, app);
     if app.extras.help_open {
         let topic = help::topic(&app.extras.help_topic);
         let (closed, action) = ui_kit::Window::new(egui::Id::unique("db_help"), "help", &tr("help.title", "Help"))

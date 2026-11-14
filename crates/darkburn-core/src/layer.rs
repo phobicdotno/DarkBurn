@@ -113,6 +113,159 @@ pub enum AirMode {
     WithLaser,
 }
 
+/// Which source a Gweike M-series layer uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GweikeSource {
+    #[default]
+    Fibre,
+    Co2,
+}
+
+/// Assist gas of a Gweike fibre layer (the codes of the Mlaser files, 0..=5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GasKind {
+    #[default]
+    Air,
+    O2,
+    N2,
+    HighAir,
+    HighO2,
+    HighN2,
+}
+
+impl GasKind {
+    pub const ALL: [GasKind; 6] = [GasKind::Air, GasKind::O2, GasKind::N2, GasKind::HighAir, GasKind::HighO2, GasKind::HighN2];
+    pub fn label(self) -> &'static str {
+        match self {
+            GasKind::Air => "Air",
+            GasKind::O2 => "Oxygen",
+            GasKind::N2 => "Nitrogen",
+            GasKind::HighAir => "Air, high pressure",
+            GasKind::HighO2 => "Oxygen, high pressure",
+            GasKind::HighN2 => "Nitrogen, high pressure",
+        }
+    }
+}
+
+/// One pierce stage of a Gweike fibre layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PierceStep {
+    /// Nozzle height, mm.
+    pub height_mm: f64,
+    /// Duty, percent.
+    pub duty_pct: f64,
+    pub freq_hz: f64,
+    pub peak_current_pct: f64,
+    pub gas: GasKind,
+    pub gas_pressure_bar: f64,
+    /// Laser-on time, ms.
+    pub time_ms: f64,
+}
+
+impl Default for PierceStep {
+    fn default() -> Self {
+        PierceStep {
+            height_mm: 5.0,
+            duty_pct: 50.0,
+            freq_hz: 500.0,
+            peak_current_pct: 100.0,
+            gas: GasKind::Air,
+            gas_pressure_bar: 5.0,
+            time_ms: 1000.0,
+        }
+    }
+}
+
+/// Gweike M-series layer values (fibre cutting and the source pick). Stored with the layer and
+/// written to the Gweike files only; DarkBurn never drives the follower, piercing or gas live.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GweikeLayer {
+    pub source: GweikeSource,
+    // Height follower
+    /// Follow the sheet with the capacitive follower.
+    pub follow: bool,
+    /// Nozzle height while cutting, mm.
+    pub cut_height_mm: f64,
+    /// Head position for fixed-height cutting (Cut Position), mm.
+    pub fixed_height_mm: f64,
+    /// Frog-jump lift between contours.
+    pub frog_jump: bool,
+    /// Lift height between contours, mm.
+    pub lift_height_mm: f64,
+    /// No lift between contours that start close together.
+    pub short_distance_no_lift: bool,
+    // Gas
+    pub gas: GasKind,
+    pub gas_pressure_bar: f64,
+    /// Dwell after the laser is on, before motion, ms.
+    pub laser_on_delay_ms: f64,
+    /// Dwell at the contour end before laser off, ms.
+    pub laser_off_before_delay_ms: f64,
+    /// Gas blow after laser off, ms.
+    pub laser_off_after_delay_ms: f64,
+    pub gas_on_short_moves: bool,
+    pub gas_on_whole_job: bool,
+    // Source
+    pub freq_hz: f64,
+    pub peak_current_pct: f64,
+    pub duty_pct: f64,
+    // Piercing
+    /// Pierce every start point of the layer first.
+    pub pre_drill: bool,
+    pub pierce_again_before_cut: bool,
+    pub pierce: Vec<PierceStep>,
+    pub slow_start: bool,
+    pub slow_start_length_mm: f64,
+    pub slow_start_speed_mm_s: f64,
+    // Contours
+    pub micro_joints: bool,
+    pub micro_joint_length_mm: f64,
+    pub micro_joint_spacing_mm: f64,
+    /// Film-removal pass before the cut.
+    pub film_removal: bool,
+    /// Nozzle code such as `1.5S`, kept as text.
+    pub nozzle: String,
+}
+
+impl Default for GweikeLayer {
+    fn default() -> Self {
+        GweikeLayer {
+            source: GweikeSource::Fibre,
+            follow: true,
+            cut_height_mm: 1.0,
+            fixed_height_mm: 20.0,
+            frog_jump: true,
+            lift_height_mm: 20.0,
+            short_distance_no_lift: true,
+            gas: GasKind::Air,
+            gas_pressure_bar: 5.0,
+            laser_on_delay_ms: 0.0,
+            laser_off_before_delay_ms: 0.0,
+            laser_off_after_delay_ms: 0.0,
+            gas_on_short_moves: false,
+            gas_on_whole_job: false,
+            freq_hz: 5000.0,
+            peak_current_pct: 100.0,
+            duty_pct: 100.0,
+            pre_drill: false,
+            pierce_again_before_cut: false,
+            pierce: Vec::new(),
+            slow_start: false,
+            slow_start_length_mm: 2.0,
+            slow_start_speed_mm_s: 10.0,
+            micro_joints: false,
+            micro_joint_length_mm: 0.3,
+            micro_joint_spacing_mm: 50.0,
+            film_removal: false,
+            nozzle: String::new(),
+        }
+    }
+}
+
 /// How fills group shapes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FillGrouping {
@@ -364,6 +517,10 @@ pub struct CutSetting {
     pub merge_images: bool,
     // Galvo
     pub galvo: Galvo,
+    // Gweike M-series
+    /// Gweike values; `None` until the user sets one. Kept when the device changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gweike: Option<GweikeLayer>,
 }
 
 impl Default for CutSetting {
@@ -424,6 +581,7 @@ impl Default for CutSetting {
             threshold_ramp: 0.0,
             merge_images: true,
             galvo: Galvo::default(),
+            gweike: None,
         }
     }
 }
@@ -647,6 +805,45 @@ pub fn default_layers() -> Vec<Layer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gweike_values_round_trip_through_a_project_file() {
+        let mut d = crate::Document::new();
+        let g = GweikeLayer {
+            source: GweikeSource::Co2,
+            cut_height_mm: 0.8,
+            gas: GasKind::HighN2,
+            gas_pressure_bar: 14.0,
+            pre_drill: true,
+            pierce: vec![PierceStep { height_mm: 6.0, time_ms: 300.0, ..Default::default() }],
+            micro_joints: true,
+            film_removal: true,
+            nozzle: "1.5S".into(),
+            ..Default::default()
+        };
+        d.layer_mut(0).settings[0].gweike = Some(g.clone());
+        let bytes = crate::project::save(&d, "test", None).unwrap();
+        let back = crate::project::load(&bytes).unwrap().doc;
+        assert_eq!(back.layer(0).settings[0].gweike.as_ref(), Some(&g), "hidden Gweike values are kept");
+        assert_eq!(back.layer(1).settings[0].gweike, None);
+    }
+
+    #[test]
+    fn old_cut_settings_without_gweike_values_load() {
+        let old = serde_json::json!({ "name": "Cut", "speed": 12.0, "max_power": 80.0 });
+        let c: CutSetting = serde_json::from_value(old).unwrap();
+        assert_eq!(c.gweike, None);
+        assert_eq!(c.speed, 12.0);
+        // A layer without Gweike values writes no `gweike` key, so older DarkBurns read it as before.
+        let v = serde_json::to_value(CutSetting::default()).unwrap();
+        assert!(v.get("gweike").is_none());
+        // Partial Gweike values fill the rest from the defaults.
+        let part: CutSetting = serde_json::from_value(serde_json::json!({ "gweike": { "gas": "o2" } })).unwrap();
+        let g = part.gweike.unwrap();
+        assert_eq!(g.gas, GasKind::O2);
+        assert_eq!(g.source, GweikeSource::Fibre);
+        assert_eq!(g.cut_height_mm, GweikeLayer::default().cut_height_mm);
+    }
 
     #[test]
     fn thirty_colour_layers_and_two_tool_layers() {

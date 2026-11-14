@@ -453,6 +453,8 @@ fn every_window_that_stays_open_docks() {
 const NOT_DOCKABLE: &[(&str, &str)] = &[
     ("about", "read once and closed"),
     ("db_updates", "read once and closed"),
+    ("db_updater_ask", "asked before an update is installed"),
+    ("db_updater_install", "shows while an update installs, then the program restarts"),
     ("db_file_message", "a message and its one button"),
     ("db_job_message", "a message and its one button"),
     ("db_import_warnings", "a message and its one button"),

@@ -133,3 +133,51 @@ fn a_docked_window_tab_dragged_onto_a_floating_group_joins_it() {
     assert!(g.app().prefs.floating.is_empty());
     assert_eq!(placement(&g), Placement::Docked("RightTop".into()));
 }
+
+#[test]
+fn a_tab_dropped_past_the_last_shown_tab_of_a_full_bar_goes_to_the_end() {
+    // The default layout: every right panel in one bar, some behind the chevron.
+    let mut g = Gui::with_prefs(1600.0, 1000.0, 1.0, Prefs::default());
+    g.frames(3);
+    let right = Place::Docked(Area::RightTop);
+    assert!(g.rect_of("panel:overflow:RightTop").is_some(), "the bar overflows: {:?}", g.rects("panel:tab:"));
+    let first = order(&g, right)[0];
+    let shown: Vec<Rect> = order(&g, right).iter().filter_map(|id| g.rect_of(&format!("panel:tab:{id}"))).collect();
+    let last = shown.iter().map(|r| r.right()).fold(f32::MIN, f32::max);
+    let to = Pos2::new(last + 4.0, tab(&g, first).center().y);
+    g.drag(tab(&g, first).center(), to);
+    assert_eq!(order(&g, right).last().copied(), Some(first), "{:?}", order(&g, right));
+}
+
+#[test]
+fn a_full_floating_group_puts_its_extra_tabs_behind_a_chevron() {
+    let mut g = two_groups();
+    let id = g.app().prefs.float_panel("laser", [300.0, 200.0], [200.0, 300.0]).unwrap();
+    for p in ["library", "cuts", "console", "camera"] {
+        g.app().prefs.move_panel(p, Place::Floating(id), None);
+    }
+    g.frames(3);
+    let float = g.rect_of(&format!("panel:float:{id}")).expect("drawn");
+    let more = g.rect_of(&format!("panel:float_overflow:{id}")).unwrap_or_else(|| panic!("the chevron: {:?}", g.rects("panel:")));
+    assert!(float.contains(more.center()));
+    for r in g.rects("panel:tab:").into_iter().map(|(_, r)| r).filter(|r| float.intersects(*r)) {
+        assert!(r.right() <= more.left() + 0.5 && r.width() > 1.0, "a shown tab is whole and left of the chevron: {r:?} {more:?}");
+    }
+}
+
+#[test]
+fn a_floating_group_stored_off_screen_is_drawn_on_it_and_stays_there_when_moved() {
+    let mut g = two_groups();
+    let id = g.app().prefs.float_panel("laser", [3000.0, -500.0], [360.0, 400.0]).unwrap();
+    g.frames(2);
+    let screen = g.screen();
+    let float = g.rect_of(&format!("panel:float:{id}")).expect("drawn");
+    assert!(screen.contains_rect(float), "{float:?} on {screen:?}");
+    // Its header dragged far up and left: it stops at the edge.
+    let free = tab(&g, "laser").right_center() + vec2(60.0, 0.0);
+    g.drag(free, Pos2::new(free.x - 2000.0, 1.0));
+    let moved = g.rect_of(&format!("panel:float:{id}")).expect("drawn");
+    assert!(screen.contains_rect(moved), "{moved:?} on {screen:?}");
+    let f = &g.app().prefs.floating[&id];
+    assert!(f.pos[0] >= screen.left() && f.pos[1] >= screen.top(), "the stored place is on screen too: {:?}", f.pos);
+}

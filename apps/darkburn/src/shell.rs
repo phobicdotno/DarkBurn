@@ -956,49 +956,8 @@ impl DarkBurn {
             self.extras.hover_topic = Some(crate::help::topic_id_for(&active));
         }
         // Tabs that do not fit go behind a chevron; the active one always stays visible.
-        let widths: Vec<f32> =
-            tabs.iter().map(|p| ui.painter().layout_no_wrap(p.title.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();
-        let mut keep = vec![true; tabs.len()];
-        let overflow_w = 26.0;
-        if 4.0 + widths.iter().sum::<f32>() > tabs_clip.width() {
-            let room = tabs_clip.width() - 4.0 - overflow_w;
-            keep = vec![false; tabs.len()];
-            let at = tabs.iter().position(|p| p.id == active).unwrap_or(0);
-            // The active tab stays also when it alone is wider than the room: it is cut short.
-            keep[at] = true;
-            let mut used = widths[at];
-            for i in (0..tabs.len()).filter(|i| *i != at) {
-                if used + widths[i] <= room {
-                    keep[i] = true;
-                    used += widths[i];
-                }
-            }
-            tabs_clip = Rect::from_min_max(tabs_clip.min, pos2(tabs_clip.right() - overflow_w, tabs_clip.bottom()));
-            let ovf = Rect::from_center_size(pos2(tabs_clip.right() + overflow_w / 2.0, header.center().y), vec2(22.0, 22.0));
-            let hidden: Vec<(String, String)> =
-                tabs.iter().enumerate().filter(|(i, _)| !keep[*i]).map(|(_, p)| (p.id.clone(), p.title.clone())).collect();
-            let id = ui.scope_id().with(("tab_overflow", area));
-            Menu::button_with(
-                ui,
-                |ui, _| {
-                    let resp = ui.interact(ovf, id, Sense::click());
-                    if resp.hovered() {
-                        ui.painter().rect_filled(ovf, t.radius_sm, t.hover);
-                    }
-                    ui.painter().text(ovf.center(), Align2::CENTER_CENTER, "\u{bb}", FontId::proportional(t.font_heading), t.text);
-                    solidcraft_ui_registry::publish_target(&format!("panel:overflow:{area:?}"), ovf);
-                    resp.backing_on_hover_text(crate::i18n::tr("ui.more_tabs", "More tabs"))
-                },
-                |ui| {
-                    ui.set_min_width(180.0);
-                    for (pid, title) in &hidden {
-                        if MenuItem::new(pid, title, "").show(ui).clicked() {
-                            pick = Some(pid.clone());
-                        }
-                    }
-                },
-            );
-        }
+        let id = ui.scope_id().with(("tab_overflow", area));
+        let keep = tab_overflow(ui, &tabs, &active, header, &mut tabs_clip, id, &format!("panel:overflow:{area:?}"), &mut pick);
         for (pi, p) in tabs.iter().enumerate() {
             if !keep[pi] {
                 continue;
@@ -1156,7 +1115,9 @@ impl DarkBurn {
             let Some(group) = self.prefs.floating.get(&g).cloned() else { continue };
             let front = tabs.iter().find(|p| p.id == group.active).unwrap_or(&tabs[0]).id.clone();
             let front_window = window_host::window_of_tab(&front).map(str::to_string);
-            let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
+            // Drawn inside the main window, whatever is stored: a group saved on a larger
+            // screen, or dragged past an edge, can always be reached by its header.
+            let rect = fit_on_screen(Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1])), ctx.content_rect());
             let mut pick: Option<String> = None;
             let mut window_action: Option<(String, WindowMove)> = None;
             let mut close = false;
@@ -1185,9 +1146,14 @@ impl DarkBurn {
                         ctx.set_cursor_icon(egui::CursorIcon::Grab);
                     }
                     let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
-                    let tabs_clip = Rect::from_min_max(header.min, pos2(close_at.left() - 2.0, header.bottom()));
+                    let mut tabs_clip = Rect::from_min_max(header.min, pos2(close_at.left() - 2.0, header.bottom()));
+                    let id = ui.scope_id().with(("float_overflow", g));
+                    let keep = tab_overflow(ui, &tabs, &front, header, &mut tabs_clip, id, &format!("panel:float_overflow:{g}"), &mut pick);
                     let mut x = header.left() + 4.0;
-                    for p in &tabs {
+                    for (pi, p) in tabs.iter().enumerate() {
+                        if !keep[pi] {
+                            continue;
+                        }
                         let on = p.id == front;
                         let title = p.title.clone();
                         let font = if on { fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
@@ -1283,12 +1249,13 @@ impl DarkBurn {
             );
             set_tab_rects(ctx, place, tab_rects);
             if let Some(f) = self.prefs.floating.get_mut(&g) {
-                if moved != egui::Vec2::ZERO {
-                    f.pos = [f.pos[0] + moved.x, f.pos[1] + moved.y];
-                }
-                if resized != egui::Vec2::ZERO {
+                // A move or resize starts from where it is drawn and stays on screen.
+                if moved != egui::Vec2::ZERO || resized != egui::Vec2::ZERO {
                     let (lo, hi) = (crate::prefs::FLOAT_MIN, crate::prefs::FLOAT_MAX);
-                    f.size = [(f.size[0] + resized.x).clamp(lo[0], hi[0]), (f.size[1] + resized.y).clamp(lo[1], hi[1])];
+                    let size = [(rect.width() + resized.x).clamp(lo[0], hi[0]), (rect.height() + resized.y).clamp(lo[1], hi[1])];
+                    let to = fit_on_screen(Rect::from_min_size(rect.min + moved, vec2(size[0], size[1])), ctx.content_rect());
+                    f.pos = [to.min.x, to.min.y];
+                    f.size = if resized != egui::Vec2::ZERO { [to.width(), to.height()] } else { f.size };
                 }
             }
             if let Some(id) = pick {
@@ -1345,7 +1312,13 @@ impl DarkBurn {
                 if place == own && !on_bar {
                     return None;
                 }
-                let at = on_bar.then(|| tab_rects(ctx, place).iter().filter(|(p, r)| p != id && r.center().x < pos.x).count());
+                // Before the first shown tab right of the pointer, counted over all shown tabs
+                // (also those behind the chevron); past the last one drawn it goes at the end.
+                let at = on_bar.then(|| {
+                    let others: Vec<&str> = self.prefs.visible_in(place).iter().map(|p| p.id).filter(|p| *p != id).collect();
+                    let before = tab_rects(ctx, place).into_iter().find(|(p, r)| p != id && r.center().x >= pos.x).map(|(p, _)| p);
+                    before.and_then(|b| others.iter().position(|p| *p == b)).unwrap_or(others.len())
+                });
                 Some(PanelDrop::To(place, at))
             }
             None if !own_rect.contains(pos) => Some(PanelDrop::Float([pos.x - 40.0, pos.y - 12.0])),
@@ -1586,6 +1559,69 @@ type TabRects = std::collections::HashMap<String, Vec<(String, Rect)>>;
 
 /// Each tab group's panel tabs as drawn (this frame, or the last one for groups drawn later):
 /// a dropped tab lands between them.
+/// Which of `tabs` fit in `tabs_clip` on `header`: those that do not go behind a chevron at its
+/// right end (then `tabs_clip` shrinks to leave room for it), and one picked there lands in
+/// `pick`. The active tab always stays, cut short when it alone is too wide.
+#[allow(clippy::too_many_arguments)]
+fn tab_overflow(ui: &mut Ui, tabs: &[Tab], active: &str, header: Rect, tabs_clip: &mut Rect, id: egui::Id, target: &str, pick: &mut Option<String>) -> Vec<bool> {
+    let t = Tokens::get();
+    let widths: Vec<f32> =
+        tabs.iter().map(|p| ui.painter().layout_no_wrap(p.title.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();
+    let overflow_w = 26.0;
+    if 4.0 + widths.iter().sum::<f32>() <= tabs_clip.width() {
+        return vec![true; tabs.len()];
+    }
+    let room = tabs_clip.width() - 4.0 - overflow_w;
+    let mut keep = vec![false; tabs.len()];
+    let at = tabs.iter().position(|p| p.id == active).unwrap_or(0);
+    keep[at] = true;
+    let mut used = widths[at];
+    for i in (0..tabs.len()).filter(|i| *i != at) {
+        if used + widths[i] <= room {
+            keep[i] = true;
+            used += widths[i];
+        }
+    }
+    *tabs_clip = Rect::from_min_max(tabs_clip.min, pos2(tabs_clip.right() - overflow_w, tabs_clip.bottom()));
+    let ovf = Rect::from_center_size(pos2(tabs_clip.right() + overflow_w / 2.0, header.center().y), vec2(22.0, 22.0));
+    let hidden: Vec<(String, String)> = tabs.iter().enumerate().filter(|(i, _)| !keep[*i]).map(|(_, p)| (p.id.clone(), p.title.clone())).collect();
+    Menu::button_with(
+        ui,
+        |ui, _| {
+            let resp = ui.interact(ovf, id, Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(ovf, t.radius_sm, t.hover);
+            }
+            ui.painter().text(ovf.center(), Align2::CENTER_CENTER, "\u{bb}", FontId::proportional(t.font_heading), t.text);
+            solidcraft_ui_registry::publish_target(target, ovf);
+            resp.backing_on_hover_text(crate::i18n::tr("ui.more_tabs", "More tabs"))
+        },
+        |ui| {
+            ui.set_min_width(180.0);
+            for (pid, title) in &hidden {
+                if MenuItem::new(pid, title, "").show(ui).clicked() {
+                    *pick = Some(pid.clone());
+                }
+            }
+        },
+    );
+    keep
+}
+
+/// Rect `r` moved (and if it must, shrunk) to lie inside `screen`; as it is when the screen is
+/// not known yet. A rect larger than the screen keeps its top-left corner on it.
+fn fit_on_screen(r: Rect, screen: Rect) -> Rect {
+    if !(screen.is_finite() && screen.width() > 1.0 && screen.height() > 1.0) {
+        return r;
+    }
+    // Never smaller than a group may be made.
+    let lo = crate::prefs::FLOAT_MIN;
+    let size = vec2(r.width().min(screen.width().max(lo[0])), r.height().min(screen.height().max(lo[1])));
+    let x = r.left().min(screen.right() - size.x).max(screen.left());
+    let y = r.top().min(screen.bottom() - size.y).max(screen.top());
+    Rect::from_min_size(pos2(x, y), size)
+}
+
 fn set_tab_rects(ctx: &egui::Context, place: panels::Place, rects: Vec<(String, Rect)>) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<TabRects>(egui::Id::unique("db_tab_rects")).insert(place.key(), rects));
 }

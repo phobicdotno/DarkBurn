@@ -27,7 +27,7 @@ fn canvas_spot(g: &Gui) -> Pos2 {
 }
 
 fn order(g: &Gui, place: Place) -> Vec<&'static str> {
-    g.app().prefs.panels_in(place).iter().map(|p| p.id).collect()
+    g.app().prefs.visible_in(place).iter().map(|p| p.id).collect()
 }
 
 #[test]

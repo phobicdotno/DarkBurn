@@ -1149,7 +1149,7 @@ impl DarkBurn {
                     ui.painter().rect_filled(header, 0.0, t.panel_header);
                     ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));
                     // The header's empty space moves the group; the tabs drawn over it win.
-                    let mover = ui.interact(header, ui.id().with(("float_move", g)), Sense::drag());
+                    let mover = ui.interact(header, ui.scope_id().with(("float_move", g)), Sense::drag());
                     if mover.dragged() {
                         moved = mover.drag_delta();
                         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -1167,7 +1167,7 @@ impl DarkBurn {
                         let gal = ui.painter().layout_no_wrap(title, font, ink);
                         let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(gal.size().x + 16.0, PANEL_HEADER - 6.0));
                         x = tr.right() + 2.0;
-                        let resp = ui.interact(tr.intersect(tabs_clip), ui.id().with(("float_tab", p.id)), Sense::click_and_drag());
+                        let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("float_tab", p.id)), Sense::click_and_drag());
                         let painter = ui.painter().with_clip_rect(tabs_clip);
                         if on {
                             painter.rect_filled(tr, t.radius_sm, t.accent_soft);
@@ -1209,7 +1209,7 @@ impl DarkBurn {
                     });
                     // The bottom-right corner resizes the group.
                     let corner = Rect::from_min_max(rect.max - vec2(14.0, 14.0), rect.max);
-                    let grip = ui.interact(corner, ui.id().with(("float_resize", g)), Sense::drag());
+                    let grip = ui.interact(corner, ui.scope_id().with(("float_resize", g)), Sense::drag());
                     if grip.hovered() || grip.dragged() {
                         ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
                     }
@@ -1510,11 +1510,11 @@ type TabRects = std::collections::HashMap<String, Vec<(String, Rect)>>;
 /// Each tab group's panel tabs as drawn (this frame, or the last one for groups drawn later):
 /// a dropped tab lands between them.
 fn set_tab_rects(ctx: &egui::Context, place: panels::Place, rects: Vec<(String, Rect)>) {
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<TabRects>(egui::Id::new("db_tab_rects")).insert(place.key(), rects));
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<TabRects>(egui::Id::unique("db_tab_rects")).insert(place.key(), rects));
 }
 
 fn tab_rects(ctx: &egui::Context, place: panels::Place) -> Vec<(String, Rect)> {
-    ctx.data(|d| d.get_temp::<TabRects>(egui::Id::new("db_tab_rects")).and_then(|m| m.get(&place.key()).cloned()).unwrap_or_default())
+    ctx.data(|d| d.get_temp::<TabRects>(egui::Id::unique("db_tab_rects")).and_then(|m| m.get(&place.key()).cloned()).unwrap_or_default())
 }
 
 /// A window's tab being dragged: show where it will go; dropped on another area it docks there,

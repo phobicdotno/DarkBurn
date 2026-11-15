@@ -1127,7 +1127,8 @@ impl DarkBurn {
                 let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
                 ui.painter().rect_filled(header, 0.0, t.panel_header);
                 let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()))), |ui| {
+                let tab_room = Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(tab_room), |ui| {
                     ui.horizontal(|ui| {
                         for p in &tabs {
                             let title = crate::i18n::panel_title(p.id, p.title);

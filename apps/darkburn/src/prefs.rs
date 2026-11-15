@@ -529,8 +529,7 @@ impl Prefs {
     /// Floating groups without a shown panel are gone; their hidden panels go back to their
     /// docked area.
     pub fn prune_floating(&mut self) {
-        let empty: Vec<u32> =
-            self.floating.keys().copied().filter(|g| !self.panels.values().any(|s| s.floating == Some(*g) && s.visible)).collect();
+        let empty: Vec<u32> = self.floating.keys().copied().filter(|g| !self.panels.values().any(|s| s.floating == Some(*g) && s.visible)).collect();
         for g in empty {
             self.close_floating(g);
         }
@@ -724,7 +723,9 @@ mod tests {
         );
         assert_eq!(odd.place("laser"), Place::Docked(Area::Left));
         assert!(odd.floating.is_empty());
-        let kept = Prefs::from_json(r#"{"layout_version":1,"panels":{"laser":{"area":"Left","visible":true,"floating":2}},"floating":{"2":{"pos":[1e30,5],"size":[-1,99999]}}}"#);
+        let kept = Prefs::from_json(
+            r#"{"layout_version":1,"panels":{"laser":{"area":"Left","visible":true,"floating":2}},"floating":{"2":{"pos":[1e30,5],"size":[-1,99999]}}}"#,
+        );
         assert_eq!(kept.place("laser"), Place::Floating(2));
         assert_eq!(kept.floating[&2].pos, [FLOAT_MAX[0], 5.0]);
         assert_eq!(kept.floating[&2].size, [FLOAT_MIN[0], FLOAT_MAX[1]]);

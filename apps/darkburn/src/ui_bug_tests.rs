@@ -289,7 +289,7 @@ fn no_widget_id_is_used_twice_in_any_panel_arrangement() {
         // Every panel in one dock, for each dock: the most tabs a dock can hold.
         for area in Area::ALL {
             for p in PANELS {
-                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true });
+                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true, floating: None });
             }
             clashes_in_layout(&mut g, &format!("all panels in {area:?} {w}x{h}"), &mut found);
         }
@@ -297,7 +297,7 @@ fn no_widget_id_is_used_twice_in_any_panel_arrangement() {
         for shift in 0..Area::ALL.len() {
             for (i, p) in PANELS.iter().enumerate() {
                 let area = Area::ALL[(i + shift) % Area::ALL.len()];
-                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true });
+                g.app().prefs.panels.insert(p.id.to_string(), crate::prefs::PanelState { area, visible: true, floating: None });
             }
             clashes_in_layout(&mut g, &format!("panels dealt round the docks ({shift}) {w}x{h}"), &mut found);
         }

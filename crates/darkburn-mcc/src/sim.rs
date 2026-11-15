@@ -19,6 +19,10 @@
 //!   free (60000 when empty).
 //! * The fast block at 60001 mirrors the axis block at 2000 and the first 14 words of every axis
 //!   slot of block 50200. The 32 hardware-parameter blocks and block 1050 read as zeros.
+//! * Head calibration (`0x65 <- [107]`) through the follower block at 10000, shaped like a capture
+//!   of the real machine: word 3 reads 107 while it runs and 0 after, word 6 (live Z in µm) moves
+//!   down and reads 0 after, word 2 gains bit 4 when it finishes. The run occupies the height axis
+//!   (slot 3) for `motion_time_ms`. A test can make the next run raise a follower alarm halfway.
 //! * Faults injected by tests: dropped requests, dropped replies, delayed replies, stale replies,
 //!   an arbitrary reply override, a reboot (silent, then not-ready), alarms and input changes.
 //! * Refusals: a request for a forbidden register or vector is answered with exception 2 and
@@ -26,7 +30,8 @@
 //!   [`CardSimulator::laser_refusals`]. A backend under test must keep both lists empty.
 
 use crate::command::{
-    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V, Policy, SafetyConfig,
+    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HEAD_CALIBRATE, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V,
+    Policy, SafetyConfig,
 };
 use crate::fifo::{FifoItem, OP_MISC, parse_fifo_words};
 use crate::frame::{DecodeError, Reply, Request, RequestError, decode_request};
@@ -139,6 +144,11 @@ impl std::fmt::Display for Timeout {
 
 impl std::error::Error for Timeout {}
 
+/// Axis slot of the height (Z) axis: block 2000 slot 3, pulse position at register 2032.
+const SLOT_Z: usize = 3;
+/// How far the simulated head travels down during a calibration, in µm (simulator choice).
+const CALIB_TRAVEL_UM: u64 = 15_000;
+
 fn s32(w: u32) -> i64 {
     w as i32 as i64
 }
@@ -155,6 +165,9 @@ pub struct CardSimulator {
     axis_faults: [u32; AXIS_SLOTS],
     axis_motion: BTreeMap<usize, (u64, u32, i64)>,
     moving_until_us: u64,
+    calibrating: bool,
+    calib_end_us: u64,
+    calib_alarm: u32,
     fifo: VecDeque<FifoItem>,
     fifo_running: bool,
     last_frame_id: Option<u32>,
@@ -195,6 +208,9 @@ impl CardSimulator {
             axis_faults: [0; AXIS_SLOTS],
             axis_motion: BTreeMap::new(),
             moving_until_us: 0,
+            calibrating: false,
+            calib_end_us: 0,
+            calib_alarm: 0,
             fifo: VecDeque::new(),
             fifo_running: false,
             last_frame_id: None,
@@ -244,6 +260,8 @@ impl CardSimulator {
         self.axis_faults = [0; AXIS_SLOTS];
         self.axis_motion.clear();
         self.moving_until_us = 0;
+        self.calibrating = false;
+        self.calib_alarm = 0;
         self.fifo.clear();
         self.fifo_running = false;
         self.last_frame_id = None;
@@ -389,6 +407,12 @@ impl CardSimulator {
             *f = bits & crate::registers::axis::FAULT_MASK;
         }
         self.update_status();
+    }
+
+    /// Make the next head calibration raise follower alarm `bits` (word 1 of block 10000, see
+    /// [`crate::registers::zf_alarm`]) halfway through: the follower then aborts the run.
+    pub fn fail_next_calibration(&mut self, bits: u32) {
+        self.calib_alarm = bits & 0xFFFF;
     }
 
     /// Set a word the card itself would report (a configuration or follower word of a mapped
@@ -733,6 +757,20 @@ impl CardSimulator {
                     EXC_NOT_READY
                 }
             }
+            CMD_HEAD_CALIBRATE if n == 1 => {
+                if self.busy() {
+                    EXC_BUSY
+                } else {
+                    // The height axis is slot 3; the simulated run takes motion_time_ms.
+                    let z = self.axis_pos[SLOT_Z];
+                    self.start_motion(SLOT_Z, CMD_HEAD_CALIBRATE, z);
+                    self.calibrating = true;
+                    self.calib_end_us = self.now_us + self.cfg.motion_time_ms * 1000;
+                    self.regs.insert(10001, 0);
+                    self.regs.insert(10003, CMD_HEAD_CALIBRATE);
+                    0
+                }
+            }
             CMD_9999 if n >= 2 => match d[1] {
                 MISC_PROLOGUE => 0,
                 MISC_DO if n == 4 => {
@@ -758,6 +796,47 @@ impl CardSimulator {
         code
     }
 
+    /// The follower block during and after a head calibration.
+    fn update_follower(&mut self) {
+        if !self.calibrating {
+            return;
+        }
+        let now = self.now_us;
+        let total = self.cfg.motion_time_ms.max(1) * 1000;
+        match self.axis_motion.get(&SLOT_Z).copied() {
+            Some((end, CMD_HEAD_CALIBRATE, _)) => {
+                let start = end.saturating_sub(total);
+                let done = now.saturating_sub(start);
+                if self.calib_alarm != 0 && done >= total / 2 {
+                    // The follower gives up: alarm set, run command and Z back to 0.
+                    self.axis_motion.remove(&SLOT_Z);
+                    self.moving_until_us = self.axis_motion.values().map(|m| m.0).max().unwrap_or(now);
+                    self.regs.insert(10001, std::mem::take(&mut self.calib_alarm));
+                    self.regs.insert(10003, 0);
+                    self.regs.insert(10006, 0);
+                    self.calibrating = false;
+                    return;
+                }
+                let z_um = -((CALIB_TRAVEL_UM as u128 * done as u128 / total as u128) as i64);
+                self.regs.insert(10003, CMD_HEAD_CALIBRATE);
+                self.regs.insert(10006, z_um as i32 as u32);
+            }
+            _ => {
+                // Finished (motion ran out) or stopped: run command and Z read 0.
+                let finished = now >= self.calib_end_us;
+                self.regs.insert(10003, 0);
+                self.regs.insert(10006, 0);
+                if finished && self.calib_alarm != 0 {
+                    // One time step went past the alarm point and the end at once.
+                    self.regs.insert(10001, std::mem::take(&mut self.calib_alarm));
+                } else if finished {
+                    self.regs.insert(10002, 0x8000_0010);
+                }
+                self.calibrating = false;
+            }
+        }
+    }
+
     fn update_status(&mut self) {
         let now = self.now_us;
         let done: Vec<usize> = self.axis_motion.iter().filter(|(_, m)| now >= m.0).map(|(&s, _)| s).collect();
@@ -768,6 +847,7 @@ impl CardSimulator {
                 self.homed[s] = true;
             }
         }
+        self.update_follower();
         let space = self.cfg.fifo_margin_empty.saturating_sub(self.queued_bytes());
         self.regs.insert(Status::FifoSpaceMargin.addr(), space);
         let run = if self.fifo_running {
@@ -1139,6 +1219,7 @@ mod tests {
     use crate::command::{self, MachineParams};
     use crate::fifo::{FifoFeeder, FramePacker};
     use crate::gate::ArmState;
+    use crate::registers::ZfWord;
 
     fn p() -> MachineParams {
         MachineParams::default()
@@ -1265,6 +1346,61 @@ mod tests {
         let f = Request::write(command::stop_all_no_decel().unwrap()).encode(1).unwrap();
         let rep = sim.exchange(&f).unwrap();
         assert_eq!(Reply::decode(&rep, Some(1)).unwrap(), Reply::Exception { func: 0x40, code: 3 });
+    }
+
+    #[test]
+    fn head_calibration_runs_and_stop_all_cancels_it() {
+        let mut l = armed();
+        l.poll_status().unwrap();
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        assert_eq!(l.sim.commands().last().unwrap(), &vec![107]);
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 1, "busy while calibrating");
+        // Cancel goes through the normal stop-all path
+        l.write(&command::stop_all(200_000, &p()).unwrap()).unwrap();
+        l.advance(ms(1));
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 0);
+        let zf = l.read_follower().unwrap();
+        assert_eq!(zf.word(ZfWord::RunCommand), 0, "a stopped run reads 0");
+        assert_eq!(zf.word(ZfWord::RunStatus), 0x8000_0000, "not marked finished");
+        // A full run finishes on its own; Mlaser then sends 0x67 [3] and [1]
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        assert!(l.read_axis_ro().unwrap().busy(3), "the height axis (slot 3) is busy");
+        assert!(!l.read_axis_ro().unwrap().busy(2));
+        l.advance(ms(150));
+        let zf = l.read_follower().unwrap();
+        assert_eq!(zf.word(ZfWord::RunCommand), 107, "107 while calibrating");
+        assert_eq!(zf.state(), crate::registers::ZfState::Calibration);
+        let z_mid = zf.z_um();
+        assert!(z_mid < 0, "Z moves down from the top: {z_mid}");
+        l.advance(ms(100));
+        assert!(l.read_follower().unwrap().z_um() < z_mid, "still moving down");
+        l.advance(ms(200));
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 0);
+        let zf = l.read_follower().unwrap();
+        assert_eq!((zf.word(ZfWord::RunCommand), zf.z_um(), zf.alarm()), (0, 0, 0), "done edge");
+        assert_eq!(zf.word(ZfWord::RunStatus), 0x8000_0010);
+        l.write(&command::fifo_stop().unwrap()).unwrap();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn head_calibration_can_be_made_to_raise_a_follower_alarm() {
+        use crate::registers::zf_alarm;
+        let mut l = armed();
+        l.sim.fail_next_calibration(zf_alarm::CAPACITANCE_SMALL);
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        l.advance(ms(100));
+        assert_eq!(l.read_follower().unwrap().word(ZfWord::RunCommand), 107);
+        l.advance(ms(100));
+        let zf = l.read_follower().unwrap();
+        assert_eq!(zf.alarm(), zf_alarm::CAPACITANCE_SMALL);
+        assert_eq!(zf.word(ZfWord::RunCommand), 0);
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 0, "the follower gave up");
+        // one-shot: the next run is clean and clears the alarm word
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        assert_eq!(l.read_follower().unwrap().alarm(), 0);
+        l.advance(ms(400));
+        assert_eq!(l.read_follower().unwrap().word(ZfWord::RunStatus), 0x8000_0010);
     }
 
     #[test]
@@ -1555,7 +1691,7 @@ mod tests {
             }
             crate::frame::build_frame(9, 0x40, &p, crate::crc::CrcOrder::HiFirst).unwrap()
         };
-        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[1]), (59502, &[1]), (0x65, &[0x65]), (0x65, &[0x66]), (0x65, &[107])] {
+        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[1]), (59502, &[1]), (0x65, &[7]), (0x65, &[9999, 16]), (0x65, &[4, 1, 2])] {
             let rep = sim.exchange(&mk(addr, words)).unwrap();
             assert_eq!(Reply::decode(&rep, Some(9)).unwrap(), Reply::Exception { func: 0x40, code: 2 }, "{addr} {words:?}");
         }

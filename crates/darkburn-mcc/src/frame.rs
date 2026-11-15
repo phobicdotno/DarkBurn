@@ -682,11 +682,11 @@ mod tests {
         p.extend_from_slice(&5555u32.to_le_bytes());
         let f = build_frame(0, FUNC_WRITE, &p, CrcOrder::HiFirst).unwrap();
         assert!(matches!(Request::decode(&f), Err(RequestError::Forbidden(Forbidden::Register150Or151(150)))));
-        // ... nor 0x65 <- [0x65]
+        // ... nor 0x65 <- [7] (offline program upload)
         let mut p = Vec::new();
         p.extend_from_slice(&0x65u32.to_le_bytes());
         p.extend_from_slice(&1u16.to_le_bytes());
-        p.extend_from_slice(&0x65u32.to_le_bytes());
+        p.extend_from_slice(&7u32.to_le_bytes());
         let f = build_frame(0, FUNC_WRITE, &p, CrcOrder::HiFirst).unwrap();
         assert!(matches!(Request::decode(&f), Err(RequestError::Forbidden(Forbidden::Command(_)))));
         // count lies

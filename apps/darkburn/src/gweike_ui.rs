@@ -2,8 +2,9 @@
 //! fibre and CO2 craft editor, the craft file export and the card simulator.
 //!
 //! This window never connects to a machine. The card simulator is a struct in this process.
-//! Direct control waits for a read-only capture on the real card (see
-//! `docs/research/mlaser-rea-findings.md`); the window says so.
+//! On Gweike M lasers it also offers head calibration (confirm, progress with elapsed time and
+//! live Z, Cancel through stop-all, a 120 s timeout), driven through the `mcc.head_calibrate*`
+//! commands.
 
 use darkburn_mcc::{Co2Craft, FibreCraft, GasType, PierceStage, ProcessType};
 use darkburn_ui::ui_kit::{self, Action, BackingTooltipExt as _, Button, StatusTone};
@@ -153,8 +154,135 @@ pub fn card_answer(v: &serde_json::Value) -> String {
     }
 }
 
+/// Whether the head calibration button shows, and whether a run is already open.
+#[derive(Clone, Copy)]
+struct CalibButton {
+    shown: bool,
+    busy: bool,
+}
+
+const CALIB_ASK: &str = "db_gweike_calib_ask";
+const CALIB_LAST: &str = "db_gweike_calib_last";
+
+/// The head calibration confirm and progress windows (Gweike M lasers only). They live outside
+/// the Gweike window so a run keeps being watched, timed out and stopped when that window closes.
+fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
+    let ask_id = Id::unique(CALIB_ASK);
+    let last_id = Id::unique(CALIB_LAST);
+    if ctx.data(|d| d.get_temp::<bool>(ask_id)).unwrap_or(false) {
+        let title = tr("gweike.calib_confirm_title", "Start head calibration?");
+        let body = tr("gweike.calib_confirm_body", "The cutting head will move to measure its height. Keep clear of the head.");
+        let (closed, action) = ui_kit::Confirm::new(Id::unique("db_gweike_calib_confirm"), "settings", &title)
+            .actions("OK", "Cancel", None)
+            .answer_keys(ui_kit::AnswerKeys::NoOnly)
+            .show(ctx, true, |ui| {
+                ui.label(body.as_str());
+            });
+        if action == Action::Ok {
+            ctx.data_mut(|d| d.remove::<bool>(ask_id));
+            match crate::api::execute_headless(app, "mcc.head_calibrate", &json!({})) {
+                Ok(v) => {
+                    ctx.data_mut(|d| d.insert_temp(last_id, v.to_string()));
+                }
+                Err(e) => {
+                    app.machine.ext.gweike_message = Some(e);
+                }
+            }
+        } else if closed || action != Action::None {
+            ctx.data_mut(|d| d.remove::<bool>(ask_id));
+        }
+    }
+    if !app.machine.ext.mcc.calibrating() {
+        return;
+    }
+    let mut v: serde_json::Value =
+        ctx.data(|d| d.get_temp::<String>(last_id)).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({ "state": "running" }));
+    let running = v["state"] == "running";
+    if running {
+        match crate::api::execute_headless(app, "mcc.head_calibrate_poll", &json!({})) {
+            Ok(n) => v = n,
+            Err(e) => {
+                app.machine.ext.gweike_message = Some(e);
+                let _ = crate::api::execute_headless(app, "mcc.head_calibrate_stop", &json!({}));
+            }
+        }
+        ctx.data_mut(|d| d.insert_temp(last_id, v.to_string()));
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    let state = v["state"].as_str().unwrap_or("running").to_owned();
+    let secs = v["elapsed_ms"].as_u64().unwrap_or(0) / 1000;
+    let limit = v["timeout_ms"].as_u64().unwrap_or(darkburn_mcc::head_calib::TIMEOUT_MS) / 1000;
+    let button = if state == "running" { tr("gweike.calib_cancel", "Cancel") } else { tr("gweike.calib_close", "Close") };
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_gweike_calib"), "settings", &tr("gweike.calib", "Head calibration"))
+        .fields()
+        .actions("", &button, None)
+        .show(ctx, true, |ui| {
+            let line = match state.as_str() {
+                "finished" => tr("gweike.calib_done", "Head calibration finished"),
+                "cancelled" => tr("gweike.calib_cancelled", "Head calibration cancelled"),
+                "failed" => tr("gweike.calib_failed", "Head calibration failed: {reason}")
+                    .replace("{reason}", &follower_alarm_text(v["alarm"].as_u64().unwrap_or(0) as u32)),
+                "timed_out" => tr("gweike.calib_timed_out", "No result after {limit} s, the head was stopped").replace("{limit}", &limit.to_string()),
+                _ => tr("gweike.calib_running", "Calibrating"),
+            };
+            let tone = match state.as_str() {
+                "finished" | "running" => StatusTone::Dim,
+                _ => StatusTone::Warning,
+            };
+            ui_kit::status_line(ui, &line, tone);
+            note(
+                ui,
+                &tr("gweike.calib_elapsed", "{secs} s of {limit} s").replace("{secs}", &secs.to_string()).replace("{limit}", &limit.to_string()),
+            );
+            if let Some(z) = v["z_um"].as_i64() {
+                note(ui, &tr("gweike.calib_z", "Z {z}").replace("{z}", &format!("{:.2} mm", z as f64 / 1000.0)));
+            }
+            if state != "running"
+                && let (Some(strength), Some(height)) = (v["signal"]["strength"].as_u64(), v["signal"]["height"].as_u64())
+            {
+                note(
+                    ui,
+                    &tr("gweike.calib_signal", "Signal {strength}, height {height}")
+                        .replace("{strength}", &strength.to_string())
+                        .replace("{height}", &height.to_string()),
+                );
+            }
+        });
+    if closed || action != Action::None {
+        let c = if state == "running" { "mcc.head_calibrate_stop" } else { "mcc.head_calibrate_dismiss" };
+        match crate::api::execute_headless(app, c, &json!({})) {
+            Ok(n) if c == "mcc.head_calibrate_stop" => {
+                ctx.data_mut(|d| d.insert_temp(last_id, n.to_string()));
+            }
+            Ok(_) => {
+                ctx.data_mut(|d| d.remove::<String>(last_id));
+            }
+            Err(e) => {
+                app.machine.ext.gweike_message = Some(e);
+            }
+        }
+    }
+}
+
+/// The follower alarm bits of a failed head calibration, in words.
+fn follower_alarm_text(alarm: u32) -> String {
+    use darkburn_mcc::registers::zf_alarm;
+    let known = [
+        (zf_alarm::SIGNAL_SMALL, tr("gweike.zf_alarm_signal_small", "signal too small")),
+        (zf_alarm::CAPACITANCE_SMALL, tr("gweike.zf_alarm_capacitance_small", "capacitance too small")),
+        (zf_alarm::SIGNAL_ZERO, tr("gweike.zf_alarm_signal_zero", "signal zero")),
+        (zf_alarm::FTC_ALARM, tr("gweike.zf_alarm_follower", "follower alarm")),
+    ];
+    let rest = known.iter().fold(alarm, |a, (bit, _)| a & !bit);
+    let mut parts: Vec<String> = known.into_iter().filter(|(bit, _)| alarm & bit != 0).map(|(_, text)| text).collect();
+    if rest != 0 {
+        parts.push(tr("gweike.zf_alarm_other", "follower alarm bits 0x{bits}").replace("{bits}", &format!("{rest:04X}")));
+    }
+    parts.join(", ")
+}
+
 /// The card simulator's buttons [MCC-05]: each one names an `mcc.*` command; the registry runs it.
-fn card_buttons(ui: &mut Ui, connected: bool, frame: &mut String, cmd: &mut Option<(&'static str, serde_json::Value)>) {
+fn card_buttons(ui: &mut Ui, connected: bool, calib: CalibButton, frame: &mut String, cmd: &mut Option<(&'static str, serde_json::Value)>) {
     ui.horizontal_wrapped(|ui| {
         if small(ui, &tr("gweike.card_connect", "Connect"), &tr("gweike.card_connect_tip", "Open the simulated card, read only"), !connected) {
             *cmd = Some(("mcc.connect", json!({})));
@@ -171,6 +299,17 @@ fn card_buttons(ui: &mut Ui, connected: bool, frame: &mut String, cmd: &mut Opti
         if small(ui, &tr("gweike.card_estop", "Emergency stop"), "", true) {
             *cmd = Some(("mcc.emergency_stop", json!({})));
         }
+        // Head calibration is a Gweike M machine action: other machines never see the button.
+        if calib.shown
+            && small(
+                ui,
+                &tr("gweike.calib", "Head calibration"),
+                &tr("gweike.calib_tip", "Calibrate the cutting head height"),
+                connected && !calib.busy,
+            )
+        {
+            ui.ctx().data_mut(|d| d.insert_temp(Id::unique(CALIB_ASK), true));
+        }
     });
     ui.horizontal(|ui| {
         ui_kit::hint_field(ui, frame, &tr("gweike.card_frame_hint", "frame bytes in hex"));
@@ -181,6 +320,7 @@ fn card_buttons(ui: &mut Ui, connected: bool, frame: &mut String, cmd: &mut Opti
 }
 
 pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
+    calibration_windows(ctx, app);
     if !app.machine.ext.gweike_open {
         return;
     }
@@ -198,6 +338,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
     let card = app.machine.ext.gweike_card.clone();
     let mut shelf = std::mem::take(&mut app.machine.ext.gweike_recipes);
     let connected = app.machine.ext.mcc.connected();
+    let calib = CalibButton { shown: app.machine.active().kind.caps().gweike.is_some(), busy: app.machine.ext.mcc.calibrating() };
     let frame_id = Id::unique("db_gweike_card_frame");
     let mut frame: String = ctx.data_mut(|d| d.get_temp(frame_id)).unwrap_or_default();
     let doc_layers: Vec<(usize, String)> =
@@ -300,7 +441,7 @@ pub fn dialogs(ctx: &Context, app: &mut DarkBurn) {
                     ),
                 );
             }
-            card_buttons(ui, connected, &mut frame, &mut cmd);
+            card_buttons(ui, connected, calib, &mut frame, &mut cmd);
             if let Some(m) = &msg {
                 note(ui, m);
             }

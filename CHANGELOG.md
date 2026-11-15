@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.0.776 (build 10)
+- New: Gweike M lasers: head calibration, with a progress window and a cancel button
+- New: Gweike M lasers: head calibration follows the height sensor and says why it failed
+
 ## v0.0.774 (build 9)
 - New: Laser, Library and Move now sit in the same tab bar as the other right-side panels
 - New: drag a tab onto another tab bar to join it, or along its own bar to reorder

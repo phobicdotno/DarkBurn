@@ -54,6 +54,9 @@ pub struct FloatGroup {
     pub active: String,
 }
 
+/// Where a window docked in a floating group goes when the group is gone.
+pub const FLOAT_HOME: &str = "RightTop";
+
 impl Default for FloatGroup {
     fn default() -> Self {
         FloatGroup { pos: [200.0, 160.0], size: [380.0, 420.0], active: String::new() }
@@ -524,14 +527,33 @@ impl Prefs {
         }
         self.floating.remove(&g);
         self.tab_order.remove(&Place::Floating(g).key());
+        // Windows docked in it go back to the right dock.
+        let key = Place::Floating(g).key();
+        for place in self.windows.values_mut() {
+            if place.area() == Some(key.as_str()) {
+                place.dock(FLOAT_HOME);
+            }
+        }
     }
 
-    /// Floating groups without a shown panel are gone; their hidden panels go back to their
-    /// docked area.
+    /// Floating groups without a shown panel or a window docked in them are gone; their hidden
+    /// panels go back to their docked area. A window docked in a group that is gone goes back
+    /// to the right dock.
     pub fn prune_floating(&mut self) {
-        let empty: Vec<u32> = self.floating.keys().copied().filter(|g| !self.panels.values().any(|s| s.floating == Some(*g) && s.visible)).collect();
+        let has_window = |g: u32| {
+            let key = Place::Floating(g).key();
+            self.windows.values().any(|w| w.area() == Some(key.as_str()))
+        };
+        let empty: Vec<u32> =
+            self.floating.keys().copied().filter(|g| !self.panels.values().any(|s| s.floating == Some(*g) && s.visible) && !has_window(*g)).collect();
         for g in empty {
             self.close_floating(g);
+        }
+        let groups: Vec<String> = self.floating.keys().map(|g| Place::Floating(*g).key()).collect();
+        for place in self.windows.values_mut() {
+            if place.area().is_some_and(|a| a.starts_with("float:") && !groups.iter().any(|k| k == a)) {
+                place.dock(FLOAT_HOME);
+            }
         }
     }
 

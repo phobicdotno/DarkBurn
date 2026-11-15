@@ -397,11 +397,21 @@ impl DarkBurn {
         solidcraft_ui_registry::clear_handles();
         // Where the dockable windows are: the stored places in, the user's moves out.
         window_host::sync(ui.ctx(), &mut self.prefs.windows);
+        // A floating group a window just left, with nothing else in it, is gone.
+        self.prefs.prune_floating();
         keep_tab_for_the_canvas(ui.ctx());
         crate::tab_focus::keep_tab_in_the_top_window(ui.ctx());
         crate::extras::frame(ui.ctx(), self);
         // The areas and texts the window kit shows, in the language just set.
-        let areas: Vec<(String, String)> = Area::ALL.into_iter().map(|a| (area_key(a), a.title())).collect();
+        let mut areas: Vec<(String, String)> = Area::ALL.into_iter().map(|a| (area_key(a), a.title())).collect();
+        // A floating tab group is named by its panels.
+        for g in self.prefs.floating.keys() {
+            let place = panels::Place::Floating(*g);
+            let names: Vec<String> = self.prefs.visible_in(place).iter().map(|p| crate::i18n::panel_title(p.id, p.title)).collect();
+            if !names.is_empty() {
+                areas.push((place.key(), names.join(" / ")));
+            }
+        }
         window_host::dock_areas(ui.ctx(), &areas.iter().map(|(k, l)| (k.as_str(), l.as_str())).collect::<Vec<_>>());
         window_host::set_texts(ui.ctx(), window_texts());
         // The canvas leaves its tool hint for the status bar, drawn before it next frame.
@@ -1124,14 +1134,31 @@ impl DarkBurn {
         let groups: Vec<u32> = self.prefs.floating.keys().copied().collect();
         for g in groups {
             let place = panels::Place::Floating(g);
-            let tabs = self.prefs.visible_in(place);
-            let Some(group) = self.prefs.floating.get(&g).cloned() else { continue };
+            let key = place.key();
+            // Its panels, then the windows docked in it.
+            let mut tabs: Vec<Tab> = self
+                .prefs
+                .visible_in(place)
+                .iter()
+                .map(|p| Tab { id: p.id.to_string(), title: crate::i18n::panel_title(p.id, p.title), window: None })
+                .collect();
+            tabs.extend(window_host::docked_tabs(ctx, &key).into_iter().map(|w| Tab {
+                id: window_host::tab_id(&w.key),
+                title: w.title,
+                window: Some(w.key),
+            }));
             if tabs.is_empty() {
                 continue;
             }
-            let front = tabs.iter().find(|p| p.id == group.active).unwrap_or(&tabs[0]).id;
+            if let Some(w) = window_host::take_activation(ctx, &key) {
+                self.prefs.set_front(place, &window_host::tab_id(&w));
+            }
+            let Some(group) = self.prefs.floating.get(&g).cloned() else { continue };
+            let front = tabs.iter().find(|p| p.id == group.active).unwrap_or(&tabs[0]).id.clone();
+            let front_window = window_host::window_of_tab(&front).map(str::to_string);
             let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
-            let mut pick: Option<&'static str> = None;
+            let mut pick: Option<String> = None;
+            let mut window_action: Option<(String, WindowMove)> = None;
             let mut close = false;
             let mut moved = egui::Vec2::ZERO;
             let mut resized = egui::Vec2::ZERO;
@@ -1145,6 +1172,7 @@ impl DarkBurn {
                     ui.painter().rect_filled(rect, t.radius_sm, t.panel);
                     ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
+                    window_host::dock_target(ctx, &key, rect);
                     let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
                     ui.painter().rect_filled(header, 0.0, t.panel_header);
                     ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));
@@ -1161,13 +1189,13 @@ impl DarkBurn {
                     let mut x = header.left() + 4.0;
                     for p in &tabs {
                         let on = p.id == front;
-                        let title = crate::i18n::panel_title(p.id, p.title);
+                        let title = p.title.clone();
                         let font = if on { fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
                         let ink = if on { t.text } else { t.text_dim };
                         let gal = ui.painter().layout_no_wrap(title, font, ink);
                         let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(gal.size().x + 16.0, PANEL_HEADER - 6.0));
                         x = tr.right() + 2.0;
-                        let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("float_tab", p.id)), Sense::click_and_drag());
+                        let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("float_tab", p.id.as_str())), Sense::click_and_drag());
                         let painter = ui.painter().with_clip_rect(tabs_clip);
                         if on {
                             painter.rect_filled(tr, t.radius_sm, t.accent_soft);
@@ -1176,24 +1204,50 @@ impl DarkBurn {
                         }
                         painter.galley(pos2(tr.left() + 8.0, tr.center().y - gal.size().y / 2.0), gal, if on { t.selected_ink } else { ink });
                         solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr.intersect(tabs_clip));
-                        tab_rects.push((p.id.to_string(), tr));
                         if resp.clicked() {
-                            pick = Some(p.id);
+                            pick = Some(p.id.clone());
                         }
-                        if let Some(d) = self.panel_tab_dragged(ctx, &resp, p.id, place, rect) {
-                            drop = Some((p.id.to_string(), d));
+                        if let Some(w) = &p.window {
+                            if let Some(to) = tab_dragged_out(ctx, &resp, &key, rect) {
+                                window_action = Some((w.clone(), to));
+                            }
+                            Menu::context(&resp, |ui| {
+                                ui.set_min_width(220.0);
+                                for to in Area::ALL {
+                                    let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
+                                    if MenuItem::new("move", &text, "").show(ui).clicked() {
+                                        window_action = Some((w.clone(), WindowMove::Dock(area_key(to))));
+                                    }
+                                }
+                                Menu::separator(ui);
+                                if MenuItem::new("float", &crate::i18n::tr("ui.window_float", "Float in the main window"), "").show(ui).clicked() {
+                                    window_action = Some((w.clone(), WindowMove::Float(None)));
+                                }
+                                if MenuItem::new("detach", &crate::i18n::tr("ui.window_detach", "Open in its own window"), "").show(ui).clicked() {
+                                    window_action = Some((w.clone(), WindowMove::Detach));
+                                }
+                                Menu::separator(ui);
+                                if MenuItem::new("close", &crate::i18n::tr("ui.close", "Close"), "close").show(ui).clicked() {
+                                    window_action = Some((w.clone(), WindowMove::Close));
+                                }
+                            });
+                            continue;
+                        }
+                        tab_rects.push((p.id.clone(), tr));
+                        if let Some(d) = self.panel_tab_dragged(ctx, &resp, &p.id, place, rect) {
+                            drop = Some((p.id.clone(), d));
                         }
                         Menu::context(&resp, |ui| {
                             ui.set_min_width(200.0);
                             for to in Area::ALL {
                                 let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
                                 if MenuItem::new("move", &text, "").show(ui).clicked() {
-                                    drop = Some((p.id.to_string(), PanelDrop::To(panels::Place::Docked(to), None)));
+                                    drop = Some((p.id.clone(), PanelDrop::To(panels::Place::Docked(to), None)));
                                 }
                             }
                             Menu::separator(ui);
                             if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
-                                hide = Some(p.id.to_string());
+                                hide = Some(p.id.clone());
                             }
                         });
                     }
@@ -1201,12 +1255,16 @@ impl DarkBurn {
                         close = true;
                     }
                     solidcraft_ui_registry::publish_target(&format!("panel:float_close:{g}"), close_at);
-                    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max).shrink2(vec2(10.0, 8.0));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-                        egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
-                            panels::contents(ui, front, self);
+                    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max);
+                    // A window in front draws itself into the body when its turn comes.
+                    window_host::set_front(ctx, &key, front_window.as_deref(), body, ui.layer_id());
+                    if front_window.is_none() {
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(body.shrink2(vec2(10.0, 8.0))), |ui| {
+                            egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
+                                panels::contents(ui, &front, self);
+                            });
                         });
-                    });
+                    }
                     // The bottom-right corner resizes the group.
                     let corner = Rect::from_min_max(rect.max - vec2(14.0, 14.0), rect.max);
                     let grip = ui.interact(corner, ui.scope_id().with(("float_resize", g)), Sense::drag());
@@ -1234,7 +1292,15 @@ impl DarkBurn {
                 }
             }
             if let Some(id) = pick {
-                self.prefs.set_front(place, id);
+                self.prefs.set_front(place, &id);
+            }
+            if let Some((w, to)) = window_action {
+                match to {
+                    WindowMove::Dock(to) => window_host::update(ctx, &w, |p| p.dock(&to)),
+                    WindowMove::Float(at) => window_host::update(ctx, &w, |p| p.float(at)),
+                    WindowMove::Detach => window_host::update(ctx, &w, |p| p.detach()),
+                    WindowMove::Close => window_host::request_close(ctx, &w),
+                }
             }
             if let Some(id) = hide {
                 if let Some(state) = self.prefs.panels.get_mut(&id) {
@@ -1246,6 +1312,11 @@ impl DarkBurn {
                 self.apply_panel_drop(&id, d);
             }
             if close {
+                // Its windows close, and open again in the right dock.
+                for w in tabs.iter().filter_map(|p| p.window.as_deref()) {
+                    window_host::request_close(ctx, w);
+                    window_host::update(ctx, w, |p| p.dock(crate::prefs::FLOAT_HOME));
+                }
                 self.prefs.close_floating(g);
             }
         }
@@ -1286,13 +1357,14 @@ impl DarkBurn {
     fn place_at(&self, ctx: &egui::Context, pos: Pos2) -> Option<(panels::Place, Rect)> {
         for (g, f) in self.prefs.floating.iter().rev() {
             let rect = Rect::from_min_size(pos2(f.pos[0], f.pos[1]), vec2(f.size[0], f.size[1]));
-            if rect.contains(pos) && !self.prefs.visible_in(panels::Place::Floating(*g)).is_empty() {
-                return Some((panels::Place::Floating(*g), rect));
+            let place = panels::Place::Floating(*g);
+            if rect.contains(pos) && window_host::target_rect(ctx, &place.key()).is_some() {
+                return Some((place, rect));
             }
         }
         let key = window_host::target_at(ctx, pos)?;
-        let area = Area::ALL.into_iter().find(|a| area_key(*a) == key)?;
-        Some((panels::Place::Docked(area), window_host::target_rect(ctx, &key)?))
+        let place = panels::Place::from_key(&key).filter(|p| !matches!(p, panels::Place::Floating(g) if !self.prefs.floating.contains_key(g)))?;
+        Some((place, window_host::target_rect(ctx, &key)?))
     }
 
     /// Panel `id` goes where its tab was dropped.

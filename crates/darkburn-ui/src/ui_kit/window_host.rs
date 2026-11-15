@@ -174,6 +174,8 @@ struct Slot {
 struct Target {
     rect: Rect,
     frame: u64,
+    /// When it was marked, counting every mark: later is on top.
+    order: u64,
 }
 
 /// The kit's state for one context, shared through egui's temporary data.
@@ -185,6 +187,8 @@ struct State {
     shown: BTreeMap<String, Shown>,
     slots: BTreeMap<String, Slot>,
     targets: BTreeMap<String, Target>,
+    /// How many times an area was marked as a target, for [`Target::order`].
+    marks: u64,
     /// The app's panel areas, key and label, in its order.
     areas: Vec<(String, String)>,
     close: BTreeSet<String>,
@@ -335,14 +339,23 @@ pub fn areas(ctx: &Context) -> Vec<(String, String)> {
 pub fn dock_target(ctx: &Context, area: &str, rect: Rect) {
     let frame = now(ctx);
     with(ctx, |s| {
-        s.targets.insert(area.to_string(), Target { rect, frame });
+        s.marks += 1;
+        let order = s.marks;
+        s.targets.insert(area.to_string(), Target { rect, frame, order });
     });
 }
 
-/// The dock area under `pos`, of those on screen this frame or the last.
+/// The dock area under `pos`, of those on screen this frame or the last. Where areas overlap
+/// (a tab group floating over a dock) the one marked last wins: it is drawn on top.
 pub fn target_at(ctx: &Context, pos: Pos2) -> Option<String> {
     let frame = now(ctx);
-    with(ctx, |s| s.targets.iter().find(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos)).map(|(k, _)| k.clone()))
+    with(ctx, |s| {
+        s.targets
+            .iter()
+            .filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos))
+            .max_by_key(|(_, t)| t.order)
+            .map(|(k, _)| k.clone())
+    })
 }
 
 /// Where area `area` is on screen, if it was drawn this frame or the last.

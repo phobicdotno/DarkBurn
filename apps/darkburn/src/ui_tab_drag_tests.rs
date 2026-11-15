@@ -99,3 +99,37 @@ fn a_floating_group_moves_resizes_and_closes() {
     assert!(!g.app().prefs.panel("laser").visible, "closing hides its panels");
     assert!(g.rects("panel:float:").is_empty());
 }
+
+#[test]
+fn a_docked_window_tab_dragged_onto_a_floating_group_joins_it() {
+    use darkburn_ui::ui_kit::window_host::{self, Placement};
+    let mut g = two_groups();
+    g.app().settings_open = true;
+    g.frames(2);
+    window_host::update(&g.ctx(), "settings", |p| p.dock("Bottom"));
+    g.frames(3);
+    let id = g.app().prefs.float_panel("laser", [300.0, 200.0], [360.0, 400.0]).unwrap();
+    g.frames(3);
+    let float = g.rect_of(&format!("panel:float:{id}")).expect("the floating group is drawn");
+    let settings = g.rect_of("panel:tab:window:settings").unwrap_or_else(|| panic!("the settings tab: {:?}", g.rects("panel:tab:")));
+    g.drag(settings.center(), float.center());
+    g.frames(3);
+    let key = Place::Floating(id).key();
+    let placement = |g: &Gui| g.app().prefs.windows.get("settings").map(|p| p.placement.clone()).unwrap_or_default();
+    assert_eq!(placement(&g), Placement::Docked(key.clone()), "it docks in the floating group");
+    let tabs: Vec<String> = window_host::docked_tabs(&g.ctx(), &key).into_iter().map(|t| t.key).collect();
+    assert_eq!(tabs, ["settings"]);
+    let wtab = g.rect_of("panel:tab:window:settings").expect("its tab is drawn");
+    assert!(float.contains(wtab.center()), "its tab is in the group's bar: {wtab:?} {float:?}");
+    // The panel leaves; the window keeps the group alive.
+    let right = g.rect_of("panel:area:RightTop").expect("the right tab group");
+    g.drag(tab(&g, "laser").center(), right.center());
+    g.frames(2);
+    assert!(g.app().prefs.floating.contains_key(&id), "the window keeps the group");
+    // Closing the group closes the window, which opens again in the right dock.
+    let close = g.rect_of(&format!("panel:float_close:{id}")).expect("its close button");
+    g.click_pos(close.center());
+    g.frames(3);
+    assert!(g.app().prefs.floating.is_empty());
+    assert_eq!(placement(&g), Placement::Docked("RightTop".into()));
+}

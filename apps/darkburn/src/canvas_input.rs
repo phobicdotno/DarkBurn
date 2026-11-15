@@ -652,7 +652,7 @@ fn context_menu(app: &mut DarkBurn, response: &Response, raw: Option<Point>, run
         Some("canvas.properties") => {
             let panel = app.prefs.panel("shape_properties");
             if panel.visible {
-                app.prefs.active_tab.insert(panel.area, "shape_properties".into());
+                app.prefs.bring_panel_forward("shape_properties");
             } else {
                 *run = Some("panel.shape_properties");
             }

@@ -41,6 +41,32 @@ impl Area {
     }
 }
 
+/// Where a panel's tab sits: in a docked area, or in a floating tab group (by its id).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Place {
+    Docked(Area),
+    Floating(u32),
+}
+
+impl Place {
+    /// The place's key: the area's name ("RightTop"), or "float:<id>" for a floating group. Tab
+    /// order is stored under it, and the window kit knows docked areas by it.
+    pub fn key(self) -> String {
+        match self {
+            Place::Docked(area) => format!("{area:?}"),
+            Place::Floating(id) => format!("float:{id}"),
+        }
+    }
+
+    /// The place a key names, if any.
+    pub fn from_key(key: &str) -> Option<Place> {
+        if let Some(id) = key.strip_prefix("float:") {
+            return id.parse().ok().map(Place::Floating);
+        }
+        Area::ALL.into_iter().find(|a| format!("{a:?}") == key).map(Place::Docked)
+    }
+}
+
 pub struct PanelDef {
     pub id: &'static str,
     pub title: &'static str,
@@ -59,9 +85,9 @@ pub const PANELS: &[PanelDef] = &[
     p("camera", "Camera Control", Area::RightTop, true),
     p("variable_text", "Variable Text", Area::RightTop, true),
     p("shape_properties", "Shape Properties", Area::RightTop, true),
-    p("laser", "Laser", Area::RightBottom, true),
-    p("library", "Library", Area::RightBottom, true),
-    p("move", "Move", Area::RightBottom, false),
+    p("laser", "Laser", Area::RightTop, true),
+    p("library", "Library", Area::RightTop, true),
+    p("move", "Move", Area::RightTop, false),
     p("art_library", "Art Library", Area::Left, false),
     p("file_list", "File List", Area::Bottom, false),
 ];
@@ -164,5 +190,15 @@ mod tests {
             assert!(def(p.id).is_some());
         }
         assert_eq!(PANELS.len(), 10);
+    }
+
+    #[test]
+    fn place_keys_read_back() {
+        for place in [Place::Docked(Area::Left), Place::Docked(Area::RightBottom), Place::Floating(0), Place::Floating(42)] {
+            assert_eq!(Place::from_key(&place.key()), Some(place));
+        }
+        assert_eq!(Place::Docked(Area::RightTop).key(), "RightTop");
+        assert_eq!(Place::from_key("float:x"), None);
+        assert_eq!(Place::from_key("Middle"), None);
     }
 }

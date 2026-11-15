@@ -421,7 +421,11 @@ fn non_default_prefs() -> crate::prefs::Prefs {
     let panels: serde_json::Map<String, Value> = crate::panels::PANELS
         .iter()
         .map(|p| {
-            (p.id.to_string(), json!({ "area": if p.home == crate::panels::Area::Left { "Bottom" } else { "Left" }, "visible": !p.shown_by_default }))
+            // Every panel in floating group 0, which holds a shown panel (Move) so it stays.
+            (
+                p.id.to_string(),
+                json!({ "area": if p.home == crate::panels::Area::Left { "Bottom" } else { "Left" }, "visible": !p.shown_by_default, "floating": 0 }),
+            )
         })
         .collect();
     let order: Vec<&str> = crate::prefs::TOOLBARS.iter().rev().map(|(id, _)| *id).collect();
@@ -435,11 +439,13 @@ fn non_default_prefs() -> crate::prefs::Prefs {
             "backdrop": "Dark",
             "dock_sizes": { "left": 300.0 },
             "files": { "auto_join_tolerance": 0.2, "colour_map": "Unique", "dxf_unit": "Inch", "dxf_units": "Fallback", "export_dir": "C:/out", "export_ext": "dxf", "hpgl_units_per_mm": 1016.0 },
+            "floating": { "0": { "pos": [210.0, 140.0], "size": [330.0, 280.0], "active": "move" } },
             "fonts": { "default_family": "Arial", "default_size": 12.5, "favourites": ["Arial"], "max_recent": 5, "recent": ["Arial"] },
             "grid_contrast": 0.8,
             "grid_spacing": 25.0,
             "hotkeys": { "file.new": "Ctrl+Alt+F9" },
             "language": "nb",
+            "layout_version": 2,
             "library_paths": { "": "C:/lib/shop.dblib" },
             "mcp": { "port": 27880 },
             "opts": {
@@ -457,6 +463,7 @@ fn non_default_prefs() -> crate::prefs::Prefs {
             "ribbon_tab": "arrange",
             "shx_fonts": ["shx:C:/fonts/romans.shx"],
             "svg_dpi": 72.0,
+            "tab_order": { "float:0": ["move", "file_list"] },
             "theme": "light",
             "toolbar_order": order,
             "toolbar_places": { "tools": { "dock": "top", "pos": null } },

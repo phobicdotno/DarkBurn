@@ -174,6 +174,10 @@ struct Slot {
 struct Target {
     rect: Rect,
     frame: u64,
+    /// When it was marked, counting every mark: later is on top.
+    order: u64,
+    /// A group floating over the docks: on top of every dock, whenever it was marked.
+    floating: bool,
 }
 
 /// The kit's state for one context, shared through egui's temporary data.
@@ -185,6 +189,8 @@ struct State {
     shown: BTreeMap<String, Shown>,
     slots: BTreeMap<String, Slot>,
     targets: BTreeMap<String, Target>,
+    /// How many times an area was marked as a target, for [`Target::order`].
+    marks: u64,
     /// The app's panel areas, key and label, in its order.
     areas: Vec<(String, String)>,
     close: BTreeSet<String>,
@@ -333,16 +339,36 @@ pub fn areas(ctx: &Context) -> Vec<(String, String)> {
 
 /// Area `area` is on screen at `rect` this frame: a window dragged onto it is docked there.
 pub fn dock_target(ctx: &Context, area: &str, rect: Rect) {
+    mark_target(ctx, area, rect, false);
+}
+
+/// A tab group floating over the docks is on screen at `rect` this frame. Where it overlaps a
+/// dock it is the target, also while the docks have newer marks than it.
+pub fn float_target(ctx: &Context, area: &str, rect: Rect) {
+    mark_target(ctx, area, rect, true);
+}
+
+fn mark_target(ctx: &Context, area: &str, rect: Rect, floating: bool) {
     let frame = now(ctx);
     with(ctx, |s| {
-        s.targets.insert(area.to_string(), Target { rect, frame });
+        s.marks += 1;
+        let order = s.marks;
+        s.targets.insert(area.to_string(), Target { rect, frame, order, floating });
     });
 }
 
-/// The dock area under `pos`, of those on screen this frame or the last.
+/// The dock area under `pos`, of those on screen this frame or the last. Where areas overlap
+/// (a tab group floating over a dock) a floating group wins over a dock, and of the same kind
+/// the one marked last: it is drawn on top.
 pub fn target_at(ctx: &Context, pos: Pos2) -> Option<String> {
     let frame = now(ctx);
-    with(ctx, |s| s.targets.iter().find(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos)).map(|(k, _)| k.clone()))
+    with(ctx, |s| {
+        s.targets
+            .iter()
+            .filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos))
+            .max_by_key(|(_, t)| (t.floating, t.order))
+            .map(|(k, _)| k.clone())
+    })
 }
 
 /// Where area `area` is on screen, if it was drawn this frame or the last.
@@ -785,6 +811,21 @@ mod tests {
         assert_eq!(p.pos, Some([40.0, 50.0]), "floating again without a drop point goes back where it was");
         p.dock("");
         assert_eq!(p.placement, Placement::Floating, "an empty area is not a dock");
+    }
+
+    #[test]
+    fn a_floating_group_wins_over_a_dock_marked_after_it() {
+        let ctx = Context::default();
+        frame(&ctx, |ui| {
+            float_target(ui.ctx(), "float:0", Rect::from_min_size(Pos2::new(800.0, 100.0), vec2(300.0, 200.0)));
+            dock_target(ui.ctx(), "RightTop", Rect::from_min_max(Pos2::new(900.0, 0.0), Pos2::new(1200.0, 800.0)));
+        });
+        // The next frame the dock is marked again before the group: the group is still on top.
+        frame(&ctx, |ui| {
+            dock_target(ui.ctx(), "RightTop", Rect::from_min_max(Pos2::new(900.0, 0.0), Pos2::new(1200.0, 800.0)));
+            assert_eq!(target_at(ui.ctx(), Pos2::new(950.0, 150.0)).as_deref(), Some("float:0"));
+            assert_eq!(target_at(ui.ctx(), Pos2::new(950.0, 500.0)).as_deref(), Some("RightTop"));
+        });
     }
 
     #[test]

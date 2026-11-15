@@ -6,10 +6,19 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::Backdrop;
-use crate::panels::{Area, PANELS};
+use crate::panels::{Area, PANELS, PanelDef, Place};
 use crate::view::{Origin, View};
 
 pub const STORAGE_KEY: &str = "darkburn.prefs";
+
+/// The panel layout's version. Settings saved with an older one are moved on once when read
+/// (see [`Prefs::migrate_layout`]). 1: the right dock is one tab bar (Laser, Library and Move
+/// used to sit in a second group below it).
+pub const LAYOUT_VERSION: u32 = 1;
+
+/// The smallest and largest a floating tab group may be, in points.
+pub const FLOAT_MIN: [f32; 2] = [200.0, 120.0];
+pub const FLOAT_MAX: [f32; 2] = [8192.0, 8192.0];
 
 /// Toolbars that can be shown or hidden (Window menu). In the ribbon each is a group or a tab.
 pub const TOOLBARS: &[(&str, &str)] = &[
@@ -27,8 +36,31 @@ pub const TOOLBARS: &[(&str, &str)] = &[
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PanelState {
+    /// The docked area; also where the panel goes back to when its floating group is gone.
     pub area: Area,
     pub visible: bool,
+    /// The floating tab group it is in (an id in [`Prefs::floating`]); none: docked in `area`.
+    pub floating: Option<u32>,
+}
+
+/// A tab group floating in the main window: where it is, its size and the tab in front.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FloatGroup {
+    /// Its top-left corner in the main window, in points.
+    pub pos: [f32; 2],
+    pub size: [f32; 2],
+    /// The tab in front (a panel id or a window's tab id).
+    pub active: String,
+}
+
+/// Where a window docked in a floating group goes when the group is gone.
+pub const FLOAT_HOME: &str = "RightTop";
+
+impl Default for FloatGroup {
+    fn default() -> Self {
+        FloatGroup { pos: [200.0, 160.0], size: [380.0, 420.0], active: String::new() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,6 +82,13 @@ pub struct Prefs {
     pub page_height: f32,
     pub origin: Origin,
     pub panels: BTreeMap<String, PanelState>,
+    /// The version of the panel layout these settings were saved with ([`LAYOUT_VERSION`]).
+    pub layout_version: u32,
+    /// The floating tab groups, by id.
+    pub floating: BTreeMap<u32, FloatGroup>,
+    /// The order of the tabs in each place ([`Place::key`]), as panel ids; panels not named
+    /// follow in their usual order.
+    pub tab_order: BTreeMap<String, Vec<String>>,
     /// The tab in front in each panel area.
     pub active_tab: BTreeMap<Area, String>,
     /// The size the user dragged each dock to ("left", "right", "bottom"); none: the default.
@@ -112,9 +151,9 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        let panels = PANELS.iter().map(|p| (p.id.to_string(), PanelState { area: p.home, visible: p.shown_by_default })).collect();
+        let panels = PANELS.iter().map(|p| (p.id.to_string(), PanelState { area: p.home, visible: p.shown_by_default, floating: None })).collect();
         let toolbars = TOOLBARS.iter().map(|(id, _)| (id.to_string(), true)).collect();
-        let active_tab = [(Area::RightTop, "cuts"), (Area::RightBottom, "laser")].into_iter().map(|(a, id)| (a, id.to_string())).collect();
+        let active_tab = [(Area::RightTop, "cuts")].into_iter().map(|(a, id)| (a, id.to_string())).collect();
         Prefs {
             theme: "warning-label".into(),
             backdrop: Backdrop::Theme,
@@ -126,6 +165,9 @@ impl Default for Prefs {
             page_height: 400.0,
             origin: Origin::FrontLeft,
             panels,
+            layout_version: LAYOUT_VERSION,
+            floating: BTreeMap::new(),
+            tab_order: BTreeMap::new(),
             active_tab,
             dock_sizes: BTreeMap::new(),
             windows: Default::default(),
@@ -163,7 +205,7 @@ impl Default for Prefs {
 
 impl Default for PanelState {
     fn default() -> Self {
-        PanelState { area: Area::RightTop, visible: true }
+        PanelState { area: Area::RightTop, visible: true, floating: None }
     }
 }
 
@@ -171,6 +213,13 @@ impl Prefs {
     /// Preferences from their stored JSON; anything missing or unreadable takes its default.
     pub fn from_json(text: &str) -> Prefs {
         let mut prefs: Prefs = serde_json::from_str(text).unwrap_or_else(|_| Prefs::salvage(text));
+        // Settings without a layout version are from before there was one (the defaults filled it in).
+        let saved = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|v| v.get("layout_version").and_then(serde_json::Value::as_u64))
+            .map_or(0, |v| v.min(u32::MAX as u64) as u32);
+        prefs.layout_version = saved;
+        prefs.migrate_layout();
         prefs.sanitise();
         prefs
     }
@@ -219,6 +268,21 @@ impl Prefs {
         serde_json::from_value(good).unwrap_or_default()
     }
 
+    /// Move a layout saved by an older version on to this one, once.
+    pub fn migrate_layout(&mut self) {
+        if self.layout_version < 1 {
+            // One tab bar on the right: the panels of the lower group join the upper one.
+            for state in self.panels.values_mut() {
+                if state.area == Area::RightBottom {
+                    state.area = Area::RightTop;
+                }
+            }
+            self.active_tab.remove(&Area::RightBottom);
+            self.tab_order.remove(&Place::Docked(Area::RightBottom).key());
+        }
+        self.layout_version = self.layout_version.max(LAYOUT_VERSION);
+    }
+
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
@@ -254,6 +318,32 @@ impl Prefs {
             self.panels.entry(id).or_insert(state);
         }
         self.panels.retain(|id, _| PANELS.iter().any(|p| p.id == id));
+        for g in self.floating.values_mut() {
+            for (i, v) in g.pos.iter_mut().enumerate() {
+                if !v.is_finite() {
+                    *v = FloatGroup::default().pos[i];
+                }
+                *v = v.clamp(-FLOAT_MAX[i], FLOAT_MAX[i]);
+            }
+            for (i, v) in g.size.iter_mut().enumerate() {
+                if !v.is_finite() {
+                    *v = FloatGroup::default().size[i];
+                }
+                *v = v.clamp(FLOAT_MIN[i], FLOAT_MAX[i]);
+            }
+        }
+        let groups: Vec<u32> = self.floating.keys().copied().collect();
+        for state in self.panels.values_mut() {
+            if state.floating.is_some_and(|g| !groups.contains(&g)) {
+                state.floating = None;
+            }
+        }
+        self.prune_floating();
+        self.tab_order.retain(|key, ids| {
+            let mut seen = std::collections::BTreeSet::new();
+            ids.retain(|id| PANELS.iter().any(|p| p.id == id) && seen.insert(id.clone()));
+            Place::from_key(key).is_some() && !ids.is_empty()
+        });
         self.dock_sizes.retain(|_, size| size.is_finite() && *size > 0.0);
         darkburn_ui::ui_kit::window_host::sanitise(&mut self.windows);
         for (id, on) in d.toolbars {
@@ -272,6 +362,8 @@ impl Prefs {
     pub fn reset_layout(&mut self) {
         let d = Prefs::default();
         self.panels = d.panels;
+        self.floating = d.floating;
+        self.tab_order = d.tab_order;
         self.active_tab = d.active_tab;
         self.dock_sizes = d.dock_sizes;
         self.windows = d.windows;
@@ -326,6 +418,145 @@ impl Prefs {
         self.panels.get(id).cloned().unwrap_or_default()
     }
 
+    /// Where panel `id` is: its floating group, else its docked area.
+    pub fn place(&self, id: &str) -> Place {
+        let state = self.panel(id);
+        match state.floating {
+            Some(g) if self.floating.contains_key(&g) => Place::Floating(g),
+            _ => Place::Docked(state.area),
+        }
+    }
+
+    /// Every panel in `place`, shown or not, in its tab order.
+    pub fn panels_in(&self, place: Place) -> Vec<&'static PanelDef> {
+        let here: Vec<&'static PanelDef> = PANELS.iter().filter(|p| self.place(p.id) == place).collect();
+        let mut out: Vec<&'static PanelDef> = Vec::new();
+        for id in self.tab_order.get(&place.key()).into_iter().flatten() {
+            if let Some(p) = here.iter().find(|p| p.id == id)
+                && !out.iter().any(|o| o.id == p.id)
+            {
+                out.push(p);
+            }
+        }
+        for p in here {
+            if !out.iter().any(|o| o.id == p.id) {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    /// The shown panels in `place`, in tab order.
+    pub fn visible_in(&self, place: Place) -> Vec<&'static PanelDef> {
+        self.panels_in(place).into_iter().filter(|p| self.panel(p.id).visible).collect()
+    }
+
+    /// The tab stored as in front in `place`, if any.
+    pub fn front(&self, place: Place) -> Option<String> {
+        match place {
+            Place::Docked(area) => self.active_tab.get(&area).cloned(),
+            Place::Floating(g) => self.floating.get(&g).map(|g| g.active.clone()).filter(|a| !a.is_empty()),
+        }
+    }
+
+    /// Tab `id` (a panel's or a window's) is in front in `place`.
+    pub fn set_front(&mut self, place: Place, id: &str) {
+        match place {
+            Place::Docked(area) => {
+                self.active_tab.insert(area, id.to_string());
+            }
+            Place::Floating(g) => {
+                if let Some(g) = self.floating.get_mut(&g) {
+                    g.active = id.to_string();
+                }
+            }
+        }
+    }
+
+    /// Panel `id` comes to the front wherever it is.
+    pub fn bring_panel_forward(&mut self, id: &str) {
+        self.set_front(self.place(id), id);
+    }
+
+    /// Move panel `id` to `to`, at tab position `at` there (none: last), shown and in front.
+    /// Moving within its own place reorders. A floating group left empty is gone.
+    /// Returns whether the panel exists.
+    pub fn move_panel(&mut self, id: &str, to: Place, at: Option<usize>) -> bool {
+        if !self.panels.contains_key(id) || matches!(to, Place::Floating(g) if !self.floating.contains_key(&g)) {
+            return false;
+        }
+        let mut order: Vec<String> = self.panels_in(to).iter().map(|p| p.id.to_string()).filter(|p| p != id).collect();
+        let at = at.unwrap_or(order.len()).min(order.len());
+        order.insert(at, id.to_string());
+        for ids in self.tab_order.values_mut() {
+            ids.retain(|p| p != id);
+        }
+        self.tab_order.retain(|_, ids| !ids.is_empty());
+        self.tab_order.insert(to.key(), order);
+        if let Some(state) = self.panels.get_mut(id) {
+            state.visible = true;
+            match to {
+                Place::Docked(area) => (state.area, state.floating) = (area, None),
+                Place::Floating(g) => state.floating = Some(g),
+            }
+        }
+        self.set_front(to, id);
+        self.prune_floating();
+        true
+    }
+
+    /// Panel `id` floats in a new tab group of its own at `pos` with `size` (clamped). Returns
+    /// the new group's id, or none for an unknown panel.
+    pub fn float_panel(&mut self, id: &str, pos: [f32; 2], size: [f32; 2]) -> Option<u32> {
+        if !self.panels.contains_key(id) {
+            return None;
+        }
+        let g = self.floating.keys().next_back().map_or(0, |last| last + 1);
+        let size = [size[0].clamp(FLOAT_MIN[0], FLOAT_MAX[0]), size[1].clamp(FLOAT_MIN[1], FLOAT_MAX[1])];
+        self.floating.insert(g, FloatGroup { pos, size, active: id.to_string() });
+        self.move_panel(id, Place::Floating(g), None);
+        Some(g)
+    }
+
+    /// Close floating group `g`: its panels are hidden and go back to their docked area.
+    pub fn close_floating(&mut self, g: u32) {
+        for state in self.panels.values_mut() {
+            if state.floating == Some(g) {
+                (state.floating, state.visible) = (None, false);
+            }
+        }
+        self.floating.remove(&g);
+        self.tab_order.remove(&Place::Floating(g).key());
+        // Windows docked in it go back to the right dock.
+        let key = Place::Floating(g).key();
+        for place in self.windows.values_mut() {
+            if place.area() == Some(key.as_str()) {
+                place.dock(FLOAT_HOME);
+            }
+        }
+    }
+
+    /// Floating groups without a shown panel or a window docked in them are gone; their hidden
+    /// panels go back to their docked area. A window docked in a group that is gone goes back
+    /// to the right dock.
+    pub fn prune_floating(&mut self) {
+        let has_window = |g: u32| {
+            let key = Place::Floating(g).key();
+            self.windows.values().any(|w| w.area() == Some(key.as_str()))
+        };
+        let empty: Vec<u32> =
+            self.floating.keys().copied().filter(|g| !self.panels.values().any(|s| s.floating == Some(*g) && s.visible) && !has_window(*g)).collect();
+        for g in empty {
+            self.close_floating(g);
+        }
+        let groups: Vec<String> = self.floating.keys().map(|g| Place::Floating(*g).key()).collect();
+        for place in self.windows.values_mut() {
+            if place.area().is_some_and(|a| a.starts_with("float:") && !groups.iter().any(|k| k == a)) {
+                place.dock(FLOAT_HOME);
+            }
+        }
+    }
+
     pub fn page(&self) -> egui::Vec2 {
         egui::vec2(self.page_width, self.page_height)
     }
@@ -340,8 +571,10 @@ mod tests {
         let p = Prefs::default();
         let right_top: Vec<_> = PANELS.iter().filter(|d| p.panel(d.id).visible && p.panel(d.id).area == Area::RightTop).map(|d| d.id).collect();
         let right_bottom: Vec<_> = PANELS.iter().filter(|d| p.panel(d.id).visible && p.panel(d.id).area == Area::RightBottom).map(|d| d.id).collect();
-        assert_eq!(right_top, ["cuts", "console", "camera", "variable_text", "shape_properties"]);
-        assert_eq!(right_bottom, ["laser", "library"]);
+        assert_eq!(right_top, ["cuts", "console", "camera", "variable_text", "shape_properties", "laser", "library"]);
+        assert!(right_bottom.is_empty(), "one tab bar on the right: {right_bottom:?}");
+        assert_eq!(p.layout_version, LAYOUT_VERSION);
+        assert!(p.floating.is_empty() && p.tab_order.is_empty());
         for hidden in ["move", "art_library", "file_list"] {
             assert!(!p.panel(hidden).visible, "{hidden} is hidden by default");
         }
@@ -418,6 +651,111 @@ mod tests {
         assert_eq!(Prefs::from_json(&text[..text.len() / 2]), Prefs::default());
         assert_eq!(Prefs::from_json("[1, 2]"), Prefs::default());
         assert_eq!(Prefs::from_json(""), Prefs::default());
+    }
+
+    /// Settings saved before the right dock became one tab bar move their lower group up, once;
+    /// a panel the user puts in the lower area after that stays there.
+    #[test]
+    fn old_layouts_move_the_lower_right_group_up_once() {
+        let old = r#"{"theme":"nord","panels":{"laser":{"area":"RightBottom","visible":true},"library":{"area":"RightBottom","visible":false},
+            "move":{"area":"Left","visible":true}},"active_tab":{"RightTop":"console","RightBottom":"laser"}}"#;
+        let p = Prefs::from_json(old);
+        assert_eq!(p.theme, "nord");
+        assert_eq!(p.layout_version, LAYOUT_VERSION);
+        assert_eq!((p.panel("laser").area, p.panel("laser").visible), (Area::RightTop, true));
+        assert_eq!((p.panel("library").area, p.panel("library").visible), (Area::RightTop, false));
+        assert_eq!(p.panel("move").area, Area::Left, "panels elsewhere stay where they were");
+        assert_eq!(p.active_tab.get(&Area::RightTop).map(String::as_str), Some("console"));
+        assert!(!p.active_tab.contains_key(&Area::RightBottom));
+        // Saved again with the new version: a panel moved down by hand stays down.
+        let mut q = p.clone();
+        q.move_panel("laser", Place::Docked(Area::RightBottom), None);
+        let back = Prefs::from_json(&q.to_json());
+        assert_eq!(back.panel("laser").area, Area::RightBottom);
+        assert_eq!(back, q);
+        // Damaged or salvaged settings without a version are moved on too.
+        let salvaged = Prefs::from_json(r#"{"anchor": 7, "panels":{"laser":{"area":"RightBottom","visible":true}}}"#);
+        assert_eq!(salvaged.panel("laser").area, Area::RightTop);
+    }
+
+    #[test]
+    fn tab_order_follows_moves_and_survives_a_restart() {
+        let mut p = Prefs::default();
+        let top = Place::Docked(Area::RightTop);
+        let ids = |p: &Prefs, at: Place| p.visible_in(at).iter().map(|d| d.id).collect::<Vec<_>>();
+        assert_eq!(ids(&p, top), ["cuts", "console", "camera", "variable_text", "shape_properties", "laser", "library"]);
+        // Reorder within the bar: Laser to the front.
+        assert!(p.move_panel("laser", top, Some(0)));
+        assert_eq!(ids(&p, top)[..3], ["laser", "cuts", "console"]);
+        assert_eq!(p.front(top).as_deref(), Some("laser"));
+        // To another area at a position; a hidden panel moved is shown.
+        let left = Place::Docked(Area::Left);
+        assert!(p.move_panel("move", left, None));
+        assert!(p.move_panel("console", left, Some(0)));
+        assert_eq!(ids(&p, left), ["console", "move"]);
+        assert!(p.panel("move").visible);
+        assert!(!ids(&p, top).contains(&"console"));
+        let back = Prefs::from_json(&p.to_json());
+        assert_eq!(back, p);
+        assert_eq!(ids(&back, top)[..2], ["laser", "cuts"]);
+        // Unknown panels and groups are refused.
+        assert!(!p.move_panel("nope", top, None));
+        assert!(!p.move_panel("cuts", Place::Floating(9), None));
+        // Unknown ids, doubles and unknown places in the stored order are dropped.
+        let odd = Prefs::from_json(r#"{"layout_version":1,"tab_order":{"RightTop":["library","gone","library","cuts"],"Nowhere":["cuts"]}}"#);
+        assert_eq!(odd.tab_order.len(), 1);
+        assert_eq!(odd.tab_order["RightTop"], ["library", "cuts"]);
+        assert_eq!(ids(&odd, top)[..3], ["library", "cuts", "console"]);
+    }
+
+    #[test]
+    fn floating_groups_come_and_go_with_their_tabs() {
+        let mut p = Prefs::default();
+        let g = p.float_panel("laser", [300.0, 200.0], [10.0, 500.0]).unwrap();
+        let float = Place::Floating(g);
+        assert_eq!(p.place("laser"), float);
+        assert_eq!(p.panel("laser").area, Area::RightTop, "its docked area is kept to return to");
+        assert_eq!(p.floating[&g].size, [FLOAT_MIN[0], 500.0], "held to the smallest size");
+        assert_eq!(p.front(float).as_deref(), Some("laser"));
+        // Another panel joins it in front of the first; a second group gets its own id.
+        assert!(p.move_panel("library", float, Some(0)));
+        assert_eq!(p.visible_in(float).iter().map(|d| d.id).collect::<Vec<_>>(), ["library", "laser"]);
+        let h = p.float_panel("cuts", [0.0, 0.0], [400.0, 400.0]).unwrap();
+        assert_ne!(g, h);
+        // Saved and read back.
+        let back = Prefs::from_json(&p.to_json());
+        assert_eq!(back, p);
+        // The last tab leaving takes the group with it.
+        assert!(p.move_panel("cuts", Place::Docked(Area::Left), None));
+        assert!(!p.floating.contains_key(&h));
+        // Closing a group hides its panels and sends them home.
+        p.close_floating(g);
+        assert!(p.floating.is_empty());
+        assert_eq!(p.place("laser"), Place::Docked(Area::RightTop));
+        assert!(!p.panel("laser").visible && !p.panel("library").visible);
+        // Hiding the last shown panel of a group (as the Window menu does) removes it too.
+        let g = p.float_panel("console", [0.0, 0.0], [400.0, 400.0]).unwrap();
+        p.panels.get_mut("console").unwrap().visible = false;
+        p.prune_floating();
+        assert!(!p.floating.contains_key(&g));
+        // Stored nonsense: a panel in a group that does not exist docks; a group with nothing in it goes.
+        let odd = Prefs::from_json(
+            r#"{"layout_version":1,"panels":{"laser":{"area":"Left","visible":true,"floating":5}},
+                "floating":{"2":{"pos":[1e30,5],"size":[-1,99999]}}}"#,
+        );
+        assert_eq!(odd.place("laser"), Place::Docked(Area::Left));
+        assert!(odd.floating.is_empty());
+        let kept = Prefs::from_json(
+            r#"{"layout_version":1,"panels":{"laser":{"area":"Left","visible":true,"floating":2}},"floating":{"2":{"pos":[1e30,5],"size":[-1,99999]}}}"#,
+        );
+        assert_eq!(kept.place("laser"), Place::Floating(2));
+        assert_eq!(kept.floating[&2].pos, [FLOAT_MAX[0], 5.0]);
+        assert_eq!(kept.floating[&2].size, [FLOAT_MIN[0], FLOAT_MAX[1]]);
+        // A layout reset puts everything back in the docks.
+        let mut r = back;
+        r.reset_layout();
+        assert!(r.floating.is_empty() && r.tab_order.is_empty());
+        assert_eq!(r.place("laser"), Place::Docked(Area::RightTop));
     }
 
     #[test]

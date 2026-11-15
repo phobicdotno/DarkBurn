@@ -215,6 +215,8 @@ mod ui_hunt_tests;
 mod ui_language_tests;
 #[cfg(test)]
 mod ui_smoke_tests;
+#[cfg(test)]
+mod ui_tab_drag_tests;
 mod updater;
 mod updates;
 mod view;

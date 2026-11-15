@@ -629,6 +629,8 @@ fn the_default_layout_shows_the_machine_panels() {
     let ctx = egui::Context::default();
     let mut a = app();
     a.prefs.panels.get_mut("console").unwrap().visible = true;
+    // Laser and Cuts / Layers share the right tab bar: the Laser tab in front shows its contents.
+    a.prefs.bring_panel_forward("laser");
     let mut found = Vec::new();
     for _ in 0..4 {
         let input =

@@ -1119,7 +1119,7 @@ impl DarkBurn {
             let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
             let mut pick: Option<&'static str> = None;
             let mut close = false;
-            egui::Area::new(egui::Id::new(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(ctx, |ui| {
+            egui::Area::new(egui::Id::unique(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(ctx, |ui| {
                 ui.set_clip_rect(rect);
                 ui.painter().rect_filled(rect, t.radius_sm, t.panel);
                 ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);

@@ -982,7 +982,7 @@ mod tests {
         use crate::ui_harness::Gui;
         let mut g = Gui::standard();
         g.exec("library.create_from_layer", serde_json::json!({ "layer": 2, "material": "Birch", "thickness": 3.0, "description": "Cut" }));
-        g.click_id("panel:tab:library");
+        g.app().prefs.bring_panel_forward("library");
         g.frames(2);
         assert_eq!(g.app().extras.library.lib.entries.len(), 1);
         assert!(g.visible_texts().join(" ").contains("Birch"), "{:?}", g.visible_texts());

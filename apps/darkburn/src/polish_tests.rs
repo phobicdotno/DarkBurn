@@ -311,7 +311,7 @@ fn library_panel_draws_a_different_icon_for_line_fill_and_image_entries() {
     let mut g = Gui::standard();
     // Show the panel first: its first drawing loads the device's own library.
     g.frames(2);
-    g.click_id("panel:tab:library");
+    g.app().prefs.bring_panel_forward("library");
     g.frames(2);
     for (layer, mode, name) in [(0, "line", "Cut through"), (1, "fill", "Engrave dark"), (2, "line", "Photo")] {
         g.exec("layer.set_mode", json!({ "layer": layer, "mode": mode }));

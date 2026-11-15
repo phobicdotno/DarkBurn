@@ -504,6 +504,7 @@ impl Prefs {
 
     /// Panel `id` floats in a new tab group of its own at `pos` with `size` (clamped). Returns
     /// the new group's id, or none for an unknown panel.
+    #[cfg_attr(not(test), allow(dead_code))] // the tab drag uses it next
     pub fn float_panel(&mut self, id: &str, pos: [f32; 2], size: [f32; 2]) -> Option<u32> {
         if !self.panels.contains_key(id) {
             return None;

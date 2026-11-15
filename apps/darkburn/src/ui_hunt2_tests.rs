@@ -204,7 +204,7 @@ fn a_saved_position_does_not_push_the_move_panel_out_of_its_dock() {
         }
         g.scroll(at, egui::vec2(0.0, -30.0));
     }
-    assert_eq!(g.rect_of("panel:area:RightBottom"), Some(dock));
+    assert_eq!(g.rect_of("panel:area:RightTop"), Some(dock));
     assert_eq!(left(&g, "SAVED POSITIONS"), before, "the panel's contents slid sideways");
     // Every control of the row is inside the dock and can be used.
     for label in ["Go", "Delete", "Save position"] {
@@ -538,7 +538,7 @@ fn panel_and_dialog_number_fields_take_sums_and_units() {
     let mut g = Gui::standard();
     show_panel(&mut g, "move");
     let set = |g: &mut Gui, label: &str, text: &str| {
-        let dock = g.rect_of("panel:area:RightBottom").unwrap();
+        let dock = g.rect_of("panel:area:RightTop").unwrap();
         let field = g.find_a11y(Some("SpinButton"), label).into_iter().find(|f| dock.contains(f.rect.center()));
         let at = field.unwrap_or_else(|| panic!("a field named {label} in the Move panel")).rect.center();
         g.click_pos(at);

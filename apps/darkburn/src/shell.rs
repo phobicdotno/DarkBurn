@@ -1119,37 +1119,40 @@ impl DarkBurn {
             let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
             let mut pick: Option<&'static str> = None;
             let mut close = false;
-            egui::Area::new(egui::Id::unique(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(ctx, |ui| {
-                ui.set_clip_rect(rect);
-                ui.painter().rect_filled(rect, t.radius_sm, t.panel);
-                ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-                solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
-                let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
-                ui.painter().rect_filled(header, 0.0, t.panel_header);
-                let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
-                let tab_room = Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(tab_room), |ui| {
-                    ui.horizontal(|ui| {
-                        for p in &tabs {
-                            let title = crate::i18n::panel_title(p.id, p.title);
-                            let resp = ui.selectable_label(p.id == front, title);
-                            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), resp.rect);
-                            if resp.clicked() {
-                                pick = Some(p.id);
+            egui::Area::new(egui::Id::unique(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(
+                ctx,
+                |ui| {
+                    ui.set_clip_rect(rect);
+                    ui.painter().rect_filled(rect, t.radius_sm, t.panel);
+                    ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                    solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
+                    let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
+                    ui.painter().rect_filled(header, 0.0, t.panel_header);
+                    let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
+                    let tab_room = Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(tab_room), |ui| {
+                        ui.horizontal(|ui| {
+                            for p in &tabs {
+                                let title = crate::i18n::panel_title(p.id, p.title);
+                                let resp = ui.selectable_label(p.id == front, title);
+                                solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), resp.rect);
+                                if resp.clicked() {
+                                    pick = Some(p.id);
+                                }
                             }
-                        }
+                        });
                     });
-                });
-                if ui_kit::quiet_icon_button_at(ui, close_at, "close", &crate::i18n::tr("ui.close", "Close")).clicked() {
-                    close = true;
-                }
-                let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max).shrink2(vec2(10.0, 8.0));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-                    egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
-                        panels::contents(ui, front, self);
+                    if ui_kit::quiet_icon_button_at(ui, close_at, "close", &crate::i18n::tr("ui.close", "Close")).clicked() {
+                        close = true;
+                    }
+                    let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max).shrink2(vec2(10.0, 8.0));
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                        egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
+                            panels::contents(ui, front, self);
+                        });
                     });
-                });
-            });
+                },
+            );
             if let Some(id) = pick {
                 self.prefs.set_front(place, id);
             }

@@ -64,6 +64,7 @@ pub mod dissect;
 pub mod fifo;
 pub mod frame;
 pub mod gate;
+pub mod head_calib;
 pub mod library;
 pub mod mlaser_files;
 pub mod paramxml;

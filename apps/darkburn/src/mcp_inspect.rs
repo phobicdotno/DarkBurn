@@ -452,8 +452,13 @@ pub fn ui_json(app: &DarkBurn, ctx: Option<&egui::Context>) -> Value {
         .iter()
         .map(|p| {
             let st = app.prefs.panel(p.id);
-            let front = app.prefs.active_tab.get(&st.area).is_some_and(|t| t == p.id);
-            json!({"id": p.id, "title": p.title, "area": st.area.label(), "visible": st.visible, "active_tab": st.visible && front})
+            let place = app.prefs.place(p.id);
+            let front = app.prefs.front(place).is_some_and(|t| t == p.id);
+            let floating = match place {
+                crate::panels::Place::Floating(g) => json!(g),
+                crate::panels::Place::Docked(_) => Value::Null,
+            };
+            json!({"id": p.id, "title": p.title, "area": st.area.label(), "floating": floating, "visible": st.visible, "active_tab": st.visible && front})
         })
         .collect();
     let shortcuts: Vec<Value> = crate::keymap::effective(&app.prefs.hotkeys)

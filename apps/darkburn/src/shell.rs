@@ -289,7 +289,9 @@ impl DarkBurn {
                     if let Some(state) = self.prefs.panels.get_mut(panel) {
                         state.visible = !state.visible;
                         if state.visible {
-                            self.prefs.active_tab.insert(state.area, panel.to_string());
+                            self.prefs.bring_panel_forward(panel);
+                        } else {
+                            self.prefs.prune_floating();
                         }
                     }
                 } else if let Some(bar) = other.strip_prefix("toolbar.") {
@@ -436,6 +438,7 @@ impl DarkBurn {
         });
         self.cursor = cursor;
         bars::floating(ui, self, &mut clicked);
+        self.floating_groups(ui.ctx());
         self.dialogs(ui.ctx());
         crate::extras::dialogs(ui.ctx(), self);
         crate::tangent_tool::window(ui.ctx(), self);
@@ -787,7 +790,7 @@ impl DarkBurn {
     }
 
     fn visible_in(&self, area: Area) -> Vec<&'static panels::PanelDef> {
-        PANELS.iter().filter(|p| self.prefs.panel(p.id).visible && self.prefs.panel(p.id).area == area).collect()
+        self.prefs.visible_in(panels::Place::Docked(area))
     }
 
     fn dock(&mut self, ui: &mut Ui, area: Area) {
@@ -1076,15 +1079,17 @@ impl DarkBurn {
                 });
             }
         }
-        if let Some((id, to)) = action
-            && let Some(state) = self.prefs.panels.get_mut(&id)
-        {
+        if let Some((id, to)) = action {
             match to {
                 Some(to) => {
-                    state.area = to;
-                    self.prefs.active_tab.insert(to, id.clone());
+                    self.prefs.move_panel(&id, panels::Place::Docked(to), None);
                 }
-                None => state.visible = false,
+                None => {
+                    if let Some(state) = self.prefs.panels.get_mut(&id) {
+                        state.visible = false;
+                    }
+                    self.prefs.prune_floating();
+                }
             }
         }
         if let Some((w, to)) = window_action {
@@ -1093,6 +1098,62 @@ impl DarkBurn {
                 WindowMove::Float(at) => window_host::update(ui.ctx(), &w, |p| p.float(at)),
                 WindowMove::Detach => window_host::update(ui.ctx(), &w, |p| p.detach()),
                 WindowMove::Close => window_host::request_close(ui.ctx(), &w),
+            }
+        }
+    }
+
+    /// The tab groups floating in the main window: each its tabs, a close button (it hides the
+    /// group's panels) and the front panel's contents. Dragging tabs in and out comes with the
+    /// tab drag; for now a group stays where it was put.
+    fn floating_groups(&mut self, ctx: &egui::Context) {
+        let t = Tokens::get();
+        let groups: Vec<u32> = self.prefs.floating.keys().copied().collect();
+        for g in groups {
+            let place = panels::Place::Floating(g);
+            let tabs = self.prefs.visible_in(place);
+            let Some(group) = self.prefs.floating.get(&g).cloned() else { continue };
+            if tabs.is_empty() {
+                continue;
+            }
+            let front = tabs.iter().find(|p| p.id == group.active).unwrap_or(&tabs[0]).id;
+            let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
+            let mut pick: Option<&'static str> = None;
+            let mut close = false;
+            egui::Area::new(egui::Id::new(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(ctx, |ui| {
+                ui.set_clip_rect(rect);
+                ui.painter().rect_filled(rect, t.radius_sm, t.panel);
+                ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
+                let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
+                ui.painter().rect_filled(header, 0.0, t.panel_header);
+                let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()))), |ui| {
+                    ui.horizontal(|ui| {
+                        for p in &tabs {
+                            let title = crate::i18n::panel_title(p.id, p.title);
+                            let resp = ui.selectable_label(p.id == front, title);
+                            solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), resp.rect);
+                            if resp.clicked() {
+                                pick = Some(p.id);
+                            }
+                        }
+                    });
+                });
+                if ui_kit::quiet_icon_button_at(ui, close_at, "close", &crate::i18n::tr("ui.close", "Close")).clicked() {
+                    close = true;
+                }
+                let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max).shrink2(vec2(10.0, 8.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
+                    egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
+                        panels::contents(ui, front, self);
+                    });
+                });
+            });
+            if let Some(id) = pick {
+                self.prefs.set_front(place, id);
+            }
+            if close {
+                self.prefs.close_floating(g);
             }
         }
     }
@@ -1380,13 +1441,37 @@ mod tests {
         out.textures_delta.clear();
     }
 
+    /// A panel put in a floating group (no drag yet: straight in the settings) is drawn there,
+    /// and the group's close button hides it.
+    #[test]
+    fn a_floating_group_draws_and_closes() {
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        let g = app.prefs.float_panel("laser", [400.0, 300.0], [380.0, 400.0]).unwrap();
+        app.prefs.move_panel("library", panels::Place::Floating(g), None);
+        let frame = |app: &mut DarkBurn, events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        frame(&mut app, vec![]);
+        frame(&mut app, vec![]);
+        let float = solidcraft_ui_registry::rect_of(&format!("panel:float:{g}"));
+        assert_eq!(float.map(|r| r.min), Some(pos2(400.0, 300.0)));
+        assert!(app.visible_in(Area::RightTop).iter().all(|p| p.id != "laser" && p.id != "library"));
+        app.prefs.close_floating(g);
+        frame(&mut app, vec![]);
+        assert!(app.prefs.floating.is_empty());
+        assert!(!app.prefs.panel("laser").visible);
+    }
+
     #[test]
     fn commands_toggle_panels_and_toolbars() {
         let ctx = egui::Context::default();
         let mut app = DarkBurn::new(Prefs::default());
         app.run(&ctx, "panel.move");
         assert!(app.prefs.panel("move").visible);
-        assert_eq!(app.prefs.active_tab.get(&Area::RightBottom).map(String::as_str), Some("move"));
+        assert_eq!(app.prefs.active_tab.get(&Area::RightTop).map(String::as_str), Some("move"));
         app.run(&ctx, "toolbar.arrange");
         assert!(!app.prefs.toolbar("arrange"));
         app.run(&ctx, "window.reset_layout");

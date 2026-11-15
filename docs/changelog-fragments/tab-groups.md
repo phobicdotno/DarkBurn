@@ -1,0 +1,1 @@
+- Laser, Library and Move now sit in the same tab bar as the other right-side panels

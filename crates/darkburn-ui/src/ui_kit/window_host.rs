@@ -349,13 +349,7 @@ pub fn dock_target(ctx: &Context, area: &str, rect: Rect) {
 /// (a tab group floating over a dock) the one marked last wins: it is drawn on top.
 pub fn target_at(ctx: &Context, pos: Pos2) -> Option<String> {
     let frame = now(ctx);
-    with(ctx, |s| {
-        s.targets
-            .iter()
-            .filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos))
-            .max_by_key(|(_, t)| t.order)
-            .map(|(k, _)| k.clone())
-    })
+    with(ctx, |s| s.targets.iter().filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos)).max_by_key(|(_, t)| t.order).map(|(k, _)| k.clone()))
 }
 
 /// Where area `area` is on screen, if it was drawn this frame or the last.

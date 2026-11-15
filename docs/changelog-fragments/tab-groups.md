@@ -2,3 +2,4 @@
 - Drag a tab onto another tab bar to join it, or along its own bar to reorder
 - Drag a tab out to give it its own window, then move, resize or close that window
 - Drop a window's tab onto a floating tab group to join it
+- Floating tab groups stay inside the window and tuck extra tabs behind a » button

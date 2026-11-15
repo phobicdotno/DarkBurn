@@ -312,7 +312,7 @@
   "gweike.calib_cancelled": "Calibrage de la tête annulé",
   "gweike.calib_close": "Fermer",
   "gweike.calib_confirm_body": "La tête de coupe va bouger pour mesurer sa hauteur. Restez à l'écart de la tête.",
-  "gweike.calib_confirm_title": "Lancer le calibrage de la tête ?",
+  "gweike.calib_confirm_title": "Lancer le calibrage de la tête ?",
   "gweike.calib_done": "Calibrage de la tête terminé",
   "gweike.calib_elapsed": "{secs} s sur {limit} s",
   "gweike.calib_running": "Calibrage en cours",

@@ -452,6 +452,7 @@ fn every_window_that_stays_open_docks() {
 /// why: each opens for one answer or one step and closes with it.
 const NOT_DOCKABLE: &[(&str, &str)] = &[
     ("about", "read once and closed"),
+    ("db_gweike_calib", "shows while a head calibration runs, then is closed"),
     ("db_updates", "read once and closed"),
     ("db_updater_ask", "asked before an update is installed"),
     ("db_updater_install", "shows while an update installs, then the program restarts"),

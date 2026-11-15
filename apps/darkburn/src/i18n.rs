@@ -185,6 +185,7 @@ mod tests {
         ("tangent_tool.rs", include_str!("tangent_tool.rs")),
         ("taper_warp.rs", include_str!("taper_warp.rs")),
         ("model_import.rs", include_str!("model_import.rs")),
+        ("gweike_ui.rs", include_str!("gweike_ui.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

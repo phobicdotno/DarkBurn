@@ -26,7 +26,7 @@ const STOP: &[&str] = &[
     "camera.stop",
     "mcc.stop",
     "mcc.emergency_stop",
-    "mcc.head_calibrate_cancel",
+    "mcc.head_calibrate_stop",
 ];
 
 /// Start a job, resume it, run a file or raw lines, or fire the laser.

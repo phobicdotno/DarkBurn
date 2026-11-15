@@ -92,7 +92,7 @@ fn gweike_card_classes_reach_the_mcp_listing() {
         ("mcc.head_calibrate", Some(HardwareClass::Motion)),
         ("mcc.head_calibrate_poll", Some(HardwareClass::Connect)),
         ("mcc.head_calibrate_dismiss", Some(HardwareClass::Connect)),
-        ("mcc.head_calibrate_cancel", Some(HardwareClass::Stop)),
+        ("mcc.head_calibrate_stop", Some(HardwareClass::Stop)),
         ("mcc.dissect", None),
     ] {
         let info = g.describe_command(id).unwrap().unwrap_or_else(|| panic!("{id} is listed"));
@@ -195,7 +195,7 @@ fn gweike_card_window_buttons_name_registered_commands_only() {
         "mcc.dissect",
         "mcc.head_calibrate",
         "mcc.head_calibrate_poll",
-        "mcc.head_calibrate_cancel",
+        "mcc.head_calibrate_stop",
         "mcc.head_calibrate_dismiss",
     ] {
         assert!(ids.contains(&want), "the window has no button for {want}");

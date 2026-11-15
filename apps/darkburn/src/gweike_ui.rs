@@ -203,7 +203,7 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             Ok(n) => v = n,
             Err(e) => {
                 app.machine.ext.gweike_message = Some(e);
-                let _ = crate::api::execute_headless(app, "mcc.head_calibrate_cancel", &json!({}));
+                let _ = crate::api::execute_headless(app, "mcc.head_calibrate_stop", &json!({}));
             }
         }
         ctx.data_mut(|d| d.insert_temp(last_id, v.to_string()));
@@ -237,9 +237,9 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             }
         });
     if closed || action != Action::None {
-        let c = if state == "running" { "mcc.head_calibrate_cancel" } else { "mcc.head_calibrate_dismiss" };
+        let c = if state == "running" { "mcc.head_calibrate_stop" } else { "mcc.head_calibrate_dismiss" };
         match crate::api::execute_headless(app, c, &json!({})) {
-            Ok(n) if c == "mcc.head_calibrate_cancel" => {
+            Ok(n) if c == "mcc.head_calibrate_stop" => {
                 ctx.data_mut(|d| d.insert_temp(last_id, n.to_string()));
             }
             Ok(_) => {

@@ -39,7 +39,7 @@ pub const STOP: Cmd = a("mcc.stop", "Stop the Gweike card simulator", "");
 pub const EMERGENCY_STOP: Cmd = a("mcc.emergency_stop", "Emergency stop the Gweike card simulator", "");
 pub const HEAD_CALIBRATE: Cmd = a("mcc.head_calibrate", "Start a Gweike M head calibration on the card simulator", "");
 pub const HEAD_CALIBRATE_POLL: Cmd = a("mcc.head_calibrate_poll", "Read how the Gweike head calibration is going", "");
-pub const HEAD_CALIBRATE_CANCEL: Cmd = a("mcc.head_calibrate_cancel", "Cancel the Gweike head calibration (stop all axes)", "");
+pub const HEAD_CALIBRATE_STOP: Cmd = a("mcc.head_calibrate_stop", "Cancel the Gweike head calibration (stop all axes)", "");
 pub const HEAD_CALIBRATE_DISMISS: Cmd = a("mcc.head_calibrate_dismiss", "Close a finished Gweike head calibration", "");
 
 /// Every `mcc.*` command but the dissector acts on the (simulated) card.
@@ -76,7 +76,7 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value) -> Result<Value, String> {
     match id {
         "mcc.head_calibrate" => calib_start(card, gweike_m),
         "mcc.head_calibrate_poll" => calib_poll(card),
-        "mcc.head_calibrate_cancel" => {
+        "mcc.head_calibrate_stop" => {
             let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
             let c = card.calib.as_mut().ok_or(NO_CALIB)?;
             if let Some(w) = c.cancel(&mcc::command::MachineParams::default()).map_err(|e| format!("{e:?}"))? {
@@ -474,7 +474,7 @@ mod tests {
         make_gweike_m(&mut a);
         run(&mut a, "mcc.connect", json!({})).unwrap();
         run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
-        let s = run(&mut a, "mcc.head_calibrate_cancel", json!({})).unwrap();
+        let s = run(&mut a, "mcc.head_calibrate_stop", json!({})).unwrap();
         assert_eq!(s["state"], "cancelled", "{s}");
         let stop = |a: &DarkBurn| {
             let link = a.machine.ext.mcc.link.as_ref().unwrap();

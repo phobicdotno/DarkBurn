@@ -237,15 +237,15 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             if let Some(z) = v["z_um"].as_i64() {
                 note(ui, &tr("gweike.calib_z", "Z {z}").replace("{z}", &format!("{:.2} mm", z as f64 / 1000.0)));
             }
-            if state != "running" {
-                if let (Some(strength), Some(height)) = (v["signal"]["strength"].as_u64(), v["signal"]["height"].as_u64()) {
-                    note(
-                        ui,
-                        &tr("gweike.calib_signal", "Signal {strength}, height {height}")
-                            .replace("{strength}", &strength.to_string())
-                            .replace("{height}", &height.to_string()),
-                    );
-                }
+            if state != "running"
+                && let (Some(strength), Some(height)) = (v["signal"]["strength"].as_u64(), v["signal"]["height"].as_u64())
+            {
+                note(
+                    ui,
+                    &tr("gweike.calib_signal", "Signal {strength}, height {height}")
+                        .replace("{strength}", &strength.to_string())
+                        .replace("{height}", &height.to_string()),
+                );
             }
         });
     if closed || action != Action::None {

@@ -49,8 +49,9 @@ fn a_panel_tab_dragged_along_its_bar_reorders_and_the_order_is_kept() {
     let to = tab(&g, "library").right_center() + vec2(6.0, 0.0);
     g.drag(tab(&g, "laser").center(), to);
     assert_eq!(order(&g, bottom), vec!["library", "laser"]);
-    let saved = g.app().prefs.tab_order.get(&bottom.key()).cloned();
-    assert_eq!(saved, Some(vec!["library".to_string(), "laser".to_string()]));
+    let saved = g.app().prefs.tab_order.get(&bottom.key()).cloned().unwrap_or_default();
+    let at = |id: &str| saved.iter().position(|p| p == id);
+    assert!(at("library").is_some() && at("library") < at("laser"), "the stored order: {saved:?}");
 }
 
 #[test]

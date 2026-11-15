@@ -192,7 +192,7 @@ fn the_move_panel_positions_follow_the_inch_setting() {
 fn a_saved_position_does_not_push_the_move_panel_out_of_its_dock() {
     let mut g = Gui::standard();
     show_panel(&mut g, "move");
-    let dock = g.rect_of("panel:area:RightBottom").unwrap();
+    let dock = g.rect_of("panel:area:RightTop").unwrap();
     let left = |g: &Gui, label: &str| g.find_text(label).unwrap_or_else(|| panic!("{label} is on screen")).left();
     let before = left(&g, "POSITION");
     assert!(before > dock.left());

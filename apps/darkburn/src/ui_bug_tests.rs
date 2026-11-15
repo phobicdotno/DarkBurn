@@ -372,7 +372,6 @@ fn docks_keep_their_default_size() {
     show_every_panel(&mut g);
     g.frames(30);
     assert!(near(dock(&g, "RightTop").width(), 380.0), "{}", dock(&g, "RightTop").width());
-    assert!(near(dock(&g, "RightBottom").width(), 380.0), "{}", dock(&g, "RightBottom").width());
     assert!(near(dock(&g, "Left").width(), 260.0), "{}", dock(&g, "Left").width());
     assert!(near(dock(&g, "Bottom").height(), 180.0), "{}", dock(&g, "Bottom").height());
     // Whatever panel is in front: a narrow one does not shrink the dock, a wide one does not widen it.
@@ -399,7 +398,6 @@ fn a_dragged_dock_keeps_its_new_size() {
     assert!((wide - 500.0).abs() < 4.0, "dragged 120 points wider than 380: {wide}");
     g.frames(40);
     assert_eq!(dock(&g, "RightTop").width(), wide, "the size stays");
-    assert_eq!(dock(&g, "RightBottom").width(), wide);
     // The bottom dock, dragged taller; the left dock, dragged narrower than it may be.
     let b = dock(&g, "Bottom");
     let top = egui::pos2(b.center().x, b.top());

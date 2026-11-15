@@ -315,7 +315,7 @@
   "gweike.calib_confirm_title": "Lancer le calibrage de la tête ?",
   "gweike.calib_done": "Calibrage de la tête terminé",
   "gweike.calib_elapsed": "{secs} s sur {limit} s",
-  "gweike.calib_failed": "Échec du calibrage de la tête : {reason}",
+  "gweike.calib_failed": "Échec du calibrage de la tête : {reason}",
   "gweike.calib_running": "Calibrage en cours",
   "gweike.calib_signal": "Signal {strength}, hauteur {height}",
   "gweike.calib_timed_out": "Aucun résultat après {limit} s, la tête a été arrêtée",

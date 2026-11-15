@@ -167,12 +167,12 @@ const CALIB_LAST: &str = "db_gweike_calib_last";
 /// The head calibration confirm and progress windows (Gweike M lasers only). They live outside
 /// the Gweike window so a run keeps being watched, timed out and stopped when that window closes.
 fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
-    let ask_id = Id::new(CALIB_ASK);
-    let last_id = Id::new(CALIB_LAST);
+    let ask_id = Id::unique(CALIB_ASK);
+    let last_id = Id::unique(CALIB_LAST);
     if ctx.data(|d| d.get_temp::<bool>(ask_id)).unwrap_or(false) {
         let title = tr("gweike.calib_confirm_title", "Start head calibration?");
         let body = tr("gweike.calib_confirm_body", "The cutting head will move to measure its height. Keep clear of the head.");
-        let (closed, action) = ui_kit::Confirm::new(Id::new("db_gweike_calib_confirm"), "settings", &title)
+        let (closed, action) = ui_kit::Confirm::new(Id::unique("db_gweike_calib_confirm"), "settings", &title)
             .actions("OK", "Cancel", None)
             .answer_keys(ui_kit::AnswerKeys::NoOnly)
             .show(ctx, true, |ui| {
@@ -182,7 +182,9 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             ctx.data_mut(|d| d.remove::<bool>(ask_id));
             match crate::api::execute_headless(app, "mcc.head_calibrate", &json!({})) {
                 Ok(v) => ctx.data_mut(|d| d.insert_temp(last_id, v.to_string())),
-                Err(e) => app.machine.ext.gweike_message = Some(e),
+                Err(e) => {
+                    app.machine.ext.gweike_message = Some(e);
+                }
             }
         } else if closed || action != Action::None {
             ctx.data_mut(|d| d.remove::<bool>(ask_id));
@@ -209,7 +211,7 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
     let secs = v["elapsed_ms"].as_u64().unwrap_or(0) / 1000;
     let limit = v["timeout_ms"].as_u64().unwrap_or(darkburn_mcc::head_calib::TIMEOUT_MS) / 1000;
     let button = if state == "running" { tr("gweike.calib_cancel", "Cancel") } else { tr("gweike.calib_close", "Close") };
-    let (closed, action) = ui_kit::Window::new(Id::new("db_gweike_calib"), "settings", &tr("gweike.calib", "Head calibration"))
+    let (closed, action) = ui_kit::Window::new(Id::unique("db_gweike_calib"), "settings", &tr("gweike.calib", "Head calibration"))
         .fields()
         .actions("", &button, None)
         .show(ctx, true, |ui| {
@@ -224,7 +226,10 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
                 _ => StatusTone::Warning,
             };
             ui_kit::status_line(ui, &line, tone);
-            note(ui, &tr("gweike.calib_elapsed", "{secs} s of {limit} s").replace("{secs}", &secs.to_string()).replace("{limit}", &limit.to_string()));
+            note(
+                ui,
+                &tr("gweike.calib_elapsed", "{secs} s of {limit} s").replace("{secs}", &secs.to_string()).replace("{limit}", &limit.to_string()),
+            );
             if let Some(z) = v["z"].as_u64() {
                 note(ui, &tr("gweike.calib_z", "Z {z}").replace("{z}", &z.to_string()));
             }
@@ -233,8 +238,12 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
         let c = if state == "running" { "mcc.head_calibrate_cancel" } else { "mcc.head_calibrate_dismiss" };
         match crate::api::execute_headless(app, c, &json!({})) {
             Ok(n) if c == "mcc.head_calibrate_cancel" => ctx.data_mut(|d| d.insert_temp(last_id, n.to_string())),
-            Ok(_) => ctx.data_mut(|d| d.remove::<String>(last_id)),
-            Err(e) => app.machine.ext.gweike_message = Some(e),
+            Ok(_) => {
+                ctx.data_mut(|d| d.remove::<String>(last_id));
+            }
+            Err(e) => {
+                app.machine.ext.gweike_message = Some(e);
+            }
         }
     }
 }
@@ -259,9 +268,14 @@ fn card_buttons(ui: &mut Ui, connected: bool, calib: CalibButton, frame: &mut St
         }
         // Head calibration is a Gweike M machine action: other machines never see the button.
         if calib.shown
-            && small(ui, &tr("gweike.calib", "Head calibration"), &tr("gweike.calib_tip", "Calibrate the cutting head height"), connected && !calib.busy)
+            && small(
+                ui,
+                &tr("gweike.calib", "Head calibration"),
+                &tr("gweike.calib_tip", "Calibrate the cutting head height"),
+                connected && !calib.busy,
+            )
         {
-            ui.ctx().data_mut(|d| d.insert_temp(Id::new(CALIB_ASK), true));
+            ui.ctx().data_mut(|d| d.insert_temp(Id::unique(CALIB_ASK), true));
         }
     });
     ui.horizontal(|ui| {

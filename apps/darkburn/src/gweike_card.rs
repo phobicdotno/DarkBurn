@@ -11,8 +11,8 @@
 //! `mcc.dissect` only reads the bytes it is given and needs no card.
 
 use darkburn_mcc as mcc;
-use mcc::registers::{self, Status};
 use mcc::head_calib::{CalibState, HeadCalibration};
+use mcc::registers::{self, Status};
 use mcc::sim::{ConnectOptions, ConnectReport, SimLink};
 use serde_json::{Value, json};
 
@@ -483,10 +483,8 @@ mod tests {
         assert_eq!(stop(&a), 1, "cancel sends one stop-all");
         run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
         // A run that never finishes is stopped at 120 s.
-        a.machine.ext.mcc.link.as_mut().unwrap().sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig {
-            motion_time_ms: 10_000_000,
-            ..darkburn_mcc::SimConfig::default()
-        });
+        a.machine.ext.mcc.link.as_mut().unwrap().sim =
+            darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig { motion_time_ms: 10_000_000, ..darkburn_mcc::SimConfig::default() });
         run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
         a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_secs(60));
         assert_eq!(run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap()["state"], "running");

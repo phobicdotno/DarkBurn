@@ -1555,7 +1555,7 @@ mod tests {
             }
             crate::frame::build_frame(9, 0x40, &p, crate::crc::CrcOrder::HiFirst).unwrap()
         };
-        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[1]), (59502, &[1]), (0x65, &[0x65]), (0x65, &[0x66]), (0x65, &[107])] {
+        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[1]), (59502, &[1]), (0x65, &[7]), (0x65, &[9999, 16]), (0x65, &[4, 1, 2])] {
             let rep = sim.exchange(&mk(addr, words)).unwrap();
             assert_eq!(Reply::decode(&rep, Some(9)).unwrap(), Reply::Exception { func: 0x40, code: 2 }, "{addr} {words:?}");
         }

@@ -95,10 +95,12 @@ fn licence_registers_and_the_two_command_vectors_are_unrepresentable() {
     assert!(matches!(SafeWrite::try_from_raw(151, &[0]), Err(Forbidden::Register150Or151(_))));
     assert!(matches!(SafeWrite::try_from_raw(59500, &[0]), Err(Forbidden::LicenceArea(_))));
     assert!(matches!(SafeWrite::try_from_raw(59511, &[0]), Err(Forbidden::LicenceArea(_))));
-    // every single-word write to the command register, all 65536 values, is refused: this covers
-    // 0x65 <- [0x65] and 0x65 <- [0x66]
+    // every single-word write to the command register, all 65536 values, is refused except the
+    // follower / head commands Mlaser sends (owner decision Q063): stop, Z origin, follow, head
+    // calibration
     for v in 0..=u16::MAX as u32 {
-        assert!(SafeWrite::try_from_raw(0x65, &[v]).is_err(), "[{v}]");
+        let allowed = matches!(v, 101 | 102 | 104 | 107);
+        assert_eq!(SafeWrite::try_from_raw(0x65, &[v]).is_ok(), allowed, "[{v}]");
     }
     // reads of the same areas
     for addr in [150, 151, 59500, 59502, 59503, 59599] {
@@ -128,10 +130,10 @@ fn random_vectors_only_pass_through_the_allow_list() {
         if let Ok(w) = SafeWrite::try_from_raw(0x65, &words) {
             accepted += 1;
             // anything accepted is one of the documented vectors, never a forbidden one
-            assert!(matches!(words[0], 1 | 2 | 3 | 5 | 9999), "{words:?}");
+            assert!(matches!(words[0], 1 | 2 | 3 | 5 | 9999 | 101..=104 | 107 | 109 | 117 | 118), "{words:?}");
             assert_ne!(w.policy(), Policy::Laser, "{words:?}");
             if words[0] == 9999 {
-                assert!(matches!(words[1], 2..=4 | 5 | 0x11), "{words:?}");
+                assert!(matches!(words[1], 2..=4 | 5 | 13 | 0x11), "{words:?}");
                 if words[1] == 4 {
                     assert_eq!(words[3], 0, "no non-zero analogue output: {words:?}");
                 }
@@ -216,8 +218,8 @@ fn decoding_hand_built_frames_cannot_smuggle_a_forbidden_write() {
         (151, vec![1]),
         (59500, vec![1]),
         (59600, vec![0]),
-        (0x65, vec![0x65]),
-        (0x65, vec![0x66]),
+        (0x65, vec![7]),
+        (0x65, vec![9999, 16]),
         (11002, vec![1]),
         (100, vec![9999]),
     ] {
@@ -288,9 +290,9 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
 
 #[test]
 fn follower_and_pierce_records_cannot_ride_in_a_fifo_frame() {
-    // The same records are refused as 0x65 commands ([103, ..] follower move, [104, ..] follow,
-    // [118, ..] pierce). Inside a FIFO frame they are just as much the vendor interlocks' job:
-    // they decode, so the simulator can model them, but no write can be built from them.
+    // As 0x65 commands these records are allowed (owner decision Q063). Inside a FIFO frame they
+    // have no captured layout yet: they decode, so the simulator can model them, but no frame
+    // carrying them can be built until a capture shows what Mlaser puts there.
     let item = |op: u32, payload: &[u32]| {
         let mut w = vec![1u32, ((payload.len() as u32 * 4) << 16) | op];
         w.extend_from_slice(payload);

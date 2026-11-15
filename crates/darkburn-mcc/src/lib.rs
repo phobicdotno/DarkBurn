@@ -10,12 +10,13 @@
 //! * **It has no transport.** There is no UDP socket, TCP stream or serial port anywhere in it, and
 //!   no dependency that could open one. Frames are byte vectors. A future backend owns the socket
 //!   and goes through [`gate::SafetyGate`], [`frame::Request`] and [`command::SafeWrite`].
-//! * **It does not bypass the machine's interlocks.** The height follower, the pierce sequence and
-//!   the gas logic stay in charge. The planner emits no laser, gas, pierce or follower data.
+//! * **It checks licence and limits only** (owner decision Q063). Follower and head commands that
+//!   Mlaser sends (follower stop, move, follow, head calibration, pierce bookkeeping, extended
+//!   outputs) are allowed; numeric limits are enforced. The planner emits no laser data.
 //! * **It cannot write the forbidden registers.** [`command::SafeWrite`] has private fields and one
 //!   allow-list classifier. Registers 150 and 151, the licence and clock area (59500 to 59599),
 //!   hardware parameters (59600 and up), follower properties, register 100, block 5000 to 5012,
-//!   the test-data window and the single-word commands `0x65 <- [0x65]` and `0x65 <- [0x66]` are
+//!   the test-data window and undecoded command vectors (offline upload / start, `[9999, 16]`) are
 //!   refused, whether built through the typed constructors, decoded from the wire or passed raw
 //!   to [`command::SafeWrite::try_from_raw`]. Byte-block (0x26) and stream (0x20, 0x21) requests
 //!   cannot be built at all. Laser-enabling data cannot be encoded through the public API.

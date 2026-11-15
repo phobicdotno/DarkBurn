@@ -5,16 +5,25 @@
 //! classifier ([`classify_write`]) that re-derives from the raw words what the write is. The
 //! classifier is an allow-list: anything it does not recognise is [`Forbidden`].
 //!
-//! Hard limits enforced here (see `docs/BUILD-RULES.md`):
+//! Hard limits enforced here (see `docs/BUILD-RULES.md`, rule "licence + limits only", owner
+//! decision Q063):
 //!
-//! * No write to registers 150 or 151, the licence / clock area 59500..=59599, hardware
+//! * Licence: no write to registers 150 or 151, the licence / clock area 59500..=59599, hardware
 //!   parameters, follower properties, register 100 or block 5000..=5012.
-//! * No `0x65 <- [0x65]` and no `0x65 <- [0x66]`. (The owner's analysis allows `[101]` as a
-//!   follower stop; the project rule is stricter, so this crate does not represent it.)
-//! * No follower moves, pierce records, gas pressure writes, non-zero analogue outputs, laser
-//!   enable, PWM with duty or any other laser data. Those writes are the vendor interlocks' job.
-//!   The classifier recognises laser data so a simulator can model the vendor gate, but
-//!   [`SafeWrite::try_from_raw`] and [`crate::Request::decode`] refuse it.
+//! * Limits: speed above the ceiling, a relative jog longer than the continuous-jog length,
+//!   jerk != 10 * acceleration, stop deceleration out of range, go-to without the absolute bit,
+//!   absolute targets outside the soft limits, follower speed / height out of range, empty vectors.
+//! * Follower and head commands Mlaser sends are allowed: stop `[101]`, Z origin `[102]`, move
+//!   `[103,..]`, follow `[104,..]`, head calibration `[107]`, lift `[109,..]`, pierce / bookkeeping
+//!   `[117,..]` / `[118,..]`, extended DO `[9999, 13, mask, value]`.
+//! * Still refused, each for a concrete reason: offline program upload / start `[7]`, `[4,..]`
+//!   (they hand the card a job DarkBurn did not build and cannot check); `[9999, 16]` and
+//!   `[9999, 1, ..]` (no decode of what they do); a DO write naming two ports (Mlaser never sends
+//!   one, so its effect on the second port is unverified); multi-axis, system and lift-table home
+//!   and lift-table / roll jogs (no capture of their parameters).
+//! * Laser data (laser DO ports on, PWM duty, non-zero analogue output) is recognised so the
+//!   simulator can model the vendor gate; [`SafeWrite::try_from_raw`] and
+//!   [`crate::Request::decode`] still refuse it.
 //! * No byte-block (0x26) or stream (0x20, 0x21) request can be built.
 //!
 //! Units follow the owner's analysis (`11-static-findings.md` section 2): speeds are `mm/s * K`, distances
@@ -44,6 +53,28 @@ pub const MISC_PWM: u32 = 3;
 pub const MISC_DA: u32 = 4;
 /// 9999 sub-command: PWM, 5 V variant.
 pub const MISC_PWM_5V: u32 = 0x11;
+/// 9999 sub-command: extended digital output `[9999, 13, mask, value]` (Mlaser's DO beyond the first word).
+pub const MISC_DO_EXT: u32 = 13;
+/// Follower stop `[101]` (written as `0x65 <- [0x65]` in older notes).
+pub const CMD_ZF_STOP: u32 = 101;
+/// Follower Z part of Go Origin `[102]` (capture 2026-11-14; `0x65 <- [0x66]` in older notes).
+pub const CMD_ZF_ORIGIN: u32 = 102;
+/// Follower move `[103, v * 10, h * 1000]`.
+pub const CMD_ZF_MOVE: u32 = 103;
+/// Follower follow `[104, ..]`.
+pub const CMD_ZF_FOLLOW: u32 = 104;
+/// Head calibration start `[107]` (capture 2026-11-14).
+pub const CMD_HEAD_CALIBRATE: u32 = 107;
+/// Follower lift `[109, v * 10, h * 1000]`.
+pub const CMD_ZF_LIFT: u32 = 109;
+/// Follower / pierce bookkeeping `[117, ..]`.
+pub const CMD_ZF_PIERCE: u32 = 117;
+/// Follower / pierce bookkeeping `[118, ..]`.
+pub const CMD_ZF_BOOKKEEPING: u32 = 118;
+/// Follower speed ceiling as a card word (mm/s * 10): 500 mm/s.
+pub const MAX_ZF_SPEED_WORD: u32 = 5000;
+/// Follower height limit as a card word (mm * 1000): 50 mm either way.
+pub const MAX_ZF_HEIGHT_WORD: u32 = 50_000;
 /// FIFO control: clear.
 pub const FIFO_CLEAR: u32 = 1;
 /// FIFO control: start.
@@ -236,8 +267,27 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
             }
             deny("go-to vector not of the form [5,0x80000003,v,a,10a,x,y,0,0]")
         }
-        // 101 (0x65) and 102 (0x66) are the two single-word commands the project rule forbids.
-        101 | 102 => deny(format!("0x65 <- [{sub}] is never written")),
+        // Follower / head commands Mlaser sends (owner decision Q063). Only the numeric limits are checked.
+        CMD_ZF_STOP if n == 1 => d(Policy::Always),
+        CMD_ZF_ORIGIN if n == 1 => d(Policy::Motion),
+        CMD_ZF_MOVE | CMD_ZF_LIFT => {
+            if n != 3 {
+                return deny("follower move must be [103|109, v*10, h*1000]");
+            }
+            if w[1] == 0 || w[1] > MAX_ZF_SPEED_WORD {
+                return deny("follower speed word out of range");
+            }
+            if s32(w[2]).unsigned_abs() > MAX_ZF_HEIGHT_WORD as u64 {
+                return deny("follower height beyond the travel limit");
+            }
+            d(Policy::Motion)
+        }
+        CMD_ZF_FOLLOW if n <= 3 => d(Policy::Motion),
+        CMD_HEAD_CALIBRATE if n == 1 => d(Policy::Motion),
+        CMD_ZF_PIERCE | CMD_ZF_BOOKKEEPING if (2..=8).contains(&n) => d(Policy::Motion),
+        CMD_ZF_STOP | CMD_ZF_ORIGIN | CMD_ZF_FOLLOW | CMD_HEAD_CALIBRATE | CMD_ZF_PIERCE | CMD_ZF_BOOKKEEPING => {
+            deny(format!("0x65 <- [{sub}, ..] has the wrong length"))
+        }
         CMD_9999 if n >= 2 => match w[1] {
             MISC_PROLOGUE => {
                 if w == [9999, 5, 0, 0] {
@@ -263,6 +313,12 @@ fn classify_command(w: &[u32], cfg: &SafetyConfig, do_word: Option<u32>) -> Resu
                     return deny("DO write must address one port 1..10");
                 }
                 do_policy(value, cfg)
+            }
+            MISC_DO_EXT if n == 4 => {
+                if w[3] & !w[2] != 0 {
+                    return deny("extended DO value has bits outside the mask");
+                }
+                d(Policy::Motion)
             }
             MISC_DA if n == 4 => {
                 if w[2] > 1 {
@@ -928,8 +984,8 @@ mod tests {
                 assert!(SafeWrite::try_from_raw(reg, words).is_err(), "reg {reg} words {words:?}");
             }
         }
-        // the specific forbidden command vectors
-        for v in [&[0x65u32][..], &[0x66], &[101], &[102]] {
+        // vectors outside the allow-list are command refusals
+        for v in [&[7u32][..], &[4, 1, 2], &[9999, 16], &[101, 1], &[107, 0]] {
             let e = SafeWrite::try_from_raw(0x65, v).unwrap_err();
             assert!(matches!(e, Forbidden::Command(_)), "{v:?}: {e}");
         }
@@ -940,12 +996,11 @@ mod tests {
     #[test]
     fn other_dangerous_vectors_are_refused() {
         let cases: &[&[u32]] = &[
-            &[107],                                   // head calibration
-            &[103, 1000, 0],                          // follower move
-            &[104, 1, 2],                             // follower follow
-            &[117, 1],                                // follower bookkeeping
-            &[118, 5, 0],                             // pierce / bookkeeping
-            &[9999, 13, 0xFFFF, 0],                   // extended DO
+            &[103, 6000, 0],                          // follower speed above ceiling
+            &[103, 0, 0],                             // follower speed zero
+            &[103, 500, 60_000],                      // follower height beyond travel
+            &[103, 500],                              // follower move too short
+            &[9999, 13, 0x1, 0x2],                    // extended DO value outside mask
             &[9999, 16],                              // unexplained
             &[9999, 1, 0],                            // legacy clear
             &[9999, 4, 1, 5000],                      // non-zero DA
@@ -972,6 +1027,27 @@ mod tests {
         assert!(SafeWrite::try_from_raw(0x65, &[3, 0x8000_0000, 50000, 5999, 59990, 100_000]).is_ok());
         assert!(SafeWrite::try_from_raw(0x67, &[4]).is_err());
         assert!(SafeWrite::try_from_raw(0x67, &[1, 2]).is_err());
+    }
+
+    #[test]
+    fn follower_and_head_commands_mlaser_sends_are_allowed() {
+        let cases: &[(&[u32], Policy)] = &[
+            (&[0x65], Policy::Always),           // follower stop
+            (&[0x66], Policy::Motion),           // Z part of Go Origin
+            (&[107], Policy::Motion),            // head calibration
+            (&[103, 500, 3000], Policy::Motion), // follower move
+            (&[109, 500, 3000], Policy::Motion), // follower lift
+            (&[104], Policy::Motion),            // follow
+            (&[104, 1, 2], Policy::Motion),
+            (&[117, 1], Policy::Motion),
+            (&[118, 5, 0], Policy::Motion),
+            (&[9999, 13, 0xFFFF, 0], Policy::Motion), // extended DO
+            (&[9999, 13, 1, 1], Policy::Motion),
+        ];
+        for (v, policy) in cases {
+            let w = SafeWrite::try_from_raw(0x65, v).unwrap_or_else(|e| panic!("{v:?}: {e}"));
+            assert_eq!(w.policy(), *policy, "{v:?}");
+        }
     }
 
     #[test]

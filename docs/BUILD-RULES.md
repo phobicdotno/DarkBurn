@@ -10,14 +10,15 @@ Read this before writing code. These rules are not optional.
 - Never write anything in the repo about why DarkBurn exists, licence costs, or LightBurn pricing.
 
 ## Hardware safety
-- Never open a real serial port, USB device or network connection to a machine. That means no COM ports, no USB laser devices, no UDP or TCP to 10.1.1.x, 192.168.x.x lasers or any controller.
+- Tests, demos and CI never open a real serial port, USB device or network connection to a machine. The app connects to a real machine only when the user tells it to. In tests that means no COM ports, no USB laser devices, no UDP or TCP to 10.1.1.x, 192.168.x.x lasers or any controller.
   - Exception (owner approved 2026-11-12): the `darkburn-pendant` crate may open the XHC wireless pendant receiver (USB 10ce:eba0, HID) when the user turns the pendant on. It only reads keys and sets LEDs; all actions go through the normal gated app paths.
 - Every driver talks through a transport trait. Tests and demos use an in-memory emulator or loopback.
 - Real-hardware tests are done by the owner by hand. Leave the TARGET-* and MCC-06 items for that.
-- The Gweike M3 Ultra is a 1200 W fibre cutter. No code may ever bypass its height follower, piercing or gas logic.
-- Gweike MCC100 card: never write licence registers 150 or 151, and never write register 0x65 from 0x65 or 0x66.
+- Gweike control (owner decisions Q046 and Q063): DarkBurn controls Gweike machines natively and may send what Mlaser sends, including head calibration, follower move / follow / stop, pierce and follower bookkeeping, gas writes and extended outputs. The safety check is **licence + limits only**:
+  - Licence: never write registers 150 or 151, the licence / clock area 59500..59599, hardware parameters, follower properties, register 100 or block 5000..5012.
+  - Limits: refuse impossible or unsafe numbers (speed above the ceiling, a jog too long, jerk not matching acceleration, stop deceleration out of range, go-to without the absolute bit, targets outside the soft limits, empty vectors).
+  - A vector that is not decoded stays refused only with a stated reason, kept next to the classifier in `crates/darkburn-mcc/src/command.rs`.
 - Any Gweike remote-monitor or cloud connection is off by default and needs the user to turn it on.
-- No Gweike motion code runs until a read-only capture on the real card has closed the open gaps listed in `docs/research/mlaser-rea-findings.md`.
 
 ## Code
 - Rust edition 2024, `cargo fmt` (repo rustfmt.toml), `cargo clippy --workspace` clean, tests for every behaviour.
@@ -27,7 +28,7 @@ Read this before writing code. These rules are not optional.
 - Geometry is in millimetres, Y up, origin at the machine origin, using `kurbo` types at crate boundaries.
 
 ## Commits
-- No `Co-Authored-By` lines.
+- No `Co-Authored-By` lines and no attribution to tools or assistants in commits or files.
 - Changelog lines are user-facing, short and casual, with no technical detail. Each new line bumps the patch version; each pushed batch bumps the build number.
 - Name finished checklist IDs in the commit message: `Done: FILE-03, EDIT-01`.
 - Tick a checklist item only when it works in the app, not when a library alone supports it.

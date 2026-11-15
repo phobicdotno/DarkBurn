@@ -26,7 +26,7 @@
 //!   [`CardSimulator::laser_refusals`]. A backend under test must keep both lists empty.
 
 use crate::command::{
-    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V, Policy, SafetyConfig,
+    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HEAD_CALIBRATE, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V, Policy, SafetyConfig,
 };
 use crate::fifo::{FifoItem, OP_MISC, parse_fifo_words};
 use crate::frame::{DecodeError, Reply, Request, RequestError, decode_request};
@@ -733,6 +733,16 @@ impl CardSimulator {
                     EXC_NOT_READY
                 }
             }
+            CMD_HEAD_CALIBRATE if n == 1 => {
+                if self.busy() {
+                    EXC_BUSY
+                } else {
+                    // The Z follower sits in slot 2; the simulated run takes motion_time_ms.
+                    let z = self.axis_pos[2];
+                    self.start_motion(2, CMD_HEAD_CALIBRATE, z);
+                    0
+                }
+            }
             CMD_9999 if n >= 2 => match d[1] {
                 MISC_PROLOGUE => 0,
                 MISC_DO if n == 4 => {
@@ -1265,6 +1275,25 @@ mod tests {
         let f = Request::write(command::stop_all_no_decel().unwrap()).encode(1).unwrap();
         let rep = sim.exchange(&f).unwrap();
         assert_eq!(Reply::decode(&rep, Some(1)).unwrap(), Reply::Exception { func: 0x40, code: 3 });
+    }
+
+    #[test]
+    fn head_calibration_runs_and_stop_all_cancels_it() {
+        let mut l = armed();
+        l.poll_status().unwrap();
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        assert_eq!(l.sim.commands().last().unwrap(), &vec![107]);
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 1, "busy while calibrating");
+        // Cancel goes through the normal stop-all path
+        l.write(&command::stop_all(200_000, &p()).unwrap()).unwrap();
+        l.advance(ms(1));
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 0);
+        // A full run finishes on its own; Mlaser then sends 0x67 [3] and [1]
+        l.write(&command::head_calibrate().unwrap()).unwrap();
+        l.advance(ms(400));
+        assert_eq!(l.poll_status().unwrap().word(Status::RunStatus), 0);
+        l.write(&command::fifo_stop().unwrap()).unwrap();
+        l.write(&command::fifo_clear().unwrap()).unwrap();
     }
 
     #[test]

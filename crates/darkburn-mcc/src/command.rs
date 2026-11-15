@@ -662,6 +662,12 @@ pub fn stop_all(v_last_word: i64, params: &MachineParams) -> Result<SafeWrite, F
     SafeWrite::build(REG_COMMAND, vec![CMD_STOP, AXIS_MASK_ALL, 2, vd, vd * 10], "stop_all")
 }
 
+/// Head calibration start `0x65 <- [107]`, as Mlaser sends it (capture 2026-11-14). Needs
+/// motion armed. Gweike M lasers only; the caller checks the machine capability.
+pub fn head_calibrate() -> Result<SafeWrite, Forbidden> {
+    SafeWrite::build(REG_COMMAND, vec![CMD_HEAD_CALIBRATE], "head_calibrate")
+}
+
 /// Stop all axes with the card's default deceleration `[1, 0x1F]`.
 pub fn stop_all_no_decel() -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_STOP, AXIS_MASK_ALL], "stop_all_no_decel")

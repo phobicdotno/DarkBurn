@@ -457,7 +457,8 @@ mod tests {
         assert_eq!(dissect_request(&write_frame(0x65, &[9999, 3, 1234, 30])).verdict, Verdict::LaserData);
         // head calibration is an allowed write (Q063)
         assert_eq!(dissect_request(&write_frame(0x65, &[107])).verdict, Verdict::WriteAllowed(Policy::Motion));
-        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[0]), (59502, &[1]), (0x65, &[7]), (0x65, &[9999, 16]), (100, &[8888]), (11000, &[1])] {
+        for (addr, words) in [(150u32, &[5555u32][..]), (151, &[0]), (59502, &[1]), (0x65, &[7]), (0x65, &[9999, 16]), (100, &[8888]), (11000, &[1])]
+        {
             let d = dissect_request(&write_frame(addr, words));
             assert!(matches!(d.verdict, Verdict::Refused(_)), "{addr} {words:?}: {:?}", d.verdict);
             assert!(d.vector.is_some() && !d.text.is_empty());

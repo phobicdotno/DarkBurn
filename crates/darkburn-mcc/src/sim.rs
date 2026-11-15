@@ -26,7 +26,8 @@
 //!   [`CardSimulator::laser_refusals`]. A backend under test must keep both lists empty.
 
 use crate::command::{
-    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HEAD_CALIBRATE, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V, Policy, SafetyConfig,
+    ABSOLUTE_BIT, CMD_9999, CMD_GOTO, CMD_HEAD_CALIBRATE, CMD_HOME, CMD_JOG, CMD_STOP, MISC_DA, MISC_DO, MISC_PROLOGUE, MISC_PWM, MISC_PWM_5V,
+    Policy, SafetyConfig,
 };
 use crate::fifo::{FifoItem, OP_MISC, parse_fifo_words};
 use crate::frame::{DecodeError, Reply, Request, RequestError, decode_request};

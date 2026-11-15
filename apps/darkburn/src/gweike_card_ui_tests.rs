@@ -89,6 +89,10 @@ fn gweike_card_classes_reach_the_mcp_listing() {
         ("mcc.status", Some(HardwareClass::Connect)),
         ("mcc.stop", Some(HardwareClass::Stop)),
         ("mcc.emergency_stop", Some(HardwareClass::Stop)),
+        ("mcc.head_calibrate", Some(HardwareClass::Motion)),
+        ("mcc.head_calibrate_poll", Some(HardwareClass::Connect)),
+        ("mcc.head_calibrate_dismiss", Some(HardwareClass::Connect)),
+        ("mcc.head_calibrate_cancel", Some(HardwareClass::Stop)),
         ("mcc.dissect", None),
     ] {
         let info = g.describe_command(id).unwrap().unwrap_or_else(|| panic!("{id} is listed"));
@@ -182,9 +186,23 @@ fn gweike_card_window_buttons_name_registered_commands_only() {
     let src = include_str!("gweike_ui.rs");
     let code = src.split("#[cfg(test)]").next().unwrap();
     let ids: Vec<&str> = code.split('"').filter(|s| s.starts_with("mcc.") && s.len() > 4).collect();
-    for want in ["mcc.connect", "mcc.disconnect", "mcc.status", "mcc.stop", "mcc.emergency_stop", "mcc.dissect"] {
+    for want in [
+        "mcc.connect",
+        "mcc.disconnect",
+        "mcc.status",
+        "mcc.stop",
+        "mcc.emergency_stop",
+        "mcc.dissect",
+        "mcc.head_calibrate",
+        "mcc.head_calibrate_poll",
+        "mcc.head_calibrate_cancel",
+        "mcc.head_calibrate_dismiss",
+    ] {
         assert!(ids.contains(&want), "the window has no button for {want}");
     }
+    // Head calibration shows only for machines whose capabilities name a Gweike M model.
+    assert!(code.contains("calib.shown"), "the head calibration button is not capability-driven");
+    assert!(code.contains("kind.caps().gweike.is_some()"), "the head calibration button is not capability-driven");
     for id in &ids {
         assert!(crate::commands::find(id).is_some(), "{id} is not a registered command");
     }

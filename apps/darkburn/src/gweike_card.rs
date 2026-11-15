@@ -135,6 +135,7 @@ fn calib_start(card: &mut CardState, gweike_m: bool) -> Result<Value, String> {
         return Err("a head calibration is already running".into());
     }
     link.gate.arming.arm_motion().map_err(|e| format!("could not arm motion: {e:?}"))?;
+    link.poll_status().map_err(|e| format!("could not read the card: {e}"))?;
     let (c, w) = HeadCalibration::start(link.sim.now_ms()).map_err(|e| format!("{e:?}"))?;
     link.write(&w).map_err(|e| format!("could not start the head calibration: {e}"))?;
     card.calib = Some(c);
@@ -426,6 +427,73 @@ mod tests {
         assert!(run(&mut a, "mcc.dissect", json!({ "hex": "" })).is_err());
         assert!(run(&mut a, "mcc.dissect", json!({ "hex": hex, "from": "cloud" })).is_err());
         assert!(!a.machine.ext.mcc.connected(), "the dissector connected");
+    }
+
+    fn make_gweike_m(a: &mut DarkBurn) {
+        let id = a.machine.active().id;
+        a.machine.devices.get_mut(id).unwrap().kind = crate::devices::DeviceType::GweikeM3Ultra;
+    }
+
+    #[test]
+    fn head_calibration_is_for_gweike_m_lasers_only() {
+        let mut a = app();
+        run(&mut a, "mcc.connect", json!({})).unwrap();
+        let e = run(&mut a, "mcc.head_calibrate", json!({})).unwrap_err();
+        assert!(e.contains("only for Gweike M"), "{e}");
+        assert!(!a.machine.ext.mcc.calibrating());
+        assert!(!a.machine.ext.mcc.link.as_ref().unwrap().sim.commands().contains(&vec![107]));
+    }
+
+    #[test]
+    fn head_calibration_runs_to_the_end_and_sends_the_finish() {
+        let mut a = app();
+        make_gweike_m(&mut a);
+        assert!(run(&mut a, "mcc.head_calibrate", json!({})).unwrap_err().contains("not connected"));
+        run(&mut a, "mcc.connect", json!({})).unwrap();
+        let s = run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
+        assert_eq!(s["state"], "running", "{s}");
+        assert_eq!(s["timeout_ms"], 120_000);
+        assert!(a.machine.ext.mcc.calibrating());
+        assert!(run(&mut a, "mcc.head_calibrate", json!({})).unwrap_err().contains("already running"));
+        assert!(run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap_err().contains("still running"));
+        a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_millis(1000));
+        let s = run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap();
+        assert_eq!(s["state"], "finished", "{s}");
+        let cmds = a.machine.ext.mcc.link.as_ref().unwrap().sim.commands().to_vec();
+        assert!(cmds.contains(&vec![107]), "{cmds:?}");
+        // The undecoded mid-run pair Mlaser sent is not part of the flow.
+        assert!(!cmds.iter().any(|c| c.first() == Some(&0x76)), "{cmds:?}");
+        assert!(a.machine.ext.mcc.link.as_ref().unwrap().sim.forbidden_attempts().is_empty());
+        run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
+        assert!(!a.machine.ext.mcc.calibrating());
+    }
+
+    #[test]
+    fn head_calibration_cancel_and_timeout_use_stop_all() {
+        let mut a = app();
+        make_gweike_m(&mut a);
+        run(&mut a, "mcc.connect", json!({})).unwrap();
+        run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
+        let s = run(&mut a, "mcc.head_calibrate_cancel", json!({})).unwrap();
+        assert_eq!(s["state"], "cancelled", "{s}");
+        let stop = |a: &DarkBurn| {
+            let link = a.machine.ext.mcc.link.as_ref().unwrap();
+            link.sim.commands().iter().filter(|c| c.starts_with(&[1, 0x1F, 2])).count()
+        };
+        assert_eq!(stop(&a), 1, "cancel sends one stop-all");
+        run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
+        // A run that never finishes is stopped at 120 s.
+        a.machine.ext.mcc.link.as_mut().unwrap().sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig {
+            motion_time_ms: 10_000_000,
+            ..darkburn_mcc::SimConfig::default()
+        });
+        run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
+        a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_secs(60));
+        assert_eq!(run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap()["state"], "running");
+        a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_secs(61));
+        let s = run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap();
+        assert_eq!(s["state"], "timed_out", "{s}");
+        assert_eq!(stop(&a), 1, "the timeout sent its own stop-all on the new card");
     }
 
     #[test]

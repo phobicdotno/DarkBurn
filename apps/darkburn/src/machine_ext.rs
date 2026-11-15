@@ -140,7 +140,7 @@ pub const COMMANDS: &[Cmd] = &[
     crate::gweike_card::EMERGENCY_STOP,
     crate::gweike_card::HEAD_CALIBRATE,
     crate::gweike_card::HEAD_CALIBRATE_POLL,
-    crate::gweike_card::HEAD_CALIBRATE_CANCEL,
+    crate::gweike_card::HEAD_CALIBRATE_STOP,
     crate::gweike_card::HEAD_CALIBRATE_DISMISS,
 ];
 

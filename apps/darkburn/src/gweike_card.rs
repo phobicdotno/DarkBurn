@@ -12,6 +12,7 @@
 
 use darkburn_mcc as mcc;
 use mcc::registers::{self, Status};
+use mcc::head_calib::{CalibState, HeadCalibration};
 use mcc::sim::{ConnectOptions, ConnectReport, SimLink};
 use serde_json::{Value, json};
 
@@ -36,6 +37,10 @@ pub const DISSECT: Cmd = a(
 );
 pub const STOP: Cmd = a("mcc.stop", "Stop the Gweike card simulator", "");
 pub const EMERGENCY_STOP: Cmd = a("mcc.emergency_stop", "Emergency stop the Gweike card simulator", "");
+pub const HEAD_CALIBRATE: Cmd = a("mcc.head_calibrate", "Start a Gweike M head calibration on the card simulator", "");
+pub const HEAD_CALIBRATE_POLL: Cmd = a("mcc.head_calibrate_poll", "Read how the Gweike head calibration is going", "");
+pub const HEAD_CALIBRATE_CANCEL: Cmd = a("mcc.head_calibrate_cancel", "Cancel the Gweike head calibration (stop all axes)", "");
+pub const HEAD_CALIBRATE_DISMISS: Cmd = a("mcc.head_calibrate_dismiss", "Close a finished Gweike head calibration", "");
 
 /// Every `mcc.*` command but the dissector acts on the (simulated) card.
 pub fn is_hardware(id: &str) -> bool {
@@ -47,11 +52,18 @@ pub fn is_hardware(id: &str) -> bool {
 pub struct CardState {
     link: Option<SimLink>,
     report: Option<ConnectReport>,
+    calib: Option<HeadCalibration>,
+    calib_last: Option<std::time::Instant>,
 }
 
 impl CardState {
     pub fn connected(&self) -> bool {
         self.link.is_some()
+    }
+
+    /// A head calibration run is open (running, or finished and not yet closed).
+    pub fn calibrating(&self) -> bool {
+        self.calib.is_some()
     }
 }
 
@@ -59,13 +71,36 @@ const NOT_CONNECTED: &str = "the Gweike card simulator is not connected; run mcc
 
 /// Run one of the `mcc.*` commands.
 pub fn run(app: &mut DarkBurn, id: &str, a: &Value) -> Result<Value, String> {
+    let gweike_m = app.machine.active().kind.caps().gweike.is_some();
     let card = &mut app.machine.ext.mcc;
     match id {
+        "mcc.head_calibrate" => calib_start(card, gweike_m),
+        "mcc.head_calibrate_poll" => calib_poll(card),
+        "mcc.head_calibrate_cancel" => {
+            let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
+            let c = card.calib.as_mut().ok_or(NO_CALIB)?;
+            if let Some(w) = c.cancel(&mcc::command::MachineParams::default()).map_err(|e| format!("{e:?}"))? {
+                link.gate.arming.on_stop();
+                link.write(&w).map_err(|e| format!("could not send the stop: {e}"))?;
+            }
+            calib_poll(card)
+        }
+        "mcc.head_calibrate_dismiss" => {
+            let c = card.calib.as_ref().ok_or(NO_CALIB)?;
+            if c.state() == &CalibState::Running {
+                return Err("the head calibration is still running; cancel it first".into());
+            }
+            card.calib = None;
+            card.calib_last = None;
+            Ok(json!({ "ok": true }))
+        }
         "mcc.connect" => connect(card, a),
         "mcc.dissect" => dissect(a),
         "mcc.disconnect" => {
             let mut link = card.link.take().ok_or(NOT_CONNECTED)?;
             card.report = None;
+            card.calib = None;
+            card.calib_last = None;
             let steps = link.disconnect();
             Ok(json!({ "ok": true, "stop_steps": steps }))
         }
@@ -86,6 +121,67 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value) -> Result<Value, String> {
         }
         other => Err(format!("{other} is not a Gweike card command")),
     }
+}
+
+const NO_CALIB: &str = "no head calibration is open; run mcc.head_calibrate first";
+
+/// Start a head calibration: arm motion on the simulated card and send `0x65 <- [107]`.
+fn calib_start(card: &mut CardState, gweike_m: bool) -> Result<Value, String> {
+    if !gweike_m {
+        return Err("head calibration is only for Gweike M lasers; pick one in the device list".into());
+    }
+    let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
+    if card.calib.as_ref().is_some_and(|c| c.state() == &CalibState::Running) {
+        return Err("a head calibration is already running".into());
+    }
+    link.gate.arming.arm_motion().map_err(|e| format!("could not arm motion: {e:?}"))?;
+    let (c, w) = HeadCalibration::start(link.sim.now_ms()).map_err(|e| format!("{e:?}"))?;
+    link.write(&w).map_err(|e| format!("could not start the head calibration: {e}"))?;
+    card.calib = Some(c);
+    card.calib_last = Some(std::time::Instant::now());
+    calib_poll(card)
+}
+
+/// One status poll of a head calibration run: moves the simulated card's clock on by the time
+/// that passed, reads the run status and the follower's Z, and sends what the run asks for
+/// (the finish writes, or stop-all on the 120 s timeout).
+fn calib_poll(card: &mut CardState) -> Result<Value, String> {
+    let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
+    let c = card.calib.as_mut().ok_or(NO_CALIB)?;
+    if c.state() == &CalibState::Running {
+        let now = std::time::Instant::now();
+        if let Some(last) = card.calib_last {
+            link.advance(now.duration_since(last).min(std::time::Duration::from_secs(5)));
+        }
+        card.calib_last = Some(now);
+    }
+    let lerr = |e: mcc::sim::LinkError| format!("could not read the card: {e}");
+    let st = link.poll_status().map_err(lerr)?;
+    let busy = st.word(Status::RunStatus) != 0;
+    let now_ms = link.sim.now_ms();
+    for w in c.on_status(now_ms, busy, &mcc::command::MachineParams::default()).map_err(|e| format!("{e:?}"))? {
+        link.write(&w).map_err(|e| format!("could not send {w:?}: {e}"))?;
+    }
+    if c.state() != &CalibState::Running {
+        link.gate.arming.on_stop();
+    }
+    let has_follower = card.report.as_ref().is_some_and(|r| r.system.has_follower());
+    let z = if has_follower { link.read_follower().ok().map(|z| z.word(registers::ZfWord::ZPosition)) } else { None };
+    let state = match c.state() {
+        CalibState::Running => "running",
+        CalibState::Finished => "finished",
+        CalibState::Cancelled => "cancelled",
+        CalibState::TimedOut => "timed_out",
+    };
+    Ok(json!({
+        "ok": true,
+        "state": state,
+        "elapsed_ms": c.elapsed_ms(now_ms),
+        "timeout_ms": mcc::head_calib::TIMEOUT_MS,
+        "busy": busy,
+        "z": z,
+        "text": format!("head calibration {}", state.replace('_', " ")),
+    }))
 }
 
 fn connect(card: &mut CardState, a: &Value) -> Result<Value, String> {

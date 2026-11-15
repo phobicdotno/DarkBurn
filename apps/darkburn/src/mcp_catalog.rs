@@ -26,6 +26,7 @@ const STOP: &[&str] = &[
     "camera.stop",
     "mcc.stop",
     "mcc.emergency_stop",
+    "mcc.head_calibrate_cancel",
 ];
 
 /// Start a job, resume it, run a file or raw lines, or fire the laser.
@@ -63,6 +64,8 @@ const CONNECT: &[&str] = &[
     "mcc.connect",
     "mcc.disconnect",
     "mcc.status",
+    "mcc.head_calibrate_poll",
+    "mcc.head_calibrate_dismiss",
 ];
 
 /// Write settings or files to a controller, or change a running job's overrides.
@@ -82,6 +85,7 @@ const CONFIG: &[&str] = &[
 
 /// Move axes (or read where the head is to place the design there).
 const MOTION: &[&str] = &[
+    "mcc.head_calibrate",
     "machine.home",
     "machine.unlock",
     "machine.go_to_origin",

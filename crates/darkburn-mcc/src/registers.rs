@@ -524,7 +524,8 @@ pub fn derive_machine_state(status: &StatusBlock, axis_ro: &[u32]) -> MachineSta
     MachineState::Ready
 }
 
-/// Typed view of the follower status block at 10000 (18 words). Only words 1 to 3 have evidence.
+/// Typed view of the follower status block at 10000 (18 words). Words 1, 2, 3 and 6 have evidence
+/// (word 6 and the calibration behaviour of word 3 from a capture of the real machine).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ZfStatus {
     /// All 18 words as read.
@@ -596,15 +597,16 @@ pub enum ZfWord {
     Info = 0,
     /// Alarm word, see [`zf_alarm`].
     Alarm = 1,
-    /// Run status (high bit clear means emergency stop, low byte 4 means piercing).
+    /// Run status (high bit clear means emergency stop, low byte 4 means piercing). It went from
+    /// 0x8000_0000 to 0x8000_0010 after a head calibration; what bit 4 means is unconfirmed.
     RunStatus = 2,
-    /// Run command (102..=107).
+    /// Run command (102..=107). 107 while the head calibrates; drops to 0 when it is done.
     RunCommand = 3,
     /// Signal strength.
     SignalStrength = 4,
     /// Signal height.
     SignalHeight = 5,
-    /// Z axis position.
+    /// Live Z position in µm, signed, counting down from the top.
     ZPosition = 6,
     /// Current speed.
     Speed = 7,
@@ -660,11 +662,16 @@ impl ZfStatus {
         self.words[1] & 0xFFFF
     }
 
-    /// One word by name. Only [`ZfWord::Alarm`], [`ZfWord::RunStatus`] and [`ZfWord::RunCommand`]
-    /// have evidence for their meaning; the others carry the name of their place in the vendor's
-    /// table and no confirmed unit.
+    /// One word by name. Only [`ZfWord::Alarm`], [`ZfWord::RunStatus`], [`ZfWord::RunCommand`] and
+    /// [`ZfWord::ZPosition`] have evidence for their meaning; the others carry the name of their
+    /// place in the vendor's table and no confirmed unit.
     pub fn word(&self, w: ZfWord) -> u32 {
         self.words[w as usize]
+    }
+
+    /// Live Z in µm (word 6, signed).
+    pub fn z_um(&self) -> i32 {
+        self.word(ZfWord::ZPosition) as i32
     }
 
     /// Names of the alarm bits that are set.

@@ -11,7 +11,7 @@
 //! `mcc.dissect` only reads the bytes it is given and needs no card.
 
 use darkburn_mcc as mcc;
-use mcc::head_calib::{CalibState, HeadCalibration};
+use mcc::head_calib::{CalibInput, CalibState, HeadCalibration};
 use mcc::registers::{self, Status};
 use mcc::sim::{ConnectOptions, ConnectReport, SimLink};
 use serde_json::{Value, json};
@@ -144,8 +144,9 @@ fn calib_start(card: &mut CardState, gweike_m: bool) -> Result<Value, String> {
 }
 
 /// One status poll of a head calibration run: moves the simulated card's clock on by the time
-/// that passed, reads the run status and the follower's Z, and sends what the run asks for
-/// (the finish writes, or stop-all on the 120 s timeout).
+/// that passed, reads the follower block (run command, alarm, live Z, signal words; the MCC run
+/// status only when the card has no follower) and sends what the run asks for (the finish
+/// writes, or stop-all on a follower alarm or the 120 s timeout).
 fn calib_poll(card: &mut CardState) -> Result<Value, String> {
     let link = card.link.as_mut().ok_or(NOT_CONNECTED)?;
     let c = card.calib.as_mut().ok_or(NO_CALIB)?;
@@ -158,30 +159,51 @@ fn calib_poll(card: &mut CardState) -> Result<Value, String> {
     }
     let lerr = |e: mcc::sim::LinkError| format!("could not read the card: {e}");
     let st = link.poll_status().map_err(lerr)?;
-    let busy = st.word(Status::RunStatus) != 0;
+    let has_follower = card.report.as_ref().is_some_and(|r| r.system.has_follower());
+    let zf = if has_follower { Some(link.read_follower().map_err(lerr)?) } else { None };
+    let input = match &zf {
+        Some(z) => CalibInput::from_follower(z),
+        None => CalibInput::RunStatus { busy: st.word(Status::RunStatus) != 0 },
+    };
     let now_ms = link.sim.now_ms();
-    for w in c.on_status(now_ms, busy, &mcc::command::MachineParams::default()).map_err(|e| format!("{e:?}"))? {
+    for w in c.on_status(now_ms, input, &mcc::command::MachineParams::default()).map_err(|e| format!("{e:?}"))? {
         link.write(&w).map_err(|e| format!("could not send {w:?}: {e}"))?;
     }
     if c.state() != &CalibState::Running {
         link.gate.arming.on_stop();
     }
-    let has_follower = card.report.as_ref().is_some_and(|r| r.system.has_follower());
-    let z = if has_follower { link.read_follower().ok().map(|z| z.word(registers::ZfWord::ZPosition)) } else { None };
-    let state = match c.state() {
-        CalibState::Running => "running",
-        CalibState::Finished => "finished",
-        CalibState::Cancelled => "cancelled",
-        CalibState::TimedOut => "timed_out",
+    let (state, alarm) = match c.state() {
+        CalibState::Running => ("running", 0),
+        CalibState::Finished => ("finished", 0),
+        CalibState::Failed { alarm } => ("failed", *alarm),
+        CalibState::Cancelled => ("cancelled", 0),
+        CalibState::TimedOut => ("timed_out", 0),
     };
+    let alarm_names = registers::zf_alarm::names(alarm);
+    let text = if alarm_names.is_empty() {
+        format!("head calibration {}", state.replace('_', " "))
+    } else {
+        format!("head calibration failed: {}", alarm_names.join(", "))
+    };
+    let signal = zf.as_ref().map(|z| {
+        json!({
+            "strength": z.word(registers::ZfWord::SignalStrength),
+            "height": z.word(registers::ZfWord::SignalHeight),
+            "live": z.word(registers::ZfWord::LiveSignalStrength),
+        })
+    });
     Ok(json!({
         "ok": true,
         "state": state,
         "elapsed_ms": c.elapsed_ms(now_ms),
         "timeout_ms": mcc::head_calib::TIMEOUT_MS,
-        "busy": busy,
-        "z": z,
-        "text": format!("head calibration {}", state.replace('_', " ")),
+        "run_command": zf.as_ref().map(|z| z.word(registers::ZfWord::RunCommand)),
+        "busy": matches!(input, CalibInput::Follower { run_command: mcc::head_calib::RUN_COMMAND_CALIBRATE, .. } | CalibInput::RunStatus { busy: true }),
+        "z_um": zf.as_ref().map(|z| z.z_um()),
+        "signal": signal,
+        "alarm": alarm,
+        "alarm_names": alarm_names,
+        "text": text,
     }))
 }
 
@@ -456,9 +478,17 @@ mod tests {
         assert!(a.machine.ext.mcc.calibrating());
         assert!(run(&mut a, "mcc.head_calibrate", json!({})).unwrap_err().contains("already running"));
         assert!(run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap_err().contains("still running"));
+        a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_millis(150));
+        let s = run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap();
+        assert_eq!(s["state"], "running", "{s}");
+        assert_eq!(s["run_command"], 107, "{s}");
+        assert!(s["z_um"].as_i64().unwrap() < 0, "Z moves down: {s}");
         a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_millis(1000));
         let s = run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap();
         assert_eq!(s["state"], "finished", "{s}");
+        assert_eq!((s["run_command"].as_u64(), s["z_um"].as_i64(), s["alarm"].as_u64()), (Some(0), Some(0), Some(0)), "{s}");
+        assert!(s["signal"].is_object(), "{s}");
+        assert!(s.get("grade").is_none(), "nothing is graded: {s}");
         let cmds = a.machine.ext.mcc.link.as_ref().unwrap().sim.commands().to_vec();
         assert!(cmds.contains(&vec![107]), "{cmds:?}");
         // The undecoded mid-run pair Mlaser sent is not part of the flow.
@@ -466,6 +496,27 @@ mod tests {
         assert!(a.machine.ext.mcc.link.as_ref().unwrap().sim.forbidden_attempts().is_empty());
         run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
         assert!(!a.machine.ext.mcc.calibrating());
+    }
+
+    #[test]
+    fn head_calibration_fails_on_a_follower_alarm_and_names_it() {
+        use darkburn_mcc::registers::zf_alarm;
+        let mut a = app();
+        make_gweike_m(&mut a);
+        run(&mut a, "mcc.connect", json!({})).unwrap();
+        a.machine.ext.mcc.link.as_mut().unwrap().sim.fail_next_calibration(zf_alarm::SIGNAL_ZERO | zf_alarm::FTC_ALARM);
+        run(&mut a, "mcc.head_calibrate", json!({})).unwrap();
+        a.machine.ext.mcc.link.as_mut().unwrap().advance(std::time::Duration::from_millis(1000));
+        let s = run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap();
+        assert_eq!(s["state"], "failed", "{s}");
+        assert_eq!(s["alarm"], zf_alarm::SIGNAL_ZERO | zf_alarm::FTC_ALARM, "{s}");
+        assert_eq!(s["alarm_names"], json!(["signal zero", "follower alarm"]), "{s}");
+        assert!(s["text"].as_str().unwrap().contains("signal zero"), "{s}");
+        let link = a.machine.ext.mcc.link.as_ref().unwrap();
+        assert_eq!(link.sim.commands().iter().filter(|c| c.starts_with(&[1, 0x1F, 2])).count(), 1, "the failure sends one stop-all");
+        // later polls change nothing
+        assert_eq!(run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap()["state"], "failed");
+        run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
     }
 
     #[test]

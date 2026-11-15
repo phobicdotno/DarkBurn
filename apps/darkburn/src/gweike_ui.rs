@@ -220,6 +220,8 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             let line = match state.as_str() {
                 "finished" => tr("gweike.calib_done", "Head calibration finished"),
                 "cancelled" => tr("gweike.calib_cancelled", "Head calibration cancelled"),
+                "failed" => tr("gweike.calib_failed", "Head calibration failed: {reason}")
+                    .replace("{reason}", &follower_alarm_text(v["alarm"].as_u64().unwrap_or(0) as u32)),
                 "timed_out" => tr("gweike.calib_timed_out", "No result after {limit} s, the head was stopped").replace("{limit}", &limit.to_string()),
                 _ => tr("gweike.calib_running", "Calibrating"),
             };
@@ -232,8 +234,18 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
                 ui,
                 &tr("gweike.calib_elapsed", "{secs} s of {limit} s").replace("{secs}", &secs.to_string()).replace("{limit}", &limit.to_string()),
             );
-            if let Some(z) = v["z"].as_u64() {
-                note(ui, &tr("gweike.calib_z", "Z {z}").replace("{z}", &z.to_string()));
+            if let Some(z) = v["z_um"].as_i64() {
+                note(ui, &tr("gweike.calib_z", "Z {z}").replace("{z}", &format!("{:.2} mm", z as f64 / 1000.0)));
+            }
+            if state != "running" {
+                if let (Some(strength), Some(height)) = (v["signal"]["strength"].as_u64(), v["signal"]["height"].as_u64()) {
+                    note(
+                        ui,
+                        &tr("gweike.calib_signal", "Signal {strength}, height {height}")
+                            .replace("{strength}", &strength.to_string())
+                            .replace("{height}", &height.to_string()),
+                    );
+                }
             }
         });
     if closed || action != Action::None {
@@ -250,6 +262,23 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
             }
         }
     }
+}
+
+/// The follower alarm bits of a failed head calibration, in words.
+fn follower_alarm_text(alarm: u32) -> String {
+    use darkburn_mcc::registers::zf_alarm;
+    let known = [
+        (zf_alarm::SIGNAL_SMALL, tr("gweike.zf_alarm_signal_small", "signal too small")),
+        (zf_alarm::CAPACITANCE_SMALL, tr("gweike.zf_alarm_capacitance_small", "capacitance too small")),
+        (zf_alarm::SIGNAL_ZERO, tr("gweike.zf_alarm_signal_zero", "signal zero")),
+        (zf_alarm::FTC_ALARM, tr("gweike.zf_alarm_follower", "follower alarm")),
+    ];
+    let rest = known.iter().fold(alarm, |a, (bit, _)| a & !bit);
+    let mut parts: Vec<String> = known.into_iter().filter(|(bit, _)| alarm & bit != 0).map(|(_, text)| text).collect();
+    if rest != 0 {
+        parts.push(tr("gweike.zf_alarm_other", "follower alarm bits 0x{bits}").replace("{bits}", &format!("{rest:04X}")));
+    }
+    parts.join(", ")
 }
 
 /// The card simulator's buttons [MCC-05]: each one names an `mcc.*` command; the registry runs it.

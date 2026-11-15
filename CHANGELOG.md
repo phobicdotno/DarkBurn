@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.0.774 (build 9)
+- New: Laser, Library and Move now sit in the same tab bar as the other right-side panels
+- New: drag a tab onto another tab bar to join it, or along its own bar to reorder
+- New: drag a tab out to give it its own window, then move, resize or close that window
+- New: drop a window's tab onto a floating tab group to join it
+- New: floating tab groups stay inside the window and tuck extra tabs behind a » button
+
 ## v0.0.769 (build 8)
 - New: click a layer's colour on a Gweike machine to pick a material recipe from a short searchable list
 - New: About shows the build number, a link to GitHub and what's new

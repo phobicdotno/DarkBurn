@@ -1172,7 +1172,7 @@ impl DarkBurn {
                     ui.painter().rect_filled(rect, t.radius_sm, t.panel);
                     ui.painter().rect_stroke(rect, t.radius_sm, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
                     solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
-                    window_host::dock_target(ctx, &key, rect);
+                    window_host::float_target(ctx, &key, rect);
                     let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
                     ui.painter().rect_filled(header, 0.0, t.panel_header);
                     ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));

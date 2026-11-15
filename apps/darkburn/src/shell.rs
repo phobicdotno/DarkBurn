@@ -1299,6 +1299,11 @@ impl DarkBurn {
     fn apply_panel_drop(&mut self, id: &str, d: PanelDrop) {
         match d {
             PanelDrop::To(place, at) => {
+                // `at` counts the shown tabs; hidden panels keep their places between them.
+                let others = |ids: Vec<&'static panels::PanelDef>| ids.into_iter().map(|p| p.id).filter(|p| *p != id).collect::<Vec<_>>();
+                let all = others(self.prefs.panels_in(place));
+                let before = at.and_then(|k| others(self.prefs.visible_in(place)).get(k).copied());
+                let at = at.map(|_| before.and_then(|b| all.iter().position(|p| *p == b)).unwrap_or(all.len()));
                 self.prefs.move_panel(id, place, at);
             }
             PanelDrop::Float(pos) => {

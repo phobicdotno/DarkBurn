@@ -1563,7 +1563,16 @@ type TabRects = std::collections::HashMap<String, Vec<(String, Rect)>>;
 /// right end (then `tabs_clip` shrinks to leave room for it), and one picked there lands in
 /// `pick`. The active tab always stays, cut short when it alone is too wide.
 #[allow(clippy::too_many_arguments)]
-fn tab_overflow(ui: &mut Ui, tabs: &[Tab], active: &str, header: Rect, tabs_clip: &mut Rect, id: egui::Id, target: &str, pick: &mut Option<String>) -> Vec<bool> {
+fn tab_overflow(
+    ui: &mut Ui,
+    tabs: &[Tab],
+    active: &str,
+    header: Rect,
+    tabs_clip: &mut Rect,
+    id: egui::Id,
+    target: &str,
+    pick: &mut Option<String>,
+) -> Vec<bool> {
     let t = Tokens::get();
     let widths: Vec<f32> =
         tabs.iter().map(|p| ui.painter().layout_no_wrap(p.title.clone(), fonts::semibold(t.font_label), t.text).size().x + 18.0).collect();

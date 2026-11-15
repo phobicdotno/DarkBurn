@@ -363,7 +363,11 @@ fn mark_target(ctx: &Context, area: &str, rect: Rect, floating: bool) {
 pub fn target_at(ctx: &Context, pos: Pos2) -> Option<String> {
     let frame = now(ctx);
     with(ctx, |s| {
-        s.targets.iter().filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos)).max_by_key(|(_, t)| (t.floating, t.order)).map(|(k, _)| k.clone())
+        s.targets
+            .iter()
+            .filter(|(_, t)| t.frame + 1 >= frame && t.rect.contains(pos))
+            .max_by_key(|(_, t)| (t.floating, t.order))
+            .map(|(k, _)| k.clone())
     })
 }
 

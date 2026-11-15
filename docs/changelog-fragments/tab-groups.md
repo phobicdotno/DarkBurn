@@ -1,1 +1,3 @@
 - Laser, Library and Move now sit in the same tab bar as the other right-side panels
+- Drag a tab onto another tab bar to join it, or along its own bar to reorder
+- Drag a tab out to give it its own window, then move, resize or close that window

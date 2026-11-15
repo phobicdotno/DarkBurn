@@ -937,6 +937,8 @@ impl DarkBurn {
         let mut x = header.left() + 4.0;
         let mut pick: Option<String> = None;
         let mut action: Option<(String, Option<Area>)> = None;
+        let mut tab_rects: Vec<(String, Rect)> = Vec::new();
+        let mut drop: Option<(String, PanelDrop)> = None;
         let mut window_action: Option<(String, WindowMove)> = None;
         let close = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
         let mut tabs_clip = Rect::from_min_max(header.min, pos2(close.left() - 2.0, header.bottom()));
@@ -997,9 +999,11 @@ impl DarkBurn {
             let g = ui.painter().layout_no_wrap(p.title.clone(), font, ink);
             let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(g.size().x + 16.0, PANEL_HEADER - 6.0));
             x = tr.right() + 2.0;
-            // A window's tab can be dragged out: onto another area, or anywhere else to float.
-            let sense = if p.window.is_some() { Sense::click_and_drag() } else { Sense::click() };
-            let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("tab", p.id.as_str())), sense);
+            // Every tab can be dragged: onto another group, along its own bar, or out to float.
+            let resp = ui.interact(tr.intersect(tabs_clip), ui.scope_id().with(("tab", p.id.as_str())), Sense::click_and_drag());
+            if p.window.is_none() {
+                tab_rects.push((p.id.clone(), tr));
+            }
             let painter = ui.painter().with_clip_rect(tabs_clip);
             if on {
                 painter.rect_filled(tr, t.radius_sm, t.accent_soft);
@@ -1036,6 +1040,9 @@ impl DarkBurn {
                     }
                 });
             } else {
+                if let Some(d) = self.panel_tab_dragged(ui.ctx(), &resp, &p.id, panels::Place::Docked(area), r) {
+                    drop = Some((p.id.clone(), d));
+                }
                 Menu::context(&resp, |ui| {
                     ui.set_min_width(200.0);
                     for to in Area::ALL.into_iter().filter(|a| *a != area) {
@@ -1045,6 +1052,9 @@ impl DarkBurn {
                         }
                     }
                     Menu::separator(ui);
+                    if MenuItem::new("float", &crate::i18n::tr("ui.window_float", "Float in the main window"), "").show(ui).clicked() {
+                        drop = Some((p.id.clone(), PanelDrop::Float(float_spot(ui.ctx()))));
+                    }
                     if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
                         action = Some((p.id.clone(), None));
                     }
@@ -1062,6 +1072,7 @@ impl DarkBurn {
                 None => action = Some((active.clone(), None)),
             }
         }
+        set_tab_rects(ui.ctx(), panels::Place::Docked(area), tab_rects);
         if let Some(id) = pick {
             self.bring_forward(area, &active, id);
         }
@@ -1092,6 +1103,9 @@ impl DarkBurn {
                 }
             }
         }
+        if let Some((id, d)) = drop {
+            self.apply_panel_drop(&id, d);
+        }
         if let Some((w, to)) = window_action {
             match to {
                 WindowMove::Dock(to) => window_host::update(ui.ctx(), &w, |p| p.dock(&to)),
@@ -1102,9 +1116,9 @@ impl DarkBurn {
         }
     }
 
-    /// The tab groups floating in the main window: each its tabs, a close button (it hides the
-    /// group's panels) and the front panel's contents. Dragging tabs in and out comes with the
-    /// tab drag; for now a group stays where it was put.
+    /// The tab groups floating in the main window: each its tabs (dragged like docked ones), a
+    /// close button (it hides the group's panels), the front panel's contents, a header that
+    /// moves it and a corner that resizes it.
     fn floating_groups(&mut self, ctx: &egui::Context) {
         let t = Tokens::get();
         let groups: Vec<u32> = self.prefs.floating.keys().copied().collect();
@@ -1119,6 +1133,11 @@ impl DarkBurn {
             let rect = Rect::from_min_size(pos2(group.pos[0], group.pos[1]), vec2(group.size[0], group.size[1]));
             let mut pick: Option<&'static str> = None;
             let mut close = false;
+            let mut moved = egui::Vec2::ZERO;
+            let mut resized = egui::Vec2::ZERO;
+            let mut drop: Option<(String, PanelDrop)> = None;
+            let mut hide: Option<String> = None;
+            let mut tab_rects: Vec<(String, Rect)> = Vec::new();
             egui::Area::new(egui::Id::unique(("db_float_group", g))).order(egui::Order::Middle).fixed_pos(rect.min).constrain(false).show(
                 ctx,
                 |ui| {
@@ -1128,36 +1147,162 @@ impl DarkBurn {
                     solidcraft_ui_registry::publish_rect(&format!("panel:float:{g}"), rect);
                     let header = Rect::from_min_size(rect.min, vec2(rect.width(), PANEL_HEADER));
                     ui.painter().rect_filled(header, 0.0, t.panel_header);
+                    ui.painter().hline(header.x_range(), header.bottom() - 0.5, Stroke::new(1.0, t.border));
+                    // The header's empty space moves the group; the tabs drawn over it win.
+                    let mover = ui.interact(header, ui.id().with(("float_move", g)), Sense::drag());
+                    if mover.dragged() {
+                        moved = mover.drag_delta();
+                        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                    } else if mover.hovered() {
+                        ctx.set_cursor_icon(egui::CursorIcon::Grab);
+                    }
                     let close_at = Rect::from_center_size(pos2(header.right() - 15.0, header.center().y), vec2(22.0, 22.0));
-                    let tab_room = Rect::from_min_max(header.min + vec2(4.0, 3.0), pos2(close_at.left(), header.bottom()));
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(tab_room), |ui| {
-                        ui.horizontal(|ui| {
-                            for p in &tabs {
-                                let title = crate::i18n::panel_title(p.id, p.title);
-                                let resp = ui.selectable_label(p.id == front, title);
-                                solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), resp.rect);
-                                if resp.clicked() {
-                                    pick = Some(p.id);
+                    let tabs_clip = Rect::from_min_max(header.min, pos2(close_at.left() - 2.0, header.bottom()));
+                    let mut x = header.left() + 4.0;
+                    for p in &tabs {
+                        let on = p.id == front;
+                        let title = crate::i18n::panel_title(p.id, p.title);
+                        let font = if on { fonts::semibold(t.font_label) } else { FontId::proportional(t.font_label) };
+                        let ink = if on { t.text } else { t.text_dim };
+                        let gal = ui.painter().layout_no_wrap(title, font, ink);
+                        let tr = Rect::from_min_size(pos2(x, header.top() + 3.0), vec2(gal.size().x + 16.0, PANEL_HEADER - 6.0));
+                        x = tr.right() + 2.0;
+                        let resp = ui.interact(tr.intersect(tabs_clip), ui.id().with(("float_tab", p.id)), Sense::click_and_drag());
+                        let painter = ui.painter().with_clip_rect(tabs_clip);
+                        if on {
+                            painter.rect_filled(tr, t.radius_sm, t.accent_soft);
+                        } else if resp.hovered() {
+                            painter.rect_filled(tr, t.radius_sm, t.hover);
+                        }
+                        painter.galley(pos2(tr.left() + 8.0, tr.center().y - gal.size().y / 2.0), gal, if on { t.selected_ink } else { ink });
+                        solidcraft_ui_registry::publish_target(&format!("panel:tab:{}", p.id), tr.intersect(tabs_clip));
+                        tab_rects.push((p.id.to_string(), tr));
+                        if resp.clicked() {
+                            pick = Some(p.id);
+                        }
+                        if let Some(d) = self.panel_tab_dragged(ctx, &resp, p.id, place, rect) {
+                            drop = Some((p.id.to_string(), d));
+                        }
+                        Menu::context(&resp, |ui| {
+                            ui.set_min_width(200.0);
+                            for to in Area::ALL {
+                                let text = format!("{} {}", crate::i18n::tr("ui.move_to", "Move to"), to.title().to_lowercase());
+                                if MenuItem::new("move", &text, "").show(ui).clicked() {
+                                    drop = Some((p.id.to_string(), PanelDrop::To(panels::Place::Docked(to), None)));
                                 }
                             }
+                            Menu::separator(ui);
+                            if MenuItem::new("hide", &crate::i18n::tr("ui.hide", "Hide"), "close").show(ui).clicked() {
+                                hide = Some(p.id.to_string());
+                            }
                         });
-                    });
+                    }
                     if ui_kit::quiet_icon_button_at(ui, close_at, "close", &crate::i18n::tr("ui.close", "Close")).clicked() {
                         close = true;
                     }
+                    solidcraft_ui_registry::publish_target(&format!("panel:float_close:{g}"), close_at);
                     let body = Rect::from_min_max(pos2(rect.left(), header.bottom()), rect.max).shrink2(vec2(10.0, 8.0));
                     ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
                         egui::ScrollArea::vertical().id_salt(("float_body", g)).auto_shrink([false, false]).show(ui, |ui| {
                             panels::contents(ui, front, self);
                         });
                     });
+                    // The bottom-right corner resizes the group.
+                    let corner = Rect::from_min_max(rect.max - vec2(14.0, 14.0), rect.max);
+                    let grip = ui.interact(corner, ui.id().with(("float_resize", g)), Sense::drag());
+                    if grip.hovered() || grip.dragged() {
+                        ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                    }
+                    if grip.dragged() {
+                        resized = grip.drag_delta();
+                    }
+                    solidcraft_ui_registry::publish_target(&format!("panel:float_resize:{g}"), corner);
+                    for i in 1..=3 {
+                        let d = i as f32 * 4.0;
+                        ui.painter().line_segment([rect.max - vec2(d, 2.0), rect.max - vec2(2.0, d)], Stroke::new(1.0, t.text_dim));
+                    }
                 },
             );
+            set_tab_rects(ctx, place, tab_rects);
+            if let Some(f) = self.prefs.floating.get_mut(&g) {
+                if moved != egui::Vec2::ZERO {
+                    f.pos = [f.pos[0] + moved.x, f.pos[1] + moved.y];
+                }
+                if resized != egui::Vec2::ZERO {
+                    let (lo, hi) = (crate::prefs::FLOAT_MIN, crate::prefs::FLOAT_MAX);
+                    f.size = [(f.size[0] + resized.x).clamp(lo[0], hi[0]), (f.size[1] + resized.y).clamp(lo[1], hi[1])];
+                }
+            }
             if let Some(id) = pick {
                 self.prefs.set_front(place, id);
             }
+            if let Some(id) = hide {
+                if let Some(state) = self.prefs.panels.get_mut(&id) {
+                    state.visible = false;
+                }
+                self.prefs.prune_floating();
+            }
+            if let Some((id, d)) = drop {
+                self.apply_panel_drop(&id, d);
+            }
             if close {
                 self.prefs.close_floating(g);
+            }
+        }
+    }
+
+    /// A panel's tab being dragged out of `own` (drawn in `own_rect`): the cursor and drop hint
+    /// while it moves, and where it goes when let go.
+    fn panel_tab_dragged(&self, ctx: &egui::Context, resp: &egui::Response, id: &str, own: panels::Place, own_rect: Rect) -> Option<PanelDrop> {
+        if !(resp.dragged() || resp.drag_stopped()) {
+            return None;
+        }
+        let pos = ctx.input(|i| i.pointer.latest_pos())?;
+        let target = self.place_at(ctx, pos);
+        if resp.dragged() {
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            if let Some((place, rect)) = target
+                && place != own
+            {
+                window_host::paint_drop_hint(ctx, rect);
+            }
+            return None;
+        }
+        match target {
+            Some((place, rect)) => {
+                let on_bar = pos.y <= rect.top() + PANEL_HEADER;
+                if place == own && !on_bar {
+                    return None;
+                }
+                let at = on_bar.then(|| tab_rects(ctx, place).iter().filter(|(p, r)| p != id && r.center().x < pos.x).count());
+                Some(PanelDrop::To(place, at))
+            }
+            None if !own_rect.contains(pos) => Some(PanelDrop::Float([pos.x - 40.0, pos.y - 12.0])),
+            None => None,
+        }
+    }
+
+    /// The tab group under `pos`: a floating one (the last drawn on top), else a docked area.
+    fn place_at(&self, ctx: &egui::Context, pos: Pos2) -> Option<(panels::Place, Rect)> {
+        for (g, f) in self.prefs.floating.iter().rev() {
+            let rect = Rect::from_min_size(pos2(f.pos[0], f.pos[1]), vec2(f.size[0], f.size[1]));
+            if rect.contains(pos) && !self.prefs.visible_in(panels::Place::Floating(*g)).is_empty() {
+                return Some((panels::Place::Floating(*g), rect));
+            }
+        }
+        let key = window_host::target_at(ctx, pos)?;
+        let area = Area::ALL.into_iter().find(|a| area_key(*a) == key)?;
+        Some((panels::Place::Docked(area), window_host::target_rect(ctx, &key)?))
+    }
+
+    /// Panel `id` goes where its tab was dropped.
+    fn apply_panel_drop(&mut self, id: &str, d: PanelDrop) {
+        match d {
+            PanelDrop::To(place, at) => {
+                self.prefs.move_panel(id, place, at);
+            }
+            PanelDrop::Float(pos) => {
+                self.prefs.float_panel(id, pos, FLOAT_SIZE);
             }
         }
     }
@@ -1341,6 +1486,35 @@ enum WindowMove {
     Float(Option<egui::Pos2>),
     Detach,
     Close,
+}
+
+/// Where a panel's dragged tab goes: into a tab group (at a tab position, none: last), or out
+/// into a new floating group with its top-left corner there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PanelDrop {
+    To(panels::Place, Option<usize>),
+    Float([f32; 2]),
+}
+
+/// The size of a floating group a dragged-out panel makes.
+const FLOAT_SIZE: [f32; 2] = [360.0, 420.0];
+
+/// Where a panel floated from its tab's menu goes: the middle of the main window.
+fn float_spot(ctx: &egui::Context) -> [f32; 2] {
+    let c = ctx.content_rect().center();
+    [c.x - FLOAT_SIZE[0] / 2.0, c.y - FLOAT_SIZE[1] / 2.0]
+}
+
+type TabRects = std::collections::HashMap<String, Vec<(String, Rect)>>;
+
+/// Each tab group's panel tabs as drawn (this frame, or the last one for groups drawn later):
+/// a dropped tab lands between them.
+fn set_tab_rects(ctx: &egui::Context, place: panels::Place, rects: Vec<(String, Rect)>) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<TabRects>(egui::Id::new("db_tab_rects")).insert(place.key(), rects));
+}
+
+fn tab_rects(ctx: &egui::Context, place: panels::Place) -> Vec<(String, Rect)> {
+    ctx.data(|d| d.get_temp::<TabRects>(egui::Id::new("db_tab_rects")).and_then(|m| m.get(&place.key()).cloned()).unwrap_or_default())
 }
 
 /// A window's tab being dragged: show where it will go; dropped on another area it docks there,

@@ -1,2 +1,0 @@
-- Gweike M lasers: head calibration, with a progress window and a cancel button
-- Gweike M lasers: head calibration follows the height sensor and says why it failed

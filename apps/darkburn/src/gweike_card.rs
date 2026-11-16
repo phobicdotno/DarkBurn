@@ -134,9 +134,18 @@ fn calib_start(card: &mut CardState, gweike_m: bool) -> Result<Value, String> {
     if card.calib.as_ref().is_some_and(|c| c.state() == &CalibState::Running) {
         return Err("a head calibration is already running".into());
     }
-    link.gate.arming.arm_motion().map_err(|e| format!("could not arm motion: {e:?}"))?;
     link.poll_status().map_err(|e| format!("could not read the card: {e}"))?;
-    let (c, w) = HeadCalibration::start(link.sim.now_ms()).map_err(|e| format!("{e:?}"))?;
+    // Superblock: read the follower/FTC status right before the start; any FTC error, or no
+    // follower status at all, refuses the start with no override (calibrating with a standing
+    // FTC error can crack the ceramic).
+    let has_follower = card.report.as_ref().is_some_and(|r| r.system.has_follower());
+    let before = if has_follower {
+        CalibInput::from_follower(&link.read_follower().map_err(|e| format!("could not read the FTC status: {e}"))?)
+    } else {
+        CalibInput::RunStatus { busy: false }
+    };
+    let (c, w) = HeadCalibration::start(link.sim.now_ms(), before).map_err(|e| e.text())?;
+    link.gate.arming.arm_motion().map_err(|e| format!("could not arm motion: {e:?}"))?;
     link.write(&w).map_err(|e| format!("could not start the head calibration: {e}"))?;
     card.calib = Some(c);
     card.calib_last = Some(std::time::Instant::now());
@@ -517,6 +526,26 @@ mod tests {
         // later polls change nothing
         assert_eq!(run(&mut a, "mcc.head_calibrate_poll", json!({})).unwrap()["state"], "failed");
         run(&mut a, "mcc.head_calibrate_dismiss", json!({})).unwrap();
+    }
+
+    #[test]
+    fn head_calibration_superblock_refuses_a_start_while_the_ftc_reports_an_error() {
+        use darkburn_mcc::registers::zf_alarm;
+        let mut a = app();
+        make_gweike_m(&mut a);
+        run(&mut a, "mcc.connect", json!({})).unwrap();
+        for alarm in [zf_alarm::FTC_ALARM, zf_alarm::SIGNAL_SMALL | zf_alarm::FOLLOW_ERROR] {
+            assert!(a.machine.ext.mcc.link.as_mut().unwrap().sim.set_card_word(10001, alarm));
+            let e = run(&mut a, "mcc.head_calibrate", json!({})).unwrap_err();
+            assert!(e.contains("blocked") && e.contains("FTC reports an error"), "{e}");
+            assert!(!a.machine.ext.mcc.calibrating());
+            let link = a.machine.ext.mcc.link.as_ref().unwrap();
+            assert!(!link.sim.commands().contains(&vec![107]), "107 was never sent");
+            assert_ne!(link.gate.arming.state(), darkburn_mcc::ArmState::MotionArmed, "motion was not armed for a blocked start");
+        }
+        // Error cleared on the machine: the start goes through.
+        assert!(a.machine.ext.mcc.link.as_mut().unwrap().sim.set_card_word(10001, 0));
+        assert_eq!(run(&mut a, "mcc.head_calibrate", json!({})).unwrap()["state"], "running");
     }
 
     #[test]

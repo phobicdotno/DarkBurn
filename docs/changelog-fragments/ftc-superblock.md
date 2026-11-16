@@ -1,0 +1,1 @@
+- Head calibration won't start while the FTC reports an error

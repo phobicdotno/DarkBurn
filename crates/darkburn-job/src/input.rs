@@ -180,15 +180,7 @@ pub struct ImageInput {
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self {
-            scanlines,
-            transform: Affine::IDENTITY,
-            group: None,
-            priority: 0,
-            direction_offset: 0.0,
-            outline: Vec::new(),
-            power_scale: 1.0,
-        }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new(), power_scale: 1.0 }
     }
 }
 

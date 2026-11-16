@@ -53,7 +53,7 @@ impl PathSegment {
     }
 }
 
-/// Planner configuration. Defaults are the owner's CF1390 values from static analysis.
+/// Planner configuration. Defaults are the owner's CF1390 values (step scale and tick from captures).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanConfig {
     /// Where the head is when the path starts.
@@ -333,7 +333,7 @@ mod tests {
         assert!((plan.cut_seconds - 2.05).abs() < 1e-9);
         assert_eq!(plan.rapid_seconds, 0.0);
         let expect = 100.0 * COUNTS_PER_MM_X;
-        assert!((plan.total_pulses_x as f64 - expect).abs() < 1.0, "{} vs {expect}", plan.total_pulses_x);
+        assert!((plan.total_pulses_x as f64 - expect).abs() <= 1.0 + 1e-6, "{} vs {expect}", plan.total_pulses_x);
         assert_eq!(plan.total_pulses_y, 0);
         assert!((plan.cut_length_mm - 100.0).abs() < 1e-9);
         assert_eq!(plan.end, Point::new(110.0, 10.0));
@@ -353,17 +353,18 @@ mod tests {
         let plan = dry_run(&[PathSegment::rapid(40.0, 50.0)], &cfg()).unwrap();
         let ex = 30.0 * COUNTS_PER_MM_X;
         let ey = 40.0 * COUNTS_PER_MM_Y;
-        assert!((plan.total_pulses_x as f64 - ex).abs() < 1.0);
-        assert!((plan.total_pulses_y as f64 - ey).abs() < 1.0);
+        assert!((plan.total_pulses_x as f64 - ex).abs() <= 1.0 + 1e-6);
+        assert!((plan.total_pulses_y as f64 - ey).abs() <= 1.0 + 1e-6);
         assert!(plan.rapid_seconds > 0.0 && plan.cut_seconds == 0.0);
-        // many short segments must not drift: carry is kept across them
+        // many short segments must not drift: carry is kept across them (truncation leaves the
+        // total at most one step short of the exact count)
         let mut path = Vec::new();
         for i in 1..=100 {
             path.push(PathSegment::cut(10.0 + i as f64 * 0.1, 10.0, 20.0));
         }
         let plan = dry_run(&path, &cfg()).unwrap();
         let expect = 10.0 * COUNTS_PER_MM_X;
-        assert!((plan.total_pulses_x as f64 - expect).abs() < 1.0, "{} vs {expect}", plan.total_pulses_x);
+        assert!((plan.total_pulses_x as f64 - expect).abs() <= 1.0 + 1e-6, "{} vs {expect}", plan.total_pulses_x);
     }
 
     #[test]

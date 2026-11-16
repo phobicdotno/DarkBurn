@@ -656,12 +656,16 @@ mod tests {
             words.extend(&b.1);
             parse_fifo_words(&words).unwrap().items
         };
-        // the laser-on block ends with the 25 % PWM [0x11, 5000 Hz, 25 %, enable]
-        assert_eq!(items(&blocks[1]).last().map(|i| i.payload().to_vec()), Some(vec![0x11, 5000, 0x19, 1]));
-        // the next block cuts: beam-on ticks with power byte 0x19, then the laser-off block
-        let on: Vec<Tick> = items(&blocks[2]).iter().filter_map(FifoItem::as_tick).filter(|t| t.laser_on).collect();
-        assert!(on.len() > 50 && on.iter().all(|t| t.power == 0x19 && t.form == TickForm::Co2));
-        assert!(items(&blocks[2]).iter().any(|i| i.payload() == [0x12, 0]));
+        // the laser segment starts with the 25 % PWM [0x11, 5000 Hz, 25 %, enable], then beam-on ticks
+        let b1 = items(&blocks[1]);
+        let pwm = b1.iter().position(|i| i.payload() == [0x11, 5000, 0x19, 1]).expect("PWM record");
+        assert!(b1[pwm + 1..].iter().all(|i| i.as_tick().is_some_and(|t| t.laser_on)));
+        // beam-on ticks carry power byte 0x19, then the laser-off block and travel again
+        let on: Vec<Tick> = b1.iter().chain(&items(&blocks[2])).filter_map(FifoItem::as_tick).filter(|t| t.laser_on).collect();
+        assert!(on.len() > 100 && on.iter().all(|t| t.power == 0x19 && t.form == TickForm::Co2));
+        let b2 = items(&blocks[2]);
+        let off = b2.iter().position(|i| i.payload() == [0x12, 0]).expect("laser-off marker");
+        assert!(b2[off..].iter().filter_map(FifoItem::as_tick).all(|t| !t.is_laser()));
     }
 
     #[test]

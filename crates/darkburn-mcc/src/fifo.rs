@@ -1,17 +1,32 @@
 //! FIFO items, frame packing and flow control for register 0x66.
 //!
-//! Item grammar (owner's `11-static-findings.md` section 5.2): `header = (payload_bytes << 16) | opcode`
-//! followed by `payload_bytes / 4` words. The motion item is opcode 3000, a 12-byte tick:
-//! `[0x00080BB8, (dY << 16) | dX, (freq << 16) | duty]` with `dX`, `dY` signed 16-bit motor pulses.
+//! Item grammar: `header = (payload_bytes << 16) | opcode` followed by `payload_bytes / 4` words.
+//! The layouts below come from captures of the vendor's own job stream (CO2 grid and circle jobs,
+//! fiber frame, dry cut and cut; see `tests/data/mlaser-grid-co2.frames`):
+//!
+//! * Opcode 3000 is one motion tick of 250 us: `[0x0008_0BB8, (form << 24) | (power << 16) |
+//!   (dy as u8) << 8 | (dx as u8), tail]`. `dx` (low byte, card axis 0) and `dy` (next byte, axis 1)
+//!   are signed 8-bit step counts (X 257.90, Y 258.14 counts/mm). `power` is the power byte (CO2:
+//!   the layer power %, fiber: a per-tick power that ramps). `form` is `0x88` for the CO2 and travel
+//!   form with tail `0x13` (laser off) or `0xffff_0013` (laser on), and `0x57` for the fiber form
+//!   with tail `0x04` or `0xffff_0004`. Acceleration lives in the deltas; there is no speed word.
+//!   Which physical direction a positive `dx`/`dy` moves is not proven yet: confirm it with a
+//!   +X jog capture before any dry run.
+//! * Opcode 3001 is a boundary record without payload.
+//! * Opcode 3002 is the segment counter `[n]`: 0, 1, 2 ... over the job, even = travel segment,
+//!   odd = laser segment. It is not a mode word.
+//! * Opcode 9999 carries 0x65-style records: DO `[2, mask, value]`, DA `[4, channel, value]`,
+//!   CO2 PWM `[0x11, freq, duty %, enable]`, fiber laser `[3, freq, power %, enable]`, and the
+//!   laser-off marker `[0x12, 0]`.
 //!
 //! A frame is `WRITE 0x66` with words `[frame_id, items...]`; the packer closes a frame when the
 //! vector `[0x40, 0x66, count, frame_id, items...]` reaches 300 words (99 ticks) or at the end of a
 //! batch. [`FifoFeeder`] reproduces the vendor flow control: frame id is register 1015 plus one, a
 //! frame is sent only if `frame_bytes + 2000 <= register 1016`, at most 50 frames per pass.
 //!
-//! Public items can only be built as *dry* items (zero duty ticks, boundary and mode records). The
-//! full grammar can be decoded for the simulator, but a frame carrying laser data or any
-//! out-of-grammar item is refused by [`crate::command::SafeWrite`].
+//! Public items can only be built as *dry* items (power 0, laser-off ticks, boundary and segment
+//! records). The full grammar can be decoded for the simulator, but a frame carrying laser data or
+//! any out-of-grammar item is refused by [`crate::command::SafeWrite`].
 
 use crate::command::{Policy, SafetyConfig};
 use crate::registers::{FIFO_MARGIN_EMPTY, FIFO_SEND_HEADROOM_BYTES, Forbidden};
@@ -21,12 +36,20 @@ use std::collections::VecDeque;
 pub const OP_TICK: u16 = 3000;
 /// Boundary record, inserted when a control record follows a tick.
 pub const OP_BOUNDARY: u16 = 3001;
-/// Mode record (5 before laser-on, 4 after; meaning low confidence).
-pub const OP_MODE: u16 = 3002;
-/// In-stream 0x65-style record (DO, DA, PWM).
+/// Segment counter `[n]`: rises by one per segment, even = travel, odd = laser.
+pub const OP_SEGMENT: u16 = 3002;
+/// In-stream 0x65-style record (DO, DA, PWM, laser).
 pub const OP_MISC: u16 = 9999;
-/// Default pulse frequency word of a dry tick (the vendor treats 0 as 5000).
-pub const DRY_TICK_FREQ: u16 = 5000;
+/// Tick period in microseconds.
+pub const TICK_US: u32 = 250;
+/// Steps per millimetre on card axis 0 (X), from a 250 mm capture line.
+pub const COUNTS_PER_MM_X: f64 = 257.90;
+/// Steps per millimetre on card axis 1 (Y), from a 250 mm capture line.
+pub const COUNTS_PER_MM_Y: f64 = 258.14;
+/// Largest step a tick carries on one axis.
+pub const TICK_MAX_STEP: i32 = i8::MAX as i32;
+/// High half of a tick tail with the beam on.
+pub const TICK_TAIL_LASER_ON: u32 = 0xFFFF_0000;
 /// Words per 3000 tick including its header (12 bytes).
 pub const TICK_WORDS: usize = 3;
 /// Words of the vendor vector prefix `[0x40, 0x66, count, frame_id]`.
@@ -42,7 +65,7 @@ fn arg_words(op: u16) -> Option<&'static [usize]> {
         3000 => &[2],
         3001 => &[0],
         3002 => &[1],
-        9999 => &[3],
+        9999 => &[2, 3, 4],
         103 | 109 => &[2],
         104 => &[2, 8],
         105 | 108 => &[4],
@@ -53,17 +76,82 @@ fn arg_words(op: u16) -> Option<&'static [usize]> {
     })
 }
 
+/// Which head a tick is written for: the top byte of the tick word and the low half of its tail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TickForm {
+    /// `0x88`, tail `0x13`: CO2 cuts and every travel or frame move.
+    Co2,
+    /// `0x57`, tail `0x04`: fiber cuts and fiber dry cuts.
+    Fiber,
+}
+
+impl TickForm {
+    /// Top byte of the tick word.
+    pub const fn code(self) -> u8 {
+        match self {
+            TickForm::Co2 => 0x88,
+            TickForm::Fiber => 0x57,
+        }
+    }
+
+    /// Low half of the tail word.
+    pub const fn tail(self) -> u32 {
+        match self {
+            TickForm::Co2 => 0x13,
+            TickForm::Fiber => 0x04,
+        }
+    }
+
+    fn from_code(code: u8) -> Option<TickForm> {
+        match code {
+            0x88 => Some(TickForm::Co2),
+            0x57 => Some(TickForm::Fiber),
+            _ => None,
+        }
+    }
+}
+
 /// One decoded 3000 tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tick {
-    /// X pulses (signed 16 bit).
-    pub dx: i16,
-    /// Y pulses (signed 16 bit).
-    pub dy: i16,
-    /// Pulse frequency (0 is treated as 5000 by the vendor).
-    pub freq: u16,
-    /// Duty. Always 0 for items this crate builds.
-    pub duty: u16,
+    /// Tick form (head).
+    pub form: TickForm,
+    /// Power byte. Always 0 for items this crate builds.
+    pub power: u8,
+    /// Steps on card axis 0 (X) in this tick.
+    pub dx: i8,
+    /// Steps on card axis 1 (Y) in this tick.
+    pub dy: i8,
+    /// Tail says beam on (`0xffff` high half). Always false for items this crate builds.
+    pub laser_on: bool,
+}
+
+impl Tick {
+    /// The two payload words `[form|power|dy|dx, tail]`.
+    pub fn encode(&self) -> [u32; 2] {
+        let word = (u32::from(self.form.code()) << 24) | (u32::from(self.power) << 16) | (u32::from(self.dy as u8) << 8) | u32::from(self.dx as u8);
+        let tail = self.form.tail() | if self.laser_on { TICK_TAIL_LASER_ON } else { 0 };
+        [word, tail]
+    }
+
+    /// Decode the two payload words; `None` for a form or tail never seen from the vendor.
+    pub fn decode(word: u32, tail: u32) -> Option<Tick> {
+        let form = TickForm::from_code((word >> 24) as u8)?;
+        let laser_on = match tail & 0xFFFF_0000 {
+            0 => false,
+            TICK_TAIL_LASER_ON => true,
+            _ => return None,
+        };
+        if tail & 0xFFFF != form.tail() {
+            return None;
+        }
+        Some(Tick { form, power: (word >> 16) as u8, dx: word as u8 as i8, dy: (word >> 8) as u8 as i8, laser_on })
+    }
+
+    /// True if the tick turns the beam on or carries power.
+    pub fn is_laser(&self) -> bool {
+        self.laser_on || self.power != 0
+    }
 }
 
 /// One FIFO item. The fields are private: the only public constructors build dry items.
@@ -74,9 +162,15 @@ pub struct FifoItem {
 }
 
 impl FifoItem {
-    /// A dry motion tick: moves `dx`, `dy` pulses with duty 0.
-    pub fn tick(dx: i16, dy: i16) -> FifoItem {
-        FifoItem { opcode: OP_TICK, payload: vec![((dy as u16 as u32) << 16) | dx as u16 as u32, ((DRY_TICK_FREQ as u32) << 16)] }
+    /// A dry motion tick in the CO2/travel form: moves `dx`, `dy` steps with power 0, beam off.
+    pub fn tick(dx: i8, dy: i8) -> FifoItem {
+        FifoItem::tick_form(TickForm::Co2, dx, dy)
+    }
+
+    /// A dry motion tick in `form`: power 0, beam off.
+    pub fn tick_form(form: TickForm, dx: i8, dy: i8) -> FifoItem {
+        let t = Tick { form, power: 0, dx, dy, laser_on: false };
+        FifoItem { opcode: OP_TICK, payload: t.encode().to_vec() }
     }
 
     /// A boundary record.
@@ -84,9 +178,9 @@ impl FifoItem {
         FifoItem { opcode: OP_BOUNDARY, payload: vec![] }
     }
 
-    /// A mode record. Only 4 and 5 pass the frame check; any other value is refused there.
-    pub fn mode(mode: u32) -> FifoItem {
-        FifoItem { opcode: OP_MODE, payload: vec![mode] }
+    /// A segment counter record. Inside one frame the counter must rise by one per record.
+    pub fn segment(n: u32) -> FifoItem {
+        FifoItem { opcode: OP_SEGMENT, payload: vec![n] }
     }
 
     /// Opcode.
@@ -117,14 +211,20 @@ impl FifoItem {
         1 + self.payload.len()
     }
 
-    /// The tick view of a 3000 item.
+    /// The tick view of a 3000 item; `None` for other items and for ticks in an unknown form.
     pub fn as_tick(&self) -> Option<Tick> {
-        if self.opcode != OP_TICK || self.payload.len() != 2 {
-            return None;
+        match (self.opcode, &self.payload[..]) {
+            (OP_TICK, [word, tail]) => Tick::decode(*word, *tail),
+            _ => None,
         }
-        let p0 = self.payload[0];
-        let p1 = self.payload[1];
-        Some(Tick { dx: p0 as u16 as i16, dy: (p0 >> 16) as u16 as i16, freq: (p1 >> 16) as u16, duty: p1 as u16 })
+    }
+
+    /// The counter of a 3002 segment record.
+    pub fn as_segment(&self) -> Option<u32> {
+        match (self.opcode, &self.payload[..]) {
+            (OP_SEGMENT, [n]) => Some(*n),
+            _ => None,
+        }
     }
 
     /// True if the item carries laser data. Such an item is decodable (so the simulator can model
@@ -141,14 +241,17 @@ impl FifoItem {
 
     fn is_laser_with(&self, laser_do_mask: u32) -> bool {
         match self.opcode {
-            OP_TICK => self.as_tick().is_some_and(|t| t.duty != 0),
+            // A tick in an unknown form counts as laser data: nothing proves its tail is off.
+            OP_TICK => self.as_tick().is_none_or(|t| t.is_laser()),
             OP_MISC => match self.payload.first() {
                 // DO: any laser port bit switched on (by default 5 fibre gate, 6 pointer, 9 CO2).
                 Some(2) => self.payload.get(2).is_some_and(|v| v & laser_do_mask != 0),
-                // PWM: always laser data in a stream.
+                // Fiber laser command and CO2 PWM: always laser data in a stream.
                 Some(3) | Some(0x11) => true,
                 // DA: non-zero value.
                 Some(4) => self.payload.get(2).is_some_and(|v| *v != 0),
+                // Laser-off marker: laser data, so the gate and the frame classifier agree.
+                Some(0x12) => true,
                 _ => false,
             },
             2002 | 2004 | 3 => true,
@@ -227,32 +330,46 @@ pub fn classify_frame_for(frame: &FifoFrame, cfg: &SafetyConfig) -> Result<Polic
 
 fn classify_frame_with(frame: &FifoFrame, laser_do_mask: u32, allowed_do_mask: u32) -> Result<Policy, Forbidden> {
     let mut laser = false;
+    let mut last_segment: Option<u32> = None;
     for item in &frame.items {
-        if item.opcode == OP_MISC {
-            let sub = item.payload[0];
-            match sub {
-                2 => {
-                    if (item.payload[1] | item.payload[2]) & !allowed_do_mask != 0 {
-                        return Err(Forbidden::FifoFrame(format!("DO record {:?} addresses a port outside the allow-list", item.payload)));
+        let p = &item.payload[..];
+        match item.opcode {
+            OP_TICK if item.as_tick().is_none() => {
+                return Err(Forbidden::FifoFrame(format!("tick {p:x?} is not in the 0x88/0x13 or 0x57/0x04 form")));
+            }
+            OP_SEGMENT => {
+                // The counter rises by one per segment over the whole job; inside one frame a
+                // second record must follow the first directly.
+                let n = p[0];
+                if let Some(prev) = last_segment
+                    && prev.checked_add(1) != Some(n)
+                {
+                    return Err(Forbidden::FifoFrame(format!("segment counter goes from {prev} to {n} inside one frame")));
+                }
+                last_segment = Some(n);
+            }
+            OP_MISC => match p {
+                [2, mask, value] => {
+                    if (mask | value) & !allowed_do_mask != 0 {
+                        return Err(Forbidden::FifoFrame(format!("DO record {p:?} addresses a port outside the allow-list")));
                     }
                 }
-                3 | 4 | 0x11 => {}
-                13 => {
-                    if item.payload[2] != 0 {
+                [4, _, _] | [3 | 0x11, _, _, _] => {}
+                [13, _, value] => {
+                    if *value != 0 {
                         return Err(Forbidden::FifoFrame("extended DO on".into()));
                     }
                 }
-                _ => return Err(Forbidden::FifoFrame(format!("9999 sub-record {sub} not allowed"))),
-            }
-        }
-        // A mode record carries one word, and only the two values seen in a stream.
-        if item.opcode == OP_MODE && !matches!(item.payload[..], [4] | [5]) {
-            return Err(Forbidden::FifoFrame(format!("mode record {:?} not allowed (only 4 and 5)", item.payload)));
+                // Laser-off marker of the vendor's laser-off block: copied, never built.
+                [0x12, 0] => laser = true,
+                _ => return Err(Forbidden::FifoFrame(format!("9999 record {p:?} not allowed"))),
+            },
+            _ => {}
         }
         // Follower moves, follow and pierce records (103..=109, 118) and 2001 belong to the
         // vendor's height-follower and pierce logic. Like laser data they decode, so a simulator
         // can model them, but they take the level no public constructor reaches.
-        let vendor_only = !matches!(item.opcode, OP_TICK | OP_BOUNDARY | OP_MODE | OP_MISC);
+        let vendor_only = !matches!(item.opcode, OP_TICK | OP_BOUNDARY | OP_SEGMENT | OP_MISC);
         if item.is_laser_with(laser_do_mask) || vendor_only {
             laser = true;
         }
@@ -474,18 +591,156 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tick_encoding_matches_the_documented_header() {
+    fn tick_encoding_matches_the_capture() {
         let t = FifoItem::tick(-3, 7);
         let w = t.words();
         assert_eq!(w.len(), 3);
         assert_eq!(w[0], 0x0008_0BB8);
-        assert_eq!(w[1], (7 << 16) | 0xFFFD);
-        assert_eq!(w[2], 5000 << 16);
+        assert_eq!(w[1], 0x8800_07FD);
+        assert_eq!(w[2], 0x13);
         let d = t.as_tick().unwrap();
-        assert_eq!((d.dx, d.dy, d.freq, d.duty), (-3, 7, 5000, 0));
+        assert_eq!((d.form, d.power, d.dx, d.dy, d.laser_on), (TickForm::Co2, 0, -3, 7, false));
         assert!(!t.is_laser());
+        // one-count ticks at the start of a cut, from the GAP notes
+        assert_eq!(Tick::decode(0x8819_0100, 0xFFFF_0013), Some(Tick { form: TickForm::Co2, power: 0x19, dx: 0, dy: 1, laser_on: true }));
+        assert_eq!(Tick::decode(0x8819_0001, 0xFFFF_0013).map(|t| (t.dx, t.dy)), Some((1, 0)));
+        // fiber form from the dry cut and the cut
+        assert_eq!(FifoItem::tick_form(TickForm::Fiber, -1, 2).words(), vec![0x0008_0BB8, 0x5700_02FF, 0x04]);
+        let f = Tick::decode(0x5716_02FF, 0xFFFF_0004).unwrap();
+        assert_eq!((f.form, f.power, f.dx, f.dy, f.laser_on), (TickForm::Fiber, 0x16, -1, 2, true));
+        assert_eq!(f.encode(), [0x5716_02FF, 0xFFFF_0004]);
+        // forms and tails never seen
+        assert_eq!(Tick::decode(0x8800_0000, 0x04), None, "CO2 word with the fiber tail");
+        assert_eq!(Tick::decode(0x5700_0000, 0x13), None, "fiber word with the CO2 tail");
+        assert_eq!(Tick::decode(0x0000_0001, 0x13), None, "old (dY<<16)|dX layout");
+        assert_eq!(Tick::decode(0x8800_0000, 0x1388_0013), None);
         assert_eq!(FifoItem::boundary().words(), vec![0x0000_0BB9]);
-        assert_eq!(FifoItem::mode(5).words(), vec![0x0004_0BBA, 5]);
+        assert_eq!(FifoItem::segment(5).words(), vec![0x0004_0BBA, 5]);
+        assert_eq!(FifoItem::segment(0x61).as_segment(), Some(0x61));
+    }
+
+    #[test]
+    fn extreme_steps_round_trip() {
+        for (dx, dy) in [(i8::MIN, i8::MAX), (i8::MAX, i8::MIN), (-1, -1), (0, 0)] {
+            for form in [TickForm::Co2, TickForm::Fiber] {
+                let t = FifoItem::tick_form(form, dx, dy).as_tick().unwrap();
+                assert_eq!((t.form, t.dx, t.dy, t.power, t.laser_on), (form, dx, dy, 0, false));
+            }
+        }
+    }
+
+    /// Real blocks from a Mlaser CO2 grid job (`tests/data/mlaser-grid-co2.frames`).
+    fn capture_blocks() -> Vec<(u32, Vec<u32>)> {
+        include_str!("../tests/data/mlaser-grid-co2.frames").lines().filter_map(|l| parse_frame_line(l).unwrap()).collect()
+    }
+
+    #[test]
+    fn real_mlaser_blocks_parse_and_classify() {
+        let blocks = capture_blocks();
+        assert_eq!(blocks.iter().map(|b| b.0).collect::<Vec<_>>(), vec![0x474, 0x479, 0x4FA, 0x511]);
+        let mut policies = Vec::new();
+        let mut segments = Vec::new();
+        for (id, data) in &blocks {
+            let mut words = vec![*id];
+            words.extend(data);
+            let f = parse_fifo_words(&words).unwrap_or_else(|e| panic!("block {id:#x}: {e}"));
+            for item in &f.items {
+                if item.opcode() == OP_TICK {
+                    assert!(item.as_tick().is_some(), "block {id:#x}: tick {:x?}", item.payload());
+                }
+                segments.extend(item.as_segment());
+            }
+            policies.push(classify_frame(&f).unwrap_or_else(|e| panic!("block {id:#x}: {e:?}")));
+        }
+        // travel-only block is motion; the laser-on and laser-off blocks are laser level
+        assert_eq!(policies, vec![Policy::Motion, Policy::Laser, Policy::Laser, Policy::Motion]);
+        assert_eq!(segments, vec![0, 1, 2]);
+        let items = |b: &(u32, Vec<u32>)| {
+            let mut words = vec![b.0];
+            words.extend(&b.1);
+            parse_fifo_words(&words).unwrap().items
+        };
+        // the laser segment starts with the 25 % PWM [0x11, 5000 Hz, 25 %, enable], then beam-on ticks
+        let b1 = items(&blocks[1]);
+        let pwm = b1.iter().position(|i| i.payload() == [0x11, 5000, 0x19, 1]).expect("PWM record");
+        assert!(b1[pwm + 1..].iter().all(|i| i.as_tick().is_some_and(|t| t.laser_on)));
+        // beam-on ticks carry power byte 0x19, then the laser-off block and travel again
+        let on: Vec<Tick> = b1.iter().chain(&items(&blocks[2])).filter_map(FifoItem::as_tick).filter(|t| t.laser_on).collect();
+        assert!(on.len() > 100 && on.iter().all(|t| t.power == 0x19 && t.form == TickForm::Co2));
+        let b2 = items(&blocks[2]);
+        let off = b2.iter().position(|i| i.payload() == [0x12, 0]).expect("laser-off marker");
+        assert!(b2[off..].iter().filter_map(FifoItem::as_tick).all(|t| !t.is_laser()));
+    }
+
+    #[test]
+    fn real_travel_block_round_trips_through_the_encoder() {
+        // Rebuild the first block of the job from decoded values with the public dry
+        // constructors; the words must equal what Mlaser sent.
+        let (id, data) = &capture_blocks()[0];
+        let mut words = vec![*id];
+        words.extend(data);
+        let f = parse_fifo_words(&words).unwrap();
+        let mut rebuilt = Vec::new();
+        for item in &f.items {
+            let again = match (item.as_segment(), item.as_tick()) {
+                (Some(n), _) => FifoItem::segment(n),
+                (_, Some(t)) => {
+                    assert!(!t.is_laser());
+                    FifoItem::tick_form(t.form, t.dx, t.dy)
+                }
+                _ => panic!("unexpected item {item:?}"),
+            };
+            rebuilt.push(again);
+        }
+        let mut p = FramePacker::new();
+        p.add_record(&rebuilt);
+        let frames = p.finish();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(&frames[0].data, data);
+        let w = crate::command::fifo_packed_frame(*id, &frames[0]).unwrap();
+        assert_eq!(w.policy(), Policy::Motion);
+        // every travel tick in the capture also re-encodes word for word
+        for (_, data) in capture_blocks() {
+            let mut words = vec![0];
+            words.extend(&data);
+            for item in parse_fifo_words(&words).unwrap().items {
+                if let Some(t) = item.as_tick() {
+                    assert_eq!(t.encode().to_vec(), item.payload());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fiber_laser_records_from_the_capture() {
+        // Fiber contour head and tail as Mlaser sent them: laser command [3, freq, power %, on],
+        // beam-on 0x57 ticks, laser-off marker and laser command off.
+        #[rustfmt::skip]
+        let words = [
+            1, 0x0004_0BBA, 3, 0x0000_0BB9, 0x000C_270F, 2, 2, 2, 0x0010_270F, 3, 0x457, 0x5F, 1, 0x0008_0BB8, 0x5701_0100,
+            0xFFFF_0004, 0x0000_0BB9, 0x0008_270F, 0x12, 0, 0x0010_270F, 3, 0x457, 0, 0, 0x000C_270F, 2, 2, 0, 0x0000_0BB9,
+            0x0004_0BBA, 4,
+        ];
+        let f = parse_fifo_words(&words).unwrap();
+        assert_eq!(f.items.len(), 11);
+        assert_eq!(classify_frame(&f), Ok(Policy::Laser));
+        // the dry cut: fiber ticks with the beam off, laser command at zero
+        let dry = [1, 0x0008_0BB8, 0x5700_0100, 4, 0x0008_0BB8, 0x5700_02FF, 4];
+        assert_eq!(classify_frame(&parse_fifo_words(&dry).unwrap()), Ok(Policy::Motion));
+    }
+
+    #[test]
+    fn segment_counter_rises_inside_a_frame() {
+        let ok = [1, 0x0004_0BBA, 0x60, 0x0000_0BB9, 0x0004_0BBA, 0x61];
+        assert_eq!(classify_frame(&parse_fifo_words(&ok).unwrap()), Ok(Policy::Motion));
+        // any start value: the counter runs over the whole job
+        for n in [0, 1, 0x61, 3001] {
+            assert_eq!(classify_frame(&parse_fifo_words(&[1, 0x0004_0BBA, n]).unwrap()), Ok(Policy::Motion), "{n}");
+        }
+        for (a, b) in [(3, 3), (4, 3), (1, 5), (u32::MAX, 0)] {
+            let w = [1, 0x0004_0BBA, a, 0x0004_0BBA, b];
+            assert!(classify_frame(&parse_fifo_words(&w).unwrap()).is_err(), "{a} -> {b}");
+        }
     }
 
     #[test]
@@ -509,7 +764,7 @@ mod tests {
 
     #[test]
     fn parse_round_trip_and_strictness() {
-        let items = [FifoItem::boundary(), FifoItem::mode(4), FifoItem::tick(2, -2)];
+        let items = [FifoItem::boundary(), FifoItem::segment(4), FifoItem::tick(2, -2)];
         let mut words = vec![9];
         for i in &items {
             words.extend(i.words());
@@ -525,12 +780,19 @@ mod tests {
         // wrong payload length for a known opcode
         assert!(parse_fifo_words(&[1, 0x0004_0BB8, 0]).is_err());
         assert!(parse_fifo_words(&[]).is_err());
+        // a tick in the old (dY<<16)|dX, (freq<<16)|duty layout parses but is refused
+        let old = parse_fifo_words(&[1, 0x0008_0BB8, (7 << 16) | 0xFFFD, 5000 << 16]).unwrap();
+        assert!(classify_frame(&old).is_err());
+        assert!(old.items[0].is_laser(), "an unknown tick form is never taken as dry");
     }
 
     #[test]
     fn laser_content_is_classified_not_hidden() {
-        // tick with duty 4
-        let w = [1, 0x0008_0BB8, 0, (5000 << 16) | 4];
+        // CO2 tick with the beam on
+        let w = [1, 0x0008_0BB8, 0x8819_0001, 0xFFFF_0013];
+        assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Laser));
+        // power byte without the beam-on tail is still laser data
+        let w = [1, 0x0008_0BB8, 0x8819_0001, 0x13];
         assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Laser));
         // DO9 on
         let w = [1, 0x000C_270F, 2, 0x100, 0x100];
@@ -541,9 +803,15 @@ mod tests {
         // DO3 high air on is a gas record, not laser
         let w = [1, 0x000C_270F, 2, 4, 4];
         assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Motion));
-        // PWM set
-        let w = [1, 0x000C_270F, 0x11, 1234, 10];
+        // PWM set [0x11, freq, duty, enable]
+        let w = [1, 0x0010_270F, 0x11, 5000, 25, 1];
         assert_eq!(classify_frame(&parse_fifo_words(&w).unwrap()), Ok(Policy::Laser));
+        // a DO or PWM record of the wrong length
+        assert!(classify_frame(&parse_fifo_words(&[1, 0x0008_270F, 2, 0x100]).unwrap()).is_err());
+        assert!(classify_frame(&parse_fifo_words(&[1, 0x000C_270F, 0x11, 1234, 10]).unwrap()).is_err());
+        // laser-off marker decodes at the laser level only
+        assert_eq!(classify_frame(&parse_fifo_words(&[1, 0x0008_270F, 0x12, 0]).unwrap()), Ok(Policy::Laser));
+        assert!(classify_frame(&parse_fifo_words(&[1, 0x0008_270F, 0x12, 1]).unwrap()).is_err());
         // DO on a port outside the allow-list
         let w = [1, 0x000C_270F, 2, 0x8000, 0x8000];
         assert!(classify_frame(&parse_fifo_words(&w).unwrap()).is_err());

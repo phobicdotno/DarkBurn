@@ -175,7 +175,7 @@ fn random_fifo_words_never_yield_laser_data() {
                 words.push(match rng.next() % 4 {
                     0 => 0,
                     1 => 0x100,
-                    2 => (5000 << 16) | (rng.next() % 3) as u32,
+                    2 => [0x13, 0xFFFF_0013, 0x8800_0001, 0x8801_0001][(rng.next() % 4) as usize],
                     _ => rng.next() as u32 & 0xFFFF,
                 });
             }
@@ -259,7 +259,7 @@ fn constructors_never_produce_laser_policy_or_forbidden_registers() {
         command::pwm_off(1234, 3).unwrap(),
         command::pwm_off(1234, 0x11).unwrap(),
         command::do_bulk_off(0, &[5, 6, 9]).unwrap(),
-        command::fifo_frame(1, &[FifoItem::boundary(), FifoItem::mode(4), FifoItem::tick(5, -5)]).unwrap(),
+        command::fifo_frame(1, &[FifoItem::boundary(), FifoItem::segment(4), FifoItem::tick(5, -5)]).unwrap(),
     ];
     for port in 1..=10 {
         all.push(command::do_off(port).unwrap());
@@ -332,7 +332,7 @@ fn follower_and_pierce_records_cannot_ride_in_a_fifo_frame() {
     }
     // A dry frame next to them still builds.
     let mut dry = vec![1u32];
-    for i in [FifoItem::boundary(), FifoItem::mode(4), FifoItem::tick(3, -3)] {
+    for i in [FifoItem::boundary(), FifoItem::segment(4), FifoItem::tick(3, -3)] {
         dry.extend(i.words());
     }
     assert_eq!(SafeWrite::try_from_raw(0x66, &dry).unwrap().policy(), Policy::Motion);

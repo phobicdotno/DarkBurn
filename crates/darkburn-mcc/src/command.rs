@@ -762,13 +762,14 @@ pub fn da_set(channel: u32, volts: f64) -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_9999, MISC_DA, channel - 1, da_millivolts(volts)?], "da_set")
 }
 
-/// PWM without motion `[9999, 3 or 0x11, freq, duty]` (four words). Only duty 0 can be built;
-/// any other duty is laser data and refused.
+/// PWM or fiber laser command without motion `[9999, 3 or 0x11, freq, power %, enable]`, the
+/// layout Mlaser sends (`[0x11, 5000, 25, 1]` for CO2, `[3, 1111, 95, 1]` for fiber). Only power 0
+/// with enable 0 can be built; any other power or enable is laser data and refused.
 pub fn pwm_set(freq: u32, duty: u32, sub: u32) -> Result<SafeWrite, Forbidden> {
     if sub != MISC_PWM && sub != MISC_PWM_5V {
         return deny("PWM sub-command must be 3 or 0x11");
     }
-    SafeWrite::build(REG_COMMAND, vec![CMD_9999, sub, freq, duty], "pwm_set")
+    SafeWrite::build(REG_COMMAND, vec![CMD_9999, sub, freq, duty, u32::from(duty != 0)], "pwm_set")
 }
 
 /// A FIFO frame `0x66 <- [frame_id, items...]` made of dry items. Items that carry laser data are
@@ -1066,10 +1067,10 @@ mod tests {
             assert_eq!(w.policy(), Policy::Laser);
         }
         // a FIFO frame with a duty tick
-        let frame = [1u32, 0x0008_0BB8, 0, (5000 << 16) | 4];
+        let frame = [1u32, 0x0008_0BB8, 0x8819_0001, 0xFFFF_0013];
         assert!(matches!(SafeWrite::try_from_raw(0x66, &frame), Err(Forbidden::LaserData(_))));
-        // zero duty is fine
-        let frame = [1u32, 0x0008_0BB8, 0, 5000 << 16];
+        // a travel tick with power 0 and the beam-off tail is fine
+        let frame = [1u32, 0x0008_0BB8, 0x8800_0001, 0x13];
         assert!(SafeWrite::try_from_raw(0x66, &frame).is_ok());
     }
 

@@ -1,9 +1,10 @@
 //! Planner dry run: a neutral toolpath in, 12-byte FIFO ticks and a time estimate out. Nothing more.
 //!
 //! What this is: a conversion of straight moves and cuts at a given speed into opcode-3000 ticks
-//! (motor pulses per tick, see [`crate::fifo`]), packed into frames, plus a duration estimate.
+//! (signed 8-bit steps per 250 us tick, see [`crate::fifo`]), packed into frames, plus a duration
+//! estimate.
 //!
-//! What this is not: it emits **no** laser data (every tick has duty 0), no digital-output,
+//! What this is not: it emits **no** laser data (every tick has power 0 and the beam-off tail), no digital-output,
 //! gas, PWM or analogue records, no follower or pierce records and no dwell records. A cut and a
 //! rapid produce identical ticks; the difference is only in the statistics. The vendor's own
 //! height follower, pierce sequence and gas logic stay in charge of everything beyond motion
@@ -15,7 +16,7 @@
 //! look-ahead and corner blending that this estimate does not model, so the estimate is an upper
 //! bound for chains of short segments.
 
-use crate::fifo::{FifoFeeder, FifoItem, FramePacker, PackedFrame};
+use crate::fifo::{COUNTS_PER_MM_X, COUNTS_PER_MM_Y, FifoFeeder, FifoItem, FramePacker, PackedFrame, TICK_MAX_STEP};
 use kurbo::Point;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -52,16 +53,16 @@ impl PathSegment {
     }
 }
 
-/// Planner configuration. Defaults are the owner's CF1390 values from static analysis.
+/// Planner configuration. Defaults are the owner's CF1390 values (step scale and tick from captures).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanConfig {
     /// Where the head is when the path starts.
     pub start: Point,
-    /// Motor pulses per mm, X: `8000 / 31.003`.
+    /// Tick steps per mm, X (card axis 0): 257.90, measured on a 250 mm capture line.
     pub pulses_per_mm_x: f64,
-    /// Motor pulses per mm, Y: `8000 / 31.009`.
+    /// Tick steps per mm, Y (card axis 1): 258.14, measured on a 250 mm capture line.
     pub pulses_per_mm_y: f64,
-    /// Tick period in microseconds (register 50005, default 250, unconfirmed).
+    /// Tick period in microseconds (250, confirmed by capture).
     pub tick_us: f64,
     /// Acceleration in mm/s^2 for the trapezoid.
     pub accel_mm_s2: f64,
@@ -79,8 +80,8 @@ impl Default for PlanConfig {
     fn default() -> PlanConfig {
         PlanConfig {
             start: Point::new(0.0, 0.0),
-            pulses_per_mm_x: 8000.0 / 31.003,
-            pulses_per_mm_y: 8000.0 / 31.009,
+            pulses_per_mm_x: COUNTS_PER_MM_X,
+            pulses_per_mm_y: COUNTS_PER_MM_Y,
             tick_us: 250.0,
             accel_mm_s2: 5999.99,
             rapid_speed_mm_s: 550.0,
@@ -102,7 +103,7 @@ pub enum PlanError {
     SpeedAboveLimit(f64),
     /// A point lies outside the work area.
     OutOfBounds(Point),
-    /// More pulses in one tick than a signed 16-bit field holds.
+    /// More steps in one tick than a signed 8-bit field holds.
     TickOverflow(f64),
     /// The plan would exceed [`PlanConfig::max_ticks`].
     TooLong,
@@ -117,7 +118,7 @@ impl fmt::Display for PlanError {
             PlanError::BadSpeed(v) => write!(f, "speed {v} mm/s is missing or not positive"),
             PlanError::SpeedAboveLimit(v) => write!(f, "speed {v} mm/s is above the machine limit"),
             PlanError::OutOfBounds(p) => write!(f, "point ({}, {}) is outside the work area", p.x, p.y),
-            PlanError::TickOverflow(v) => write!(f, "{v} pulses in one tick do not fit 16 bits"),
+            PlanError::TickOverflow(v) => write!(f, "{v} pulses in one tick do not fit 8 bits"),
             PlanError::TooLong => write!(f, "plan exceeds the tick limit"),
             PlanError::BadConfig(s) => write!(f, "bad planner configuration: {s}"),
         }
@@ -274,7 +275,7 @@ pub fn dry_run(path: &[PathSegment], cfg: &PlanConfig) -> Result<DryRunPlan, Pla
             let ex = ds * ux * cfg.pulses_per_mm_x + carry_x;
             let ey = ds * uy * cfg.pulses_per_mm_y + carry_y;
             for v in [ex, ey] {
-                if v.abs() > i16::MAX as f64 {
+                if v.abs() > TICK_MAX_STEP as f64 {
                     return Err(PlanError::TickOverflow(v));
                 }
             }
@@ -283,7 +284,7 @@ pub fn dry_run(path: &[PathSegment], cfg: &PlanConfig) -> Result<DryRunPlan, Pla
             carry_y = ey - py;
             plan.total_pulses_x += px as i64;
             plan.total_pulses_y += py as i64;
-            packer.add_record(&[FifoItem::tick(px as i16, py as i16)]);
+            packer.add_record(&[FifoItem::tick(px as i8, py as i8)]);
         }
         plan.tick_count += n;
         let secs = n as f64 * tick_s;
@@ -331,8 +332,8 @@ mod tests {
         assert!((plan.estimated_seconds - 2.05).abs() < 1e-9);
         assert!((plan.cut_seconds - 2.05).abs() < 1e-9);
         assert_eq!(plan.rapid_seconds, 0.0);
-        let expect = 100.0 * 8000.0 / 31.003;
-        assert!((plan.total_pulses_x as f64 - expect).abs() < 1.0, "{} vs {expect}", plan.total_pulses_x);
+        let expect = 100.0 * COUNTS_PER_MM_X;
+        assert!((plan.total_pulses_x as f64 - expect).abs() <= 1.0 + 1e-6, "{} vs {expect}", plan.total_pulses_x);
         assert_eq!(plan.total_pulses_y, 0);
         assert!((plan.cut_length_mm - 100.0).abs() < 1e-9);
         assert_eq!(plan.end, Point::new(110.0, 10.0));
@@ -350,19 +351,20 @@ mod tests {
     #[test]
     fn diagonal_pulses_follow_the_axis_scales_and_carry() {
         let plan = dry_run(&[PathSegment::rapid(40.0, 50.0)], &cfg()).unwrap();
-        let ex = 30.0 * 8000.0 / 31.003;
-        let ey = 40.0 * 8000.0 / 31.009;
-        assert!((plan.total_pulses_x as f64 - ex).abs() < 1.0);
-        assert!((plan.total_pulses_y as f64 - ey).abs() < 1.0);
+        let ex = 30.0 * COUNTS_PER_MM_X;
+        let ey = 40.0 * COUNTS_PER_MM_Y;
+        assert!((plan.total_pulses_x as f64 - ex).abs() <= 1.0 + 1e-6);
+        assert!((plan.total_pulses_y as f64 - ey).abs() <= 1.0 + 1e-6);
         assert!(plan.rapid_seconds > 0.0 && plan.cut_seconds == 0.0);
-        // many short segments must not drift: carry is kept across them
+        // many short segments must not drift: carry is kept across them (truncation leaves the
+        // total at most one step short of the exact count)
         let mut path = Vec::new();
         for i in 1..=100 {
             path.push(PathSegment::cut(10.0 + i as f64 * 0.1, 10.0, 20.0));
         }
         let plan = dry_run(&path, &cfg()).unwrap();
-        let expect = 10.0 * 8000.0 / 31.003;
-        assert!((plan.total_pulses_x as f64 - expect).abs() < 1.0, "{} vs {expect}", plan.total_pulses_x);
+        let expect = 10.0 * COUNTS_PER_MM_X;
+        assert!((plan.total_pulses_x as f64 - expect).abs() <= 1.0 + 1e-6, "{} vs {expect}", plan.total_pulses_x);
     }
 
     #[test]
@@ -377,7 +379,7 @@ mod tests {
             let parsed = parse_fifo_words(w.words()).unwrap();
             for item in parsed.items {
                 let t = item.as_tick().expect("only ticks");
-                assert_eq!(t.duty, 0, "dry run never turns the laser on");
+                assert!(t.power == 0 && !t.laser_on, "dry run never turns the laser on");
                 assert!(!item.is_laser());
                 sx += t.dx as i64;
                 sy += t.dy as i64;
@@ -422,9 +424,13 @@ mod tests {
 
     #[test]
     fn overflow_is_reported_not_wrapped() {
-        // 3000 mm/s with a huge pulse scale would need more than 32767 pulses per 250 us tick
+        // 3000 mm/s with a huge pulse scale would need more than 127 steps per 250 us tick
         let c = PlanConfig { pulses_per_mm_x: 50_000.0, accel_mm_s2: 1.0e9, ..cfg() };
         assert!(matches!(dry_run(&[PathSegment::cut(1000.0, 10.0, 3000.0)], &c), Err(PlanError::TickOverflow(_))));
+        // with the real scale one byte holds about 1968 mm/s per axis: 2500 mm/s does not fit
+        let c = PlanConfig { accel_mm_s2: 1.0e9, ..cfg() };
+        assert!(matches!(dry_run(&[PathSegment::cut(1000.0, 10.0, 2500.0)], &c), Err(PlanError::TickOverflow(_))));
+        assert!(dry_run(&[PathSegment::cut(1000.0, 10.0, 1900.0)], &c).is_ok());
     }
 
     #[test]

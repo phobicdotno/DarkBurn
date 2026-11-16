@@ -238,7 +238,7 @@ fn damaged_and_odd_frames_are_refused_without_a_panic() {
         reqs.push(Request::write(w));
     }
     reqs.push(Request::write(command::jog_continuous(0, false, &p(), None).unwrap()));
-    reqs.push(Request::write(command::fifo_frame(u32::MAX, &vec![FifoItem::tick(i16::MIN, i16::MAX); 99]).unwrap()));
+    reqs.push(Request::write(command::fifo_frame(u32::MAX, &vec![FifoItem::tick(i8::MIN, i8::MAX); 99]).unwrap()));
     let mut sim = CardSimulator::new(SimConfig::default());
     for r in &reqs {
         let f = r.encode(0xFFFF).unwrap();

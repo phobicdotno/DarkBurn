@@ -57,7 +57,7 @@ pub fn fifo_opcode_name(op: u16) -> &'static str {
     match op {
         3000 => "tick",
         3001 => "boundary",
-        3002 => "mode",
+        3002 => "segment",
         9999 => "misc",
         103 => "follower move",
         104 => "follower 104",
@@ -149,7 +149,9 @@ pub fn describe_misc(w: &[u32]) -> String {
             if ports.is_empty() { format!("output mask {mask:#x} value {value:#x}") } else { format!("set {}", ports.join(" ")) }
         }
         [4, channel, millivolts, ..] => format!("analogue output {} = {millivolts} mV", channel.wrapping_add(1)),
-        [3 | 0x11, freq, duty, ..] => format!("PWM {freq} Hz, duty {duty}"),
+        [3 | 0x11, freq, duty, enable, ..] => format!("PWM {freq} Hz, duty {duty}, enable {enable}"),
+        [3 | 0x11, freq, duty] => format!("PWM {freq} Hz, duty {duty}"),
+        [0x12, ..] => "laser-off marker".into(),
         [5, ..] => "connect prologue (meaning unknown)".into(),
         _ => String::new(),
     }
@@ -203,7 +205,8 @@ pub fn describe_fifo(words: &[u32]) -> String {
             remainder = rest.len() - i;
             break;
         }
-        if op == 3000 && n == 2 && rest[i + 2] & 0xFFFF != 0 {
+        // beam-on tail (0xffff high half) or a power byte: the 0x88/0x57 tick layout
+        if op == 3000 && n == 2 && (rest[i + 2] >> 16 == 0xFFFF || (rest[i + 1] >> 16) & 0xFF != 0) {
             ticks_with_duty += 1;
         }
         match census.iter_mut().find(|(o, _)| *o == op) {
@@ -217,7 +220,7 @@ pub fn describe_fifo(words: &[u32]) -> String {
     let parts: Vec<String> = census.iter().map(|(op, n)| format!("{} x{n}", fifo_opcode_name(*op))).collect();
     let mut out = format!("queue frame id={frame_id} ({frame_id:#x}), {items} items [{}]", parts.join(", "));
     if ticks_with_duty > 0 {
-        out.push_str(&format!(", {ticks_with_duty} ticks with duty"));
+        out.push_str(&format!(", {ticks_with_duty} laser-on ticks"));
     }
     if remainder > 0 {
         out.push_str(&format!(", {remainder} words left over"));
@@ -419,7 +422,10 @@ mod tests {
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 2, 0x101, 0x100]), "CMD misc/outputs 1..10 [9999, 2, 257, 256]  set DO1=0 DO9=1");
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 13, 0b11, 0b01]), "CMD misc/outputs 11..26 [9999, 13, 3, 1]  set DO11=1 DO12=0");
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 4, 1, 5000]), "CMD misc/analogue output [9999, 4, 1, 5000]  analogue output 2 = 5000 mV");
-        assert_eq!(describe_vector(&[0x40, 0x65, 5, 9999, 0x11, 1234, 0, 0]), "CMD misc/PWM (5 V) [9999, 17, 1234, 0, 0]  PWM 1234 Hz, duty 0");
+        assert_eq!(
+            describe_vector(&[0x40, 0x65, 5, 9999, 0x11, 1234, 0, 0]),
+            "CMD misc/PWM (5 V) [9999, 17, 1234, 0, 0]  PWM 1234 Hz, duty 0, enable 0"
+        );
         assert_eq!(describe_vector(&[0x40, 0x65, 1, 101]), "CMD follower stop [101]");
         assert_eq!(describe_vector(&[0x40, 0x65, 3, 103, 500, 3000]), "CMD follower move [103, 500, 3000]  follower v 50.0 mm/s, height +3.000 mm");
         assert_eq!(describe_vector(&[0x40, 0x67, 1, 2]), "queue control 2 (start)");
@@ -435,11 +441,11 @@ mod tests {
 
     #[test]
     fn queue_frames_are_summarised() {
-        let w = command::fifo_frame(7, &[FifoItem::boundary(), FifoItem::tick(1, 2), FifoItem::tick(3, 4), FifoItem::mode(5)]).unwrap();
-        assert_eq!(describe_vector(&w.request_vector()), "queue frame id=7 (0x7), 4 items [tick x2, boundary x1, mode x1]");
+        let w = command::fifo_frame(7, &[FifoItem::boundary(), FifoItem::tick(1, 2), FifoItem::tick(3, 4), FifoItem::segment(5)]).unwrap();
+        assert_eq!(describe_vector(&w.request_vector()), "queue frame id=7 (0x7), 4 items [tick x2, boundary x1, segment x1]");
         // a tick with duty and a follower record are named, not hidden
-        let words = [9u32, 0x0008_0BB8, 0, (5000 << 16) | 40, 0x0008_0067, 500, 3000, 0x0005_0BB8];
-        assert_eq!(describe_fifo(&words), "queue frame id=9 (0x9), 2 items [follower move x1, tick x1], 1 ticks with duty, 1 words left over");
+        let words = [9u32, 0x0008_0BB8, 0x8819_0100, 0xFFFF_0013, 0x0008_0067, 500, 3000, 0x0008_0BB8, 0x8800_0100, 0x13, 0x0005_0BB8];
+        assert_eq!(describe_fifo(&words), "queue frame id=9 (0x9), 3 items [tick x2, follower move x1], 1 laser-on ticks, 1 words left over");
         assert_eq!(describe_fifo(&[]), "queue frame (empty: no frame id)");
     }
 

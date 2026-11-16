@@ -711,6 +711,7 @@ mod tests {
     fn fiber_laser_records_from_the_capture() {
         // Fiber contour head and tail as Mlaser sent them: laser command [3, freq, power %, on],
         // beam-on 0x57 ticks, laser-off marker and laser command off.
+        #[rustfmt::skip]
         let words = [
             1, 0x0004_0BBA, 3, 0x0000_0BB9, 0x000C_270F, 2, 2, 2, 0x0010_270F, 3, 0x457, 0x5F, 1, 0x0008_0BB8, 0x5701_0100,
             0xFFFF_0004, 0x0000_0BB9, 0x0008_270F, 0x12, 0, 0x0010_270F, 3, 0x457, 0, 0, 0x000C_270F, 2, 2, 0, 0x0000_0BB9,

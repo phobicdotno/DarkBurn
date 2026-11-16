@@ -422,7 +422,10 @@ mod tests {
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 2, 0x101, 0x100]), "CMD misc/outputs 1..10 [9999, 2, 257, 256]  set DO1=0 DO9=1");
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 13, 0b11, 0b01]), "CMD misc/outputs 11..26 [9999, 13, 3, 1]  set DO11=1 DO12=0");
         assert_eq!(describe_vector(&[0x40, 0x65, 4, 9999, 4, 1, 5000]), "CMD misc/analogue output [9999, 4, 1, 5000]  analogue output 2 = 5000 mV");
-        assert_eq!(describe_vector(&[0x40, 0x65, 5, 9999, 0x11, 1234, 0, 0]), "CMD misc/PWM (5 V) [9999, 17, 1234, 0, 0]  PWM 1234 Hz, duty 0, enable 0");
+        assert_eq!(
+            describe_vector(&[0x40, 0x65, 5, 9999, 0x11, 1234, 0, 0]),
+            "CMD misc/PWM (5 V) [9999, 17, 1234, 0, 0]  PWM 1234 Hz, duty 0, enable 0"
+        );
         assert_eq!(describe_vector(&[0x40, 0x65, 1, 101]), "CMD follower stop [101]");
         assert_eq!(describe_vector(&[0x40, 0x65, 3, 103, 500, 3000]), "CMD follower move [103, 500, 3000]  follower v 50.0 mm/s, height +3.000 mm");
         assert_eq!(describe_vector(&[0x40, 0x67, 1, 2]), "queue control 2 (start)");
@@ -442,10 +445,7 @@ mod tests {
         assert_eq!(describe_vector(&w.request_vector()), "queue frame id=7 (0x7), 4 items [tick x2, boundary x1, segment x1]");
         // a tick with duty and a follower record are named, not hidden
         let words = [9u32, 0x0008_0BB8, 0x8819_0100, 0xFFFF_0013, 0x0008_0067, 500, 3000, 0x0008_0BB8, 0x8800_0100, 0x13, 0x0005_0BB8];
-        assert_eq!(
-            describe_fifo(&words),
-            "queue frame id=9 (0x9), 3 items [tick x2, follower move x1], 1 laser-on ticks, 1 words left over"
-        );
+        assert_eq!(describe_fifo(&words), "queue frame id=9 (0x9), 3 items [tick x2, follower move x1], 1 laser-on ticks, 1 words left over");
         assert_eq!(describe_fifo(&[]), "queue frame (empty: no frame id)");
     }
 

@@ -37,9 +37,14 @@ use crate::registers::{Forbidden, REG_COMMAND, REG_FIFO_CONTROL, REG_FIFO_DATA, 
 pub const CMD_STOP: u32 = 1;
 /// Sub-command 2: home.
 pub const CMD_HOME: u32 = 2;
-/// Sub-command 3: jog / relative move (bit 31 of the axis word = absolute).
+/// Sub-command 3: jog / relative move (bit 31 of the axis word = absolute). The distance is
+/// signed micrometres: positive X moves the head right, positive Y towards the back (seen on an
+/// M3 Ultra).
 pub const CMD_JOG: u32 = 3;
-/// Sub-command 5: go to point.
+/// Sub-command 5: go to point. Without [`ABSOLUTE_BIT`] the X/Y words are distances from where
+/// the head is: the vendor's "Home" button sends `[5, 3, ...]` with the target minus the current
+/// position, and two presses from different starts sent different words but stopped at the same
+/// spot (seen on an M3 Ultra).
 pub const CMD_GOTO: u32 = 5;
 /// Sub-command 9999: miscellaneous (connect prologue, DO, DA, PWM).
 pub const CMD_9999: u32 = 9999;

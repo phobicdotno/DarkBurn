@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.0.778 (build 11)
+- Fix: the Gweike window and the update link now speak every language, not just English and Norwegian
+- Fix: Gweike job data now uses the same layout as the laser's own software (not used for real jobs yet)
+
 ## v0.0.776 (build 10)
 - New: Gweike M lasers: head calibration, with a progress window and a cancel button
 - New: Gweike M lasers: head calibration follows the height sensor and says why it failed

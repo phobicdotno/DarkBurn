@@ -666,7 +666,8 @@ mod tests {
         let j = n.to_json();
         let health: Vec<&str> = j["devices"].as_array().unwrap().iter().map(|d| d["health"].as_str().unwrap()).collect();
         assert_eq!(health, ["ok", "ok", "not_fitted", "ok"]);
-        assert_eq!(n.verdict(), "Card OK, 0% loss, 0.4 ms");
+        // The protocol probe wins over ping; the simulator answers at once.
+        assert!(n.verdict().starts_with("Card OK, 0% loss"), "{}", n.verdict());
     }
 
     #[test]

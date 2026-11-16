@@ -58,6 +58,7 @@ and settings are all commands; if you can click it, there is a command (find it 
 | `galvo.*` | galvo (fibre, UV) devices: settings, lens correction files, red-light framing and repeat marking; actions that mark or arm are hardware |
 | `gweike.*` | the Gweike M3 Ultra file workflow: layer to material and craft mapping, `.chf`, DXF and `.nc` export, the planner dry run and the card simulator. There is no command that connects to the real card |
 | `mcc.*` | the in-memory Gweike card simulator: connect (reads only), status with the alarms in words, stop, emergency stop, disconnect (all hardware), and `mcc.dissect`, which explains a controller frame you paste. None reaches a real card |
+| `net.*` | `net.test` (`status`, `start`, `stop`): the Gweike laser network test. It pings the card, the follower and the fiber source and reads the card's status block over UDP 502. Read only, but it does reach the real laser network (hardware) |
 
 The dedicated tools (`new_design`, `open`, `save`, `import`, `export`, `undo`, `redo`,
 `set_setting`) are shortcuts for `file.new`, `file.open`, `file.save` / `file.save_as`,
@@ -134,7 +135,7 @@ call.
 - Anything that moves axes, fires the laser, sends a job, writes machine settings or controller
   files, or connects to a device is a **hardware command** (`hardware: true`): `machine.*`,
   `job.start`, `job.send`, `job.frame`, `job.home`, `job.run_gcode`, `tools.position_laser`,
-  `arrange.laser_*`, `edit.device_settings`, `edit.machine_settings`, `laser.devices` and more.
+  `arrange.laser_*`, `net.test`, `edit.device_settings`, `edit.machine_settings`, `laser.devices` and more.
   `describe_command` tells for any id. Changing the machine's setup counts too: selecting, adding,
   removing or importing a device, its connection, the start and end scripts and limits
   (`job.set_gcode_settings`) and the galvo settings.

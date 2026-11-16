@@ -137,6 +137,8 @@ mod multi_trace;
 mod native_frame;
 mod nest_cmds;
 mod nest_ui;
+mod net_test;
+mod net_test_ui;
 mod node_tool;
 mod numeric;
 mod numeric_edits;
@@ -369,6 +371,11 @@ impl eframe::App for App {
         // The pendant's Stop and Pause keys work whether or not the window is drawn: a
         // minimised or covered window runs this and no `ui`.
         pendant_ui::logic(ctx, app);
+        // The Gweike network test measures on its own thread: collect its samples.
+        app.machine.ext.net.pump();
+        if app.machine.ext.net.running() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        }
         if self.frames < 2 {
             self.frames += 1;
             #[cfg(target_os = "windows")]

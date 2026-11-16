@@ -11,12 +11,49 @@
 //! decoded register, so a finished run is only "done". A card without a follower block falls
 //! back to the MCC run status word (busy, then idle).
 //!
+//! **Superblock (owner, 2026-11-16):** a calibration started while the FTC reports an error can
+//! crack the ceramic ring. [`HeadCalibration::start`] therefore needs a fresh follower status read
+//! taken just before the start and refuses outright, with no override, when any follower alarm
+//! bit is set ([`crate::registers::zf_alarm`], FTC alarm included) or when no follower status
+//! could be read at all. [`command::head_calibrate`] is private to this crate, so nothing else
+//! can send `0x65 <- [107]`.
+//!
 //! Open: 9.6 s into the captured run Mlaser also sent `0x65 <- [1, 0x1F, 2, 0x176F, 0x30D40]`
 //! then `0x65 <- [0x76, 5, 0]`. What triggers that pair is not decoded, so it is not part of
 //! this flow.
 
 use crate::command::{self, MachineParams, SafeWrite};
 use crate::registers::Forbidden;
+
+/// Why a head calibration was not started. There is no override for any of these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StartBlocked {
+    /// The follower/FTC reports an error (alarm bits, `word 1 & 0xFFFF` of block 10000).
+    FtcError {
+        /// The alarm bits that were set.
+        alarm: u32,
+    },
+    /// No follower status was read before the start, so an FTC error cannot be ruled out.
+    NoFollowerStatus,
+    /// The write itself was refused by the register rules.
+    Forbidden(Forbidden),
+}
+
+impl StartBlocked {
+    /// Plain text for the user.
+    pub fn text(&self) -> String {
+        match self {
+            StartBlocked::FtcError { alarm } => format!(
+                "Head calibration blocked: the FTC reports an error ({}). Calibrating with an FTC error standing can crack the ceramic. Clear the error on the machine first.",
+                crate::registers::zf_alarm::names(*alarm).join(", ")
+            ),
+            StartBlocked::NoFollowerStatus => {
+                "Head calibration blocked: the FTC status could not be read, so an FTC error cannot be ruled out.".into()
+            }
+            StartBlocked::Forbidden(f) => format!("Head calibration blocked: {f:?}"),
+        }
+    }
+}
 
 /// The run stops itself and reports a failure after this long.
 pub const TIMEOUT_MS: u64 = 120_000;
@@ -77,9 +114,17 @@ pub struct HeadCalibration {
 }
 
 impl HeadCalibration {
-    /// Start a run at `now_ms`; returns the run and the write to send.
-    pub fn start(now_ms: u64) -> Result<(HeadCalibration, SafeWrite), Forbidden> {
-        Ok((HeadCalibration { started_ms: now_ms, seen_busy: false, state: CalibState::Running }, command::head_calibrate()?))
+    /// Start a run at `now_ms`; returns the run and the write to send. `before` is the follower
+    /// status read just before the start: any alarm bit, or no follower status at all, blocks the
+    /// start (superblock, no override).
+    pub fn start(now_ms: u64, before: CalibInput) -> Result<(HeadCalibration, SafeWrite), StartBlocked> {
+        match before {
+            CalibInput::Follower { alarm, .. } if alarm & 0xFFFF != 0 => return Err(StartBlocked::FtcError { alarm: alarm & 0xFFFF }),
+            CalibInput::Follower { .. } => {}
+            CalibInput::RunStatus { .. } => return Err(StartBlocked::NoFollowerStatus),
+        }
+        let w = command::head_calibrate().map_err(StartBlocked::Forbidden)?;
+        Ok((HeadCalibration { started_ms: now_ms, seen_busy: false, state: CalibState::Running }, w))
     }
 
     /// Current state.
@@ -149,14 +194,33 @@ mod tests {
 
     #[test]
     fn start_sends_107() {
-        let (c, w) = HeadCalibration::start(0).unwrap();
+        let (c, w) = HeadCalibration::start(0, zf(0)).unwrap();
         assert_eq!(w.words(), &[107]);
         assert_eq!(c.state(), &CalibState::Running);
     }
 
     #[test]
+    fn superblock_any_ftc_error_refuses_the_start() {
+        use crate::registers::zf_alarm;
+        for alarm in [zf_alarm::FTC_ALARM, zf_alarm::SIGNAL_SMALL, zf_alarm::TOUCH_PLATE, zf_alarm::FPGA_NOT_LOADED, 1 << 14] {
+            let e = HeadCalibration::start(0, CalibInput::Follower { run_command: 0, alarm }).unwrap_err();
+            assert_eq!(e, StartBlocked::FtcError { alarm });
+            assert!(e.text().contains("FTC reports an error"), "{}", e.text());
+        }
+        // high bits are not alarm bits
+        assert!(HeadCalibration::start(0, CalibInput::Follower { run_command: 0, alarm: 0x1_0000 }).is_ok());
+    }
+
+    #[test]
+    fn superblock_no_follower_status_refuses_the_start() {
+        for busy in [false, true] {
+            assert_eq!(HeadCalibration::start(0, rs(busy)).unwrap_err(), StartBlocked::NoFollowerStatus);
+        }
+    }
+
+    #[test]
     fn finishes_on_the_follower_run_command_edge() {
-        let (mut c, _) = HeadCalibration::start(0).unwrap();
+        let (mut c, _) = HeadCalibration::start(0, zf(0)).unwrap();
         assert!(c.on_status(100, zf(105), &p()).unwrap().is_empty(), "before the follower picked it up");
         assert!(c.on_status(500, zf(107), &p()).unwrap().is_empty());
         assert!(c.on_status(11_000, zf(107), &p()).unwrap().is_empty());
@@ -169,7 +233,7 @@ mod tests {
 
     #[test]
     fn a_zero_run_command_before_107_is_not_done() {
-        let (mut c, _) = HeadCalibration::start(0).unwrap();
+        let (mut c, _) = HeadCalibration::start(0, zf(0)).unwrap();
         assert!(c.on_status(100, zf(0), &p()).unwrap().is_empty());
         assert_eq!(c.state(), &CalibState::Running);
     }
@@ -177,7 +241,7 @@ mod tests {
     #[test]
     fn follower_alarm_fails_the_run_with_stop_all() {
         use crate::registers::zf_alarm;
-        let (mut c, _) = HeadCalibration::start(0).unwrap();
+        let (mut c, _) = HeadCalibration::start(0, zf(0)).unwrap();
         c.on_status(500, zf(107), &p()).unwrap();
         let alarm = zf_alarm::SIGNAL_SMALL | zf_alarm::FTC_ALARM;
         let w = c.on_status(5_000, CalibInput::Follower { run_command: 107, alarm }, &p()).unwrap();
@@ -190,7 +254,7 @@ mod tests {
 
     #[test]
     fn run_status_fallback_without_a_follower() {
-        let (mut c, _) = HeadCalibration::start(0).unwrap();
+        let (mut c, _) = HeadCalibration::start(0, zf(0)).unwrap();
         assert!(c.on_status(100, rs(false), &p()).unwrap().is_empty(), "idle before the card picked it up");
         assert!(c.on_status(500, rs(true), &p()).unwrap().is_empty());
         let w = c.on_status(22_000, rs(false), &p()).unwrap();
@@ -200,7 +264,7 @@ mod tests {
 
     #[test]
     fn timeout_stops() {
-        let (mut c, _) = HeadCalibration::start(1000).unwrap();
+        let (mut c, _) = HeadCalibration::start(1000, zf(0)).unwrap();
         c.on_status(2000, zf(107), &p()).unwrap();
         let w = c.on_status(1000 + TIMEOUT_MS, zf(107), &p()).unwrap();
         assert_eq!(c.state(), &CalibState::TimedOut);
@@ -209,7 +273,7 @@ mod tests {
 
     #[test]
     fn cancel_stops_once() {
-        let (mut c, _) = HeadCalibration::start(0).unwrap();
+        let (mut c, _) = HeadCalibration::start(0, zf(0)).unwrap();
         let w = c.cancel(&p()).unwrap().unwrap();
         assert_eq!(w.words()[..2], [1, 0x1F]);
         assert_eq!(c.state(), &CalibState::Cancelled);

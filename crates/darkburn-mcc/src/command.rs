@@ -663,8 +663,10 @@ pub fn stop_all(v_last_word: i64, params: &MachineParams) -> Result<SafeWrite, F
 }
 
 /// Head calibration start `0x65 <- [107]`, as Mlaser sends it (capture 2026-11-14). Needs
-/// motion armed. Gweike M lasers only; the caller checks the machine capability.
-pub fn head_calibrate() -> Result<SafeWrite, Forbidden> {
+/// motion armed. Gweike M lasers only; the caller checks the machine capability. Crate-private:
+/// the only way in from outside is [`crate::head_calib::HeadCalibration::start`], which refuses
+/// while the FTC reports an error (superblock).
+pub(crate) fn head_calibrate() -> Result<SafeWrite, Forbidden> {
     SafeWrite::build(REG_COMMAND, vec![CMD_HEAD_CALIBRATE], "head_calibrate")
 }
 

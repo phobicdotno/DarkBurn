@@ -300,7 +300,15 @@ fn card_buttons(ui: &mut Ui, connected: bool, calib: CalibButton, frame: &mut St
             *cmd = Some(("mcc.emergency_stop", json!({})));
         }
         // Read only: pings and one status read, like the vendor's Network Test button.
-        if small(ui, &tr("net.open", "Network test"), &tr("net.open_tip", "Ping the card, follower and fiber source and time the card's answers"), true) {
+        if small(
+            ui,
+            &tr("net.open", "Network test"),
+            &tr(
+                "net.open_tip",
+                "Ping the card, follower and fiber source and time the card's answers",
+            ),
+            true,
+        ) {
             ui.ctx().data_mut(|d| d.insert_temp(Id::unique(crate::net_test_ui::OPEN), true));
         }
         // Head calibration is a Gweike M machine action: other machines never see the button.

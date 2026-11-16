@@ -44,6 +44,7 @@ pub const SLOW_MS: f64 = 20.0;
 /// Loss above this share (percent) is "lost" rather than "slow".
 pub const LOST_PCT: f64 = 50.0;
 /// The PC side of the laser network.
+#[cfg(test)]
 pub const PC_IP: Ipv4Addr = Ipv4Addr::new(10, 1, 1, 10);
 
 /// What is being tested.
@@ -212,6 +213,7 @@ pub fn verdict(nic_ok: Option<bool>, card: &Stats, protocol: &Stats) -> String {
 }
 
 /// Whether any local adapter has an address in 10.1.1.0/24. `None` when it cannot be told.
+#[cfg_attr(test, allow(dead_code))]
 pub fn nic_on_laser_net() -> Option<bool> {
     // Asking the OS which source address it would use for the card needs no packet: a UDP
     // "connect" only picks a route.
@@ -264,10 +266,12 @@ pub fn probe_card(wire: &mut dyn CardWire, seq: u16, timeout: Duration) -> Probe
 }
 
 /// The card over UDP 502. Opened only when the user presses Start.
+#[cfg_attr(test, allow(dead_code))]
 pub struct UdpCard {
     socket: std::net::UdpSocket,
 }
 
+#[cfg_attr(test, allow(dead_code))]
 impl UdpCard {
     pub fn open() -> std::io::Result<UdpCard> {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
@@ -294,6 +298,7 @@ impl CardWire for darkburn_mcc::CardSimulator {
 }
 
 /// The system `ping` program with a 1000-byte payload.
+#[cfg_attr(test, allow(dead_code))]
 pub struct SystemPing;
 
 impl Pinger for SystemPing {

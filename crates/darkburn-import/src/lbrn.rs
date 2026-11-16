@@ -63,10 +63,8 @@ fn import_with_point_budget(bytes: &[u8], point_budget: usize) -> Result<Importe
     if root.name != "LightBurnProject" {
         return Err(ImportError::Parse("not a LightBurn project".into()));
     }
-    let mut r = Reader { out: Imported::default(), verts: HashMap::new(), prims: HashMap::new(), names: HashMap::new(),
-        budget: 2_000_000,
-        point_budget,
-    };
+    let mut r =
+        Reader { out: Imported::default(), verts: HashMap::new(), prims: HashMap::new(), names: HashMap::new(), budget: 2_000_000, point_budget };
 
     let mut info = ProjectInfo {
         app_version: root.attr("AppVersion").map(str::to_string),
@@ -913,9 +911,7 @@ mod tests {
 
     #[test]
     fn shared_vert_list_counts_against_the_point_budget() {
-        let shape = |id: &str| {
-            format!(r#"<Shape Type="Path" CutIndex="0" VertID="{id}" PrimID="{id}"><XForm>1 0 0 1 0 0</XForm></Shape>"#)
-        };
+        let shape = |id: &str| format!(r#"<Shape Type="Path" CutIndex="0" VertID="{id}" PrimID="{id}"><XForm>1 0 0 1 0 0</XForm></Shape>"#);
         let mut xml = String::from(r#"<?xml version="1.0"?><LightBurnProject AppVersion="1.0" FormatVersion="1">"#);
         xml.push_str(r#"<Shape Type="Path" CutIndex="0" VertID="0" PrimID="0"><XForm>1 0 0 1 0 0</XForm><VertList>V0 0V10 0V10 10V0 10</VertList><PrimList>LineClosed</PrimList></Shape>"#);
         for _ in 0..9 {
@@ -923,9 +919,7 @@ mod tests {
         }
         xml.push_str("</LightBurnProject>");
         // Ten shapes of four points each: 40 points. A budget of 20 lets the first five through.
-        let drawn = |doc: &Imported| {
-            doc.items.iter().filter(|i| matches!(&i.kind, ItemKind::Path(p) if !p.path.elements().is_empty())).count()
-        };
+        let drawn = |doc: &Imported| doc.items.iter().filter(|i| matches!(&i.kind, ItemKind::Path(p) if !p.path.elements().is_empty())).count();
         let all = import_with_point_budget(xml.as_bytes(), 1000).unwrap();
         assert_eq!(drawn(&all), 10);
         assert!(all.warnings.is_empty(), "{:?}", all.warnings);

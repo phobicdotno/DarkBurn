@@ -10,8 +10,9 @@
 //!   the layer power %, fiber: a per-tick power that ramps). `form` is `0x88` for the CO2 and travel
 //!   form with tail `0x13` (laser off) or `0xffff_0013` (laser on), and `0x57` for the fiber form
 //!   with tail `0x04` or `0xffff_0004`. Acceleration lives in the deltas; there is no speed word.
-//!   Which physical direction a positive `dx`/`dy` moves is not proven yet: confirm it with a
-//!   +X jog capture before any dry run.
+//!   On the card's own axes, positive X moves the head right and positive Y moves it towards
+//!   the back (seen on an M3 Ultra with jog steps). That a positive FIFO `dx`/`dy` follows the
+//!   same axis sign is assumed, not seen yet: check it in a dry run before cutting.
 //! * Opcode 3001 is a boundary record without payload.
 //! * Opcode 3002 is the segment counter `[n]`: 0, 1, 2 ... over the job, even = travel segment,
 //!   odd = laser segment. It is not a mode word.

@@ -7,7 +7,7 @@
 //! masks) and optional-content layers (Illustrator layers, with hidden state). Clip paths are
 //! not applied (a warning says so) and PDF text that was not converted to outlines is skipped.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
 use kurbo::{Affine, BezPath, Point};
@@ -45,6 +45,15 @@ const PT_TO_MM: f64 = 25.4 / 72.0;
 const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 const MAX_DECODED: usize = 512 * 1024 * 1024;
 const MAX_FORM_DEPTH: u32 = 16;
+/// Pixels all images of one import may add up to; one picture drawn many times counts each time.
+const MAX_TOTAL_PIXELS: u64 = 4 * MAX_PIXELS;
+
+/// Images shared by every page of one import: each image object is decoded once, and the
+/// pixels of every placed copy count against one budget.
+struct Images {
+    pixels_left: u64,
+    decoded: HashMap<(ObjectId, Rgb), Result<DynamicImage, String>>,
+}
 
 fn load(bytes: &[u8]) -> Result<Document, ImportError> {
     guard("PDF", || Document::load_mem(bytes))?.map_err(|e| ImportError::Parse(format!("PDF: {e}")))
@@ -81,6 +90,10 @@ pub fn import_ai(bytes: &[u8], opts: &PdfOptions) -> Result<Imported, ImportErro
 
 /// Imports a PDF.
 pub fn import(bytes: &[u8], opts: &PdfOptions) -> Result<Imported, ImportError> {
+    import_with_pixel_budget(bytes, opts, MAX_TOTAL_PIXELS)
+}
+
+fn import_with_pixel_budget(bytes: &[u8], opts: &PdfOptions, pixels: u64) -> Result<Imported, ImportError> {
     let doc = load(bytes)?;
     let pages = guard("PDF", || doc.get_pages())?;
     let mut out = Imported { page_count: Some(pages.len()), ..Default::default() };
@@ -88,6 +101,7 @@ pub fn import(bytes: &[u8], opts: &PdfOptions) -> Result<Imported, ImportError> 
         return Err(ImportError::Parse("the PDF has no pages".into()));
     }
     let off = hidden_ocgs(&doc);
+    let mut images = Images { pixels_left: pixels, decoded: HashMap::new() };
     let selected: Vec<(u32, ObjectId)> = match opts.pages {
         PageSelection::All => pages.iter().map(|(n, id)| (*n, *id)).collect(),
         PageSelection::Page(n) => {
@@ -100,7 +114,7 @@ pub fn import(bytes: &[u8], opts: &PdfOptions) -> Result<Imported, ImportError> 
     };
     for (num, page_id) in selected {
         let group = if opts.pages == PageSelection::All { Some(out.new_group(None, Some(format!("Page {num}")))) } else { None };
-        let mut interp = Interp { doc: &doc, opts, out: &mut out, off: &off, group, budget: 2_000_000, ops: 0 };
+        let mut interp = Interp { doc: &doc, opts, out: &mut out, off: &off, group, budget: 2_000_000, ops: 0, images: &mut images };
         let _ = guard("PDF page", || interp.page(page_id));
     }
     Ok(crate::finish(out))
@@ -228,6 +242,7 @@ struct Interp<'a> {
     group: Option<u32>,
     budget: usize,
     ops: usize,
+    images: &'a mut Images,
 }
 
 /// Resource dictionaries in lookup order (innermost first).
@@ -468,7 +483,7 @@ impl<'a> Interp<'a> {
                 }
                 "BI" => {
                     if let Some(Object::Stream(s)) = a.first() {
-                        if self.opts.include_images {
+                        if self.opts.include_images && self.take_pixels(&s.dict) {
                             let img = decode_image(doc, &s.dict, &s.content, gs.fill, &res, true, false);
                             self.place_image(img, &gs, &mc);
                         }
@@ -540,7 +555,7 @@ impl<'a> Interp<'a> {
 
     fn xobject(&mut self, nm: &[u8], res: &Res<'a>, gs: &GState, depth: u32, mc: &[Option<(String, bool)>]) {
         let doc = self.doc;
-        let Some((obj, _)) = res.lookup(doc, b"XObject", nm) else { return };
+        let Some((obj, id)) = res.lookup(doc, b"XObject", nm) else { return };
         let Ok(stream) = obj.as_stream() else { return };
         let subtype = stream.dict.get(b"Subtype").ok().and_then(name).unwrap_or(b"");
         match subtype {
@@ -567,14 +582,38 @@ impl<'a> Interp<'a> {
                 self.run(&content, inner, g, depth + 1, mc2);
             }
             b"Image" => {
-                if !self.opts.include_images {
+                if !self.opts.include_images || !self.take_pixels(&stream.dict) {
                     return;
                 }
-                let img = decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false, true);
+                let img = match id {
+                    // The fill colour is part of the key: a 1-bit mask is painted in it.
+                    Some(id) => self
+                        .images
+                        .decoded
+                        .entry((id, gs.fill))
+                        .or_insert_with(|| decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false, true))
+                        .clone(),
+                    None => decode_image(doc, &stream.dict, &stream.content, gs.fill, res, false, true),
+                };
                 self.place_image(img, gs, mc);
             }
             _ => {}
         }
+    }
+
+    /// Takes an image's pixels from the import's budget; false (with a warning) once it is spent.
+    fn take_pixels(&mut self, dict: &Dictionary) -> bool {
+        let w = get_abbr(self.doc, dict, b"W", b"Width").and_then(num).unwrap_or(0.0);
+        let h = get_abbr(self.doc, dict, b"H", b"Height").and_then(num).unwrap_or(0.0);
+        // A bad size is refused by the decoder with its own message.
+        let pixels = if w >= 1.0 && h >= 1.0 && w * h <= MAX_PIXELS as f64 { (w as u64) * (h as u64) } else { 0 };
+        if pixels > self.images.pixels_left {
+            self.images.pixels_left = 0;
+            self.out.warn("The PDF's images add up to too many pixels; the rest were skipped");
+            return false;
+        }
+        self.images.pixels_left -= pixels;
+        true
     }
 
     fn place_image(&mut self, img: Result<DynamicImage, String>, gs: &GState, mc: &[Option<(String, bool)>]) {
@@ -920,4 +959,51 @@ fn samples_to_image(
         }
     }
     Ok(DynamicImage::ImageRgb8(img))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-page PDF whose content draws the 2 x 2 image XObject `/I` `draws` times.
+    fn pdf_drawing_one_image(draws: usize) -> Vec<u8> {
+        let content = "q 10 0 0 10 0 0 cm /I Do Q ".repeat(draws);
+        let image: &[u8] = b"<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\n\x00\x55\xaa\xff\nendstream";
+        let bodies = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /MediaBox [0 0 300 300] /Resources << /XObject << /I 5 0 R >> >> >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        ];
+        let mut out = b"%PDF-1.6\n".to_vec();
+        let mut offsets = Vec::new();
+        for (n, body) in bodies.iter().map(|b| b.as_bytes().to_vec()).chain([image.to_vec()]).enumerate() {
+            offsets.push(out.len());
+            out.extend(format!("{} 0 obj\n", n + 1).as_bytes());
+            out.extend(body);
+            out.extend(b"\nendobj\n");
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1).as_bytes());
+        for o in &offsets {
+            out.extend(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", offsets.len() + 1).as_bytes());
+        out
+    }
+
+    fn image_count(doc: &Imported) -> usize {
+        doc.items.iter().filter(|i| matches!(i.kind, ItemKind::Image(_))).count()
+    }
+
+    #[test]
+    fn one_image_drawn_many_times_counts_against_the_pixel_budget() {
+        let bytes = pdf_drawing_one_image(10);
+        let all = import_with_pixel_budget(&bytes, &PdfOptions::default(), 1000).unwrap();
+        assert_eq!(image_count(&all), 10, "{:?}", all.warnings);
+        // Each draw is 4 pixels: 10 pixels let two through.
+        let cut = import_with_pixel_budget(&bytes, &PdfOptions::default(), 10).unwrap();
+        assert_eq!(image_count(&cut), 2, "{:?}", cut.warnings);
+        assert!(cut.warnings.iter().any(|w| w.contains("too many pixels")), "{:?}", cut.warnings);
+    }
 }

@@ -176,6 +176,7 @@ pub struct CardSimulator {
     laser_refusals: u64,
     frames_accepted: u64,
     ticks_consumed: u64,
+    segment: Option<u32>,
     items_consumed: u64,
     underruns: u64,
     queue_low_water: Option<usize>,
@@ -219,6 +220,7 @@ impl CardSimulator {
             laser_refusals: 0,
             frames_accepted: 0,
             ticks_consumed: 0,
+            segment: None,
             items_consumed: 0,
             underruns: 0,
             queue_low_water: None,
@@ -324,6 +326,8 @@ impl CardSimulator {
             self.position[0] += t.dx as i64;
             self.position[1] += t.dy as i64;
             self.ticks_consumed += 1;
+        } else if let Some(n) = item.as_segment() {
+            self.segment = Some(n);
         } else if item.opcode() == OP_MISC && item.payload().len() >= 3 && item.payload()[0] == MISC_DO {
             self.set_outputs(item.payload()[1], item.payload()[2]);
         }
@@ -461,6 +465,11 @@ impl CardSimulator {
     /// Frames queued so far.
     pub fn frames_accepted(&self) -> u64 {
         self.frames_accepted
+    }
+
+    /// Last 3002 segment counter the FIFO executed (even = travel, odd = laser segment).
+    pub fn segment(&self) -> Option<u32> {
+        self.segment
     }
 
     /// Ticks the FIFO executed.
@@ -1528,7 +1537,33 @@ mod tests {
         l.advance(Duration::from_micros(250 * plan.tick_count));
         assert_eq!(l.sim.ticks_consumed(), plan.tick_count);
         assert_eq!(l.sim.pulse_position(), (plan.total_pulses_x, plan.total_pulses_y));
-        assert!(l.sim.consumed_items().iter().all(|i| i.as_tick().is_some_and(|t| t.duty == 0)));
+        assert!(l.sim.consumed_items().iter().all(|i| i.as_tick().is_some_and(|t| !t.is_laser())));
+    }
+
+    #[test]
+    fn a_real_mlaser_travel_block_runs_in_the_simulator() {
+        // First block of a captured CO2 grid job: segment 0 and 98 travel ticks.
+        let line = include_str!("../tests/data/mlaser-grid-co2.frames").lines().find(|l| l.starts_with("40 66")).unwrap();
+        let (_, data) = crate::fifo::parse_frame_line(line).unwrap().unwrap();
+        let mut words = vec![1];
+        words.extend(&data);
+        let w = command::SafeWrite::try_from_raw(0x66, &words).unwrap();
+        assert_eq!(w.policy(), command::Policy::Motion);
+        let mut l = armed();
+        l.write(&w).unwrap();
+        assert_eq!(l.sim.fifo_depth(), 99);
+        l.write(&command::fifo_start().unwrap()).unwrap();
+        l.advance(Duration::from_micros(250 * 98));
+        assert_eq!(l.sim.ticks_consumed(), 98);
+        assert_eq!(l.sim.segment(), Some(0));
+        let (mut sx, mut sy) = (0i64, 0i64);
+        for item in crate::fifo::parse_fifo_words(&words).unwrap().items {
+            if let Some(t) = item.as_tick() {
+                sx += i64::from(t.dx);
+                sy += i64::from(t.dy);
+            }
+        }
+        assert_eq!(l.sim.pulse_position(), (sx, sy));
     }
 
     #[test]
@@ -1719,7 +1754,7 @@ mod tests {
         };
         // DO9 on, PWM with duty, and a FIFO tick with duty
         for (reg, words) in
-            [(0x65u32, vec![9999u32, 2, 0x100, 0x100]), (0x65, vec![9999, 3, 1234, 20]), (0x66, vec![1, 0x0008_0BB8, 0, (5000 << 16) | 4])]
+            [(0x65u32, vec![9999u32, 2, 0x100, 0x100]), (0x65, vec![9999, 3, 1234, 20]), (0x66, vec![1, 0x0008_0BB8, 0x8819_0001, 0xFFFF_0013])]
         {
             let rep = sim.exchange(&mk(reg, &words)).unwrap();
             assert!(matches!(Reply::decode(&rep, Some(1)).unwrap(), Reply::Exception { .. }));

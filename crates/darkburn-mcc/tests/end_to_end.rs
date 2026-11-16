@@ -146,5 +146,5 @@ fn machine_params_default_to_the_documented_machine() {
     assert_eq!((p.k, p.fcp_max_acc), (1000, 20000));
     let cfg = PlanConfig::default();
     assert_eq!(cfg.work_area_mm, (1371.0, 950.0));
-    assert!((cfg.pulses_per_mm_x - 258.04).abs() < 0.01);
+    assert!((cfg.pulses_per_mm_x - 257.90).abs() < 0.01 && (cfg.pulses_per_mm_y - 258.14).abs() < 0.01);
 }

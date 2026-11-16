@@ -144,17 +144,18 @@ fn the_head_is_not_jogged_and_the_fifo_not_cleared_under_a_running_stream() {
 }
 
 #[test]
-fn a_mode_record_the_card_was_never_seen_to_take_does_not_reach_it() {
-    // Only 4 and 5 were ever seen in a stream. Any other word went to the card as dry motion.
-    for mode in [0, 1, 3, 6, 0xFFFF_FFFF] {
-        assert!(command::fifo_frame(1, &[FifoItem::boundary(), FifoItem::mode(mode), FifoItem::tick(1, 0)]).is_err(), "mode {mode}");
-        assert!(SafeWrite::try_from_raw(0x66, &[1, 0x0004_0BBA, mode]).is_err(), "raw mode {mode}");
+fn a_segment_counter_that_does_not_rise_inside_a_frame_does_not_reach_the_card() {
+    // 3002 is the job's segment counter (0, 1, 2 ... in the capture), not a mode word: any value
+    // passes on its own, but inside one frame the next record must be the previous plus one.
+    for (a, b) in [(4, 4), (5, 4), (0, 2), (0xFFFF_FFFF, 0)] {
+        assert!(command::fifo_frame(1, &[FifoItem::segment(a), FifoItem::boundary(), FifoItem::segment(b)]).is_err(), "{a} -> {b}");
+        assert!(SafeWrite::try_from_raw(0x66, &[1, 0x0004_0BBA, a, 0x0004_0BBA, b]).is_err(), "raw {a} -> {b}");
     }
     let mut l = armed();
-    for mode in [4, 5] {
-        l.write(&command::fifo_frame(mode - 3, &[FifoItem::boundary(), FifoItem::mode(mode), FifoItem::tick(1, 0)]).unwrap()).unwrap();
+    for (id, n) in [(1, 0), (2, 1), (3, 0x61)] {
+        l.write(&command::fifo_frame(id, &[FifoItem::boundary(), FifoItem::segment(n), FifoItem::tick(1, 0)]).unwrap()).unwrap();
     }
-    assert_eq!(l.sim.frames_accepted(), 2);
+    assert_eq!(l.sim.frames_accepted(), 3);
 }
 
 /// Homed, parked 1 mm inside the X soft limit (1371 mm), status fresh.

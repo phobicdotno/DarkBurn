@@ -916,7 +916,7 @@ mod tests {
         let mut g = SafetyGate::default();
         g.arming.arm_motion().unwrap();
         g.observe_status(0, &status(0, 0, 0, 0));
-        let laser_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0, (5000 << 16) | 4], &SafetyConfig::default(), None).unwrap();
+        let laser_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0x8819_0001, 0xFFFF_0013], &SafetyConfig::default(), None).unwrap();
         g.after_send(&laser_frame, 0);
         assert!(g.card_fifo_has_laser);
         assert_eq!(g.check_write(&command::fifo_start().unwrap(), 0), Err(GateRefusal::LaserFramesQueued));
@@ -993,7 +993,7 @@ mod tests {
     #[test]
     fn nothing_fires_while_a_co2_port_is_on_and_the_water_is_not_ok() {
         let pwm = SafeWrite::from_raw_for_simulator(0x65, &[9999, 3, 5000, 500, 0], &SafetyConfig::default(), None).unwrap();
-        let duty_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0, (5000 << 16) | 4], &SafetyConfig::default(), None).unwrap();
+        let duty_frame = SafeWrite::from_raw_for_simulator(0x66, &[1, 0x0008_0BB8, 0x8819_0001, 0xFFFF_0013], &SafetyConfig::default(), None).unwrap();
         assert_eq!((pwm.policy(), duty_frame.policy()), (Policy::Laser, Policy::Laser));
         let mut g = SafetyGate::default();
         laser_armed(&mut g);

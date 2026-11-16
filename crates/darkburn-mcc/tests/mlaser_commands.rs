@@ -157,15 +157,16 @@ fn analogue_output_is_zero_or_nothing() {
 #[test]
 fn pwm_without_motion_is_zero_duty_or_nothing() {
     let w = command::pwm_set(1234, 0, 3).unwrap();
-    assert_eq!(w.words(), &[9999, 3, 1234, 0]);
+    assert_eq!(w.words(), &[9999, 3, 1234, 0, 0]);
     assert_eq!(w.policy(), Policy::Always);
     #[rustfmt::skip]
     assert_eq!(body(&w), [
-        0x00, 0x18, 0x00, 0x40, 0x65, 0x00, 0x00, 0x00, 0x04, 0x00,
+        0x00, 0x1C, 0x00, 0x40, 0x65, 0x00, 0x00, 0x00, 0x05, 0x00,
         0x0F, 0x27, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xD2, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
     ]);
     decodes_to_itself(&w);
-    assert_eq!(command::pwm_set(5000, 0, 0x11).unwrap().words(), &[9999, 0x11, 5000, 0]);
+    assert_eq!(command::pwm_set(5000, 0, 0x11).unwrap().words(), &[9999, 0x11, 5000, 0, 0]);
     for duty in [1, 30, 100, u32::MAX] {
         assert!(matches!(command::pwm_set(1234, duty, 3), Err(Forbidden::LaserData(_))), "duty {duty}");
         assert!(matches!(command::pwm_set(1234, duty, 0x11), Err(Forbidden::LaserData(_))), "duty {duty}");

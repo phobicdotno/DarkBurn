@@ -1,1 +1,0 @@
-- Fix: the Gweike window and the update link now speak every language, not just English and Norwegian

@@ -1,1 +1,0 @@
-- Fix: Gweike job data now uses the same layout as the laser's own software (not used for real jobs yet)

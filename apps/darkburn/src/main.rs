@@ -59,7 +59,6 @@ mod galvo_settings;
 mod galvo_ui;
 mod gcode_machines;
 mod gweike_card;
-mod net_test;
 #[cfg(test)]
 mod gweike_card_ui_tests;
 mod gweike_recipes;
@@ -138,6 +137,7 @@ mod multi_trace;
 mod native_frame;
 mod nest_cmds;
 mod nest_ui;
+mod net_test;
 mod node_tool;
 mod numeric;
 mod numeric_edits;

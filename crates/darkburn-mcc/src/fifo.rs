@@ -10,6 +10,8 @@
 //!   the layer power %, fiber: a per-tick power that ramps). `form` is `0x88` for the CO2 and travel
 //!   form with tail `0x13` (laser off) or `0xffff_0013` (laser on), and `0x57` for the fiber form
 //!   with tail `0x04` or `0xffff_0004`. Acceleration lives in the deltas; there is no speed word.
+//!   Which physical direction a positive `dx`/`dy` moves is not proven yet: confirm it with a
+//!   +X jog capture before any dry run.
 //! * Opcode 3001 is a boundary record without payload.
 //! * Opcode 3002 is the segment counter `[n]`: 0, 1, 2 ... over the job, even = travel segment,
 //!   odd = laser segment. It is not a mode word.
@@ -248,6 +250,8 @@ impl FifoItem {
                 Some(3) | Some(0x11) => true,
                 // DA: non-zero value.
                 Some(4) => self.payload.get(2).is_some_and(|v| *v != 0),
+                // Laser-off marker: laser data, so the gate and the frame classifier agree.
+                Some(0x12) => true,
                 _ => false,
             },
             2002 | 2004 | 3 => true,

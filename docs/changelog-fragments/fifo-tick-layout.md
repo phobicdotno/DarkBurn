@@ -1,1 +1,1 @@
-- Fix: Gweike jobs now send motion the same way the laser's own software does
+- Fix: Gweike job data now uses the same layout as the laser's own software (not used for real jobs yet)

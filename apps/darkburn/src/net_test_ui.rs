@@ -13,7 +13,7 @@ use crate::shell::DarkBurn;
 /// Temp flag the Gweike page sets to open the window.
 pub const OPEN: &str = "db_net_test_open";
 
-const SPARK: Vec2 = Vec2::new(150.0, 22.0);
+const SPARK: Vec2 = Vec2::new(110.0, 20.0);
 
 fn device_name(t: Target) -> String {
     match t {
@@ -135,6 +135,7 @@ pub fn window(ctx: &Context, app: &mut DarkBurn) {
     let close = tr("net.close", "Close");
     let verdict = n.verdict();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_net_test"), "settings", &tr("net.title", "Laser network test"))
+        .body_width(820.0)
         .actions(&go, &close, None)
         .show(ctx, true, |ui| {
             let t = Tokens::get();

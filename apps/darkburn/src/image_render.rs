@@ -81,10 +81,11 @@ pub fn window(gray: &GrayF, size_mm: (f64, f64), interval_mm: f64, max_side: u32
     let i = interval_mm.max(1e-4);
     let (dw, dh) = (size_mm.0 / i, size_mm.1 / i);
     let (fx, fy) = ((f64::from(max_side) / dw).min(1.0), (f64::from(max_side) / dh).min(1.0));
-    if fx >= 1.0 && fy >= 1.0 {
+    let (w, h) = (gray.width, gray.height);
+    // A picture with no pixels has no part to cut out (and `clamp(1, 0)` would panic).
+    if (fx >= 1.0 && fy >= 1.0) || w == 0 || h == 0 {
         return (std::borrow::Cow::Borrowed(gray), size_mm, false);
     }
-    let (w, h) = (gray.width, gray.height);
     let (sw, sh) = (((f64::from(w) * fx) as u32).clamp(1, w), ((f64::from(h) * fy) as u32).clamp(1, h));
     let (x0, y0) = ((w - sw) / 2, (h - sh) / 2);
     let sub = gray.window(x0, y0, sw, sh);
@@ -229,6 +230,16 @@ mod tests {
         let (left, right) = (ink(0, 16), ink(48, 64));
         assert!(left > right * 3, "dark side has more dots: {left} vs {right}");
         assert!(r.image.pixels.iter().all(|p| p.r() == 0 || p.r() == 255), "binary mode gives pure dots");
+    }
+
+    #[test]
+    fn window_of_a_picture_with_no_pixels_is_not_a_panic() {
+        for g in [GrayF::new(0, 10, 0.5), GrayF::new(10, 0, 0.5), GrayF::new(0, 0, 0.5)] {
+            let (part, size, cut) = window(&g, (100.0, 100.0), 0.01, 16);
+            assert_eq!((part.width, part.height), (g.width, g.height));
+            assert_eq!(size, (100.0, 100.0));
+            assert!(!cut);
+        }
     }
 
     #[test]

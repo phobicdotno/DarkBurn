@@ -44,16 +44,27 @@ struct Reader {
     prims: HashMap<String, PrimSpec>,
     names: HashMap<u32, String>,
     budget: usize,
+    /// Points left to copy into paths. Shapes that share one `VertID` each copy the list, so the
+    /// shape budget alone does not bound memory.
+    point_budget: usize,
 }
+
+/// Total points all shapes of one project may copy into their paths.
+const POINT_BUDGET: usize = 20_000_000;
 
 /// Imports a LightBurn project.
 pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
+    import_with_point_budget(bytes, POINT_BUDGET)
+}
+
+fn import_with_point_budget(bytes: &[u8], point_budget: usize) -> Result<Imported, ImportError> {
     let text = String::from_utf8_lossy(bytes);
     let root = xml::parse(&text).map_err(|e| ImportError::Parse(format!("LightBurn project: {e}")))?;
     if root.name != "LightBurnProject" {
         return Err(ImportError::Parse("not a LightBurn project".into()));
     }
-    let mut r = Reader { out: Imported::default(), verts: HashMap::new(), prims: HashMap::new(), names: HashMap::new(), budget: 2_000_000 };
+    let mut r =
+        Reader { out: Imported::default(), verts: HashMap::new(), prims: HashMap::new(), names: HashMap::new(), budget: 2_000_000, point_budget };
 
     let mut info = ProjectInfo {
         app_version: root.attr("AppVersion").map(str::to_string),
@@ -303,6 +314,12 @@ impl Reader {
             }
         }
         let verts = verts.unwrap_or_default();
+        if verts.len() > self.point_budget {
+            self.point_budget = 0;
+            self.out.warn("LightBurn project has too many points in all; the rest of its shapes were left empty");
+            return BezPath::new();
+        }
+        self.point_budget -= verts.len();
         let prims = prims.unwrap_or(PrimSpec::AutoClosed);
         let mut p = build_path(&verts, &prims);
         p.apply_affine(xf);
@@ -890,5 +907,24 @@ mod tests {
         }
         assert!(matches!(parse_prim_list("LineClosed"), PrimSpec::LineClosed));
         assert!(matches!(parse_prim_list(" "), PrimSpec::AutoClosed));
+    }
+
+    #[test]
+    fn shared_vert_list_counts_against_the_point_budget() {
+        let shape = |id: &str| format!(r#"<Shape Type="Path" CutIndex="0" VertID="{id}" PrimID="{id}"><XForm>1 0 0 1 0 0</XForm></Shape>"#);
+        let mut xml = String::from(r#"<?xml version="1.0"?><LightBurnProject AppVersion="1.0" FormatVersion="1">"#);
+        xml.push_str(r#"<Shape Type="Path" CutIndex="0" VertID="0" PrimID="0"><XForm>1 0 0 1 0 0</XForm><VertList>V0 0V10 0V10 10V0 10</VertList><PrimList>LineClosed</PrimList></Shape>"#);
+        for _ in 0..9 {
+            xml.push_str(&shape("0"));
+        }
+        xml.push_str("</LightBurnProject>");
+        // Ten shapes of four points each: 40 points. A budget of 20 lets the first five through.
+        let drawn = |doc: &Imported| doc.items.iter().filter(|i| matches!(&i.kind, ItemKind::Path(p) if !p.path.elements().is_empty())).count();
+        let all = import_with_point_budget(xml.as_bytes(), 1000).unwrap();
+        assert_eq!(drawn(&all), 10);
+        assert!(all.warnings.is_empty(), "{:?}", all.warnings);
+        let cut = import_with_point_budget(xml.as_bytes(), 20).unwrap();
+        assert_eq!(drawn(&cut), 5);
+        assert!(cut.warnings.iter().any(|w| w.contains("points")), "{:?}", cut.warnings);
     }
 }

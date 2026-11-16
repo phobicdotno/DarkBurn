@@ -433,6 +433,7 @@ pub(crate) fn state_dialog_cases() -> Vec<OpenDialog> {
         ("macro", Box::new(|a| a.machine.dlg.macro_edit = Some((0, "G0 X0 Y0".into())))),
         ("controller info", Box::new(|a| a.machine.dlg.controller_info = true)),
         ("machine settings", Box::new(|a| a.machine.dlg.machine_settings = true)),
+        ("network test", Box::new(|a| a.machine.ext.net.open = true)),
         (
             "find my laser",
             Box::new(|a| {

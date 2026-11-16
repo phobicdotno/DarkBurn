@@ -186,6 +186,8 @@ mod tests {
         ("taper_warp.rs", include_str!("taper_warp.rs")),
         ("model_import.rs", include_str!("model_import.rs")),
         ("gweike_ui.rs", include_str!("gweike_ui.rs")),
+        ("net_test.rs", include_str!("net_test.rs")),
+        ("net_test_ui.rs", include_str!("net_test_ui.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

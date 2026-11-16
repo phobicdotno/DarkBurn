@@ -142,6 +142,8 @@ pub const COMMANDS: &[Cmd] = &[
     crate::gweike_card::HEAD_CALIBRATE_POLL,
     crate::gweike_card::HEAD_CALIBRATE_STOP,
     crate::gweike_card::HEAD_CALIBRATE_DISMISS,
+    // Gweike laser network test (net_test.rs)
+    crate::net_test::COMMAND,
 ];
 
 /// Whether `id` is handled here.
@@ -151,7 +153,7 @@ pub fn handles(id: &str) -> bool {
 
 /// Commands here that act on a machine.
 pub fn is_hardware(id: &str) -> bool {
-    id.starts_with("machine.") || crate::gweike_card::is_hardware(id)
+    id.starts_with("machine.") || crate::gweike_card::is_hardware(id) || id == "net.test"
 }
 
 /// Commands here that only edit documents, files or the device list, though their id starts
@@ -164,7 +166,7 @@ pub fn not_hardware(id: &str) -> bool {
 
 /// The command touches Gweike machine concepts (the MCP side reads this).
 pub fn gweike(id: &str) -> bool {
-    id.starts_with("gweike.") || id.starts_with("mcc.") || matches!(id, "file.export_gweike_dxf" | "file.export_gweike_nc")
+    id.starts_with("gweike.") || id.starts_with("mcc.") || matches!(id, "net.test" | "file.export_gweike_dxf" | "file.export_gweike_nc")
 }
 
 /// The command writes a file.
@@ -228,6 +230,8 @@ pub struct ExtUi {
     pub galvo_message: Option<String>,
     /// The Gweike card simulator the `mcc.*` commands work on.
     pub mcc: crate::gweike_card::CardState,
+    /// The Gweike network test window and its measurements.
+    pub net: crate::net_test::NetTest,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -371,6 +375,7 @@ pub fn run(app: &mut DarkBurn, id: &str, a: &Value, _src: Source) -> Option<Resu
         "gweike.recipe_layer" => crate::recipe_picker::layer_command(app, a),
         "gweike.recipe_undo" => crate::recipe_picker::undo_command(app, a),
         id if id.starts_with("mcc.") => crate::gweike_card::run(app, id, a),
+        "net.test" => crate::net_test::command(&mut app.machine.ext.net, a),
         other => Err(format!("{other} is not a machine command")),
     })
 }

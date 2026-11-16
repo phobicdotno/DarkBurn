@@ -9,14 +9,33 @@
 //! The ping uses the system `ping` program on every platform: `IcmpSendEcho` and raw ICMP sockets
 //! need `unsafe`, which the workspace forbids. On Windows the console window is hidden.
 
-// Wired into the Gweike page and MCP in the next step.
-#![allow(dead_code)]
-
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use darkburn_mcc::{Reply, Request};
 use serde_json::{Value, json};
+
+use crate::commands::Cmd;
+
+/// The MCP command: start, stop or read the test.
+pub const COMMAND: Cmd = Cmd {
+    id: "net.test",
+    label: "Test the Gweike laser network",
+    key: "",
+    icon: "",
+    args: r#"{"type":"object","properties":{"action":{"enum":["status","start","stop"],"description":"status (the default) reads the results without starting anything"}}}"#,
+};
+
+/// Run `net.test`: `{"action": "start" | "stop" | "status"}`.
+pub fn command(n: &mut NetTest, a: &Value) -> Result<Value, String> {
+    match a.get("action").and_then(Value::as_str).unwrap_or("status") {
+        "start" => n.start(),
+        "stop" => n.stop(),
+        "status" => n.pump(),
+        other => return Err(format!("unknown action {other}: use start, stop or status")),
+    }
+    Ok(n.to_json())
+}
 
 /// Samples kept per device for the sparkline and the numbers.
 pub const HISTORY: usize = 60;
@@ -449,6 +468,21 @@ impl NetTest {
         self.runner = Some(Runner::start(pinger, wire, Duration::from_millis(1000)));
     }
 
+    /// Start on the real laser network. Under `cargo test` a fake pinger and the card
+    /// simulator stand in, so no test touches the network.
+    pub fn start(&mut self) {
+        #[cfg(not(test))]
+        {
+            let wire = UdpCard::open().ok().map(|w| Box::new(w) as Box<dyn CardWire>);
+            self.start_with(Box::new(SystemPing), wire, nic_on_laser_net());
+        }
+        #[cfg(test)]
+        {
+            let sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
+            self.start_with(Box::new(SimPing), Some(Box::new(sim)), Some(true));
+        }
+    }
+
     pub fn stop(&mut self) {
         if let Some(mut r) = self.runner.take() {
             r.stop();
@@ -483,6 +517,17 @@ impl NetTest {
             })
             .collect();
         json!({ "running": self.running(), "nic_on_laser_net": self.nic_ok, "verdict": self.verdict(), "devices": devices })
+    }
+}
+
+/// Answers like a healthy direct cable without an external follower (tests only).
+#[cfg(test)]
+struct SimPing;
+
+#[cfg(test)]
+impl Pinger for SimPing {
+    fn ping(&mut self, ip: Ipv4Addr, _timeout: Duration) -> Option<f64> {
+        (ip != Target::Follower.ip()).then_some(0.4)
     }
 }
 
@@ -622,5 +667,15 @@ mod tests {
         let health: Vec<&str> = j["devices"].as_array().unwrap().iter().map(|d| d["health"].as_str().unwrap()).collect();
         assert_eq!(health, ["ok", "ok", "not_fitted", "ok"]);
         assert_eq!(n.verdict(), "Card OK, 0% loss, 0.4 ms");
+    }
+
+    #[test]
+    fn the_command_reads_starts_and_stops() {
+        let mut n = NetTest::default();
+        let v = command(&mut n, &json!({})).unwrap();
+        assert_eq!(v["running"], false);
+        assert_eq!(command(&mut n, &json!({ "action": "start" })).unwrap()["running"], true);
+        assert_eq!(command(&mut n, &json!({ "action": "stop" })).unwrap()["running"], false);
+        assert!(command(&mut n, &json!({ "action": "jump" })).is_err());
     }
 }

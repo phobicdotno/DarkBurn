@@ -247,6 +247,10 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
     if cur_air {
         tp.ops.push(Op::Air { on: false });
     }
+    if cur_z.is_some_and(|z| z != 0.0) {
+        // The job moved Z: it ends back at the height it started from (Q077).
+        tp.ops.push(Op::ZMove { z: 0.0 });
+    }
     progress.set_span(0.0, 1.0);
     progress.report(1.0)?;
     Ok(match &opts.origin {
@@ -671,7 +675,8 @@ fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
             sl.runs.iter().map(|&(a, b, p)| (a.min(b), a.max(b), p.clamp(0.0, 1.0))).filter(|r| r.1 - r.0 > EPS).collect();
         raw.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         for (x0, x1, p) in raw {
-            let power = if p > 0.0 { s.min_power + (s.max_power - s.min_power) * p } else { 0.0 };
+            // Power scale is a share of the power, as on lines and fills (Q078).
+            let power = if p > 0.0 { (s.min_power + (s.max_power - s.min_power) * p) * img.power_scale } else { 0.0 };
             if is.skip_blanks && power <= 0.0 {
                 continue;
             }
@@ -729,7 +734,7 @@ mod tests {
         let tp = generate(&JobInput { layers: vec![a, b] }, &JobOptions::default(), &mut Progress::none()).unwrap();
         assert_eq!(tp.layers[0].name, "B");
         let zs: Vec<f64> = tp.ops.iter().filter_map(|o| if let Op::ZMove { z } = o { Some(*z) } else { None }).collect();
-        assert_eq!(zs, vec![1.0, 0.5]);
+        assert_eq!(zs, vec![1.0, 0.5, 0.0], "the job ends back at the start height");
         let passes = tp.ops.iter().filter(|o| matches!(o, Op::PassStart { .. })).count();
         assert_eq!(passes, 3);
     }

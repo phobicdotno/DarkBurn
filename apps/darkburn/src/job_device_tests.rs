@@ -418,10 +418,11 @@ fn z_relative_only_and_z_optimize_change_the_gcode() {
     i.device.z_enabled = true;
     let b = build_job_simple(&i).unwrap();
     let plain = gcode_text(&b, None, &DeviceGcodeSettings::default());
-    assert!(plain.contains("G0 Z2") && !plain.contains("G91"), "{plain}");
+    assert!(plain.contains("G0 Z2") && !plain.contains("G0 Z0"), "{plain}");
     assert_eq!(plain.matches("G0 Z2").count(), 1, "the second pass is already at Z2: {plain}");
+    assert!(plain.contains("G91\nG0 Z-2\nG90"), "the job ends back at its start height, relative: {plain}");
     let always = gcode_text(&b, None, &DeviceGcodeSettings { z_optimize: false, ..Default::default() });
-    assert_eq!(always.matches("G0 Z").count(), 2, "{always}");
+    assert_eq!(always.matches("G0 Z").count(), 3, "two passes and the way back: {always}");
     let rel = gcode_text(&b, None, &DeviceGcodeSettings { z_relative_only: true, ..Default::default() });
     assert!(rel.contains("G91") && rel.contains("G90"), "{rel}");
 }

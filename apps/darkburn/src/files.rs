@@ -61,6 +61,9 @@ pub struct FileState {
     /// Counts the projects made or opened in this window: a window that holds on to one project
     /// can tell that another has taken its place.
     pub project_serial: u64,
+    /// Recent projects whose file was not there at start-up (an unplugged drive, a network
+    /// folder that is down). They stay in the list, drawn greyed out (Q079).
+    pub missing_recent: std::collections::HashSet<String>,
 }
 
 #[derive(Default)]
@@ -106,12 +109,18 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             if let Some(path) = app.prefs.recent.get(n).cloned() {
                 let path = PathBuf::from(path);
                 if path.exists() {
+                    app.files.missing_recent.retain(|p| Path::new(p) != path);
                     guard(app, ctx, Then::Open(Some(path)));
-                } else if drive_is_there(&path) {
-                    app.prefs.recent.retain(|p| Path::new(p) != path);
-                    app.files.message = Some(("Project not found".into(), format!("{} is no longer there.", path.display())));
                 } else {
-                    app.files.message = Some(("Project not found".into(), format!("{} is on a drive that is not connected now.", path.display())));
+                    // Still missing when picked: say so and drop it from the list (Q079).
+                    let why = if drive_is_there(&path) {
+                        format!("{} is no longer there.", path.display())
+                    } else {
+                        format!("{} is on a drive that is not connected now.", path.display())
+                    };
+                    app.prefs.recent.retain(|p| Path::new(p) != path);
+                    app.files.missing_recent.retain(|p| Path::new(p) != path);
+                    app.files.message = Some(("Project not found".into(), why));
                 }
             }
         }
@@ -336,10 +345,10 @@ fn drive_is_there(path: &Path) -> bool {
     path.ancestors().last().is_none_or(|root| root.as_os_str().is_empty() || root.exists())
 }
 
-/// Drop recent projects whose files are gone. One on a drive that is not there now is kept.
-pub fn prune_recent(prefs: &mut Prefs) {
-    prefs.recent.retain(|p| Path::new(p).is_file() || !drive_is_there(Path::new(p)));
-    prefs.recent.truncate(RECENT_MAX);
+/// The recent projects whose files are not there now. They are kept in the list (drawn greyed
+/// out) and dropped only when picked and still missing (Q079): the drive may be back later.
+pub fn missing_recent(prefs: &Prefs) -> std::collections::HashSet<String> {
+    prefs.recent.iter().filter(|p| !Path::new(p).is_file()).cloned().collect()
 }
 
 // ----- Import -----
@@ -693,7 +702,8 @@ pub fn frame(ctx: &egui::Context, app: &mut DarkBurn) {
     let now = Instant::now();
     if !app.files.started {
         app.files.started = true;
-        prune_recent(&mut app.prefs);
+        app.prefs.recent.truncate(RECENT_MAX);
+        app.files.missing_recent = missing_recent(&app.prefs);
         if let Some(dir) = app.settings_dir.clone()
             && !app.safe_mode
             && !app.fio.secondary
@@ -926,8 +936,8 @@ mod tests {
         assert!(p.recent[0].ends_with("5.dbrn"));
         assert_eq!(p.recent.iter().filter(|r| r.ends_with("\\5.dbrn") || r.ends_with("/5.dbrn")).count(), 1);
         assert!(p.recent[1].ends_with("29.dbrn"));
-        prune_recent(&mut p);
-        assert!(p.recent.is_empty(), "missing files are dropped");
+        assert_eq!(missing_recent(&p).len(), RECENT_MAX, "missing files are marked, not dropped");
+        assert_eq!(p.recent.len(), RECENT_MAX);
     }
 
     #[test]
@@ -942,28 +952,26 @@ mod tests {
         assert!(!run(&mut a, &ctx, "edit.copy"));
     }
 
-    /// A drive letter with nothing behind it (a memory stick or network drive that is not there).
-    #[cfg(windows)]
-    fn absent_drive() -> Option<String> {
-        ('D'..='Z').rev().map(|c| format!("{c}:\\")).find(|d| !Path::new(d).exists())
-    }
-
-    #[cfg(windows)]
     #[test]
-    fn recent_projects_on_a_drive_that_is_not_there_are_kept() {
-        let Some(drive) = absent_drive() else { return };
-        let dir = TempDir::new("recent-drive");
+    fn missing_recent_projects_stay_greyed_until_picked() {
+        // Q079: a project whose file is not there at start-up stays in Recent (drawn greyed out)
+        // and is dropped only when it is picked and still missing.
+        let dir = TempDir::new("recent-missing");
         let mut a = app(&dir);
-        let away = format!("{drive}jobs\\sign.dbrn");
+        let here = dir.0.join("here.dbrn");
+        std::fs::write(&here, b"x").unwrap();
+        let here = here.to_string_lossy().into_owned();
         let gone = dir.0.join("gone.dbrn").to_string_lossy().into_owned();
-        a.prefs.recent = vec![away.clone(), gone];
+        a.prefs.recent = vec![gone.clone(), here.clone()];
         let ctx = egui::Context::default();
         frame(&ctx, &mut a);
-        assert_eq!(a.prefs.recent, vec![away.clone()], "the deleted file goes, the one on the absent drive stays");
-        // Picking it says why it cannot be opened, and keeps it for when the drive is back.
+        assert_eq!(a.prefs.recent, vec![gone.clone(), here.clone()], "a missing project stays in the list");
+        assert!(a.files.missing_recent.contains(&gone));
+        assert!(!a.files.missing_recent.contains(&here));
         assert!(run(&mut a, &ctx, "file.recent.0"));
-        assert!(a.files.message.is_some());
-        assert_eq!(a.prefs.recent, vec![away]);
+        assert!(a.files.message.is_some(), "picking it says it is not found");
+        assert_eq!(a.prefs.recent, vec![here]);
+        assert!(a.files.missing_recent.is_empty());
     }
 
     #[test]

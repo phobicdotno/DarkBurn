@@ -229,6 +229,19 @@ fn output_off_layers_are_left_out() {
 }
 
 #[test]
+fn hidden_layers_are_not_burned() {
+    // Q076: a hidden layer (Show off) is not burned, even with Output on.
+    let mut d = line_doc(20.0);
+    d.layer_mut(0).show = false;
+    assert!(d.layer(0).output);
+    assert_eq!(build_job_simple(&input(d.clone())).unwrap_err(), BuildError::NothingToBurn);
+    sq(&mut d, 1, 50.0, 10.0, 10.0);
+    let b = build(d);
+    assert!(b.toolpath.layers.iter().all(|l| l.layer_index != 0), "only the shown layer burns");
+    assert!(!b.toolpath.layers.is_empty());
+}
+
+#[test]
 fn shape_power_scale_and_priority() {
     let mut d = Document::new();
     d.layer_mut(0).main_mut().max_power = 80.0;

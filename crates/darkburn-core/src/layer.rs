@@ -751,9 +751,11 @@ impl Layer {
         !self.is_tool() && self.settings.iter().any(|s| s.enabled && s.mode.fills())
     }
 
-    /// Whether this layer can actually burn (tool layers never do).
+    /// Whether this layer can actually burn: Output on and the layer shown (a hidden layer is
+    /// not burned, Q076); tool layers never burn. Every job path (Start, Send, Save G-code / RD,
+    /// frame, preview, time estimate) filters layers through this one check.
     pub fn outputs(&self) -> bool {
-        self.output && !self.is_tool()
+        self.output && self.show && !self.is_tool()
     }
 
     /// Add a sub-layer (a copy of the last one). False when the layer is full.
@@ -852,6 +854,9 @@ mod tests {
         assert_eq!(layers.iter().filter(|l| l.is_tool()).count(), 2);
         assert!(!layers[T1].outputs() && !layers[T2].outputs());
         assert!(layers[0].outputs());
+        let mut hidden = layers[0].clone();
+        hidden.show = false;
+        assert!(hidden.output && !hidden.outputs(), "a hidden layer is not burned");
         assert_eq!(layer_label(5), "05");
         assert_eq!(layer_label(T2), "T2");
         let colours: Vec<_> = (0..LAYER_COUNT).map(layer_colour).collect();

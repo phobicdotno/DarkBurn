@@ -135,6 +135,7 @@ pub fn window(ctx: &Context, app: &mut DarkBurn) {
     let close = tr("net.close", "Close");
     let verdict = n.verdict();
     let (closed, action) = ui_kit::Window::new(Id::unique("db_net_test"), "settings", &tr("net.title", "Laser network test"))
+        .dockable("db_net_test")
         .body_width(820.0)
         .actions(&go, &close, None)
         .show(ctx, true, |ui| {

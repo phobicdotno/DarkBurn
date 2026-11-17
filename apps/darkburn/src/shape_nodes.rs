@@ -370,7 +370,8 @@ fn setting_auto_gaps(doc: &Document, s: &Shape, t: &darkburn_core::layer::Tabs, 
 /// sub-layer that cuts the shape as lines with its tabs on and a Tab size above 0, each tab
 /// belongs to the sub-path nearest to it, and the tabs of one sub-path together take at most
 /// half of it. An `extra` tab goes on the shape of a group whose outline is nearest to it.
-pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Point, f64)> {
+/// `tolerance` is the device's curve tolerance, so the kerf outline matches the job's.
+pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point], tolerance: f64) -> Vec<(Point, f64)> {
     let leaves = cut_leaves(doc, id);
     let outlines: Vec<BezPath> = leaves.iter().map(|(_, l)| l.outline()).collect();
     let mut placed: Vec<Vec<Point>> = leaves.iter().map(|(_, l)| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1])).collect()).collect();
@@ -392,9 +393,9 @@ pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Po
             // The job cuts the kerf-offset outline (`job_build`), and holds the tabs to half of
             // that: a kerf grows a part and shrinks a hole.
             let cut = if c.kerf != 0.0 {
-                let around = around.get_or_insert_with(|| crate::job_build::kerf_outlines(doc, crate::job_build::TOLERANCE));
+                let around = around.get_or_insert_with(|| crate::job_build::kerf_outlines(doc, tolerance));
                 let depth = crate::job_build::kerf_depth(around, (id, *k), leaf.bbox(), outline);
-                darkburn_geom::offset::kerf_offset(outline, if depth % 2 == 1 { -c.kerf } else { c.kerf }, crate::job_build::TOLERANCE)
+                darkburn_geom::offset::kerf_offset(outline, if depth % 2 == 1 { -c.kerf } else { c.kerf }, tolerance)
             } else {
                 outline.clone()
             };

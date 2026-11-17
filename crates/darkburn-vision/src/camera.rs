@@ -73,9 +73,19 @@ fn checked_pixel_size(view: BedRect, px_per_mm: f64) -> Result<(u32, u32), Image
     Ok(view.pixel_size(px_per_mm))
 }
 
-/// The largest scale at which `view` stays within the pixel budget.
-fn max_px_per_mm(view: BedRect) -> f64 {
-    (MAX_BED_IMAGE_PIXELS / (view.width * view.height).max(1e-9)).sqrt() * 0.99
+/// `px_per_mm` (1 when it is not a positive number) held to the pixel budget for `view`,
+/// counted on the rounded pixel size the picture really gets. `None` when no scale fits.
+fn capped_px_per_mm(view: BedRect, px_per_mm: f64) -> Option<f64> {
+    let want = if px_per_mm.is_finite() && px_per_mm > 0.0 { px_per_mm } else { 1.0 };
+    let mut ppm = want.min((MAX_BED_IMAGE_PIXELS / (view.width * view.height).max(1e-9)).sqrt() * 0.99);
+    // A narrow view rounds its short side up to whole pixels; step down until it fits.
+    for _ in 0..1000 {
+        if checked_pixel_size(view, ppm).is_ok() {
+            return Some(ppm);
+        }
+        ppm *= 0.98;
+    }
+    None
 }
 
 /// Camera image orientation fix-ups applied before alignment: rotate by quarter turns (clockwise) then flip.
@@ -614,8 +624,12 @@ pub fn trace_from_capture(
     match alignment {
         Some((al, view, ppm)) => {
             // A scale past the pixel budget is held to it, so the trace still lands in place.
-            let ppm = if ppm.is_finite() && ppm > 0.0 { ppm.min(max_px_per_mm(view)) } else { 1.0 };
-            let mut bed_img = al.render_bed_image(&undistorted, view, ppm).expect("the scale is held within the pixel budget");
+            // A view no scale fits is traced as the plain picture.
+            let Some((ppm, mut bed_img)) =
+                capped_px_per_mm(view, ppm).and_then(|ppm| al.render_bed_image(&undistorted, view, ppm).ok().map(|img| (ppm, img)))
+            else {
+                return TraceImage { image: to_grayscale(&undistorted), placement: None };
+            };
             // Uncovered pixels are transparent; show them as white paper.
             for p in bed_img.pixels_mut() {
                 if p.0[3] == 0 {
@@ -885,6 +899,17 @@ mod tests {
         assert_eq!(t.image.dimensions(), (200, 120));
         assert_eq!(t.placement, Some((view, 2.0)));
         assert_eq!(t.image.get_pixel(100, 60)[0], 10);
+    }
+
+    #[test]
+    fn trace_scale_is_held_to_the_rounded_pixel_budget() {
+        // A narrow view whose short side rounds up to whole pixels, and a fallback scale on a huge view.
+        for (view, ppm) in [(BedRect::new(0.0, 0.0, 100_000.0, 0.001), 10_000.0), (BedRect::new(0.0, 0.0, 20_000.0, 20_000.0), f64::NAN)] {
+            let p = capped_px_per_mm(view, ppm).unwrap();
+            assert!(checked_pixel_size(view, p).is_ok(), "{view:?} {p}");
+        }
+        assert_eq!(capped_px_per_mm(BedRect::new(0.0, 0.0, 100.0, 60.0), 2.0), Some(2.0));
+        assert_eq!(capped_px_per_mm(BedRect::new(0.0, 0.0, f64::INFINITY, 60.0), 2.0), None);
     }
 
     #[test]

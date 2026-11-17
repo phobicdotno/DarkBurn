@@ -440,17 +440,66 @@ impl SvgReader<'_> {
 /// Read an SVG document. Coordinates are mm with the SVG's top-left at the work area's
 /// top-left (not yet placed).
 pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
-    let dpi = if opts.svg_dpi.is_finite() && opts.svg_dpi > 0.0 { opts.svg_dpi } else { 96.0 };
+    let bad = |e: usvg::Error| format!("the SVG could not be read ({e})");
+    // Decompress an .svgz once; the same text is checked for old Inkscape and then read.
+    let unzipped;
+    let data = if data.starts_with(&[0x1f, 0x8b]) {
+        unzipped = usvg::decompress_svgz(data).map_err(bad)?;
+        &unzipped[..]
+    } else {
+        data
+    };
+    let text = std::str::from_utf8(data).map_err(|_| bad(usvg::Error::NotAnUtf8Str))?;
+    let xml_opt = usvg::roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    let doc = usvg::roxmltree::Document::parse_with_options(text, xml_opt).map_err(|e| bad(usvg::Error::ParsingFailed(e)))?;
+    let mut dpi = if opts.svg_dpi.is_finite() && opts.svg_dpi > 0.0 { opts.svg_dpi } else { 96.0 };
+    if old_inkscape_px(doc.root_element()) {
+        dpi = 90.0;
+    }
     let mut o = usvg::Options { dpi, ..Default::default() };
     if memchr_text(data) {
         o.fontdb = fonts();
     }
-    let tree = usvg::Tree::from_data(data, &o).map_err(|e| format!("the SVG could not be read ({e})"))?;
+    let tree = usvg::Tree::from_xmltree(&doc, &o).map_err(bad)?;
     let k = 25.4 / dpi as f64;
     let to_mm = Affine::new([k, 0.0, 0.0, -k, 0.0, opts.page.height]);
     let mut reader = SvgReader { opts, out: Imported::default() };
     reader.group(tree.root(), to_mm * affine(tree.root().transform()), None);
     Ok(reader.out)
+}
+
+const INKSCAPE_NS: &str = "http://www.inkscape.org/namespaces/inkscape";
+
+/// Inkscape before 0.92 used 90 user units per inch. True when the root `<svg>` says it was saved
+/// by such a version and its width and height are bare numbers or px (no physical units), so
+/// its pixels are read at 90 per inch.
+fn old_inkscape_px(root: usvg::roxmltree::Node) -> bool {
+    if root.tag_name().name() != "svg" {
+        return false;
+    }
+    let Some(version) = root.attribute((INKSCAPE_NS, "version")) else { return false };
+    if !inkscape_before_092(version) {
+        return false;
+    }
+    let px = |v: Option<&str>| match v {
+        None => true,
+        Some(v) => {
+            let v = v.trim();
+            let n = v.strip_suffix("px").unwrap_or(v).trim();
+            !n.is_empty() && n.parse::<f64>().is_ok_and(f64::is_finite)
+        }
+    };
+    px(root.attribute("width")) && px(root.attribute("height"))
+}
+
+/// An `inkscape:version` such as "0.91 r13725" or "0.48.4 r9939" is older than 0.92.
+fn inkscape_before_092(version: &str) -> bool {
+    let token = version.trim().split(|c: char| !(c.is_ascii_digit() || c == '.')).next().unwrap_or("");
+    let mut parts = token.split('.');
+    let (Some(Ok(major)), Some(Ok(minor))) = (parts.next().map(str::parse::<u32>), parts.next().map(str::parse::<u32>)) else {
+        return false;
+    };
+    major == 0 && minor < 92
 }
 
 /// The document has a `<text` element (fonts are loaded only then).
@@ -688,6 +737,64 @@ mod tests {
             let w = svg(mm, &Options { svg_dpi: dpi, ..opts() }).unwrap().bbox().unwrap().width();
             assert!((w - 50.0).abs() < 1e-4, "{dpi}: {w}");
         }
+    }
+
+    /// `data` wrapped as gzip with one uncompressed (stored) deflate block.
+    fn gzip_stored(data: &[u8]) -> Vec<u8> {
+        let mut crc = 0xffff_ffffu32;
+        for &b in data {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            }
+        }
+        let n = data.len() as u16;
+        let mut out = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 255, 1];
+        out.extend_from_slice(&n.to_le_bytes());
+        out.extend_from_slice(&(!n).to_le_bytes());
+        out.extend_from_slice(data);
+        out.extend_from_slice(&(!crc).to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out
+    }
+
+    #[test]
+    fn old_inkscape_pixels_are_90_per_inch() {
+        let old = br#"<?xml version="1.0"?>
+<!-- Created with Inkscape -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="90" height="90" inkscape:version="0.91 r13725"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(old, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // px suffix and an older 0.48 version count too.
+        let px = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="90px" height="90px" inkscape:version="0.48.4 r9939"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(px, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // The same file without inkscape:version stays at the 96 per inch setting.
+        let plain = br#"<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(plain, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
+        // A newer Inkscape is unchanged.
+        let new = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="90" height="90" inkscape:version="0.92.4 (5da689c313, 2019-01-14)"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(new, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
+        // Physical units in an old file are unchanged.
+        let mm = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100" inkscape:version="0.91 r13725"><path d="M0 0 L100 0" stroke="black"/></svg>"#;
+        let w = svg(mm, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 100.0).abs() < 1e-4, "{w}");
+        // A gzip-compressed old file (.svgz) is detected too.
+        let w = svg(&gzip_stored(old), &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // A '>' inside an attribute value does not cut the root tag short.
+        let gt = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" data-note="a > b" width="100mm" height="100mm" viewBox="0 0 100 100" inkscape:version="0.91 r13725"><path d="M0 0 L100 0" stroke="black"/></svg>"#;
+        let w = svg(gt, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 100.0).abs() < 1e-4, "{w}");
+        // Version text inside another attribute's value is not an inkscape:version.
+        let inside = br#"<svg xmlns="http://www.w3.org/2000/svg" data-note=" inkscape:version='0.91'" width="90" height="90"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(inside, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
+        assert!(inkscape_before_092("0.91 r13725") && inkscape_before_092("0.48.4 r9939"));
+        assert!(!inkscape_before_092("0.92.3") && !inkscape_before_092("1.3.2 (091e20e, 2023-11-25)") && !inkscape_before_092(""));
     }
 
     #[test]

@@ -873,17 +873,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     }
     let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     let mut warnings = Vec::new();
-    let mut dropped = 0usize;
     let area = input.device.area();
     let order_pos: HashMap<usize, usize> = doc.layer_order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
 
-    let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
-    let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
-    // The outlines of each layer, framed unless the layer is left out for its size.
-    let mut line_frames: Vec<Vec<BezPath>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
-    let mut tool_frame: Vec<BezPath> = Vec::new();
-    let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
     // Selection bounds for "use selection origin" (all selected shapes, burning or not), where
@@ -1016,154 +1009,174 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             StartMode::CurrentPosition => input.head.is_some(),
             StartMode::UserOrigin => true,
         };
-    let place_bounds = if !placing {
-        None
-    } else {
-        tops.iter()
-            .flat_map(|t| t.leaves())
-            .filter(|l| {
-                // A layer left out for its size is not part of the job and does not move it.
-                let li = l.layer.min(layer::LAYER_COUNT - 1);
-                doc.layer(li).outputs() && !(too_big[li] && !l.is_image())
-            })
-            .map(|l| placed(&l))
-            .reduce(|a, b| a.union(b))
-    };
-    let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
-    for (n, top) in tops.iter().enumerate() {
-        if cancelled() {
-            return Err(BuildError::Cancelled);
-        }
-        report(0.25 * n as f32 / total as f32);
-        let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
-        for (k, leaf) in top.leaves().into_iter().enumerate() {
-            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
-            let l = doc.layer(li);
-            if !l.outputs() {
-                // Tool layers never burn, but may be framed with the job (LAYER-02).
-                if l.is_tool() && l.frame && !leaf.is_image() {
-                    // Mapped like the shapes that burn, so the frame stays with the job.
-                    let outline = leaf.outline();
-                    tool_frame.push(match &vision_map {
-                        Some(m) => m.apply(outline),
-                        None => outline,
-                    });
-                }
-                continue;
+    // The shapes are placed, tested against the work area and collected; when the real count
+    // below leaves a layer out, all of it is done again without that layer, so a layer left
+    // out never moves the job nor makes other shapes fall outside the work area. Each round
+    // leaves out at least one more layer, so this ends.
+    let warnings_before = warnings.len();
+    let mut real_drops: Vec<String> = Vec::new();
+    let (mut layers, leaves_by_layer, line_frames, tool_frame, kerf_lost, place_bounds, dropped) = loop {
+        warnings.truncate(warnings_before);
+        let mut dropped = 0usize;
+        let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
+        let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+        // The outlines of each layer, framed unless the layer is left out for its size.
+        let mut line_frames: Vec<Vec<BezPath>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+        let mut tool_frame: Vec<BezPath> = Vec::new();
+        let mut kerf_lost = [0usize; layer::LAYER_COUNT];
+        let place_bounds = if !placing {
+            None
+        } else {
+            tops.iter()
+                .flat_map(|t| t.leaves())
+                .filter(|l| {
+                    // A layer left out for its size is not part of the job and does not move it.
+                    let li = l.layer.min(layer::LAYER_COUNT - 1);
+                    doc.layer(li).outputs() && !(too_big[li] && !l.is_image())
+                })
+                .map(|l| placed(&l))
+                .reduce(|a, b| a.union(b))
+        };
+        let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
+        for (n, top) in tops.iter().enumerate() {
+            if cancelled() {
+                return Err(BuildError::Cancelled);
             }
-            if too_big[li] && !leaf.is_image() {
-                continue;
-            }
-            let bbox = leaf.bbox();
-            // Measured where the job puts the shape (print and cut and rotary move it, and so
-            // does the start mode).
-            if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
-                dropped += 1;
-                continue;
-            }
-            if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
-                warnings.push(format!(
-                    "Text \"{}\" has no outline yet and was left out.",
-                    match &leaf.kind {
-                        ShapeKind::Text(t) => t.text.as_str(),
-                        _ => "",
+            report(0.25 * n as f32 / total as f32);
+            let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
+            for (k, leaf) in top.leaves().into_iter().enumerate() {
+                let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+                let l = doc.layer(li);
+                if !l.outputs() {
+                    // Tool layers never burn, but may be framed with the job (LAYER-02).
+                    if l.is_tool() && l.frame && !leaf.is_image() {
+                        // Mapped like the shapes that burn, so the frame stays with the job.
+                        let outline = leaf.outline();
+                        tool_frame.push(match &vision_map {
+                            Some(m) => m.apply(outline),
+                            None => outline,
+                        });
                     }
-                ));
-                continue;
-            }
-            let entry = layers[li].get_or_insert_with(|| {
-                let mut settings: Vec<job::CutSettings> = l
-                    .settings
-                    .iter()
-                    .map(|s| {
-                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
-                        c.constant_power |= input.device.m3_only;
-                        c
-                    })
-                    .collect();
-                for s in &mut settings {
-                    s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
-                }
-                LayerInput {
-                    index: li,
-                    name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
-                    priority: order_pos.get(&li).copied().unwrap_or(li) as i32,
-                    output: true,
-                    settings,
-                    shapes: Vec::new(),
-                    images: Vec::new(),
-                }
-            });
-            if leaf.is_image() {
-                leaves_by_layer[li].push((leaf, group));
-                continue;
-            }
-            let mut path = leaf.outline();
-            if path.elements().is_empty() {
-                continue;
-            }
-            // Each line sub-layer with a kerf offset cuts its own outline; fills keep the drawn one.
-            let kerfs = kerfs_of(l);
-            let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
-            if !kerfs.is_empty() {
-                // How many other cut shapes this one lies inside: odd means a hole.
-                let depth = kerf_depth(&kerf_outlines, (top.id, k), bbox, &path);
-                let mut lost_most = 0;
-                for (setting, kerf) in kerfs {
-                    let kerf = if depth % 2 == 1 { -kerf } else { kerf };
-                    let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
-                    lost_most = lost_most.max(lost);
-                    line_paths.push((setting, offset));
-                }
-                kerf_lost[li] += lost_most;
-            }
-            if let Some(m) = &vision_map {
-                path = m.apply(path);
-                for (_, p) in &mut line_paths {
-                    *p = m.apply(std::mem::take(p));
-                }
-            }
-            let mut si = ShapeInput::new(path);
-            si.line_paths = line_paths;
-            {
-                let used = si.outlines_used(&entry.settings);
-                if used.iter().all(|p| p.elements().is_empty()) {
-                    // Nothing of the shape is left to cut.
                     continue;
                 }
-                line_frames[li].extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+                if too_big[li] && !leaf.is_image() {
+                    continue;
+                }
+                let bbox = leaf.bbox();
+                // Measured where the job puts the shape (print and cut and rotary move it, and so
+                // does the start mode).
+                if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
+                    dropped += 1;
+                    continue;
+                }
+                if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
+                    warnings.push(format!(
+                        "Text \"{}\" has no outline yet and was left out.",
+                        match &leaf.kind {
+                            ShapeKind::Text(t) => t.text.as_str(),
+                            _ => "",
+                        }
+                    ));
+                    continue;
+                }
+                let entry = layers[li].get_or_insert_with(|| {
+                    let mut settings: Vec<job::CutSettings> = l
+                        .settings
+                        .iter()
+                        .map(|s| {
+                            let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                            c.constant_power |= input.device.m3_only;
+                            c
+                        })
+                        .collect();
+                    for s in &mut settings {
+                        s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
+                    }
+                    LayerInput {
+                        index: li,
+                        name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
+                        priority: order_pos.get(&li).copied().unwrap_or(li) as i32,
+                        output: true,
+                        settings,
+                        shapes: Vec::new(),
+                        images: Vec::new(),
+                    }
+                });
+                if leaf.is_image() {
+                    leaves_by_layer[li].push((leaf, group));
+                    continue;
+                }
+                let mut path = leaf.outline();
+                if path.elements().is_empty() {
+                    continue;
+                }
+                // Each line sub-layer with a kerf offset cuts its own outline; fills keep the drawn one.
+                let kerfs = kerfs_of(l);
+                let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
+                if !kerfs.is_empty() {
+                    // How many other cut shapes this one lies inside: odd means a hole.
+                    let depth = kerf_depth(&kerf_outlines, (top.id, k), bbox, &path);
+                    let mut lost_most = 0;
+                    for (setting, kerf) in kerfs {
+                        let kerf = if depth % 2 == 1 { -kerf } else { kerf };
+                        let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
+                        lost_most = lost_most.max(lost);
+                        line_paths.push((setting, offset));
+                    }
+                    kerf_lost[li] += lost_most;
+                }
+                if let Some(m) = &vision_map {
+                    path = m.apply(path);
+                    for (_, p) in &mut line_paths {
+                        *p = m.apply(std::mem::take(p));
+                    }
+                }
+                let mut si = ShapeInput::new(path);
+                si.line_paths = line_paths;
+                {
+                    let used = si.outlines_used(&entry.settings);
+                    if used.iter().all(|p| p.elements().is_empty()) {
+                        // Nothing of the shape is left to cut.
+                        continue;
+                    }
+                    line_frames[li].extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+                }
+                // Tabs and forced start points are stored in the shape's local coordinates; they
+                // go through the same mapping as the outline (the kerf offset keeps them: each
+                // snaps to the nearest point of the path that is cut).
+                let place = |p: &[f64; 2]| {
+                    let q = leaf.transform * Point::new(p[0], p[1]);
+                    vision_map.as_ref().map_or(q, |m| m.apply_point(q))
+                };
+                si.start_point = leaf.start_point.as_ref().map(place);
+                si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
+                si.direction = match leaf.direction {
+                    darkburn_core::CutDirection::Auto => None,
+                    darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
+                    darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
+                    darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
+                };
+                si.tabs = leaf.tabs.iter().map(place).collect();
+                si.group = group;
+                si.priority = leaf.priority;
+                si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
+                entry.shapes.push(si);
             }
-            // Tabs and forced start points are stored in the shape's local coordinates; they
-            // go through the same mapping as the outline (the kerf offset keeps them: each
-            // snaps to the nearest point of the path that is cut).
-            let place = |p: &[f64; 2]| {
-                let q = leaf.transform * Point::new(p[0], p[1]);
-                vision_map.as_ref().map_or(q, |m| m.apply_point(q))
-            };
-            si.start_point = leaf.start_point.as_ref().map(place);
-            si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
-            si.direction = match leaf.direction {
-                darkburn_core::CutDirection::Auto => None,
-                darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
-                darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
-                darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
-            };
-            si.tabs = leaf.tabs.iter().map(place).collect();
-            si.group = group;
-            si.priority = leaf.priority;
-            si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
-            entry.shapes.push(si);
         }
-    }
-    // The estimate above is only an early exit: the real pieces are counted on the outlines
-    // as the generator cuts them (kerf and mapping applied), and a layer past the limit is
-    // left out whole, before anything of it is generated.
-    for (li, why) in drop_too_many_pieces(&mut layers, input.device.tolerance, &pieces) {
-        line_frames[li].clear();
-        kerf_lost[li] = 0;
-        warnings.push(why.clone());
-        size_warnings.push(why);
-    }
+        // The estimate above is only an early exit: the real pieces are counted on the outlines
+        // as the generator cuts them (kerf and mapping applied), and a layer past the limit is
+        // left out whole, before anything of it is generated, and the job is placed again.
+        let drops = drop_too_many_pieces(&mut layers, input.device.tolerance, &pieces);
+        if drops.is_empty() {
+            break (layers, leaves_by_layer, line_frames, tool_frame, kerf_lost, place_bounds, dropped);
+        }
+        for (li, why) in drops {
+            too_big[li] = true;
+            real_drops.push(why.clone());
+            size_warnings.push(why);
+        }
+    };
+    warnings.extend(real_drops);
     frame_paths.extend(line_frames.into_iter().flatten());
     for (li, lost) in kerf_lost.iter().enumerate() {
         if *lost > 0 {
@@ -1985,6 +1998,53 @@ mod tests {
         });
         d.vision_settings = Some(v.to_value());
         far_too_many_left_out(d, "stretched kerf corners");
+    }
+
+    #[test]
+    fn far_too_many_real_pieces_left_out_do_not_move_the_other_layers() {
+        // Layer 2 passes the early estimate, but its real count (kerf corners stretched 1000
+        // times in X) is past the limit. With "Remove what is outside the work area" from a
+        // user origin, it must not take part in placing the job: layer 0 burns where it does
+        // without layer 2, instead of being pushed off the bed by it and discarded.
+        use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
+        let mut v = crate::vision_state::VisionState::default();
+        v.pnc.fit = Some(PnCFit {
+            mode: PnCMode::FullAffine,
+            affine: Affine::scale_non_uniform(1000.0, 1.0),
+            scale: 1000f64.sqrt(),
+            rotation_deg: 0.0,
+            translation: (0.0, 0.0),
+            residuals: ResidualReport { per_target: Vec::new(), rms_mm: 0.0, max_mm: 0.0 },
+        });
+        let mut alone = Document::new();
+        alone.vision_settings = Some(v.to_value());
+        // Mapped to [-200, -190] x [0, 10].
+        alone.add(Shape::rect(Rect::new(-0.2, 0.0, -0.19, 10.0), 0.0, 0));
+        let mut both = alone.clone();
+        let s = both.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 20.0;
+        both.add(Shape::rect(Rect::new(0.0, 0.0, 0.001, 100.0), 0.0, 2));
+        let build = |d: Document| {
+            let mut i = input(d);
+            i.settings.discard_out_of_bounds = true;
+            i.settings.start_from = StartMode::UserOrigin;
+            i.settings.anchor = JobAnchor::Center;
+            i.user_origin = Some(Point::new(99.5, 100.0));
+            build_job_simple(&i).unwrap()
+        };
+        let plain = build(alone);
+        assert!(plain.toolpath.ops.iter().any(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)), "layer 0 burns alone");
+        let b = build(both);
+        assert!(
+            b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation") && w.contains(&layer::layer_label(2))),
+            "{:?}",
+            b.warnings
+        );
+        assert!(b.toolpath.layers.iter().all(|l| l.layer_index == 0), "nothing of layer 2 is left");
+        assert_eq!(b.toolpath.ops, plain.toolpath.ops, "layer 0 burns where it does without layer 2");
     }
 
     #[test]

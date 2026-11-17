@@ -242,6 +242,37 @@ impl Default for DeviceSettings {
     }
 }
 
+impl DeviceSettings {
+    /// Checks the whole-number timings against what the board's 16-bit delay words hold, and
+    /// that the external axis and Z steps per mm are numbers above zero (at most 1 000 000).
+    pub fn validate_ranges(&self) -> Result<(), String> {
+        let t = &self.timings;
+        let delays = [
+            ("short jump delay", t.min_jump_delay, 0, 65_535),
+            ("long jump delay", t.max_jump_delay, 0, 65_535),
+            ("laser on delay", t.laser_on_tc, -65_535, 65_535),
+            ("laser off delay", t.laser_off_tc, -65_535, 65_535),
+            ("end delay", t.end_tc, 0, 65_535),
+            ("polygon delay", t.polygon_tc, 0, 655_350),
+        ];
+        for (name, v, lo, hi) in delays {
+            if !(lo..=hi).contains(&v) {
+                return Err(format!("The {name} is {v}; it must be from {lo} to {hi}."));
+            }
+        }
+        let steps = |v: f64| v.is_finite() && v > 0.0 && v <= 1_000_000.0;
+        for (axis, v) in self.axis_steps_per_mm.iter().enumerate() {
+            if !steps(*v) {
+                return Err(format!("Axis {axis} has {v} steps per mm; it must be above 0 and at most 1000000."));
+            }
+        }
+        if !steps(self.z_steps_per_mm) {
+            return Err(format!("Z has {} steps per mm; it must be above 0 and at most 1000000.", self.z_steps_per_mm));
+        }
+        Ok(())
+    }
+}
+
 /// Galvo units per millisecond for a speed in mm/s.
 pub fn speed_word(speed_mm_s: f64, units_per_mm: f64) -> u16 {
     (speed_mm_s.abs() * units_per_mm / 1000.0).round().clamp(1.0, 65535.0) as u16

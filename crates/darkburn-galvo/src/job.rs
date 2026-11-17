@@ -943,6 +943,17 @@ fn validate(job: &Job) -> Result<(), CompileError> {
     if job.repeat.count == 0 {
         return Err(CompileError::Invalid("Repeat count must be at least 1.".into()));
     }
+    // The axis moves `step * repeat` mm; past a kilometre it is no axis step.
+    if let Some((axis, step)) = job.repeat.axis_step
+        && (axis > 1 || !step.is_finite() || step.abs() > 1_000_000.0)
+    {
+        return Err(CompileError::Invalid("The repeat axis step needs axis 0 or 1 and a step of at most 1000000 mm.".into()));
+    }
+    if let Some(rc) = &job.rotary
+        && (rc.axis > 1 || !rc.max_size_mm.is_finite())
+    {
+        return Err(CompileError::Invalid("The rotary needs axis 0 or 1 and a maximum size that is a number.".into()));
+    }
     Ok(())
 }
 
@@ -961,6 +972,7 @@ fn flush<'a>(w: &mut Writer<'a>, dev: &'a DeviceSettings, field: &'a Field, body
 /// round), or a jump speed that is not a number.
 fn validate_device(dev: &DeviceSettings) -> Result<(), CompileError> {
     dev.ports.validate().map_err(CompileError::Invalid)?;
+    dev.validate_ranges().map_err(CompileError::Invalid)?;
     if !(dev.field.size_mm.is_finite() && dev.field.size_mm > 0.0) {
         return Err(CompileError::Invalid("The field size must be a number above zero.".into()));
     }
@@ -1699,6 +1711,39 @@ mod tests {
         job.layers[0].geometry = vec![rect_path(0.0, 0.0, 10.0, 90.0)];
         let opt = CompileOptions { max_rotary_windows: 10, ..Default::default() };
         assert!(matches!(compile(&job, &dev(), &opt), Err(CompileError::Invalid(_))));
+    }
+
+    #[test]
+    fn out_of_range_galvo_settings_are_refused() {
+        let mut job = Job::new();
+        job.layers.push(line_layer(vec![rect_path(0.0, 0.0, 10.0, 10.0)]));
+        let opt = CompileOptions::default();
+        assert!(compile(&job, &dev(), &opt).is_ok());
+        let bad_devs: Vec<fn(&mut DeviceSettings)> = vec![
+            |d| d.timings.min_jump_delay = -1,
+            |d| d.timings.max_jump_delay = 70_000,
+            |d| d.timings.laser_on_tc = i32::MIN,
+            |d| d.timings.end_tc = i32::MAX,
+            |d| d.timings.polygon_tc = -5,
+            |d| d.axis_steps_per_mm[1] = f64::NAN,
+            |d| d.axis_steps_per_mm[0] = 0.0,
+            |d| d.z_steps_per_mm = 1e300,
+        ];
+        for (i, f) in bad_devs.into_iter().enumerate() {
+            let mut d = dev();
+            f(&mut d);
+            assert!(matches!(compile(&job, &d, &opt), Err(CompileError::Invalid(_))), "setting {i}");
+        }
+        for step in [(0, f64::NAN), (0, 1e300), (2, 5.0)] {
+            let mut j = job.clone();
+            j.repeat = RepeatMarking { count: 2, axis_step: Some(step), wait_foot_each: false };
+            assert!(matches!(compile(&j, &dev(), &opt), Err(CompileError::Invalid(_))), "{step:?}");
+        }
+        for (axis, size) in [(0, f64::NAN), (3, 40.0)] {
+            let mut j = job.clone();
+            j.rotary = Some(RotaryConfig { mode: RotaryMode::BySlice, max_size_mm: size, axis });
+            assert!(matches!(compile(&j, &dev(), &opt), Err(CompileError::Invalid(_))), "{axis} {size}");
+        }
     }
 
     #[test]

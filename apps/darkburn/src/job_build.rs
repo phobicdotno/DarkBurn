@@ -413,6 +413,30 @@ impl std::error::Error for BuildError {}
 /// machine. Past it the layer's shapes are left out of the job with a warning.
 pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
 
+/// The most dots (dot mode) or perforation gaps the outlines of one layer may have: 500 m of
+/// outline at 0.1 mm, far beyond any machine. Past it the layer's shapes are left out of the
+/// job with a warning, as for [`MAX_FILL_ROWS`].
+pub const MAX_LINE_PIECES: f64 = 5_000_000.0;
+
+/// The shortest step along an outline of the layer's dot mode or perforation (dot spacing, or
+/// one cut and skip), or None when no line setting of the layer splits its outlines. The
+/// floors are those of [`cut_settings`].
+fn piece_step(l: &Layer) -> Option<f64> {
+    l.settings
+        .iter()
+        .filter(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine))
+        .filter_map(|s| {
+            if s.dot_mode {
+                Some(s.dot_spacing.max(0.01))
+            } else if s.perforation && s.perf_skip > 0.0 {
+                Some(s.perf_cut.max(0.01) + s.perf_skip)
+            } else {
+                None
+            }
+        })
+        .min_by(f64::total_cmp)
+}
+
 /// The finest line interval of the layer's fill settings, or None when it does not fill.
 fn fill_interval(l: &Layer) -> Option<f64> {
     l.settings
@@ -842,13 +866,42 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
         }
     }
-    let mut fill_too_big = [false; layer::LAYER_COUNT];
+    // Dot mode and perforation split every outline into pieces as long as their step, so an
+    // outline of kilometres (or one scaled up by accident) would be more pieces than there is
+    // memory for: such a layer is left out the same way.
+    let mut outline_len = [0.0_f64; layer::LAYER_COUNT];
+    for top in &tops {
+        for leaf in top.leaves() {
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if l.outputs() && !leaf.is_image() && piece_step(l).is_some() {
+                outline_len[li] += darkburn_geom::path::length(&leaf.outline());
+            }
+        }
+    }
+    let mut too_big = [false; layer::LAYER_COUNT];
     for li in 0..layer::LAYER_COUNT {
+        let Some(step) = piece_step(doc.layer(li)) else { continue };
+        let pieces = outline_len[li] / step;
+        if pieces.is_nan() || pieces > MAX_LINE_PIECES {
+            too_big[li] = true;
+            warnings.push(format!(
+                "The shapes on layer {} were left out: their dots or perforation would be {:.0} million pieces (the limit is {:.0} million). Check their size.",
+                layer::layer_label(li),
+                pieces / 1e6,
+                MAX_LINE_PIECES / 1e6
+            ));
+        }
+    }
+    for li in 0..layer::LAYER_COUNT {
+        if too_big[li] {
+            continue;
+        }
         let (Some(span), Some(interval)) = (fill_span[li], fill_interval(doc.layer(li))) else { continue };
         let rows = span.width().max(span.height()) / interval;
         // (A size that is not a number is not let through either.)
         if rows.is_nan() || rows > MAX_FILL_ROWS {
-            fill_too_big[li] = true;
+            too_big[li] = true;
             warnings.push(format!(
                 "The shapes on layer {} were left out: the fill would be {:.0} million scan lines (the limit is {:.0} million). Check their size.",
                 layer::layer_label(li),
@@ -873,9 +926,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         tops.iter()
             .flat_map(|t| t.leaves())
             .filter(|l| {
-                // A fill layer left out for its size is not part of the job and does not move it.
+                // A layer left out for its size is not part of the job and does not move it.
                 let li = l.layer.min(layer::LAYER_COUNT - 1);
-                doc.layer(li).outputs() && !(fill_too_big[li] && !l.is_image())
+                doc.layer(li).outputs() && !(too_big[li] && !l.is_image())
             })
             .map(|l| placed(&l))
             .reduce(|a, b| a.union(b))
@@ -902,7 +955,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 }
                 continue;
             }
-            if fill_too_big[li] && !leaf.is_image() {
+            if too_big[li] && !leaf.is_image() {
                 continue;
             }
             let bbox = leaf.bbox();
@@ -1663,6 +1716,45 @@ mod tests {
         let b = build_job_simple(&input(d)).unwrap();
         assert!(!b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
         assert!(b.toolpath.ops.len() > 1500);
+    }
+
+    #[test]
+    fn dots_or_perforation_far_too_many_are_left_out_with_a_warning() {
+        // An outline of about 8e9 mm split into dots or perforation took all the memory there
+        // is; the layer is now left out as a fill that size is, and other layers are unchanged.
+        let set = |d: &mut Document, l: usize, dots: bool| {
+            let s = d.layer_mut(l).main_mut();
+            s.mode = Mode::Line;
+            if dots {
+                s.dot_mode = true;
+                s.dot_spacing = 0.1;
+            } else {
+                s.perforation = true;
+                s.perf_cut = 1.0;
+                s.perf_skip = 1.0;
+            }
+        };
+        for dots in [true, false] {
+            let mut small = Document::new();
+            set(&mut small, 0, dots);
+            small.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+            let plain = build_job_simple(&input(small.clone())).unwrap();
+            assert!(!plain.warnings.iter().any(|w| w.contains("dots or perforation")), "{:?}", plain.warnings);
+            let pieces = if dots {
+                plain.toolpath.ops.iter().filter(|o| matches!(o, Op::Dwell { .. })).count()
+            } else {
+                plain.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power == 0.0)).count()
+            };
+            assert!(pieces >= 20, "a normal outline still gets its pieces: {pieces}");
+            let mut big = small.clone();
+            set(&mut big, 2, dots);
+            big.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+            let started = std::time::Instant::now();
+            let b = build_job_simple(&input(big)).unwrap();
+            assert!(started.elapsed().as_secs() < 30, "held by the limit before any piece is made");
+            assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation")), "{:?}", b.warnings);
+            assert_eq!(b.toolpath.ops, plain.toolpath.ops, "only the small square is cut (dots {dots})");
+        }
     }
 
     #[test]

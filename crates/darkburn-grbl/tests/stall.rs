@@ -157,3 +157,22 @@ fn buffer_counts_from_older_reports_are_not_used_once_reports_drop_bf() {
     m.stop().unwrap();
     until(&m, |e| matches!(e, Event::Stopped));
 }
+
+#[test]
+fn a_pause_during_an_idle_dwell_holds_the_job_until_resume() {
+    let opts = ConnectOptions { stream_mode: StreamMode::Synchronous, ..Default::default() };
+    let emu = EmulatorHandle::new(GrblEmulator::new(EmulatorConfig::atomstack().with_setting(10, 3.0)));
+    emu.with(|e| e.set_idle_dwell(true));
+    let m = GrblMachine::connect(Box::new(emu.transport()), opts);
+    assert!(m.wait_until(T, |s| s.status.state == MachineState::Idle && s.activity == Activity::Idle && s.status.planner_free.is_some()));
+    m.start_job(Job::from_lines(["G21 G90", "G1 X5 F600", "G4 P2", "G0 X0"].map(String::from))).unwrap();
+    // The move takes 0.5 s; then the controller dwells reporting Idle.
+    assert!(m.wait_until(T, |s| s.status.state == MachineState::Idle && s.activity == Activity::Job), "{:?}", m.snapshot());
+    m.pause().unwrap();
+    assert!(m.wait_until(T, |s| s.status.state == MachineState::Hold(0)), "{:?}", m.snapshot().status);
+    std::thread::sleep(Duration::from_millis(3000));
+    assert_eq!(m.snapshot().activity, Activity::Job, "a held dwell does not finish: {:?}", m.snapshot());
+    m.resume().unwrap();
+    let ev = until(&m, |e| matches!(e, Event::JobFinished(_) | Event::JobAborted { .. }));
+    assert!(matches!(ev.last(), Some(Event::JobFinished(_))), "{ev:?}");
+}

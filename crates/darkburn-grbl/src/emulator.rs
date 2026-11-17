@@ -583,6 +583,12 @@ impl GrblEmulator {
             return max;
         }
         if let Some(t) = self.dwell_until {
+            if matches!(self.state, State::Hold { .. }) {
+                // A held dwell waits: its time does not run until the cycle resumes.
+                self.dwell_until = Some(t + max);
+                self.now += max;
+                return max;
+            }
             let d = (t - self.now).max(0.0);
             if d > max {
                 self.now += max;
@@ -1015,7 +1021,7 @@ impl GrblEmulator {
                 self.timer_until = Some(self.now + self.cfg.decel_seconds);
             }
             State::Jog => self.cancel_jog(),
-            State::Idle if self.cycle_pending() => {
+            State::Idle if self.cycle_pending() || self.dwell_until.is_some() => {
                 self.state = State::Hold { complete: true };
             }
             _ => {}

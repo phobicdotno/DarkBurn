@@ -190,6 +190,8 @@ mod tests {
         ("net_test_ui.rs", include_str!("net_test_ui.rs")),
         ("api.rs", include_str!("api.rs")),
         ("machine_ui.rs", include_str!("machine_ui.rs")),
+        ("shape_ui.rs", include_str!("shape_ui.rs")),
+        ("shape_ops.rs", include_str!("shape_ops.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,
@@ -262,6 +264,17 @@ mod tests {
                 assert_eq!(v, w, "{k}");
             }
         }
+    }
+
+    /// The Deform errors are found in shape_ops.rs and shown in the user's language.
+    #[test]
+    fn deform_errors_are_translated() {
+        let en = english();
+        for k in ["nothing", "grid_format", "grid_count", "point_format", "bad_point", "one_line"] {
+            assert!(en.contains_key(&format!("shapes.deform_{k}")), "shapes.deform_{k}");
+        }
+        let nb = lookup(tables().get("nb"), "shapes.deform_one_line", "the grid points lie on one line: nothing was deformed");
+        assert_eq!(nb, "Figuren ligger på én linje: ingenting ble deformert.");
     }
 
     #[test]

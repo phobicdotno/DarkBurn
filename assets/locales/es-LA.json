@@ -819,5 +819,12 @@
   "lock.rotate": "rotar",
   "lock.refused": "{id} fue rechazado: el bloqueo de {lock} está activado (barra de estado). Desactívalo primero.",
   "machine.busy_switch": "{id} fue rechazado: el láser está ocupado con un trabajo o un encuadre (o un trabajo en pausa). Detenlo primero y luego cambia de dispositivo.",
-  "machine.bridge_setup": "La configuración del puente"
+  "machine.bridge_setup": "La configuración del puente",
+  "shapes.join_changed": "Las formas cambiaron durante la unión: no se unió nada",
+  "shapes.deform_nothing": "nada que deformar",
+  "shapes.deform_grid_format": "la cuadrícula debe tener 16 puntos [x, y], empezando por la fila inferior",
+  "shapes.deform_grid_count": "la cuadrícula debe tener 16 puntos",
+  "shapes.deform_point_format": "los puntos de la cuadrícula se escriben como [x, y]",
+  "shapes.deform_bad_point": "punto no válido",
+  "shapes.deform_one_line": "los puntos de la cuadrícula están en una línea: no se deformó nada"
 }

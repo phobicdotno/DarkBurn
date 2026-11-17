@@ -819,5 +819,12 @@
   "lock.rotate": "回転",
   "lock.refused": "{id} は拒否されました: {lock} ロックがオンです (ステータスバー)。先にオフにしてください。",
   "machine.busy_switch": "{id} は拒否されました: レーザーはジョブまたはフレーミング (または一時停止中のジョブ) で使用中です。先に停止してからデバイスを切り替えてください。",
-  "machine.bridge_setup": "ブリッジの設定"
+  "machine.bridge_setup": "ブリッジの設定",
+  "shapes.join_changed": "結合中に図形が変更されました。何も結合されていません",
+  "shapes.deform_nothing": "変形するものがありません",
+  "shapes.deform_grid_format": "グリッドには下の行から順に 16 個の [x, y] 点が必要です",
+  "shapes.deform_grid_count": "グリッドには 16 個の点が必要です",
+  "shapes.deform_point_format": "グリッドの点は [x, y] で指定します",
+  "shapes.deform_bad_point": "無効な点です",
+  "shapes.deform_one_line": "グリッドの点が一直線上にあるため、何も変形されませんでした"
 }

@@ -1,0 +1,2 @@
+- Sizing or deforming a shape down to nothing is refused instead of flattening it
+- Auto-Join no longer overwrites shapes you edited while it was still working

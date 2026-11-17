@@ -819,5 +819,12 @@
   "lock.rotate": "rotere",
   "lock.refused": "{id} ble avvist: {lock}-låsen er på (statuslinjen). Slå den av først.",
   "machine.busy_switch": "{id} ble avvist: laseren er opptatt med en jobb eller ramme (eller en pauset jobb). Stopp den først, og bytt deretter enhet.",
-  "machine.bridge_setup": "Broinnstillingen"
+  "machine.bridge_setup": "Broinnstillingen",
+  "shapes.join_changed": "Formene ble endret under sammenføyingen: ingenting ble føyd sammen",
+  "shapes.deform_nothing": "ingenting å deformere",
+  "shapes.deform_grid_format": "rutenettet må ha 16 [x, y]-punkter, nederste rad først",
+  "shapes.deform_grid_count": "rutenettet må ha 16 punkter",
+  "shapes.deform_point_format": "rutenettpunkter skrives som [x, y]",
+  "shapes.deform_bad_point": "ugyldig punkt",
+  "shapes.deform_one_line": "Figuren ligger på én linje: ingenting ble deformert."
 }

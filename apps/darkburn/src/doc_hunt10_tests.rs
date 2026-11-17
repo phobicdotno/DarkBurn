@@ -1122,3 +1122,47 @@ fn warp_and_deform_points_beyond_reach_are_refused() {
     g[5] = json!([15.0, 1e6]);
     assert!(run(&mut a, "tools.deform", json!({ "grid": g })).is_ok());
 }
+
+/// Deform onto a line or a point, and a Resize to a size of about nothing, are refused: no shape
+/// is left squashed to a line or a point (bug hunt notes, "Shapes: a command can still leave ...").
+#[test]
+fn deform_and_resize_never_squash_a_shape_to_nothing() {
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 50.0, 50.0, 0);
+    select(&mut a, &[r]);
+    let before = bbox(&a, r);
+    let steps = a.editor.history.len();
+    let point: Vec<Value> = (0..16).map(|_| json!([10.0, 10.0])).collect();
+    let line: Vec<Value> = (0..16).map(|k| json!([k as f64, 2.0 * k as f64])).collect();
+    for g in [point, line] {
+        assert!(run(&mut a, "tools.deform", json!({ "grid": g })).is_err(), "deform onto a line or a point");
+    }
+    for (w, h) in [(1e-300, 10.0), (10.0, 1e-300), (1e-12, 1e-12)] {
+        let res = run(&mut a, "shape.resize", json!({ "anchor": "centre", "width": w, "height": h }));
+        assert!(!matches!(res, Ok(ref v) if v["changed"] == json!(true)), "resize to {w} x {h}: {res:?}");
+    }
+    assert_eq!(bbox(&a, r), before, "the shape is as it was");
+    assert_eq!(a.editor.history.len(), steps, "no undo step was made");
+    let t = a.editor.doc.get(r).unwrap().transform;
+    assert!(darkburn_geom::transform::keeps_size(t));
+}
+
+/// A small unchanged grid far from the origin keeps its area and is not taken for a line.
+#[test]
+fn deform_far_from_the_origin_is_not_refused_as_a_line() {
+    let base = 536_870_912.0;
+    let mut cells = [[Point::ZERO; 4]; 4];
+    let mut grid = Vec::new();
+    for (i, row) in cells.iter_mut().enumerate() {
+        for (j, p) in row.iter_mut().enumerate() {
+            *p = Point::new(base + j as f64, base + i as f64);
+            grid.push(json!([p.x, p.y]));
+        }
+    }
+    assert_eq!(crate::shape_ops::outline_area(&cells), 9.0);
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 3.0, 3.0, 0);
+    select(&mut a, &[r]);
+    let res = run(&mut a, "tools.deform", json!({ "grid": grid }));
+    assert!(res.is_ok(), "{res:?}");
+}

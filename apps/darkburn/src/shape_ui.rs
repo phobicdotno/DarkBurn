@@ -443,6 +443,8 @@ pub struct JoinJob {
     total: Arc<AtomicUsize>,
     handle: Option<JoinHandle<Option<Vec<Vec<BezPath>>>>>,
     groups: JoinGroups,
+    /// The source shapes as they were at the start: the joins are applied only to these.
+    sources: Vec<(ShapeId, Option<darkburn_core::Shape>)>,
 }
 
 impl JoinJob {
@@ -471,7 +473,18 @@ impl JoinJob {
             }
             Some(out)
         });
-        JoinJob { cancel, done, total, handle: Some(handle), groups }
+        JoinJob { cancel, done, total, handle: Some(handle), groups, sources: Vec::new() }
+    }
+
+    /// Remembers the source shapes as they are in `doc` now, for [`JoinJob::sources_unchanged`].
+    pub fn remember(mut self, doc: &darkburn_core::Document) -> JoinJob {
+        self.sources = self.groups.iter().flat_map(|g| g.1.iter()).map(|id| (*id, doc.get(*id).cloned())).collect();
+        self
+    }
+
+    /// Whether every source shape in `doc` is still as [`JoinJob::remember`] saw it.
+    pub fn sources_unchanged(&self, doc: &darkburn_core::Document) -> bool {
+        self.sources.iter().all(|(id, s)| doc.get(*id) == s.as_ref())
     }
 
     pub fn cancel(&self) {
@@ -1154,14 +1167,20 @@ fn auto_join_dialog(ctx: &Context, app: &mut DarkBurn) {
             app.shape_ui.error = Some("select open paths to join".into());
         } else {
             app.shape_ui.error = None;
-            app.shape_ui.join_job = Some(JoinJob::start(groups, tol.max(1e-6)));
+            app.shape_ui.join_job = Some(JoinJob::start(groups, tol.max(1e-6)).remember(&app.editor.doc));
         }
     }
     if app.shape_ui.join_job.as_ref().is_some_and(JoinJob::finished)
         && let Some(job) = app.shape_ui.join_job.take()
     {
+        // Shapes edited while the worker ran are not replaced by joins of their old paths.
+        let unchanged = job.sources_unchanged(&app.editor.doc);
         let (groups, result) = job.take();
         match result {
+            Some(_) if !unchanged => {
+                app.shape_ui.error = Some(crate::i18n::tr("shapes.join_changed", "The shapes changed while joining: nothing was joined"));
+                app.shape_ui.status = app.shape_ui.error.clone();
+            }
             Some(r) => match crate::shape_ops::apply_joined(&mut app.editor, &groups, r) {
                 Ok(v) => {
                     app.shape_ui.status = Some(format!("Joined {} shapes into {}", v["before"], v["after"]));
@@ -1612,6 +1631,42 @@ mod tests {
         crate::shape_ops::apply_joined(&mut e, &groups, result).unwrap();
         assert_eq!(e.doc.len(), 1);
         assert_eq!(e.history.len(), before + 1);
+    }
+
+    /// A shape edited while the worker runs is not replaced by the joins of its old path.
+    #[test]
+    fn a_join_of_shapes_edited_meanwhile_is_dropped() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        let mut ids = Vec::new();
+        app.editor.edit("add", |d, sel| {
+            for p in &two_open_paths()[0].2 {
+                ids.push(d.add(Shape::path(p.clone(), 0)));
+            }
+            sel.set(ids.iter().copied());
+            true
+        });
+        let groups = crate::shape_ops::join_inputs(&app.editor.doc, &ids);
+        let job = JoinJob::start(groups, 0.1).remember(&app.editor.doc);
+        assert!(job.sources_unchanged(&app.editor.doc));
+        while !job.finished() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // The user moves one of the shapes before the result is applied.
+        app.editor.edit("move", |d, _| darkburn_core::arrange::translate(d, &ids[..1], darkburn_core::kurbo::Vec2::new(5.0, 0.0)));
+        assert!(!job.sources_unchanged(&app.editor.doc));
+        let moved = app.editor.doc.get(ids[0]).cloned();
+        let steps = app.editor.history.len();
+        // Opening the dialog cancels a job left from before, so open it first.
+        app.shape_ui.open_dialog("edit.auto_join");
+        frame(&ctx, &mut app);
+        app.shape_ui.join_job = Some(job);
+        frame(&ctx, &mut app);
+        assert!(app.shape_ui.join_job.is_none(), "the finished job was taken");
+        assert_eq!(app.editor.doc.len(), 2, "nothing was joined");
+        assert_eq!(app.editor.doc.get(ids[0]).cloned(), moved, "the moved shape stays as moved");
+        assert_eq!(app.editor.history.len(), steps, "no undo step");
+        assert!(app.shape_ui.status.as_deref().is_some_and(|s| s.contains("changed")), "{:?}", app.shape_ui.status);
     }
 
     #[test]

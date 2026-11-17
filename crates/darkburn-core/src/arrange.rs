@@ -61,14 +61,41 @@ impl Anchor {
 
 /// Apply `a` (in document coordinates) to the shapes `ids`.
 pub fn transform(doc: &mut Document, ids: &[ShapeId], a: Affine) -> bool {
+    // Refused as a whole when it would squash a shape to a line or a point, or break its numbers
+    // (a scale of zero, a typed size of 1e-300). A shape that came in squashed may still move,
+    // but not be squashed further. Each shape is checked and changed once, however often listed.
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let squashes = |t: Affine| {
+        let c = a * t;
+        !c.as_coeffs().iter().all(|x| x.is_finite()) || rank(c) < rank(t)
+    };
+    if !a.as_coeffs().iter().all(|c| c.is_finite()) || ids.iter().filter_map(|id| doc.get(*id)).any(|s| squashes(s.transform)) {
+        return false;
+    }
     let mut changed = false;
-    for id in ids {
+    for id in &ids {
         if let Some(s) = doc.get_mut(*id) {
             s.transform = a * s.transform;
             changed = true;
         }
     }
     changed
+}
+
+/// How many directions `t` keeps a size in: 2 for a real shape, 1 for one squashed to a line,
+/// 0 for one squashed to a point or with broken numbers.
+fn rank(t: Affine) -> u8 {
+    if darkburn_geom::transform::keeps_size(t) {
+        return 2;
+    }
+    let [p, q, r, s, _, _] = t.as_coeffs();
+    // The larger singular value, as in `keeps_size`.
+    let sum = p * p + q * q + r * r + s * s;
+    let det = (p * s - q * r).abs();
+    let big = ((sum + (sum * sum - 4.0 * det * det).max(0.0).sqrt()) / 2.0).sqrt();
+    u8::from(big.is_finite() && big >= darkburn_geom::transform::MIN_SCALE)
 }
 
 /// Move by `d` millimetres.
@@ -451,6 +478,59 @@ mod tests {
             let c = t(&d).as_coeffs();
             assert!(near(c[1], 0.0) && near(c[2], 0.0), "axis-aligned again: {c:?}");
         }
+    }
+
+    /// No size, scale or transform leaves a shape squashed to a line or a point.
+    #[test]
+    fn nothing_squashes_a_shape_to_a_line_or_a_point() {
+        let (mut d, ids) = three();
+        let before: Vec<Rect> = ids.iter().map(|id| bb(&d, *id)).collect();
+        for (w, h) in [(1e-300, 10.0), (10.0, 1e-300), (1e-12, 1e-12), (f64::MIN_POSITIVE, 5.0)] {
+            assert!(!resize(&mut d, &ids, Anchor::Centre, w, h), "resize to {w} x {h}");
+        }
+        for (sx, sy) in [(0.0, 1.0), (1.0, 0.0), (1e-13, 1.0), (f64::NAN, 1.0), (f64::INFINITY, 1.0), (1e300, 1e300)] {
+            assert!(!scale(&mut d, &ids, Anchor::Centre, sx, sy), "scale {sx} x {sy}");
+        }
+        assert!(!transform(&mut d, &ids, Affine::new([1.0, 2.0, 2.0, 4.0, 0.0, 0.0])), "a fold onto a line");
+        let after: Vec<Rect> = ids.iter().map(|id| bb(&d, *id)).collect();
+        assert_eq!(before, after, "nothing moved");
+        // A real resize still works, and a shape that came in squashed may still be moved.
+        assert!(resize(&mut d, &ids[..1], Anchor::Centre, 0.5, 20.0));
+        d.get_mut(ids[2]).unwrap().transform = Affine::scale_non_uniform(1.0, 0.0);
+        assert!(translate(&mut d, &ids[2..], Vec2::new(1.0, 0.0)));
+    }
+
+    /// A shape that came in squashed to a line may move and turn, but not be squashed to a point,
+    /// and no transform may leave it with numbers that are not numbers.
+    #[test]
+    fn a_squashed_shape_moves_but_is_not_squashed_further() {
+        let (mut d, ids) = three();
+        let flat = Affine::scale_non_uniform(1.0, 0.0);
+        d.get_mut(ids[0]).unwrap().transform = flat;
+        let one = &ids[..1];
+        assert!(rotate(&mut d, one, 30.0));
+        assert!(translate(&mut d, one, Vec2::new(5.0, 0.0)));
+        let t = d.get(ids[0]).unwrap().transform;
+        assert!(!transform(&mut d, one, Affine::scale(0.0)), "a line squashed to a point");
+        d.get_mut(ids[0]).unwrap().transform = Affine::scale_non_uniform(1e300, 0.0);
+        assert!(!transform(&mut d, one, Affine::scale(1e10)), "numbers that overflow");
+        d.get_mut(ids[0]).unwrap().transform = t;
+        assert!(!transform(&mut d, &ids, Affine::scale(0.0)));
+        assert_eq!(d.get(ids[0]).unwrap().transform, t, "unchanged");
+    }
+
+    /// A shape listed twice is checked and changed once, so a small scale cannot pass twice.
+    #[test]
+    fn a_shape_listed_twice_is_transformed_once() {
+        let (mut d, ids) = three();
+        let twice = [ids[0], ids[0]];
+        let t0 = d.get(ids[0]).unwrap().transform;
+        assert!(transform(&mut d, &twice, Affine::scale(1e-5)));
+        let t = d.get(ids[0]).unwrap().transform;
+        assert_eq!(t, Affine::scale(1e-5) * t0, "applied once");
+        assert!(darkburn_geom::transform::keeps_size(t));
+        assert!(translate(&mut d, &twice, Vec2::new(1.0, 0.0)));
+        assert_eq!(d.get(ids[0]).unwrap().transform, Affine::translate((1.0, 0.0)) * t);
     }
 
     fn three() -> (Document, Vec<ShapeId>) {

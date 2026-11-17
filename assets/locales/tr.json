@@ -819,5 +819,12 @@
   "lock.rotate": "döndürme",
   "lock.refused": "{id} reddedildi: {lock} kilidi açık (durum çubuğu). Önce kapatın.",
   "machine.busy_switch": "{id} reddedildi: lazer bir iş veya çerçeveleme (ya da duraklatılmış bir iş) ile meşgul. Önce durdurun, sonra cihazı değiştirin.",
-  "machine.bridge_setup": "Köprü kurulumu"
+  "machine.bridge_setup": "Köprü kurulumu",
+  "shapes.join_changed": "Birleştirme sırasında şekiller değişti: hiçbir şey birleştirilmedi",
+  "shapes.deform_nothing": "deforme edilecek bir şey yok",
+  "shapes.deform_grid_format": "ızgara, alt satırdan başlayarak 16 [x, y] noktası içermelidir",
+  "shapes.deform_grid_count": "ızgara 16 nokta içermelidir",
+  "shapes.deform_point_format": "ızgara noktaları [x, y] olarak yazılır",
+  "shapes.deform_bad_point": "geçersiz nokta",
+  "shapes.deform_one_line": "ızgara noktaları tek bir doğru üzerinde: hiçbir şey deforme edilmedi"
 }

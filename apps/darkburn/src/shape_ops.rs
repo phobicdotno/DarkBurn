@@ -24,6 +24,7 @@ use darkburn_geom::slots::{self, Slot, SlotKind, SlotQuery};
 use darkburn_geom::transform as gxf;
 use serde_json::{Value, json};
 
+use crate::i18n::tr;
 use crate::shell::DarkBurn;
 use crate::tools::Tool;
 
@@ -874,23 +875,49 @@ fn reachable(p: Point) -> Result<Point, String> {
 
 fn deform(e: &mut Editor, a: &Value) -> R {
     let ids = selected(e)?;
-    let src = bbox_of_ids(&e.doc, &ids).ok_or("nothing to deform")?;
-    let pts = a.get("grid").and_then(Value::as_array).ok_or("grid must list 16 [x, y] points, bottom row first")?;
+    let src = bbox_of_ids(&e.doc, &ids).ok_or_else(|| tr("shapes.deform_nothing", "nothing to deform"))?;
+    let pts = a
+        .get("grid")
+        .and_then(Value::as_array)
+        .ok_or_else(|| tr("shapes.deform_grid_format", "grid must list 16 [x, y] points, bottom row first"))?;
     if pts.len() != 16 {
-        return Err("grid must list 16 points".into());
+        return Err(tr("shapes.deform_grid_count", "grid must list 16 points"));
     }
     let mut grid = [[Point::ZERO; 4]; 4];
     for (i, v) in pts.iter().enumerate() {
-        let arr = v.as_array().filter(|x| x.len() == 2).ok_or("grid points are [x, y]")?;
-        grid[i / 4][i % 4] = reachable(Point::new(arr[0].as_f64().ok_or("bad point")?, arr[1].as_f64().ok_or("bad point")?))?;
+        let arr = v.as_array().filter(|x| x.len() == 2).ok_or_else(|| tr("shapes.deform_point_format", "grid points are [x, y]"))?;
+        let coord = |c: &Value| c.as_f64().ok_or_else(|| tr("shapes.deform_bad_point", "bad point"));
+        grid[i / 4][i % 4] = reachable(Point::new(coord(&arr[0])?, coord(&arr[1])?))?;
     }
     // A point beyond reach could only give a shape nobody can reach, and flattening the mapping
     // of such a point asks for gigabytes.
     if !grid.iter().flatten().all(|p| within_reach(*p)) {
         return Err(OUT_OF_REACH.into());
     }
+    // A grid folded onto a line or a point would squash the shapes to nothing.
+    if outline_area(&grid).abs() < 1e-6 {
+        return Err(tr("shapes.deform_one_line", "the grid points lie on one line: nothing was deformed"));
+    }
     let done = e.edit("Deform", |d, _| map_shapes_in_doc(d, &ids, &mut |_, p| gxf::deform_grid(p, src, grid, TOL)) > 0);
     ok(done, &ids)
+}
+
+/// The area inside the outer ring of a deform grid (rows bottom first), signed. Measured from the
+/// ring's first point, so a small grid far from the origin keeps its area.
+pub(crate) fn outline_area(grid: &[[Point; 4]; 4]) -> f64 {
+    let ring: Vec<Point> = (0..4)
+        .map(|j| grid[0][j])
+        .chain((1..4).map(|i| grid[i][3]))
+        .chain((0..3).rev().map(|j| grid[3][j]))
+        .chain((1..3).rev().map(|i| grid[i][0]))
+        .collect();
+    let o = ring[0];
+    let mut twice = 0.0;
+    for (a, b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        let (a, b) = (*a - o, *b - o);
+        twice += a.x * b.y - b.x * a.y;
+    }
+    twice / 2.0
 }
 
 fn round_corners(e: &mut Editor, a: &Value, env: &Env) -> R {

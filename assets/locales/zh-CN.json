@@ -819,5 +819,12 @@
   "lock.rotate": "旋转",
   "lock.refused": "{id} 已被拒绝：{lock}锁已开启（状态栏）。请先将其关闭。",
   "machine.busy_switch": "{id} 已被拒绝：激光器正忙于作业或走边框（或有暂停的作业）。请先停止，再更换设备。",
-  "machine.bridge_setup": "桥接设置"
+  "machine.bridge_setup": "桥接设置",
+  "shapes.join_changed": "连接期间形状已更改：未连接任何内容",
+  "shapes.deform_nothing": "没有可变形的对象",
+  "shapes.deform_grid_format": "网格必须列出 16 个 [x, y] 点，从底行开始",
+  "shapes.deform_grid_count": "网格必须包含 16 个点",
+  "shapes.deform_point_format": "网格点的格式为 [x, y]",
+  "shapes.deform_bad_point": "无效的点",
+  "shapes.deform_one_line": "网格点位于同一直线上：未进行任何变形"
 }

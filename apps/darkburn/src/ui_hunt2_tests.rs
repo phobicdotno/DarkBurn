@@ -631,7 +631,7 @@ fn device_settings_ok_keeps_changes_made_to_the_device_meanwhile() {
     g.click_id("dialog:ok");
     g.frames(3);
     assert!(g.app().machine.dlg.settings.is_none());
-    let dev = g.app().machine.devices.get(id).unwrap();
+    let dev = g.app().machine.devices.get(id).unwrap().clone();
     assert_eq!(dev.settings.red_dot_y, 4.5, "the window's edit was written");
     assert_eq!(dev.settings.red_dot_x, 7.25, "the change made meanwhile was lost");
     assert_eq!(dev.settings.tab_pulse_width, 0.5, "the change made meanwhile was lost");

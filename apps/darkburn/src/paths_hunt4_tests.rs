@@ -221,6 +221,32 @@ fn a_project_file_with_cut_settings_out_of_range_opens_with_them_in_range() {
 // ---------------------------------------------------------------- extreme shapes
 
 #[test]
+fn shape_start_point_on_an_overflowing_outline_keeps_the_shape() {
+    use crate::shape_ops::tests::{run, select};
+    use serde_json::json;
+    let mut a = app();
+    let v = run(&mut a, "shape.add_path", json!({ "svg_path": "M-1e308 -1e308 L1e308 1e308 L1e308 -1e308 Z" })).unwrap();
+    let id = ShapeId(v["id"].as_u64().unwrap());
+    select(&mut a, &[id]);
+    for (x, y) in [(1e308, 0.0), (-1e308, -1e308), (0.0, 0.0)] {
+        let r = run(&mut a, "shape.set_start_point", json!({ "shape": id.0, "x": x, "y": y }));
+        let s = a.editor.doc.get(id).expect("the shape is still there");
+        let finite = s.start_points().flatten().all(|v| v.is_finite())
+            && s.outline().elements().iter().all(|e| match *e {
+                darkburn_core::kurbo::PathEl::MoveTo(p) | darkburn_core::kurbo::PathEl::LineTo(p) => p.x.is_finite() && p.y.is_finite(),
+                darkburn_core::kurbo::PathEl::QuadTo(p, q) => [p, q].iter().all(|p| p.x.is_finite() && p.y.is_finite()),
+                darkburn_core::kurbo::PathEl::CurveTo(p, q, w) => [p, q, w].iter().all(|p| p.x.is_finite() && p.y.is_finite()),
+                darkburn_core::kurbo::PathEl::ClosePath => true,
+            });
+        assert!(finite, "start point at {x}, {y} gave {r:?}: {s:?}");
+        if let Ok(v) = &r {
+            assert!(!v.to_string().contains("null"), "{v}");
+        }
+    }
+}
+
+
+#[test]
 fn copy_along_a_path_whose_length_cannot_be_worked_out_is_refused_not_a_crash() {
     use crate::shape_ops::tests::{run, select};
     use serde_json::json;

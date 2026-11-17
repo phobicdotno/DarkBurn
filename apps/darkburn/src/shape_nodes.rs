@@ -462,6 +462,10 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
     let ids = targets(e, a)?;
     let p = Point::new(num(a, "x", 0.0), num(a, "y", 0.0));
     let all = flag(a, "all", false);
+    if !p.x.is_finite() || !p.y.is_finite() {
+        return Err("the start point is not a number".into());
+    }
+    let mut overflow = false;
     let done = e.edit("Set start point", |d, _| {
         let mut any = false;
         for id in &ids {
@@ -482,15 +486,29 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
                 if !grouped && matches!(leaf.kind, ShapeKind::Path { .. }) {
                     let path = leaf.outline();
                     let q = gpath::set_start_point(&path, p, all);
+                    // Coordinates near the largest number can overflow on the way: such a path
+                    // would be left out of the saved project, so the shape is kept as it was.
+                    let moved: Vec<[f64; 2]> = points
+                        .iter()
+                        .map(|q| {
+                            let at = leaf.transform * Point::new(q[0], q[1]);
+                            [at.x, at.y]
+                        })
+                        .collect();
+                    if !path_is_finite(&q) || moved.iter().flatten().any(|v| !v.is_finite()) {
+                        overflow = true;
+                        continue;
+                    }
                     if q != path && set_shape_path(d, *id, q) {
                         any = true;
                         // The path is now kept where it lies in the document, with no transform
                         // of its own: so are its start points.
-                        for q in &mut points {
-                            let at = leaf.transform * Point::new(q[0], q[1]);
-                            *q = [at.x, at.y];
-                        }
+                        points = moved;
                     }
+                }
+                if points.iter().flatten().any(|v| !v.is_finite()) {
+                    overflow = true;
+                    continue;
                 }
                 let Some(s) = leaf_mut(d, *id, *n) else { continue };
                 if s.start_points().collect::<Vec<_>>() != points {
@@ -501,7 +519,23 @@ fn set_start(e: &mut Editor, a: &Value) -> R {
         }
         any
     });
+    if overflow && !done {
+        return Err("the shape's coordinates are too large to set a start point".into());
+    }
     ok(done, &ids)
+}
+
+/// Every point of the path is a finite number.
+fn path_is_finite(p: &BezPath) -> bool {
+    p.elements().iter().all(|e| {
+        let pts: &[Point] = match e {
+            darkburn_core::kurbo::PathEl::MoveTo(a) | darkburn_core::kurbo::PathEl::LineTo(a) => std::slice::from_ref(a),
+            darkburn_core::kurbo::PathEl::QuadTo(a, b) => &[*a, *b],
+            darkburn_core::kurbo::PathEl::CurveTo(a, b, c) => &[*a, *b, *c],
+            darkburn_core::kurbo::PathEl::ClosePath => &[],
+        };
+        pts.iter().all(|q| q.x.is_finite() && q.y.is_finite())
+    })
 }
 
 fn reverse(e: &mut Editor, a: &Value) -> R {

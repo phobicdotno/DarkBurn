@@ -245,7 +245,6 @@ fn shape_start_point_on_an_overflowing_outline_keeps_the_shape() {
     }
 }
 
-
 #[test]
 fn copy_along_a_path_whose_length_cannot_be_worked_out_is_refused_not_a_crash() {
     use crate::shape_ops::tests::{run, select};

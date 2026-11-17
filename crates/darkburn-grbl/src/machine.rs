@@ -48,7 +48,7 @@ use kurbo::{Point, Rect};
 use crate::codes::{SettingInfo, alarm_is_critical, alarm_message, error_message, setting_info};
 use crate::protocol::{
     Axes, FirmwareInfo, FirmwareKind, MachineState, RapidOverride, Response, StatusReport, apply_build_info, clean_line, feed_override_bytes,
-    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, words,
+    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, strip_noise, words,
 };
 use crate::transport::Transport;
 
@@ -102,6 +102,9 @@ pub struct ConnectOptions {
     pub origin_strategy: OriginStrategy,
     /// Echo every streamed line and its `ok` to the console.
     pub show_all: bool,
+    /// How long lines may wait for their answer while the controller reports itself idle with
+    /// empty buffers before the answer counts as lost (plus any dwell still in flight).
+    pub stall_timeout: Duration,
 }
 
 impl Default for ConnectOptions {
@@ -119,6 +122,7 @@ impl Default for ConnectOptions {
             max_fire_duration: Duration::from_secs(10),
             origin_strategy: OriginStrategy::G10L20,
             show_all: false,
+            stall_timeout: STALL_TIMEOUT,
         }
     }
 }
@@ -131,6 +135,10 @@ const DISCONNECT_WAIT: Duration = Duration::from_secs(1);
 /// How long it then waits for the worker to let the link go once it was told to give up.
 const GIVE_UP_WAIT: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Default [`ConnectOptions::stall_timeout`].
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Said when an answer was lost: the job or command ends, nothing more is streamed.
+const STALL_MESSAGE: &str = "The controller stopped answering; a reply was lost.";
 
 /// Errors returned straight from [`GrblMachine`] methods.
 #[derive(Clone, Debug, PartialEq)]
@@ -1371,6 +1379,11 @@ struct Worker {
     pause_unconfirmed: Option<Instant>,
     poll_sent: Option<Instant>,
     last_poll: Instant,
+    /// When a line last went out or an answer last came in (see `check_stall`).
+    last_traffic: Instant,
+    /// Since when every status report has shown Idle with the planner empty and the RX buffer
+    /// free (see `check_stall`); only counts when later than `last_traffic`.
+    eligible_since: Option<Instant>,
     echo_status: bool,
     settings_collect: Vec<SettingValue>,
     stop: Option<StopSeq>,
@@ -1415,6 +1428,8 @@ impl Worker {
             pause_unconfirmed: None,
             poll_sent: None,
             last_poll: now,
+            last_traffic: now,
+            eligible_since: None,
             echo_status: false,
             settings_collect: Vec::new(),
             stop: None,
@@ -1538,10 +1553,12 @@ impl Worker {
         let n = self.t.read(&mut buf, Duration::from_millis(2)).map_err(|e| e.to_string())?;
         for &b in &buf[..n] {
             if b == b'\n' {
-                let line = String::from_utf8_lossy(&self.rx_line).trim_end_matches('\r').to_owned();
+                let raw = String::from_utf8_lossy(&self.rx_line).into_owned();
                 self.rx_line.clear();
-                if !line.trim().is_empty() {
-                    self.on_line(line.trim())?;
+                // A noise byte in front of an `ok` must not cost the answer.
+                let line = strip_noise(&raw);
+                if !line.is_empty() {
+                    self.on_line(line)?;
                 }
             } else if self.rx_line.len() < 4096 {
                 self.rx_line.push(b);
@@ -1915,6 +1932,7 @@ impl Worker {
         if self.fire_until.is_some_and(|t| now >= t) {
             self.fire_off(true);
         }
+        self.check_stall(now);
         if self.job.is_some() && now - self.last_progress >= Duration::from_millis(100) {
             self.last_progress = now;
             let p = self.job.as_mut().map(ActiveJob::progress);
@@ -1923,6 +1941,48 @@ impl Worker {
             }
         }
         Ok(true)
+    }
+
+    /// A lost answer (a garbled `ok`, a dropped byte) leaves its line in flight for good and the
+    /// job running until Stop. Only a controller that has plainly finished everything counts:
+    /// reports of Idle with the planner empty and the RX buffer free, unbroken for the whole
+    /// allowance and all taken after the last traffic. The allowance runs from the first such
+    /// report, not from the last line: GRBL 1.1 runs a `G4` only once the motion before it has
+    /// finished and reports Idle with empty buffers while it waits. Without `Bf:` in the
+    /// reports (or the planner size from `[OPT:]`) nothing is guessed. The
+    /// job ends as failed, the laser-off line goes out, and nothing is reset: an idle
+    /// controller's start-up blocks could move the head.
+    fn check_stall(&mut self, now: Instant) {
+        if self.phase != Phase::Ready || self.stop.is_some() || self.in_flight.is_empty() {
+            return;
+        }
+        let dwell: f64 = self.in_flight.iter().map(|p| dwell_seconds(&p.text)).sum();
+        let limit = self.opts.stall_timeout + Duration::from_secs_f64(dwell.clamp(0.0, 86_400.0));
+        // Any report since that was not idle and empty cleared `eligible_since`.
+        let Some(since) = self.eligible_since.filter(|&t| t > self.last_traffic) else { return };
+        if now.saturating_duration_since(since) < limit {
+            return;
+        }
+        if self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H")) {
+            return;
+        }
+        if !self.snap.status.updated.is_some_and(|t| now.saturating_duration_since(t) < POLL_STALE) {
+            return;
+        }
+        let first = self.in_flight.front().map(|p| p.text.clone()).unwrap_or_default();
+        self.in_flight.clear();
+        self.in_flight_bytes = 0;
+        self.motion_pending = false;
+        self.fire_until = None;
+        self.queue.clear();
+        self.note(STALL_MESSAGE);
+        if self.job.is_some() {
+            self.abort_job(STALL_MESSAGE);
+        } else {
+            self.emit(Event::Error { code: 0, message: STALL_MESSAGE.into(), line: first });
+        }
+        self.queue.push_back(Outgoing { text: "M5 S0".into(), origin: Origin::Internal(Tag::Plain), sync: false, needs_idle: false });
+        self.last_traffic = now;
     }
 
     /// Sends `?`, respecting the 5 Hz limit unless `now` is set for a one-off request that has
@@ -2055,6 +2115,7 @@ impl Worker {
         }
         self.in_flight.push_back(Pending { len, origin: o.origin, text: o.text });
         self.in_flight_bytes += len;
+        self.last_traffic = Instant::now();
         self.snap.rx_in_flight_peak = self.snap.rx_in_flight_peak.max(self.in_flight_bytes);
         Ok(())
     }
@@ -2152,6 +2213,7 @@ impl Worker {
             return Ok(());
         };
         self.in_flight_bytes -= p.len;
+        self.last_traffic = Instant::now();
         let user = matches!(p.origin, Origin::Console | Origin::Macro);
         if error.is_some() && is_jog_line(&p.text) && !self.in_flight.iter().any(|q| is_jog_line(&q.text)) {
             // The controller refused the jog: nothing moves.
@@ -2364,10 +2426,10 @@ impl Worker {
         }
         st.feed = r.feed.map_or(st.feed, |f| f * k);
         st.spindle = r.spindle.unwrap_or(st.spindle);
-        if let Some((b, rx)) = r.buffer {
-            st.planner_free = Some(b);
-            st.rx_free = Some(rx);
-        }
+        // A report without `Bf:` (`$10` changed) leaves no buffer counts: old ones would
+        // describe another moment.
+        st.planner_free = r.buffer.map(|(b, _)| b);
+        st.rx_free = r.buffer.map(|(_, rx)| rx);
         if let Some((f, ra, s)) = r.overrides {
             st.overrides = Overrides { feed: f, rapid: ra, power: s };
             st.accessories = r.accessories.unwrap_or_default();
@@ -2376,6 +2438,17 @@ impl Worker {
         st.updated = Some(Instant::now());
         let changed = st.state != r.state;
         st.state = r.state.clone();
+        // Idle and buffer counts from this one report (see `check_stall`).
+        let idle_empty = r.state == MachineState::Idle
+            && self.snap.firmware.as_ref().is_some_and(|fw| match (fw.planner_blocks, r.buffer) {
+                (Some(blocks), Some((b, rx))) => b >= u32::from(blocks) && (rx as usize) >= fw.rx_buffer_size.saturating_sub(1),
+                _ => false,
+            });
+        if !idle_empty {
+            self.eligible_since = None;
+        } else if self.eligible_since.is_none_or(|t| t <= self.last_traffic) {
+            self.eligible_since = Some(Instant::now());
+        }
         if let (Some(jog), Some(asked)) = (self.jog_sent, poll_time)
             && asked > jog
             && r.state != MachineState::Jog
@@ -2473,6 +2546,15 @@ impl Worker {
         }
         Ok(())
     }
+}
+
+/// Seconds a `G4 P<seconds>` line waits; 0 for any other line.
+fn dwell_seconds(text: &str) -> f64 {
+    let w = words(text);
+    if !w.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9)) {
+        return 0.0;
+    }
+    w.iter().find(|(l, _)| *l == 'P').and_then(|(_, v)| v.parse::<f64>().ok()).filter(|p| p.is_finite() && *p > 0.0).unwrap_or(0.0)
 }
 
 fn is_sync_origin(origin: &Origin, text: &str) -> bool {

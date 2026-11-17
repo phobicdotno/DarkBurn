@@ -1,0 +1,2 @@
+- GRBL: a reply with a stray byte in front of it no longer leaves a job hanging
+- GRBL: if a reply gets lost and the machine has clearly finished, the job now ends with a message and the laser off instead of showing "running" forever

@@ -381,6 +381,13 @@ pub enum Response {
 }
 
 /// Classifies one received line (without its line ending).
+/// Drops noise in front of a controller line: control characters and characters that are not
+/// ASCII (a byte garbled on the wire reads as U+FFFD). Printable text is left as it is, so
+/// `xok` is still not an `ok`.
+pub fn strip_noise(line: &str) -> &str {
+    line.trim_start_matches(|c: char| !c.is_ascii_graphic()).trim_end()
+}
+
 pub fn parse_response(line: &str) -> Response {
     let line = line.trim();
     if line == "ok" {

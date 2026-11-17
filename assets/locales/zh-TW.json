@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "網格必須包含 16 個點",
   "shapes.deform_point_format": "網格點的格式為 [x, y]",
   "shapes.deform_bad_point": "無效的點",
-  "shapes.deform_one_line": "網格點位於同一直線上：未進行任何變形"
+  "shapes.deform_one_line": "網格點位於同一直線上：未進行任何變形",
+  "edit.too_deep": "{what}：圖形最多只能巢狀 {max} 層群組。",
+  "edit.not_grouped": "未組成群組",
+  "edit.not_pasted": "未貼上",
+  "files.left_out_title": "已儲存，但省略了部分圖形",
+  "files.left_out_note": "{path}：有 {n} 個圖形無法寫入，已從檔案中省略（巢狀過深，或位置不是數字）。它們仍在開啟的專案中。"
 }

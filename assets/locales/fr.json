@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "la grille doit contenir 16 points",
   "shapes.deform_point_format": "les points de la grille s’écrivent [x, y]",
   "shapes.deform_bad_point": "point non valide",
-  "shapes.deform_one_line": "les points de la grille sont alignés : rien n’a été déformé"
+  "shapes.deform_one_line": "les points de la grille sont alignés : rien n’a été déformé",
+  "edit.too_deep": "{what} : les formes peuvent être imbriquées sur au plus {max} niveaux de groupe.",
+  "edit.not_grouped": "Non groupé",
+  "edit.not_pasted": "Non collé",
+  "files.left_out_title": "Enregistré avec des formes omises",
+  "files.left_out_note": "{path} : {n} forme(s) n'ont pas pu être écrites et ont été omises du fichier (imbriquées trop profondément, ou une position qui n'est pas un nombre). Elles sont toujours dans le projet ouvert."
 }

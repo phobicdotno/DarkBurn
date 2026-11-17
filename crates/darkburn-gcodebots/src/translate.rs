@@ -55,6 +55,9 @@ pub struct TranslateOptions {
     /// Write the time of a dwell (`G4 P`) in milliseconds. The input gives seconds, as GRBL
     /// reads it; Marlin and its relatives read `P` as milliseconds.
     pub dwell_p_ms: bool,
+    /// Write a dwell as `G4 S<seconds>`. Smoothieware reads `P` as milliseconds outside grbl
+    /// mode and as seconds in it; `S` is seconds in both (smoothieware.org/g4).
+    pub dwell_s_seconds: bool,
 }
 
 impl Default for TranslateOptions {
@@ -76,6 +79,7 @@ impl Default for TranslateOptions {
             home_command: None,
             travel_s0: false,
             dwell_p_ms: false,
+            dwell_s_seconds: false,
         }
     }
 }
@@ -117,6 +121,7 @@ impl TranslateOptions {
             home_command: g.auto_home_on_start.then(|| home_command(p)),
             travel_s0: p.kind == DeviceKind::Custom,
             dwell_p_ms: matches!(p.kind, DeviceKind::Marlin | DeviceKind::Snapmaker),
+            dwell_s_seconds: p.kind == DeviceKind::Smoothie,
         }
     }
 }
@@ -232,7 +237,7 @@ where
         out.push(opts.air_off.trim().to_owned());
     }
     out.extend(script_lines(&opts.end_script));
-    if opts.cluster { cluster(&out) } else { out }
+    if opts.cluster { cluster_lines(&out, opts.dwell_s_seconds) } else { out }
 }
 
 fn script_lines(s: &str) -> Vec<String> {
@@ -374,7 +379,13 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
 
     if !is_motion_word && !words.iter().any(|(l, _)| *l == 'S') {
         let dwell = words.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9));
-        if dwell && opts.dwell_p_ms {
+        if dwell && opts.dwell_s_seconds {
+            for w in &mut words {
+                if w.0 == 'P' && w.1.parse::<f64>().is_ok() {
+                    w.0 = 'S';
+                }
+            }
+        } else if dwell && opts.dwell_p_ms {
             for w in &mut words {
                 if w.0 == 'P'
                     && let Ok(seconds) = w.1.parse::<f64>()
@@ -469,6 +480,13 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
 /// merged move so the modal state stays the same. This is the lossless form of "G-code
 /// clustering" for fast rasters.
 pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
+    cluster_lines(lines, false)
+}
+
+/// [`cluster`] for an output dialect. With `dwell_s_seconds` (Smoothieware), the `S` of a
+/// `G4` line is the dwell time, not laser power, so it does not become the power of the moves
+/// after it; otherwise (GRBL) an `S` on a dwell line is power and is tracked as before.
+pub fn cluster_lines<S: AsRef<str>>(lines: &[S], dwell_s_seconds: bool) -> Vec<String> {
     struct Pending {
         start: (f64, f64),
         end: (f64, f64),
@@ -546,12 +564,13 @@ pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
         } else {
             flush(&mut pend, &mut out);
             out.push(l.to_owned());
+            let dwell = words.as_ref().is_some_and(|w| w.iter().any(|(c, v)| *c == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9)));
             if let Some(w) = words {
                 for (c, v) in &w {
                     match c {
                         'X' if abs => px = v.parse().ok().or(px),
                         'Y' if abs => py = v.parse().ok().or(py),
-                        'S' => cur_s = Some(v.clone()),
+                        'S' if !(dwell && dwell_s_seconds) => cur_s = Some(v.clone()),
                         'F' => cur_f = Some(v.clone()),
                         _ => {}
                     }
@@ -589,11 +608,14 @@ mod tests {
             assert!(out.iter().any(|l| l == "G4 P250") && out.iter().any(|l| l == "G4 P1500"), "{kind:?}: {out:?}");
             assert!(!out.iter().any(|l| l.contains("P0.25")), "{kind:?}: {out:?}");
         }
-        // Seconds stay for a controller that reads them (and where the unit is not known).
-        for kind in [DeviceKind::Smoothie, DeviceKind::Custom] {
-            let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(kind)));
-            assert!(out.iter().any(|l| l == "G4 P0.25") && out.iter().any(|l| l == "G4 P1.5"), "{kind:?}: {out:?}");
-        }
+        // Smoothieware reads `P` as milliseconds outside grbl mode and as seconds in it; `S` is
+        // seconds in both (smoothieware.org/g4).
+        let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Smoothie)));
+        assert!(out.iter().any(|l| l == "G4 S0.25") && out.iter().any(|l| l == "G4 S1.5"), "{out:?}");
+        assert!(!out.iter().any(|l| l.starts_with("G4 P")), "{out:?}");
+        // Seconds stay for a custom device, where the unit is not known.
+        let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Custom)));
+        assert!(out.iter().any(|l| l == "G4 P0.25") && out.iter().any(|l| l == "G4 P1.5"), "{out:?}");
     }
 
     /// A custom controller is not known to switch the laser off for `G0` by itself.
@@ -726,6 +748,23 @@ mod tests {
         let lines = ["G0 X0 Y0", "G1 X1 Y0 S500 F3000", "G1 X2 Y0 S500", "G1 X3 Y0 S500", "G1 X4 Y0 S0", "G1 X5 Y0 S0", "G1 X5 Y1 S0"];
         let r = cluster(&lines);
         assert_eq!(r, vec!["G0 X0 Y0", "G1 X3 Y0 S500 F3000", "G1 X5 Y0 S0 F3000", "G1 X5 Y1 S0 F3000"]);
+    }
+
+    #[test]
+    fn a_dwell_s_word_is_not_laser_power() {
+        let lines = ["M3", "G0 X0 Y0", "G1 X0 Y0 S0 F1000", "G4 S1", "G1 X10"];
+        let r = cluster_lines(&lines, true);
+        assert_eq!(r.last().map(String::as_str), Some("G1 X10 Y0 S0 F1000"), "{r:?}");
+        assert!(r.iter().any(|l| l == "G4 S1"), "{r:?}");
+        // GRBL: an `S` on a dwell line is power and still counts, and so does its `F`.
+        let grbl = ["M3", "G0 X0 Y0", "G1 X1 S500 F1000", "G4 P1 S0 F200", "G1 X10", "M5"];
+        let r = cluster(&grbl);
+        assert!(r.iter().any(|l| l == "G1 X10 Y0 S0 F200"), "{r:?}");
+        let o = TranslateOptions { cluster: true, ..TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Smoothie)) };
+        let out = run(&["M3", "G0 X0 Y0", "G1 X0 Y0 S0", "G4 P1", "G1 X10"], &o);
+        assert!(out.iter().any(|l| l == "G4 S1"), "{out:?}");
+        let last = out.iter().rev().find(|l| l.starts_with("G1")).unwrap();
+        assert!(!last.contains("S1"), "the dwell's seconds became power: {out:?}");
     }
 
     #[test]

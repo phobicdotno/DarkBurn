@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "网格必须包含 16 个点",
   "shapes.deform_point_format": "网格点的格式为 [x, y]",
   "shapes.deform_bad_point": "无效的点",
-  "shapes.deform_one_line": "网格点位于同一直线上：未进行任何变形"
+  "shapes.deform_one_line": "网格点位于同一直线上：未进行任何变形",
+  "edit.too_deep": "{what}：图形最多只能嵌套 {max} 层组。",
+  "edit.not_grouped": "未编组",
+  "edit.not_pasted": "未粘贴",
+  "files.left_out_title": "已保存，但省略了部分图形",
+  "files.left_out_note": "{path}：有 {n} 个图形无法写入，已从文件中省略（嵌套过深，或位置不是数字）。它们仍在打开的项目中。"
 }

@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "격자에는 16개의 점이 있어야 합니다",
   "shapes.deform_point_format": "격자 점은 [x, y] 형식입니다",
   "shapes.deform_bad_point": "잘못된 점입니다",
-  "shapes.deform_one_line": "격자 점이 한 직선 위에 있어 아무것도 변형되지 않았습니다"
+  "shapes.deform_one_line": "격자 점이 한 직선 위에 있어 아무것도 변형되지 않았습니다",
+  "edit.too_deep": "{what}: 도형은 최대 {max}단계 그룹까지만 중첩할 수 있습니다.",
+  "edit.not_grouped": "그룹화되지 않음",
+  "edit.not_pasted": "붙여넣지 않음",
+  "files.left_out_title": "일부 도형을 제외하고 저장됨",
+  "files.left_out_note": "{path}: 도형 {n}개를 쓸 수 없어 파일에서 제외했습니다(너무 깊게 중첩되었거나 위치가 숫자가 아님). 열려 있는 프로젝트에는 그대로 있습니다."
 }

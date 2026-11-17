@@ -502,7 +502,10 @@ impl<'a> Emitter<'a> {
 
     fn dwell(&mut self, ms: f64, power: f64, out: &mut Vec<String>) {
         let p_word = match self.s.flavor {
-            Flavor::Marlin | Flavor::Smoothieware => format!("G4 P{}", fmt(ms, 0)),
+            Flavor::Marlin => format!("G4 P{}", fmt(ms, 0)),
+            // Smoothieware reads `P` as milliseconds outside grbl mode and as seconds in it;
+            // `S` is seconds in both (smoothieware.org/g4).
+            Flavor::Smoothieware => format!("G4 S{}", fmt(ms / 1000.0, 3)),
             _ => format!("G4 P{}", fmt(ms / 1000.0, 3)),
         };
         if power <= 0.0 {
@@ -838,6 +841,18 @@ mod tests {
         s.overscan_as_g0 = false;
         let g = emit(&tp(ops, false), &s);
         assert!(g.contains("M4\nG1 X2 F6000\n"), "{g}");
+    }
+
+    /// A dwell is written in the unit each controller reads: seconds in `P` for GRBL,
+    /// milliseconds in `P` for Marlin, seconds in `S` for Smoothieware (smoothieware.org/g4).
+    #[test]
+    fn a_dwell_is_written_in_the_unit_each_flavor_reads() {
+        let ops = vec![Op::Rapid { to: Point::new(1.0, 1.0) }, Op::Dwell { ms: 250.0, power: 0.0 }];
+        for (flavor, want) in [(Flavor::Grbl, "G4 P0.25\n"), (Flavor::Marlin, "G4 P250\n"), (Flavor::Smoothieware, "G4 S0.25\n")] {
+            let s = GcodeSettings { comments: false, flavor, ..GcodeSettings::grbl() };
+            let g = emit(&tp(ops.clone(), false), &s);
+            assert!(g.contains(want), "{flavor:?}: {g}");
+        }
     }
 
     /// A layer's name is free text and is written into a comment. Whatever it holds, the

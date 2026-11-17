@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "gitteret skal have 16 punkter",
   "shapes.deform_point_format": "gitterpunkter skrives som [x, y]",
   "shapes.deform_bad_point": "ugyldigt punkt",
-  "shapes.deform_one_line": "gitterpunkterne ligger på én linje: intet blev deformeret"
+  "shapes.deform_one_line": "gitterpunkterne ligger på én linje: intet blev deformeret",
+  "edit.too_deep": "{what}: figurer må højst ligge {max} grupper dybt.",
+  "edit.not_grouped": "Ikke grupperet",
+  "edit.not_pasted": "Ikke indsat",
+  "files.left_out_title": "Gemt, men nogle figurer blev udeladt",
+  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og blev udeladt af filen (indlejret for dybt, eller en position der ikke er et tal). De findes stadig i det åbne projekt."
 }

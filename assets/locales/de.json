@@ -835,5 +835,10 @@
   "shapes.deform_grid_count": "das Raster muss 16 Punkte enthalten",
   "shapes.deform_point_format": "Rasterpunkte werden als [x, y] angegeben",
   "shapes.deform_bad_point": "ungültiger Punkt",
-  "shapes.deform_one_line": "die Rasterpunkte liegen auf einer Linie: nichts wurde verformt"
+  "shapes.deform_one_line": "die Rasterpunkte liegen auf einer Linie: nichts wurde verformt",
+  "edit.too_deep": "{what}: Formen dürfen höchstens {max} Gruppen tief verschachtelt sein.",
+  "edit.not_grouped": "Nicht gruppiert",
+  "edit.not_pasted": "Nicht eingefügt",
+  "files.left_out_title": "Gespeichert, aber einige Formen wurden ausgelassen",
+  "files.left_out_note": "{path}: {n} Form(en) konnten nicht geschrieben werden und wurden in der Datei ausgelassen (zu tief verschachtelt oder eine Position, die keine Zahl ist). Sie sind weiterhin im geöffneten Projekt."
 }

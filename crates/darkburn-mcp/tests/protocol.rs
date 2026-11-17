@@ -177,6 +177,31 @@ fn jsonrpc_errors() {
 }
 
 #[test]
+fn bad_ids_and_versions_are_invalid_requests() {
+    let mut s = default_server();
+    for bad in [json!({"a": 1}), json!([1, 2]), json!(true)] {
+        let line = json!({"jsonrpc": "2.0", "id": bad, "method": "ping"}).to_string();
+        let r: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
+        assert_eq!(r["error"]["code"], -32600, "{r}");
+        assert_eq!(r["id"], Value::Null, "the bad id is not echoed back: {r}");
+    }
+    for ok in [json!("abc"), json!(7), json!(1.5), Value::Null] {
+        let line = json!({"jsonrpc": "2.0", "id": ok, "method": "ping"}).to_string();
+        let r: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
+        assert!(r.get("error").is_none(), "{r}");
+        assert_eq!(r["id"], ok);
+    }
+    for version in [json!("1.0"), json!(2.0), Value::Null] {
+        let line = json!({"jsonrpc": version, "id": 3, "method": "ping"}).to_string();
+        let r: Value = serde_json::from_str(&s.handle_line(&line).unwrap()).unwrap();
+        assert_eq!(r["error"]["code"], -32600, "{r}");
+        assert_eq!(r["id"], 3);
+    }
+    let r: Value = serde_json::from_str(&s.handle_line(r#"{"id":4,"method":"ping"}"#).unwrap()).unwrap();
+    assert_eq!(r["error"]["code"], -32600, "no `jsonrpc` at all: {r}");
+}
+
+#[test]
 fn invalid_arguments_are_protocol_errors_and_never_run() {
     let mut s = default_server();
     for (tool, args, needle) in [

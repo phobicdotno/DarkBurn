@@ -329,6 +329,27 @@ fn a_refusal_still_reaches_a_client_that_reads_it_after_the_server_hung_up() {
 }
 
 #[test]
+fn an_object_or_array_id_is_refused_and_not_echoed() {
+    let app = App::start(McpPolicy::default());
+    let mut s = TcpStream::connect(app.addr()).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    write_frame(&mut s, &json!({"hello": {"token": TOKEN, "client": "test", "version": 1}})).unwrap();
+    assert_eq!(read_frame(&mut s, 1 << 20).unwrap().unwrap()["ok"], true);
+    for bad in [json!({"a": 1}), json!([1]), json!(false)] {
+        write_frame(&mut s, &json!({"id": bad, "method": "execute", "params": {"id": "file.new"}})).unwrap();
+        let reply = read_frame(&mut s, 1 << 20).unwrap().unwrap();
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["id"], Value::Null, "{reply}");
+    }
+    write_frame(&mut s, &json!({"id": "x", "method": "ping"})).unwrap();
+    let reply = read_frame(&mut s, 1 << 20).unwrap().unwrap();
+    assert_eq!((reply["ok"].clone(), reply["id"].clone()), (json!(true), json!("x")));
+    drop(s);
+    let (_, executed) = app.finish();
+    assert!(executed.is_empty(), "nothing ran: {executed:?}");
+}
+
+#[test]
 fn large_payloads_cross_the_channel() {
     let app = App::start(McpPolicy::default());
     let mut r = app.remote();

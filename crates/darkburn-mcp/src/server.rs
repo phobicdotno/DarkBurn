@@ -165,6 +165,12 @@ impl<T: Tools> Server<T> {
     pub fn handle(&mut self, msg: Value) -> Option<Value> {
         let Value::Object(o) = &msg else { return Some(error(Value::Null, INVALID_REQUEST, "message must be an object")) };
         let id = o.get("id").cloned();
+        // JSON-RPC 2.0: an `id` is a string, a number or null. Anything else is not echoed back.
+        if let Some(v) = &id
+            && !(v.is_string() || v.is_number() || v.is_null())
+        {
+            return Some(error(Value::Null, INVALID_REQUEST, "`id` must be a string, a number or null"));
+        }
         let Some(method) = o.get("method").and_then(Value::as_str) else {
             // A response to a request of ours (we send none) or junk.
             if o.contains_key("result") || o.contains_key("error") {
@@ -172,6 +178,9 @@ impl<T: Tools> Server<T> {
             }
             return Some(error(id.unwrap_or(Value::Null), INVALID_REQUEST, "missing `method`"));
         };
+        if o.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+            return Some(error(id.unwrap_or(Value::Null), INVALID_REQUEST, "`jsonrpc` must be \"2.0\""));
+        }
         let params = o.get("params").cloned().unwrap_or(Value::Null);
         let Some(id) = id else {
             if method == "notifications/initialized" {

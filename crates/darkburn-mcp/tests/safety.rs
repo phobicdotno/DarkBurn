@@ -294,6 +294,22 @@ fn full_confirmation_flow_through_the_mcp_tools() {
 }
 
 #[test]
+fn batch_steps_are_checked_for_enabled_like_single_calls() {
+    let mut g = gate(allow_all());
+    let steps = vec![
+        BatchStep { command: "file.new".into(), params: json!({}), confirmation_token: None },
+        BatchStep { command: "edit.disabled_example".into(), params: json!({}), confirmation_token: None },
+    ];
+    let r = g.batch(&steps, false).unwrap();
+    assert!(!r.ok);
+    assert_eq!(r.failed_step, Some(1));
+    let e = r.steps[1].error.as_ref().unwrap();
+    assert_eq!(e.code, ErrorCode::Disabled);
+    assert!(e.message.contains("inspect_design"), "the gate refused it, not the backend: {}", e.message);
+    assert_eq!(g.inner().executed, vec!["file.new".to_string()]);
+}
+
+#[test]
 fn parameters_are_validated_before_the_backend_runs() {
     let mut g = gate(allow_all());
     let e = exec(&mut g, "laser.test_fire", json!({"power": 500})).unwrap_err();

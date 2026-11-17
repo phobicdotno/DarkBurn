@@ -117,6 +117,40 @@ impl Rig {
 
 // 3. Node tool join ------------------------------------------------------------------------------
 
+#[test]
+fn joining_two_touching_ends_on_release_marks_the_document_changed() {
+    let mut rig = Rig::new();
+    let out = run(&mut rig.app, "shape.add_path", json!({ "svg_path": "M100 100 L160 100 L130 140" })).unwrap();
+    let id = ShapeId(out["id"].as_u64().unwrap());
+    rig.app.editor.selection.set([id]);
+    rig.app.set_tool(crate::tools::Tool::Nodes);
+    rig.frame(vec![], Modifiers::NONE);
+    // Drag the last node onto the first: it lands on it exactly (own nodes are caught first),
+    // but the ends are only joined when the button comes up.
+    let (a, b) = (rig.screen(Point::new(130.0, 140.0)), rig.screen(Point::new(100.0, 100.0)));
+    rig.mv(a);
+    rig.button(a, true);
+    for k in 1..=6 {
+        rig.mv(a + (b - a) * (k as f32 / 6.0));
+    }
+    rig.mv(b);
+    // Off the canvas (onto the ruler) the drag moves nothing more, so the release frame does
+    // not touch the document by moving the node again: only the join can mark it changed.
+    let off = Pos2::new(2.0, 2.0);
+    rig.mv(off);
+    let shape = rig.app.editor.doc.get(id).unwrap();
+    assert!(!shape.is_closed(), "the ends touch but are not joined before the release");
+    let end = shape.outline().elements().iter().rev().find_map(|e| match e {
+        darkburn_core::kurbo::PathEl::LineTo(p) => Some(*p),
+        _ => None,
+    });
+    assert!(end.is_some_and(|p| p.distance(Point::new(100.0, 100.0)) < 1e-6), "the end lies on the start: {end:?}");
+    let before = rig.app.editor.revision();
+    rig.button(off, false);
+    assert!(rig.app.editor.doc.get(id).unwrap().is_closed(), "the release joined the touching ends");
+    assert!(rig.app.editor.revision() > before, "the join marks the document changed");
+}
+
 // 4. Ctrl+Z during a drag ------------------------------------------------------------------------
 
 fn rect_rig() -> (Rig, ShapeId) {

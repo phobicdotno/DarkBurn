@@ -849,6 +849,7 @@ impl GrblEmulator {
         self.planner.clear();
         self.current = None;
         self.timer_until = None;
+        self.dwell_until = None;
         self.resume_after_hold = false;
         self.gc_pos = self.mpos;
     }
@@ -895,7 +896,6 @@ impl GrblEmulator {
         }
         let in_alarm = self.state == State::Alarm || self.wait_reset;
         self.clear_motion();
-        self.dwell_until = None;
         self.reset_modal();
         self.wait_reset = false;
         self.state = if in_alarm { State::Alarm } else { State::Idle };
@@ -1692,6 +1692,10 @@ impl GrblEmulator {
                 if !check && secs > 0.0 && self.idle_dwell {
                     // `G4` waited for the motion before it (a sync line), so the planner is empty.
                     self.dwell_until = Some(self.now + secs);
+                    // The move before it has finished: GRBL 1.1 reports Idle through the dwell.
+                    if self.state == State::Run {
+                        self.state = State::Idle;
+                    }
                 } else if !check && secs > 0.0 {
                     self.planner.push_back(Block { target: self.gc_pos, feed: 1.0, rapid: false, jog: false, power: 0.0, dwell: secs });
                 }

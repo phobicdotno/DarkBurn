@@ -1,0 +1,1 @@
+- Art library no longer loses what another open DarkBurn added to the same library file when you save

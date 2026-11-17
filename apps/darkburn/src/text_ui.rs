@@ -1295,7 +1295,7 @@ fn qr_dialog(ctx: &Context, app: &mut DarkBurn) {
                 });
                 match q.kind {
                     0 => {
-                        ui_kit::text_area(ui, "Text", Id::unique("qr_text"), &mut q.text, 4, 100_000);
+                        ui_kit::text_area(ui, "Text", Id::unique("qr_text"), &mut q.text, 4, crate::text_cmds::MAX_BARCODE_CHARS);
                     }
                     1 => ui_kit::row(ui, "Address", |ui| {
                         ui_kit::hint_field(ui, &mut q.url, "example.com");

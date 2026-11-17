@@ -116,22 +116,34 @@ impl Default for DrillSettings {
 /// are sent as several in a row.
 pub const MAX_POINT_DWELL: u16 = 60_000;
 
+/// The most points one outline may be drilled at; a tiny spacing would otherwise ask for
+/// billions of points.
+pub const MAX_DRILL_POINTS: usize = 1_000_000;
+
 /// The points to drill along one polyline: its own points when `spacing` is 0, otherwise
 /// evenly spread about `spacing` apart (both ends of an open line are always drilled).
-pub fn drill_points(pts: &[Point], closed: bool, spacing: f64) -> Vec<Point> {
+/// Refused when that would be more than [`MAX_DRILL_POINTS`].
+pub fn drill_points(pts: &[Point], closed: bool, spacing: f64) -> Result<Vec<Point>, CompileError> {
     let mut line: Vec<Point> = pts.to_vec();
     line.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
     if closed && line.len() > 1 && (line[0] - line[line.len() - 1]).hypot() < 1e-9 {
         line.pop();
     }
     if line.len() < 2 || !(spacing.is_finite() && spacing > 0.0) {
-        return line;
+        return Ok(line);
     }
     if closed {
         line.push(line[0]);
     }
     let length: f64 = line.windows(2).map(|w| (w[1] - w[0]).hypot()).sum();
-    let steps = ((length / spacing).round() as usize).max(1);
+    // Count the points before building them; written so that "not a number" fails it.
+    let nf = (length / spacing).round();
+    if !(nf < MAX_DRILL_POINTS as f64) {
+        return Err(CompileError::Invalid(format!(
+            "The drill spacing of {spacing} mm needs more than {MAX_DRILL_POINTS} points on one outline, which is the limit."
+        )));
+    }
+    let steps = (nf as usize).max(1);
     let count = if closed { steps } else { steps + 1 };
     let mut out = Vec::with_capacity(count);
     let (mut seg, mut walked) = (0usize, 0.0f64);
@@ -145,7 +157,7 @@ pub fn drill_points(pts: &[Point], closed: bool, spacing: f64) -> Vec<Point> {
         let t = if d > 0.0 { ((target - walked) / d).clamp(0.0, 1.0) } else { 0.0 };
         out.push(line[seg].lerp(line[seg + 1], t));
     }
-    out
+    Ok(out)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -739,7 +751,7 @@ fn layer_polys(job_layer: &Layer, li: usize, win: &Window, opt: &CompileOptions)
 fn emit_drill_layer(w: &mut Writer, shapes: &[Vec<Poly>], d: &DrillSettings, win: &Window) -> Result<(), CompileError> {
     let dy = win.center_y.unwrap_or(0.0);
     for poly in shapes.iter().flatten() {
-        for p in drill_points(&poly.pts, poly.closed, d.spacing_mm) {
+        for p in drill_points(&poly.pts, poly.closed, d.spacing_mm)? {
             // A point on the line between two bands belongs to the upper one, so it is drilled once.
             if let Some((a, b)) = win.band
                 && !(p.y >= a && (p.y < b || (win.last_band && p.y <= b + 1e-9)))
@@ -1468,26 +1480,40 @@ mod tests {
     #[test]
     fn drill_points_are_the_corners_or_evenly_spread() {
         let sq = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 10.0), Point::new(0.0, 10.0)];
-        assert_eq!(drill_points(&sq, true, 0.0), sq, "spacing 0: the corners");
+        assert_eq!(drill_points(&sq, true, 0.0).unwrap(), sq, "spacing 0: the corners");
         // A closed square with a repeated first point is still four corners.
         let mut again = sq.to_vec();
         again.push(sq[0]);
-        assert_eq!(drill_points(&again, true, 0.0).len(), 4);
+        assert_eq!(drill_points(&again, true, 0.0).unwrap().len(), 4);
         // 40 mm round, every 5 mm: eight points, none twice.
-        let eight = drill_points(&sq, true, 5.0);
+        let eight = drill_points(&sq, true, 5.0).unwrap();
         assert_eq!(eight.len(), 8);
         assert_eq!(eight[0], Point::new(0.0, 0.0));
         assert!((eight[1] - Point::new(5.0, 0.0)).hypot() < 1e-9 && (eight[3] - Point::new(10.0, 5.0)).hypot() < 1e-9);
         assert!((eight[7] - Point::new(0.0, 5.0)).hypot() < 1e-9);
         // An open 10 mm line every 3 mm: both ends and two between, evenly.
         let line = [Point::new(0.0, 0.0), Point::new(10.0, 0.0)];
-        let four = drill_points(&line, false, 3.0);
+        let four = drill_points(&line, false, 3.0).unwrap();
         assert_eq!(four.len(), 4);
         assert!((four[3] - line[1]).hypot() < 1e-9 && (four[1].x - 10.0 / 3.0).abs() < 1e-9);
         // A spacing longer than the line: just its ends. A single point stays one point.
-        assert_eq!(drill_points(&line, false, 50.0), line);
-        assert_eq!(drill_points(&line[..1], false, 1.0), line[..1]);
-        assert!(drill_points(&[], true, 1.0).is_empty());
+        assert_eq!(drill_points(&line, false, 50.0).unwrap(), line);
+        assert_eq!(drill_points(&line[..1], false, 1.0).unwrap(), line[..1]);
+        assert!(drill_points(&[], true, 1.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_tiny_drill_spacing_is_refused_before_building_points() {
+        let line = [Point::new(0.0, 0.0), Point::new(10.0, 0.0)];
+        match drill_points(&line, false, 1e-9) {
+            Err(CompileError::Invalid(m)) => assert!(m.contains("limit"), "{m}"),
+            other => panic!("expected a limit error, got {:?}", other.map(|v| v.len())),
+        }
+        let mut job = Job::new();
+        job.layers.push(drill_layer(vec![rect_path(0.0, 0.0, 5.0, 5.0)], 1.0, 1e-9));
+        assert!(matches!(compile(&job, &dev(), &CompileOptions::default()), Err(CompileError::Invalid(_))));
+        // Just under the limit still works.
+        assert_eq!(drill_points(&line, false, 10.0 / (MAX_DRILL_POINTS - 2) as f64).unwrap().len(), MAX_DRILL_POINTS - 1);
     }
 
     #[test]

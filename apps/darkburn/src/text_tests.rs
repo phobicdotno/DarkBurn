@@ -247,6 +247,16 @@ fn barcode_data_length_is_capped() {
 }
 
 #[test]
+fn qr_text_length_is_capped() {
+    let mut a = app();
+    let long = "A".repeat(1_000_000);
+    let e = run(&mut a, "qr.add", json!({ "text": long })).unwrap_err();
+    assert!(e.contains("4296"), "{e}");
+    assert!(run(&mut a, "qr.add", json!({ "kind": "url", "url": "h".repeat(4297) })).is_err());
+    assert!(run(&mut a, "qr.add", json!({ "text": "hello" })).is_ok());
+}
+
+#[test]
 fn serial_numbers_and_navigation() {
     let mut a = app();
     let id = add(&mut a, "SN{serial:3}", json!({ "variable": "serial" }));

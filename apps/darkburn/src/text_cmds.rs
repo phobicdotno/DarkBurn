@@ -304,7 +304,7 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
 const MAX_CODE_MODULE_MM: f64 = 1_000.0;
 /// The most characters a barcode's data may have: the biggest QR code holds 4296, and no 1D code
 /// or Data Matrix holds more, so anything longer is refused before the generator sees it.
-const MAX_BARCODE_CHARS: usize = 4296;
+pub(crate) const MAX_BARCODE_CHARS: usize = 4296;
 /// The largest QR code side or barcode height, in mm.
 const MAX_CODE_SIZE_MM: f64 = 100_000.0;
 
@@ -316,6 +316,10 @@ fn code_size(what: &str, v: f64, max: f64) -> Result<f64, String> {
 fn apply_qr_args(doc: &Document, layer: usize, c: &mut CodeShape, a: &Value) -> Result<(), String> {
     let CodeSpec::Qr(q) = &mut c.spec else { return Err("not a QR code".into()) };
     if let Some(content) = qr_content(a, Some(&q.content))? {
+        let n = content.payload().chars().count();
+        if n > MAX_BARCODE_CHARS {
+            return Err(format!("QR text is {n} characters; at most {MAX_BARCODE_CHARS} fit in a QR code"));
+        }
         q.content = content;
     }
     if let Some(e) = word(a, "ecc") {

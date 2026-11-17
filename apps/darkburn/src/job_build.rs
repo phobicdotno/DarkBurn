@@ -465,11 +465,25 @@ struct Collected {
     job: JobInput,
     bounds: Option<Rect>,
     selection_bounds: Option<Rect>,
+    /// Bounds the job is anchored on in place of its own, after shapes were dropped from it.
+    anchor_bounds: Option<Rect>,
     frame_paths: Vec<BezPath>,
     /// Outlines on tool layers that are framed with the job.
     tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
+}
+
+impl Collected {
+    /// The origin settings of the build: anchored where "Remove what is outside the work area"
+    /// placed the job when it dropped shapes.
+    fn origin(&self, input: &BuildInput) -> Result<OriginSettings, BuildError> {
+        let mut o = origin_for(input, self.selection_bounds)?;
+        if self.anchor_bounds.is_some() {
+            o.selection_bounds = self.anchor_bounds;
+        }
+        Ok(o)
+    }
 }
 
 fn cut_mode(m: Mode) -> CutMode {
@@ -826,8 +840,14 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // the bed: from the user origin or the head, the anchor of the whole job (all the shapes
     // that could burn) goes there. Absolute jobs, and jobs from the current position while the
     // head position is unknown, are measured where they are mapped.
-    let bed_place = if !st.discard_out_of_bounds || matches!(st.start_from, StartMode::Absolute) {
-        Affine::IDENTITY
+    let placing = st.discard_out_of_bounds
+        && match st.start_from {
+            StartMode::Absolute => false,
+            StartMode::CurrentPosition => input.head.is_some(),
+            StartMode::UserOrigin => true,
+        };
+    let place_bounds = if !placing {
+        None
     } else {
         tops.iter()
             .flat_map(|t| t.leaves())
@@ -838,8 +858,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             })
             .map(|l| placed(&l))
             .reduce(|a, b| a.union(b))
-            .map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b))
     };
+    let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -1039,7 +1059,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // Bounds of what burns, as the engine anchors the job.
     let job = JobInput { layers: list };
     let bounds = job::generate::job_bounds(&job, input.device.tolerance);
-    Ok(Collected { job, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
+    // The engine anchors on what is left. Once shapes are dropped, it anchors on the bounds the
+    // test used instead, so the shapes that are kept burn where they passed it.
+    let anchor_bounds = if dropped > 0 && !st.use_selection_origin { place_bounds } else { None };
+    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -1112,7 +1135,7 @@ fn fires_anywhere(tp: &Toolpath) -> bool {
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
-    let origin = origin_for(input, c.selection_bounds)?;
+    let origin = c.origin(input)?;
     let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: input.device.tolerance, comments: true };
     let mut scaled = |f: f32| report(0.3 + 0.7 * f);
     let mut progress = Progress::new(cancel, Some(&mut scaled));
@@ -1354,7 +1377,7 @@ pub fn frame_toolpath(points: &[Point], origin: &OriginSettings, job_bounds: Rec
 pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Option<f64>) -> Result<Toolpath, BuildError> {
     let c = collect(input, None, &mut |_| {})?;
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
-    let origin = origin_for(input, c.selection_bounds)?;
+    let origin = c.origin(input)?;
     let points = match kind {
         FrameKind::Rectangle => {
             let mut r = bounds;

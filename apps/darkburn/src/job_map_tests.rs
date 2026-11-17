@@ -5,6 +5,7 @@
 use darkburn_core::Document;
 use darkburn_core::kurbo::{Affine, Point, Rect};
 use darkburn_core::layer::Mode;
+use darkburn_job::JobAnchor;
 use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
 
 use crate::job_build::*;
@@ -247,4 +248,35 @@ fn a_fill_left_out_for_its_size_does_not_move_the_placement() {
     assert!(b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
     let min = machine_min(&b);
     assert!(min.x.abs() < 1e-6 && min.y.abs() < 1e-6, "the job starts at {min:?}, not at the user origin");
+}
+
+#[test]
+fn shapes_kept_burn_where_they_passed_the_work_area_test() {
+    // 200 mm bed, user origin at (190, 100), centre anchor. The whole job (X 0 to 300) is
+    // centred on the origin: the square at X 290 lands past the bed and is dropped, the one at
+    // X 100 is tested at X 140 to 150. Anchored on what was left (X 0 to 110), it burned at
+    // X 235 to 245, off the bed.
+    let mut d = line_doc();
+    for x in [0.0, 100.0, 290.0] {
+        d.add(darkburn_core::Shape::rect(Rect::new(x, 10.0, x + 10.0, 20.0), 0.0, 0));
+    }
+    let mut i = input(d);
+    i.settings.discard_out_of_bounds = true;
+    i.settings.start_from = StartMode::UserOrigin;
+    i.settings.anchor = JobAnchor::Center;
+    i.user_origin = Some(Point::new(190.0, 100.0));
+    let b = build_job_simple(&i).unwrap();
+    assert_eq!(b.dropped_shapes, 1);
+    assert!(!b.out_of_bounds(), "the job leaves the bed: {:?}", b.bounds_report.violations.len());
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for op in &b.toolpath.ops {
+        if let darkburn_job::Op::Cut { to, .. } = op {
+            (lo, hi) = (lo.min(to.x), hi.max(to.x));
+        }
+    }
+    assert!((lo - 40.0).abs() < 1e-6 && (hi - 150.0).abs() < 1e-6, "burns at X {lo} to {hi}, not 40 to 150");
+    // The job bounds are what burns, and the origin anchors on where the test placed them.
+    near(b.bounds, Rect::new(0.0, 10.0, 110.0, 20.0), 1e-6);
+    let a = b.origin.anchor_point(b.bounds);
+    assert!((a.x - 150.0).abs() < 1e-6, "anchored at {a:?}, not at the centre of X 0 to 300");
 }

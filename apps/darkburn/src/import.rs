@@ -528,9 +528,7 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 fn inkscape_before_092(version: &str) -> bool {
     let token = version.trim().split(|c: char| !(c.is_ascii_digit() || c == '.')).next().unwrap_or("");
     let mut parts = token.split('.');
-    let (Some(Ok(major)), Some(Ok(minor))) =
-        (parts.next().map(str::parse::<u32>), parts.next().map(str::parse::<u32>))
-    else {
+    let (Some(Ok(major)), Some(Ok(minor))) = (parts.next().map(str::parse::<u32>), parts.next().map(str::parse::<u32>)) else {
         return false;
     };
     major == 0 && minor < 92

@@ -1381,6 +1381,9 @@ struct Worker {
     last_poll: Instant,
     /// When a line last went out or an answer last came in (see `check_stall`).
     last_traffic: Instant,
+    /// Since when every status report has shown Idle with the planner empty and the RX buffer
+    /// free (see `check_stall`); only counts when later than `last_traffic`.
+    eligible_since: Option<Instant>,
     echo_status: bool,
     settings_collect: Vec<SettingValue>,
     stop: Option<StopSeq>,
@@ -1426,6 +1429,7 @@ impl Worker {
             poll_sent: None,
             last_poll: now,
             last_traffic: now,
+            eligible_since: None,
             echo_status: false,
             settings_collect: Vec::new(),
             stop: None,
@@ -1941,8 +1945,11 @@ impl Worker {
 
     /// A lost answer (a garbled `ok`, a dropped byte) leaves its line in flight for good and the
     /// job running until Stop. Only a controller that has plainly finished everything counts:
-    /// a fresh report of Idle with the planner empty and the RX buffer free, long after the
-    /// last answer. Without `Bf:` (or the planner size from `[OPT:]`) nothing is guessed. The
+    /// reports of Idle with the planner empty and the RX buffer free, unbroken for the whole
+    /// allowance and all taken after the last traffic. The allowance runs from the first such
+    /// report, not from the last line: GRBL 1.1 runs a `G4` only once the motion before it has
+    /// finished and reports Idle with empty buffers while it waits. Without `Bf:` in the
+    /// reports (or the planner size from `[OPT:]`) nothing is guessed. The
     /// job ends as failed, the laser-off line goes out, and nothing is reset: an idle
     /// controller's start-up blocks could move the head.
     fn check_stall(&mut self, now: Instant) {
@@ -1951,20 +1958,15 @@ impl Worker {
         }
         let dwell: f64 = self.in_flight.iter().map(|p| dwell_seconds(&p.text)).sum();
         let limit = self.opts.stall_timeout + Duration::from_secs_f64(dwell.clamp(0.0, 86_400.0));
-        if now.saturating_duration_since(self.last_traffic) < limit {
+        // Any report since that was not idle and empty cleared `eligible_since`.
+        let Some(since) = self.eligible_since.filter(|&t| t > self.last_traffic) else { return };
+        if now.saturating_duration_since(since) < limit {
             return;
         }
         if self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H")) {
             return;
         }
-        let st = &self.snap.status;
-        let fresh = st.updated.is_some_and(|t| t > self.last_traffic && now.saturating_duration_since(t) < POLL_STALE);
-        if st.state != MachineState::Idle || !fresh {
-            return;
-        }
-        let Some(fw) = self.snap.firmware.as_ref() else { return };
-        let (Some(blocks), Some(planner_free), Some(rx_free)) = (fw.planner_blocks, st.planner_free, st.rx_free) else { return };
-        if planner_free < u32::from(blocks) || (rx_free as usize) < fw.rx_buffer_size.saturating_sub(1) {
+        if !self.snap.status.updated.is_some_and(|t| now.saturating_duration_since(t) < POLL_STALE) {
             return;
         }
         let first = self.in_flight.front().map(|p| p.text.clone()).unwrap_or_default();
@@ -2424,10 +2426,10 @@ impl Worker {
         }
         st.feed = r.feed.map_or(st.feed, |f| f * k);
         st.spindle = r.spindle.unwrap_or(st.spindle);
-        if let Some((b, rx)) = r.buffer {
-            st.planner_free = Some(b);
-            st.rx_free = Some(rx);
-        }
+        // A report without `Bf:` (`$10` changed) leaves no buffer counts: old ones would
+        // describe another moment.
+        st.planner_free = r.buffer.map(|(b, _)| b);
+        st.rx_free = r.buffer.map(|(_, rx)| rx);
         if let Some((f, ra, s)) = r.overrides {
             st.overrides = Overrides { feed: f, rapid: ra, power: s };
             st.accessories = r.accessories.unwrap_or_default();
@@ -2436,6 +2438,17 @@ impl Worker {
         st.updated = Some(Instant::now());
         let changed = st.state != r.state;
         st.state = r.state.clone();
+        // Idle and buffer counts from this one report (see `check_stall`).
+        let idle_empty = r.state == MachineState::Idle
+            && self.snap.firmware.as_ref().is_some_and(|fw| match (fw.planner_blocks, r.buffer) {
+                (Some(blocks), Some((b, rx))) => b >= u32::from(blocks) && (rx as usize) >= fw.rx_buffer_size.saturating_sub(1),
+                _ => false,
+            });
+        if !idle_empty {
+            self.eligible_since = None;
+        } else if self.eligible_since.is_none_or(|t| t <= self.last_traffic) {
+            self.eligible_since = Some(Instant::now());
+        }
         if let (Some(jog), Some(asked)) = (self.jog_sent, poll_time)
             && asked > jog
             && r.state != MachineState::Jog

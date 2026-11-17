@@ -262,6 +262,10 @@ pub struct GrblEmulator {
     stats: EmulatorStats,
     /// Test faults on coming `ok` replies: (number of the `ok`, noise in front, or `None` to lose it).
     ok_faults: Vec<(usize, Option<Vec<u8>>)>,
+    /// Test hook: run `G4` the GRBL 1.1 way (see [`GrblEmulator::set_idle_dwell`]).
+    idle_dwell: bool,
+    /// End of a running GRBL 1.1 style dwell; no line is read and its `ok` waits until then.
+    dwell_until: Option<f64>,
 }
 
 fn default_settings(flavor: EmulatorFlavor) -> BTreeMap<u16, f64> {
@@ -369,6 +373,8 @@ impl GrblEmulator {
             step_power: 0.0,
             stats: EmulatorStats::default(),
             ok_faults: Vec::new(),
+            idle_dwell: false,
+            dwell_until: None,
         };
         e.power_on_reset();
         e
@@ -427,6 +433,13 @@ impl GrblEmulator {
     /// way (`noise` is `None`), or arrives with `noise` in front of it.
     pub fn fault_ok(&mut self, after: usize, noise: Option<&[u8]>) {
         self.ok_faults.push((self.stats.oks + after, noise.map(<[u8]>::to_vec)));
+    }
+
+    /// Test hook: run `G4` as GRBL 1.1 does. Once the motion before it has finished, the
+    /// controller waits out the dwell reporting Idle with empty buffers, reads no further
+    /// line, and answers the `G4` only at the end. Off: the dwell is a planner block.
+    pub fn set_idle_dwell(&mut self, on: bool) {
+        self.idle_dwell = on;
     }
 
     pub fn unplug(&mut self) {
@@ -568,6 +581,17 @@ impl GrblEmulator {
             }
             self.now += max;
             return max;
+        }
+        if let Some(t) = self.dwell_until {
+            let d = (t - self.now).max(0.0);
+            if d > max {
+                self.now += max;
+                return max;
+            }
+            self.now = t;
+            self.dwell_until = None;
+            self.reply_ok();
+            return d;
         }
         if let Some(t) = self.timer_until {
             let d = (t - self.now).max(0.0);
@@ -871,6 +895,7 @@ impl GrblEmulator {
         }
         let in_alarm = self.state == State::Alarm || self.wait_reset;
         self.clear_motion();
+        self.dwell_until = None;
         self.reset_modal();
         self.wait_reset = false;
         self.state = if in_alarm { State::Alarm } else { State::Idle };
@@ -1135,7 +1160,7 @@ impl GrblEmulator {
 
     fn process_rx(&mut self) {
         loop {
-            if self.boot_until.is_some() || self.wait_reset || self.state == State::Home || self.state == State::Sleep {
+            if self.boot_until.is_some() || self.dwell_until.is_some() || self.wait_reset || self.state == State::Home || self.state == State::Sleep {
                 return;
             }
             let Some(end) = self.rx.iter().position(|&b| b == b'\n' || b == b'\r') else {
@@ -1187,7 +1212,7 @@ impl GrblEmulator {
                     return LineOutcome::Wait;
                 }
                 self.record(&line);
-                if self.apply_gcode(g) {
+                if self.apply_gcode(g) && self.dwell_until.is_none() {
                     self.reply_ok();
                 }
                 LineOutcome::Done
@@ -1664,7 +1689,10 @@ impl GrblEmulator {
         match g.non_modal {
             Some(40) => {
                 let secs = g.p.unwrap_or(0.0);
-                if !check && secs > 0.0 {
+                if !check && secs > 0.0 && self.idle_dwell {
+                    // `G4` waited for the motion before it (a sync line), so the planner is empty.
+                    self.dwell_until = Some(self.now + secs);
+                } else if !check && secs > 0.0 {
                     self.planner.push_back(Block { target: self.gc_pos, feed: 1.0, rapid: false, jog: false, power: 0.0, dwell: secs });
                 }
             }

@@ -125,3 +125,35 @@ fn a_slow_controller_that_still_runs_never_trips() {
     assert!(matches!(ev.last(), Some(Event::JobFinished(_))), "{ev:?}");
     assert!(emu.with(|e| !e.stats().realtime.contains(&0x18)));
 }
+
+#[test]
+fn a_dwell_after_a_long_move_is_timed_from_when_the_controller_went_idle() {
+    // GRBL 1.1: the `G4` waits for the 2 s move, then dwells 1 s reporting Idle with empty
+    // buffers, and only then answers. Its answer comes ~3 s after the last traffic, far past
+    // the 0.3 s limit plus the dwell; the controller has been idle for at most the dwell.
+    let opts = ConnectOptions { stall_timeout: Duration::from_millis(300), stream_mode: StreamMode::Synchronous, ..Default::default() };
+    let emu = EmulatorHandle::new(GrblEmulator::new(EmulatorConfig::atomstack().with_setting(10, 3.0)));
+    emu.with(|e| e.set_idle_dwell(true));
+    let m = GrblMachine::connect(Box::new(emu.transport()), opts);
+    assert!(m.wait_until(T, |s| s.status.state == MachineState::Idle && s.activity == Activity::Idle && s.status.planner_free.is_some()));
+    m.start_job(Job::from_lines(["G21 G90", "G1 X20 F600", "G4 P1", "G0 X0"].map(String::from))).unwrap();
+    let ev = until(&m, |e| matches!(e, Event::JobFinished(_) | Event::JobAborted { .. }));
+    assert!(matches!(ev.last(), Some(Event::JobFinished(_))), "{ev:?}");
+    assert!(emu.with(|e| !e.stats().realtime.contains(&0x18)));
+}
+
+#[test]
+fn buffer_counts_from_older_reports_are_not_used_once_reports_drop_bf() {
+    let (m, emu) = rig(with_bf(), Duration::from_millis(300));
+    assert!(m.wait_until(T, |s| s.status.planner_free.is_some()));
+    // `$10=1`: from now on the reports carry no `Bf:`.
+    m.send_console("$10=1").unwrap();
+    assert!(m.wait_until(T, |s| s.status.planner_free.is_none() && s.status.rx_free.is_none()), "{:?}", m.snapshot().status);
+    emu.with(|e| e.fault_ok(6, None));
+    m.start_job(job()).unwrap();
+    std::thread::sleep(Duration::from_millis(2000));
+    assert_eq!(m.snapshot().activity, Activity::Job, "{:?}", m.snapshot());
+    assert_eq!(m5_lines(&emu), 1, "only the job's own laser-off line");
+    m.stop().unwrap();
+    until(&m, |e| matches!(e, Event::Stopped));
+}

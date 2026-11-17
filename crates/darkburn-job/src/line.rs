@@ -6,7 +6,7 @@ use std::f64::consts::FRAC_PI_2;
 use kurbo::{Point, Vec2};
 
 use crate::geom::{self, EPS};
-use crate::input::{CutSettings, Lead, LeadStyle, TabSettings};
+use crate::input::{CutSettings, Lead, LeadStyle, LineSettings, TabSettings};
 use crate::ir::Op;
 
 /// Per-path context for [`emit_path`].
@@ -65,6 +65,30 @@ fn push_tab(intervals: &mut Vec<(f64, f64, f64)>, a: f64, b: f64, tab_power: f64
     }
 }
 
+/// The overcut [`emit_path`] adds to a closed path of `perimeter` mm: none for dots (they have
+/// no line to close) and never more than the path once round.
+fn overcut_of(perimeter: f64, closed: bool, ls: &LineSettings) -> f64 {
+    let dots = ls.dot_mode.is_some_and(|d| d.spacing > EPS);
+    if !closed || dots || ls.overcut <= 0.0 { 0.0 } else { ls.overcut.min(perimeter) }
+}
+
+/// How many dots (dot mode) or perforation gaps [`emit_path`] makes on one pass of a path of
+/// `perimeter` mm, overcut included; never fewer than it makes (0 when the settings split the
+/// path into nothing). The job builder counts these to keep a layer within its limit.
+pub fn path_pieces(perimeter: f64, closed: bool, ls: &LineSettings) -> f64 {
+    let total = perimeter + overcut_of(perimeter, closed, ls);
+    if let Some(dm) = ls.dot_mode.filter(|d| d.spacing > EPS) {
+        // A dot at the start and one every spacing up to the end.
+        return ((total + EPS) / dm.spacing).floor() + 1.0;
+    }
+    match ls.perforation {
+        Some(pf) if pf.cut > 0.0 && pf.skip > 0.0 && total > EPS => {
+            if total < pf.cut + pf.skip { 1.0 } else { ((total - pf.cut) / (pf.cut + pf.skip)).floor() + 1.0 }
+        }
+        _ => 0.0,
+    }
+}
+
 /// Emit a planned path. `pts` are in cut order; closed paths repeat the start point at the end.
 pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<Op>) {
     if pts.len() < 2 {
@@ -90,11 +114,9 @@ pub fn emit_path(pts: &[Point], closed: bool, ctx: &PathContext, out: &mut Vec<O
     let mut path = pts.to_vec();
     // Overcut closes a cut line over its own start. Dots have no line to close: going on past
     // the start would only fire the first dots again, or new ones between them.
-    let dots = ls.dot_mode.is_some_and(|d| d.spacing > EPS);
-    let overcut = if dots { 0.0 } else { ls.overcut };
-    if closed && overcut > 0.0 {
-        let oc = overcut.min(perimeter);
-        let pieces = geom::split_at(pts, &[oc]);
+    let overcut = overcut_of(perimeter, closed, ls);
+    if overcut > 0.0 {
+        let pieces = geom::split_at(pts, &[overcut]);
         path.extend(pieces[0].iter().skip(1));
     }
     let total = geom::polyline_length(&path);

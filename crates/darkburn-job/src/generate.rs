@@ -265,6 +265,37 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
     })
 }
 
+/// The dots (dot mode) and perforation gaps the line settings of `layer` make, every pass of
+/// every setting counted, on the outlines [`generate`] cuts (flattened with `tolerance`, mm),
+/// overcut included: never fewer than it emits. Counting stops as soon as the count passes
+/// `limit`, so an outline of kilometres costs no more than one that fits.
+pub fn line_pieces(layer: &LayerInput, tolerance: f64, limit: f64) -> f64 {
+    let tol = tolerance.max(1e-4);
+    let mut n = 0.0;
+    for (i, s) in layer.settings.iter().enumerate() {
+        let splits = s.line.dot_mode.is_some_and(|d| d.spacing > EPS) || s.line.perforation.is_some_and(|p| p.cut > 0.0 && p.skip > 0.0);
+        if !s.enabled || s.passes == 0 || !splits || !matches!(s.mode, CutMode::Line | CutMode::FillLine) {
+            continue;
+        }
+        for shape in &layer.shapes {
+            for poly in geom::flatten(shape.line_path(i), tol) {
+                let mut perimeter = geom::polyline_length(&poly.pts);
+                if poly.closed
+                    && let (Some(a), Some(b)) = (poly.pts.first(), poly.pts.last())
+                {
+                    perimeter += a.distance(*b);
+                }
+                n += line::path_pieces(perimeter, poly.closed, &s.line) * s.passes as f64;
+                // (A count that is not a number is not let through either.)
+                if !(n <= limit) {
+                    return n;
+                }
+            }
+        }
+    }
+    n
+}
+
 fn layer_comment(layer: &LayerInput, s: &CutSettings, mode: CutMode) -> String {
     format!(
         "Layer C{:02} {} - {:?} {} mm/s {}%{}",

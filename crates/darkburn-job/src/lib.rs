@@ -28,7 +28,7 @@ pub mod progress;
 pub mod sim;
 
 pub use bounds::{BoundsReport, OutOfBounds, check_bounds};
-pub use generate::{JobError, JobOptions, generate};
+pub use generate::{JobError, JobOptions, generate, line_pieces};
 pub use input::*;
 pub use ir::{CoordSpace, IrLayer, Op, Toolpath};
 pub use origin::{Corner, FinishPosition, JobAnchor, MachineGeometry, OriginSettings, StartFrom};

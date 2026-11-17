@@ -108,7 +108,13 @@ fn wait(app: &mut DarkBurn, what: &str, mut f: impl FnMut(&DarkBurn) -> bool) {
         if f(app) {
             return;
         }
-        assert!(Instant::now() < end, "timed out waiting for {what}");
+        if Instant::now() >= end {
+            let h = &app.machine.handle;
+            for c in h.console().iter().rev().take(40).collect::<Vec<_>>().into_iter().rev() {
+                eprintln!("{:?} {}", c.kind, c.text);
+            }
+            panic!("timed out waiting for {what}, was {:?} {:?} {:?}", h.snapshot().state, h.snapshot().link, h.snapshot().alarm);
+        }
         std::thread::sleep(Duration::from_millis(3));
     }
 }
@@ -1061,6 +1067,38 @@ fn app_on_a_real_link() -> DarkBurn {
     wait(&mut a, "ready on the real link", |a| state(a) == LaserState::Ready);
     assert!(a.machine.handle.is_real_machine() && !a.machine.handle.is_simulator());
     a
+}
+
+/// Stop must always win: a Stop sent the moment after Start, before the controller has seen
+/// any of the job, a little later, or once it runs, always ends the job and leaves the machine
+/// standing still.
+#[test]
+fn a_stop_right_after_a_start_always_wins_on_a_real_link() {
+    let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(grbl::EmulatorConfig::atomstack().with_time_scale(1.0)));
+    let port = grbl_behind_tcp(emu.clone());
+    let mut a = app();
+    a.machine.handle = loopback(Link::Tcp { host: "127.0.0.1".into(), port });
+    wait(&mut a, "ready on the real link", |a| state(a) == LaserState::Ready);
+    for i in 0..24u64 {
+        if state(&a) == LaserState::Alarm {
+            a.machine.handle.command(MachineCommand::Unlock).unwrap();
+        }
+        wait(&mut a, &format!("ready before round {i}"), |a| state(a) == LaserState::Ready);
+        a.machine.begin_start(zigzag(200, 30.0, 300)).unwrap();
+        std::thread::sleep(Duration::from_millis((i % 4) * 6));
+        let id = ["job.stop", "machine.stop", "machine.emergency_stop"][(i % 3) as usize];
+        run(&mut a, id, json!({})).unwrap_or_else(|e| panic!("{id} was refused: {e}"));
+        wait(&mut a, &format!("{id} in round {i}"), |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+        // The controller stands still and has nothing of the job left to run.
+        let end = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < end {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (st, planned, rx) = emu.with(|e| (e.state_name(), e.planner_len(), e.rx_len()));
+        assert!(!st.starts_with("Run") && planned == 0 && rx == 0, "round {i} ({id}): controller {st}, {planned} planned, {rx} in rx");
+        assert!(matches!(state(&a), LaserState::Ready | LaserState::Alarm), "round {i} ({id}): {:?}", state(&a));
+    }
 }
 
 /// A job from the window (the user's own Start) that runs for minutes unless it is stopped.

@@ -528,9 +528,18 @@ impl DarkBurn {
                     break;
                 }
                 let br = Rect::from_center_size(pos2(x, r.center().y), vec2(32.0, 32.0));
-                let resp = ui.interact(br, ui.scope_id().with(("ab", icon)), Sense::hover());
-                icons::paint_app_bar(ui.painter(), Rect::from_center_size(br.center(), vec2(18.0, 18.0)), icon, 0.35);
-                resp.backing_on_hover_text(tip);
+                // Real buttons: they run their command, and are dim only when it has nothing to
+                // act on (nothing to undo or redo).
+                let enabled = self.can_run(id);
+                let resp = ui.interact(br, ui.scope_id().with(("ab", icon)), if enabled { Sense::click() } else { Sense::hover() });
+                if enabled && resp.hovered() {
+                    ui.painter().rect_filled(br.shrink(3.0), t.radius_sm, t.app_bar_hover_button);
+                }
+                icons::paint_app_bar(ui.painter(), Rect::from_center_size(br.center(), vec2(18.0, 18.0)), icon, if enabled { 1.0 } else { 0.35 });
+                solidcraft_ui_registry::publish_target(&format!("appbar:{icon}"), br);
+                if resp.backing_on_hover_text(tip).clicked() && enabled {
+                    *clicked = Some(id.to_string());
+                }
                 x += 34.0;
             }
             // Right-hand cluster: version, settings, help, then the caption buttons.

@@ -738,6 +738,16 @@ fn picker_sections(prefs: &FontPrefs, installed: &[String], shx: &[String], quer
     (pick(&prefs.favourites), pick(&prefs.recent), pick(shx), pick(installed))
 }
 
+/// The search text of the font list drawn on pass `pass`, when it was last drawn on pass `last`
+/// with the text `stored`: a list that was shut in between (or never shown) opens with an empty
+/// search box, a list kept open keeps what was typed.
+fn query_on_show(last: Option<u64>, pass: u64, stored: String) -> String {
+    match last {
+        Some(l) if l == pass || l + 1 == pass => stored,
+        _ => String::new(),
+    }
+}
+
 /// A font drop-down with search, favourites, recent fonts and a live preview. Returns the
 /// font picked this frame.
 pub fn font_picker(
@@ -760,7 +770,14 @@ pub fn font_picker(
         ui.set_max_width(width);
         ui_kit::dropdown_menu(ui, ("font_picker_menu", id), &shown, |ui| {
             ui.set_min_width(width.max(280.0));
-            let mut query: String = ui.data_mut(|d| d.get_temp(id.with("q"))).unwrap_or_default();
+            // The list was closed if it was not drawn on the pass before this one; a list that
+            // opens again starts with an empty search box.
+            let pass = ui.ctx().cumulative_pass_nr();
+            let last: Option<u64> = ui.data(|d| d.get_temp(id.with("shown")));
+            ui.data_mut(|d| d.insert_temp(id.with("shown"), pass));
+            let stored: String = ui.data_mut(|d| d.get_temp(id.with("q"))).unwrap_or_default();
+            let mut query = query_on_show(last, pass, stored);
+            ui.data_mut(|d| d.insert_temp(id.with("q"), query.clone()));
             let edit = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search fonts").desired_width(f32::INFINITY));
             crate::a11y::text(ui, &edit, "Search fonts");
             if edit.changed() {
@@ -1624,6 +1641,16 @@ mod tests {
         assert_eq!((favs, single, all.len()), (shx.clone(), shx.clone(), 0));
         let (favs, _, single, _) = picker_sections(&prefs, &installed, &shx, "fonts");
         assert!(favs.is_empty() && single.is_empty(), "the folder name is not the font's name");
+    }
+
+    /// The font list's search text is kept while the list is open and cleared when the list is
+    /// opened again after being shut.
+    #[test]
+    fn font_search_text_is_cleared_when_the_list_opens_again() {
+        assert_eq!(query_on_show(None, 5, "plex".into()), "", "a list never shown starts empty");
+        assert_eq!(query_on_show(Some(4), 5, "plex".into()), "plex", "kept while open");
+        assert_eq!(query_on_show(Some(5), 5, "plex".into()), "plex", "kept when drawn twice in a pass");
+        assert_eq!(query_on_show(Some(2), 5, "plex".into()), "", "cleared after the list was shut");
     }
 
     /// Typing a text away to nothing takes the text out; it does not stay as a shape nobody can see.

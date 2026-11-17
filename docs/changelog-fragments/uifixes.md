@@ -1,0 +1,3 @@
+- The font list starts with an empty search box every time you open it
+- Convert to Bitmap shows the right size when drawing outlines
+- The Save, Undo and Redo buttons at the top work now

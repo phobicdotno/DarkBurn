@@ -384,6 +384,8 @@ pub enum BuildError {
     NothingToBurn,
     NothingSelected,
     NoUserOrigin,
+    /// A shape or picture has a coordinate that is not a finite number.
+    NotANumber,
 }
 
 impl std::fmt::Display for BuildError {
@@ -393,6 +395,7 @@ impl std::fmt::Display for BuildError {
             BuildError::NothingToBurn => "there is nothing to burn: no shapes on layers that output",
             BuildError::NothingSelected => "Cut selected graphics is on and nothing is selected",
             BuildError::NoUserOrigin => "Start from is User origin, but no user origin is set",
+            BuildError::NotANumber => "a shape or picture has a coordinate that is not a number",
         })
     }
 }
@@ -1047,6 +1050,7 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
         Ok(tp) => tp,
         Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
         Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
+        Err(JobError::NotANumber) => return Err(BuildError::NotANumber),
     };
     // A job that fires the laser nowhere (every layer at power 0) is refused like an image at
     // power 0, before anything reaches the machine or a file.

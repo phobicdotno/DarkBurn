@@ -1,0 +1,1 @@
+- Stop always wins, even right as a job starts

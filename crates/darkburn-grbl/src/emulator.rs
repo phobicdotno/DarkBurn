@@ -154,6 +154,9 @@ pub struct EmulatorStats {
     pub max_laser_s: f64,
     /// Every move that started with the laser on, in order (when `record_lines`).
     pub burns: Vec<Burn>,
+    /// Lines and real-time bytes (except `?`) in the order they were taken, with the state
+    /// at the time (when `record_lines`; the last 200 only).
+    pub journal: VecDeque<String>,
 }
 
 /// A move the laser was on for: machine positions in mm and the S value of the block.
@@ -900,6 +903,8 @@ impl GrblEmulator {
     fn realtime(&mut self, b: u8) {
         if b != rt::STATUS {
             self.stats.realtime.push(b);
+            let entry = format!("rt {b:#04x} in {:?}, {} planned, {} in rx", self.state, self.planner_len(), self.rx_len());
+            self.journal(entry);
         }
         match b {
             rt::STATUS => {
@@ -1177,6 +1182,16 @@ impl GrblEmulator {
         self.stats.lines_processed += 1;
         if self.cfg.record_lines {
             self.stats.lines.push(line.to_owned());
+        }
+        self.journal(line.to_owned());
+    }
+
+    fn journal(&mut self, entry: String) {
+        if self.cfg.record_lines {
+            if self.stats.journal.len() >= 200 {
+                self.stats.journal.pop_front();
+            }
+            self.stats.journal.push_back(entry);
         }
     }
 

@@ -313,6 +313,11 @@ impl Snapshot {
             ConnectionState::Connecting => return LaserStatus::Connecting,
             ConnectionState::Connected => {}
         }
+        // A stop is not over until its reset is answered; the alarm a reset raises while the
+        // head moved shows once it is, so Unlock is not tried on a link that is still busy.
+        if self.activity == Activity::Stopping {
+            return LaserStatus::Busy;
+        }
         if self.alarm_locked || self.status.state.is_alarm() {
             return LaserStatus::Alarm;
         }

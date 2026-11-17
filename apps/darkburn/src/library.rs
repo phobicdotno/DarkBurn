@@ -1145,7 +1145,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("darkburn-lib-shared-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("shared.clb");
+        let file = dir.join("shared.dbclb");
         let mut prefs = Prefs::default();
         prefs.library_paths.insert("diode".into(), file.to_string_lossy().into_owned());
         prefs.library_paths.insert("co2".into(), file.to_string_lossy().into_owned());

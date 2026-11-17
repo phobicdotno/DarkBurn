@@ -3,7 +3,7 @@
 //! is still a hole when the outline around it is not selected.
 
 use darkburn_core::Document;
-use darkburn_core::kurbo::{Affine, Rect};
+use darkburn_core::kurbo::{Affine, Point, Rect};
 use darkburn_core::layer::Mode;
 use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
 
@@ -114,4 +114,57 @@ fn a_selected_outline_is_offset_alone() {
     let b = build_job_simple(&i).unwrap();
     near(b.bounds, Rect::new(9.5, 9.5, 50.5, 50.5), 0.05);
     assert!(b.toolpath.ops.iter().any(|o| matches!(o, darkburn_job::Op::Cut { .. })));
+}
+
+/// A line layer 0 and nothing on it yet.
+fn line_doc() -> Document {
+    let mut d = Document::new();
+    let s = d.layer_mut(0).main_mut();
+    s.mode = Mode::Line;
+    s.speed = 20.0;
+    s.max_power = 50.0;
+    d
+}
+
+/// The lowest corner the head goes to, in machine coordinates.
+fn machine_min(b: &BuiltJob) -> Point {
+    let mut min = Point::new(f64::INFINITY, f64::INFINITY);
+    for p in b.toolpath.ops.iter().filter_map(darkburn_job::Op::target) {
+        min = Point::new(min.x.min(p.x), min.y.min(p.y));
+    }
+    min
+}
+
+#[test]
+fn selection_origin_is_measured_where_print_and_cut_puts_the_selection() {
+    // A square drawn at (10, 10) to (30, 30), moved by the alignment to (50, 35) to (70, 55).
+    let mut d = line_doc();
+    let id = d.add(darkburn_core::Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+    with_vision(&mut d, |s| s.pnc.fit = Some(fit(Affine::translate((40.0, 25.0)))));
+    let mut i = input(d);
+    i.selection = vec![id];
+    i.settings.start_from = StartMode::UserOrigin;
+    i.user_origin = Some(Point::new(0.0, 0.0));
+    i.settings.use_selection_origin = true;
+    let b = build_job_simple(&i).unwrap();
+    // The selected square is the whole job: its corner goes to the user origin. Measured where
+    // it was drawn, the job would start 40 and 25 mm off.
+    let min = machine_min(&b);
+    assert!(min.x.abs() < 1e-6 && min.y.abs() < 1e-6, "the job starts at {min:?}, not at the user origin");
+}
+
+#[test]
+fn shapes_outside_the_work_area_are_measured_where_print_and_cut_puts_them() {
+    // Moved 40 mm right: a square drawn inside the 200 mm bed lands outside it, and one drawn
+    // to the left of the bed lands inside.
+    let mut d = line_doc();
+    d.add(darkburn_core::Shape::rect(Rect::new(150.0, 10.0, 170.0, 30.0), 0.0, 0));
+    d.add(darkburn_core::Shape::rect(Rect::new(-30.0, 10.0, -10.0, 30.0), 0.0, 0));
+    with_vision(&mut d, |s| s.pnc.fit = Some(fit(Affine::translate((40.0, 0.0)))));
+    let mut i = input(d);
+    i.settings.discard_out_of_bounds = true;
+    let b = build_job_simple(&i).unwrap();
+    assert_eq!(b.dropped_shapes, 1);
+    assert!(!b.out_of_bounds(), "the square moved off the bed was kept: {:?}", b.bounds);
+    near(b.bounds, Rect::new(10.0, 10.0, 30.0, 30.0), 1e-6);
 }

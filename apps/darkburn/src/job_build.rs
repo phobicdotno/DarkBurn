@@ -704,6 +704,18 @@ fn is_outside(bbox: Rect, area: Rect) -> bool {
     bbox.x0 < area.x0 - tol || bbox.y0 < area.y0 - tol || bbox.x1 > area.x1 + tol || bbox.y1 > area.y1 + tol
 }
 
+/// The bounds of a shape where the job puts it: after the cylinder, rotary and print-and-cut
+/// mapping of the project (as drawn when there is none).
+fn placed_bbox(s: &Shape, map: Option<&crate::vision_state::JobMap>) -> Rect {
+    let Some(m) = map else { return s.bbox() };
+    let path = s.outline();
+    if path.elements().is_empty() {
+        let o = m.apply_point(s.transform * Point::ZERO);
+        return Rect::from_points(o, o);
+    }
+    m.apply(path).bounding_box()
+}
+
 fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {
     // Text hook: variable text, QR codes and barcodes are evaluated for this job.
     let prepared = crate::text_render::prepare_for_output(&input.doc);
@@ -718,9 +730,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let area = input.device.area();
     let order_pos: HashMap<usize, usize> = doc.layer_order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
 
-    // Selection bounds for "use selection origin" (all selected shapes, burning or not).
-    let selection_bounds = input.selection.iter().filter_map(|id| doc.get(*id)).map(|s| s.bbox()).reduce(|a, b| a.union(b));
-
     let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
@@ -728,6 +737,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
+    // Selection bounds for "use selection origin" (all selected shapes, burning or not), where
+    // the job puts them: the anchor is measured on the same mapped shapes as the job bounds.
+    let placed = |s: &Shape| placed_bbox(s, vision_map.as_ref());
+    let selection_bounds = input.selection.iter().filter_map(|id| doc.get(*id)).map(placed).reduce(|a, b| a.union(b));
     let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
@@ -810,7 +823,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let bbox = leaf.bbox();
-            if st.discard_out_of_bounds && is_outside(bbox, area) {
+            // Measured where the job puts the shape (print and cut and rotary move it).
+            if st.discard_out_of_bounds && is_outside(placed(&leaf), area) {
                 dropped += 1;
                 continue;
             }

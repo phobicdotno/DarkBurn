@@ -93,7 +93,11 @@ pub struct Part {
 /// The outline parts of shape `id` (a group gives one part per descendant; images none).
 pub fn parts_of(doc: &Document, id: ShapeId) -> Vec<Part> {
     let Some(s) = doc.get(id) else { return Vec::new() };
-    s.leaves().into_iter().filter(|l| !l.is_image()).map(|l| Part { path: crate::text_render::drawn_outline(doc, &l), layer: l.layer, name: l.name.clone() }).collect()
+    s.leaves()
+        .into_iter()
+        .filter(|l| !l.is_image())
+        .map(|l| Part { path: crate::text_render::drawn_outline(doc, &l), layer: l.layer, name: l.name.clone() })
+        .collect()
 }
 
 /// `ids` that exist and can be edited, bottom of the draw order first.

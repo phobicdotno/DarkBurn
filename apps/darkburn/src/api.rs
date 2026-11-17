@@ -82,6 +82,8 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
 pub fn lock_of(id: &str) -> Option<usize> {
     match id {
         "shape.place" | "shape.translate" | "arrange.move_selection" | "arrange.move_h_together" | "arrange.move_v_together" => Some(0),
+        "arrange.to_laser" | "arrange.nest" | "arrange.quick_nest" | "arrange.true_nest" => Some(0),
+        _ if ["arrange.align_", "arrange.distribute_", "arrange.page_", "arrange.laser_", "arrange.dock_"].iter().any(|p| id.starts_with(p)) => Some(0),
         "shape.resize" | "arrange.same_width" | "arrange.same_height" => Some(1),
         "shape.rotate" | "arrange.rotate_by" | "arrange.rotate_cw" | "arrange.rotate_ccw" | "arrange.flip_h" | "arrange.flip_v" => Some(2),
         _ => None,

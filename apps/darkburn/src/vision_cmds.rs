@@ -119,9 +119,11 @@ pub fn sync(app: &mut DarkBurn) {
             app.vision.state.camera = saved;
         }
         app.vision.synced = app.editor.doc.vision_settings.clone();
-        // The picture is for the old setup; redo it when there is a frame.
-        if app.vision.raw.is_some() {
-            let _ = rebuild_overlay(app);
+        // The picture is for the old setup; redo it when there is a frame, and drop it when it
+        // cannot be redone so the old picture is not drawn at the new placement.
+        if app.vision.raw.is_some() && rebuild_overlay(app).is_err() {
+            app.vision.overlay = None;
+            app.vision.overlay_gen += 1;
         }
     }
 }

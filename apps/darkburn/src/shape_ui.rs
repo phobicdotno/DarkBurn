@@ -1391,6 +1391,11 @@ fn array_edit_dialog(ctx: &Context, app: &mut DarkBurn) {
     let id = "arrange.array_edit";
     let sel = app.editor.selected();
     let found = sel.iter().copied().find(|i| app.editor.doc.get(*i).is_some_and(|s| s.array.is_some()));
+    // Selecting something else drops the form's unapplied changes: the array is loaded afresh
+    // when it is selected again.
+    if found.is_none() {
+        app.shape_ui.array_edit.target = None;
+    }
     if let Some(t) = found
         && app.shape_ui.array_edit.target != Some(t)
         && let Some(def) = app.editor.doc.get(t).and_then(|s| s.array.as_deref())
@@ -1768,6 +1773,38 @@ mod tests {
         frame(&ctx, &mut app);
         assert_eq!(app.shape_ui.array_edit.items, 1);
         assert_eq!(app.shape_ui.preview.len(), 6);
+    }
+
+    #[test]
+    fn array_edit_form_forgets_unapplied_changes_when_the_selection_moves() {
+        let ctx = Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        let mut other = None;
+        app.editor.edit("add", |d, sel| {
+            let r = d.add(Shape::rect(KRect::new(10.0, 10.0, 30.0, 30.0), 0.0, 1));
+            other = Some(d.add(Shape::rect(KRect::new(100.0, 100.0, 120.0, 120.0), 0.0, 1)));
+            sel.set([r]);
+            true
+        });
+        app.shape_ui.grid.rows = 2.0;
+        app.shape_ui.grid.cols = 3.0;
+        let args = app.shape_ui.grid.args();
+        let out = crate::api::execute(&mut app, &ctx, "arrange.grid_array", &args).unwrap();
+        let arr = ShapeId(out["ids"][0].as_u64().unwrap());
+        app.editor.selection.set([arr]);
+        app.shape_ui.open_dialog("arrange.array_edit");
+        frame(&ctx, &mut app);
+        let loaded = app.shape_ui.array_edit.grid.rows;
+        app.shape_ui.array_edit.grid.rows = loaded + 3.0;
+        frame(&ctx, &mut app);
+        // Something else, then the same array again: the form shows the array as it is.
+        let other = other.unwrap();
+        app.editor.selection.set([other]);
+        frame(&ctx, &mut app);
+        app.editor.selection.set([arr]);
+        frame(&ctx, &mut app);
+        assert_eq!(app.shape_ui.array_edit.target, Some(arr));
+        assert_eq!(app.shape_ui.array_edit.grid.rows, loaded, "the unapplied change survived");
     }
 
     #[test]

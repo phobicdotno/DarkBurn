@@ -713,7 +713,7 @@ fn placed_bbox(s: &Shape, map: Option<&crate::vision_state::JobMap>) -> Rect {
         let o = m.apply_point(s.transform * Point::ZERO);
         return Rect::from_points(o, o);
     }
-    m.apply(path).bounding_box()
+    darkburn_core::kurbo::Shape::bounding_box(&m.apply(path))
 }
 
 fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {

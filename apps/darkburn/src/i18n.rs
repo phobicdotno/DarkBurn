@@ -193,6 +193,8 @@ mod tests {
         ("shape_ui.rs", include_str!("shape_ui.rs")),
         ("shape_ops.rs", include_str!("shape_ops.rs")),
         ("job_build.rs", include_str!("job_build.rs")),
+        ("actions.rs", include_str!("actions.rs")),
+        ("files.rs", include_str!("files.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,
@@ -292,6 +294,28 @@ mod tests {
         let want = "sylinderkorrigering kan ikke bøye bilder: slå den av, eller brenn bildene i en egen jobb";
         assert_eq!(BuildError::PictureNotMapped.to_string(), want);
         set_language("en");
+    }
+
+    /// The refusal of a too-deep Group or Paste and the warning of a save that left shapes out
+    /// are in every language, with the depth, count and file filled in.
+    #[test]
+    fn depth_and_left_out_messages_are_translated() {
+        let en = english();
+        for k in ["edit.too_deep", "edit.not_grouped", "edit.not_pasted", "files.left_out_title", "files.left_out_note"] {
+            assert!(en.contains_key(k), "{k}");
+        }
+        let max = darkburn_core::editor::MAX_GROUP_DEPTH.to_string();
+        let path = std::path::Path::new("plan.dbrn");
+        set_language("nb");
+        let refusal = crate::actions::too_deep(&tr("edit.not_grouped", "Not grouped"));
+        assert_eq!(refusal, format!("Ikke gruppert: figurer kan ligge høyst {max} grupper dypt."));
+        assert_eq!(tr("files.left_out_title", "Saved with shapes left out"), "Lagret, men noen figurer ble utelatt");
+        let note = crate::files::left_out_note(path, 3);
+        assert!(note.starts_with("plan.dbrn: 3 figur(er) kunne ikke skrives"), "{note}");
+        set_language("en");
+        let refusal = crate::actions::too_deep(&tr("edit.not_pasted", "Not pasted"));
+        assert_eq!(refusal, format!("Not pasted: shapes may sit at most {max} groups deep."));
+        assert!(crate::files::left_out_note(path, 3).starts_with("plan.dbrn: 3 shape(s) could not be written"));
     }
 
     #[test]

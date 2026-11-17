@@ -1138,3 +1138,18 @@ fn help_text_says_direct_control_waits_for_a_capture() {
     assert!(crate::gweike_workflow::DIRECT_CONTROL_NOTE.contains("read-only capture"));
     assert!(crate::gweike_workflow::DIRECT_CONTROL_NOTE.contains("mlaser-rea-findings"));
 }
+
+#[test]
+fn galvo_panel_says_framed_only_for_a_frame_of_this_job() {
+    let (mut a, _) = galvo_app();
+    galvo_square(&mut a);
+    let key = crate::machine_ext::galvo_current_frame_key(&a).expect("a galvo job");
+    assert!(!crate::machine_ext::galvo_frame_matches(&mut a, None), "no frame yet");
+    assert!(!crate::machine_ext::galvo_frame_matches(&mut a, Some(key ^ 1)), "a frame of another job");
+    assert!(crate::machine_ext::galvo_frame_matches(&mut a, Some(key)), "a frame of this job");
+    // Moving the job after framing: the old frame no longer counts.
+    run(&mut a, "edit.select_all", json!({})).unwrap();
+    run(&mut a, "shape.translate", json!({ "dx": 5.0, "dy": 0.0 })).unwrap();
+    a.machine.ext.galvo_job_key = None;
+    assert!(!crate::machine_ext::galvo_frame_matches(&mut a, Some(key)), "the job moved since the frame");
+}

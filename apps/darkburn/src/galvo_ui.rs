@@ -81,7 +81,8 @@ pub fn panel(ui: &mut Ui, app: &mut DarkBurn) {
             ui_kit::window_host::raise(ui.ctx(), "db_galvo_repeat");
         }
     });
-    let framed = g.framed_key.is_some();
+    // "Done" only for a frame of this very job (the key the driver checks before it starts).
+    let framed = g.require_framing && crate::machine_ext::galvo_frame_matches(app, g.framed_key);
     ui.label(
         RichText::new(format!(
             "{}{}{}",

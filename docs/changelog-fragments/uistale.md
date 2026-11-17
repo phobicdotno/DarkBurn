@@ -1,0 +1,3 @@
+- The galvo panel only says framing is done when the frame matches the job you are about to start
+- Device Settings no longer throws away changes made to the device while the window was open
+- Edit Virtual Array starts fresh when you pick the array again, instead of showing old unapplied changes

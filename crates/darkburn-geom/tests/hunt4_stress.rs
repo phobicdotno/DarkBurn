@@ -322,3 +322,23 @@ fn degenerate_and_extreme_input_never_panics_or_hangs() {
     }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
+
+/// A huge tab count is held to `MAX_TABS_PER_SUBPATH` instead of taking all memory, and a
+/// distance that is not a number leaves the closed contour in the cut (no tab), not dropped.
+#[test]
+fn tab_count_is_capped_and_nan_distance_keeps_the_contour() {
+    use darkburn_geom::tabs;
+    let square = poly(&[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)], true);
+    let r = tabs::place_tabs(&square, &tabs::TabOptions { count: usize::MAX / 2, size: 1e-6, ..Default::default() });
+    assert_eq!(r.gaps.len(), tabs::MAX_TABS_PER_SUBPATH);
+    let r = tabs::place_tabs(&square, &tabs::TabOptions { spacing: Some(1e-300), size: 1e-6, ..Default::default() });
+    assert_eq!(r.gaps.len(), tabs::MAX_TABS_PER_SUBPATH);
+    for d in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let r = tabs::place_tabs_at(&square, &[d], 1.0);
+        assert!(r.gaps.is_empty(), "{d}: no tab");
+        let b = darkburn_geom::path::bounding_box(&r.cut).expect("contour still cut");
+        assert!((b.width() - 100.0).abs() < 1e-9 && (b.height() - 100.0).abs() < 1e-9, "{d}: {b:?}");
+    }
+    // A good distance next to a bad one still places its tab.
+    assert_eq!(tabs::place_tabs_at(&square, &[f64::NAN, 50.0], 1.0).gaps.len(), 1);
+}

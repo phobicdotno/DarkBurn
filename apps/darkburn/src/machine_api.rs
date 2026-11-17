@@ -687,7 +687,7 @@ pub struct MachineHandle {
     /// When the last resume was sent, until the machine shows the job going (see
     /// [`MachineHandle::resume_pending`]).
     resume_sent: Option<Instant>,
-    /// When the last job or frame was accepted, until the machine shows it working (see
+    /// When the last job or frame was accepted, until the machine shows it working or ends it (see
     /// [`MachineHandle::start_pending`]).
     start_sent: Option<Instant>,
 }
@@ -800,9 +800,22 @@ impl MachineHandle {
         let mut gone = false;
         for e in &events {
             match e {
+                // The start showed itself or ended: the snapshot speaks for it from here on.
+                MachineEvent::JobStarted
+                | MachineEvent::FrameStarted
+                | MachineEvent::JobFinished(_)
+                | MachineEvent::JobAborted(_)
+                | MachineEvent::Stopped
+                | MachineEvent::Done { ok: false, .. } => self.start_sent = None,
                 MachineEvent::Console(c) => self.push_console(c.clone()),
-                MachineEvent::Error(m) => self.note(format!("Error: {m}")),
-                MachineEvent::Alarm(m) => self.note(format!("Alarm: {m}")),
+                MachineEvent::Error(m) => {
+                    self.start_sent = None;
+                    self.note(format!("Error: {m}"));
+                }
+                MachineEvent::Alarm(m) => {
+                    self.start_sent = None;
+                    self.note(format!("Alarm: {m}"));
+                }
                 MachineEvent::Disconnected(r) => {
                     gone = true;
                     self.note(r.clone().map_or_else(|| "Disconnected".into(), |r| format!("Connection lost: {r}")));
@@ -852,7 +865,11 @@ impl MachineHandle {
         }
         let starts = matches!(
             cmd,
-            MachineCommand::StartJob(_) | MachineCommand::FrameRect(..) | MachineCommand::FrameOutline(..) | MachineCommand::FrameOnController
+            MachineCommand::StartJob(_)
+                | MachineCommand::RunFile(_)
+                | MachineCommand::FrameRect(..)
+                | MachineCommand::FrameOutline(..)
+                | MachineCommand::FrameOnController
         );
         let r = match self.adapter.as_mut() {
             Some(a) => a.command(cmd),
@@ -869,10 +886,11 @@ impl MachineHandle {
     pub fn start_job(&mut self, job: JobRequest) -> Result<(), MachineError> {
         self.command(MachineCommand::StartJob(Box::new(job)))
     }
-    /// A job or frame was accepted less than [`RESUME_SETTLE`] ago and the machine has not shown
-    /// it working yet: the snapshot may still say ready, but the machine is about to be busy.
+    /// A job or frame was accepted and the machine has neither shown it working nor reported
+    /// how it ended: the snapshot may still say ready (a Ruida upload waiting at an overwrite
+    /// prompt does), but the machine is about to be busy. No timeout: Stop clears it.
     pub fn start_pending(&self) -> bool {
-        self.start_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
+        self.start_sent.is_some()
     }
     /// Always sent while connected.
     pub fn pause(&mut self) -> Result<(), MachineError> {

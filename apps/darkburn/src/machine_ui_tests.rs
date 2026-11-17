@@ -897,6 +897,8 @@ fn the_device_cannot_change_while_a_job_runs() {
         ("device.select", json!({ "id": other })),
         ("device.remove", json!({ "id": active })),
         ("device.bridge_setup", json!({ "host": "127.0.0.1", "port": 5005, "name": "Bridge" })),
+        ("machine.connect", json!({ "device": active })),
+        ("machine.reset_connection", json!({})),
     ] {
         let e = run(&mut a, id, args).unwrap_err();
         assert!(e.contains("busy"), "{id}: {e}");

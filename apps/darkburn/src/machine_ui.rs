@@ -739,14 +739,15 @@ pub fn device_locked(app: &DarkBurn) -> bool {
 }
 
 /// A command that would change or drop the device in use while [`device_locked`]. Picking the
-/// device already in use changes nothing and is let through.
+/// device already in use changes nothing and is let through; connecting again (to any device)
+/// closes the working connection first, so it is refused. Disconnect stays: it is a way to stop.
 fn switch_while_busy(app: &DarkBurn, id: &str, a: &Value) -> bool {
     if !device_locked(app) {
         return false;
     }
     match id {
         "device.select" => a.get("id").and_then(Value::as_u64) != app.machine.devices.active,
-        "machine.connect" => a.get("device").and_then(Value::as_u64).is_some_and(|d| app.machine.devices.active != Some(d)),
+        "machine.connect" | "machine.reset_connection" => true,
         _ => drops_the_link(app, id, a),
     }
 }

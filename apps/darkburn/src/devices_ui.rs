@@ -131,9 +131,11 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
             }
             ui.separator();
             let sel = app.machine.dlg.devices_sel.or(app.machine.devices.active);
+            let locked = machine_ui::device_locked(app);
             ui.horizontal_wrapped(|ui| {
                 let has = sel.is_some();
-                if small(ui, "Use", "Make it the device the panels use", has)
+                let switch_ok = !locked || sel == app.machine.devices.active;
+                if small(ui, "Use", "Make it the device the panels use", has && !locked)
                     && let Some(id) = sel
                 {
                     app.machine.select_device(id);
@@ -149,7 +151,7 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 {
                     app.machine.dlg.devices_sel = app.machine.devices.duplicate(id);
                 }
-                if small(ui, "Remove", "Remove it from the list (the last device stays)", has && n > 1)
+                if small(ui, "Remove", "Remove it from the list (the last device stays)", has && n > 1 && switch_ok)
                     && let Some(id) = sel
                 {
                     app.machine.remove_device(id);

@@ -875,3 +875,35 @@ fn start_is_refused_everywhere_when_the_device_says_start_is_off() {
     run(&mut a, "machine.start", json!({})).unwrap();
     wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
 }
+
+/// Owner, Q083: the device in use does not change under a running or paused job. Picking another
+/// device, removing the active one and the bridge setup are refused until the job is stopped.
+#[test]
+fn the_device_cannot_change_while_a_job_runs() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    draw_square(&mut a);
+    let active = a.machine.devices.active.unwrap();
+    let other = a.machine.devices.devices.iter().find(|d| d.id != active).unwrap().id;
+    run(&mut a, "job.start", json!({})).unwrap();
+    wait(&mut a, "the job to start", |a| a.machine.handle.job_running());
+    run(&mut a, "job.pause", json!({})).unwrap();
+    wait(&mut a, "the pause", |a| state(a) == LaserState::Paused);
+    assert!(machine_ui::device_locked(&a));
+    for (id, args) in [
+        ("device.select", json!({ "id": other })),
+        ("device.remove", json!({ "id": active })),
+        ("device.bridge_setup", json!({ "host": "127.0.0.1", "port": 5005, "name": "Bridge" })),
+    ] {
+        let e = run(&mut a, id, args).unwrap_err();
+        assert!(e.contains("busy"), "{id}: {e}");
+    }
+    assert_eq!(a.machine.devices.active, Some(active));
+    assert!(a.machine.handle.is_connected(), "the job's connection stays");
+    // The device in use may be picked again (nothing changes), and another one removed.
+    run(&mut a, "device.select", json!({ "id": active })).unwrap();
+    run(&mut a, "job.stop", json!({})).unwrap();
+    wait(&mut a, "the stop", |a| !a.machine.handle.job_running());
+    run(&mut a, "device.select", json!({ "id": other })).unwrap();
+    assert_eq!(a.machine.devices.active, Some(other));
+}

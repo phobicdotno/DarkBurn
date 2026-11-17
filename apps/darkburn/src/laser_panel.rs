@@ -150,7 +150,7 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
     let before = idx;
     ui_kit::row(ui, "Device", |ui| {
         let opts: Vec<&str> = names.iter().map(String::as_str).collect();
-        ui_kit::dropdown(ui, "laser_device", &mut idx, &opts);
+        ui.add_enabled_ui(!machine_ui::device_locked(app), |ui| ui_kit::dropdown(ui, "laser_device", &mut idx, &opts));
     });
     if idx != before {
         let id = app.machine.devices.devices[idx].id;

@@ -652,6 +652,9 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
             return Some(Ok(json!({ "ok": true, "start_cancelled": true })));
         }
     }
+    if switch_while_busy(app, id, a) {
+        return Some(Err(BUSY_SWITCH.replace("{id}", id)));
+    }
     if src == Source::Api && app.machine.handle.is_real_machine() {
         if AGENT_STOPS.contains(&id) {
             return Some(agent_stop(app, id));
@@ -711,6 +714,28 @@ fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
         "device.select" | "device.bridge_setup" => true,
         "device.remove" => a.get("id").and_then(Value::as_u64).is_some_and(|d| app.machine.devices.active == Some(d)),
         _ => false,
+    }
+}
+
+/// Why a device switch is refused while the machine works. `{id}` is the command.
+pub const BUSY_SWITCH: &str =
+    "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.";
+
+/// Whether the machine is running, framing or holding a paused job: the device in use must not
+/// change then, since that would end the connection under the job (owner, Q083).
+pub fn device_locked(app: &DarkBurn) -> bool {
+    app.machine.handle.job_running()
+}
+
+/// A command that would change or drop the device in use while [`device_locked`]. Picking the
+/// device already in use changes nothing and is let through.
+fn switch_while_busy(app: &DarkBurn, id: &str, a: &Value) -> bool {
+    if !device_locked(app) {
+        return false;
+    }
+    match id {
+        "device.select" => a.get("id").and_then(Value::as_u64) != app.machine.devices.active,
+        _ => drops_the_link(app, id, a),
     }
 }
 

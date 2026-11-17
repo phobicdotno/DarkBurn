@@ -1,0 +1,1 @@
+- You can't switch or remove the laser in use while a job or frame is running

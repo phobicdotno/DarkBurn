@@ -820,5 +820,11 @@
   "lock.refused": "{id} foi recusado: o bloqueio de {lock} está ativo (barra de estado). Desative-o primeiro.",
   "machine.busy_switch": "{id} foi recusado: o laser está ocupado com um trabalho ou enquadramento (ou um trabalho em pausa). Pare-o primeiro e depois mude de dispositivo.",
   "machine.bridge_setup": "A configuração da ponte",
-  "shapes.join_changed": "As formas mudaram durante a união: nada foi unido"
+  "shapes.join_changed": "As formas mudaram durante a união: nada foi unido",
+  "shapes.deform_nothing": "nada para deformar",
+  "shapes.deform_grid_format": "a grade deve ter 16 pontos [x, y], começando pela linha de baixo",
+  "shapes.deform_grid_count": "a grade deve ter 16 pontos",
+  "shapes.deform_point_format": "os pontos da grade são escritos como [x, y]",
+  "shapes.deform_bad_point": "ponto inválido",
+  "shapes.deform_one_line": "os pontos da grade estão em uma linha: nada foi deformado"
 }

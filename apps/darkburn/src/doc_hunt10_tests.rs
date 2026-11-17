@@ -1146,3 +1146,23 @@ fn deform_and_resize_never_squash_a_shape_to_nothing() {
     let t = a.editor.doc.get(r).unwrap().transform;
     assert!(darkburn_geom::transform::keeps_size(t));
 }
+
+/// A small unchanged grid far from the origin keeps its area and is not taken for a line.
+#[test]
+fn deform_far_from_the_origin_is_not_refused_as_a_line() {
+    let base = 536_870_912.0;
+    let mut cells = [[Point::ZERO; 4]; 4];
+    let mut grid = Vec::new();
+    for (i, row) in cells.iter_mut().enumerate() {
+        for (j, p) in row.iter_mut().enumerate() {
+            *p = Point::new(base + j as f64, base + i as f64);
+            grid.push(json!([p.x, p.y]));
+        }
+    }
+    assert_eq!(crate::shape_ops::outline_area(&cells), 9.0);
+    let mut a = app();
+    let r = add_rect(&mut a, 0.0, 0.0, 3.0, 3.0, 0);
+    select(&mut a, &[r]);
+    let res = run(&mut a, "tools.deform", json!({ "grid": grid }));
+    assert!(res.is_ok(), "{res:?}");
+}

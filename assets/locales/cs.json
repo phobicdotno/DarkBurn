@@ -820,5 +820,11 @@
   "lock.refused": "{id} bylo odmítnuto: zámek {lock} je zapnutý (stavový řádek). Nejprve jej vypněte.",
   "machine.busy_switch": "{id} bylo odmítnuto: laser je zaneprázdněn úlohou nebo rámováním (nebo pozastavenou úlohou). Nejprve ji zastavte a potom změňte zařízení.",
   "machine.bridge_setup": "Nastavení mostu",
-  "shapes.join_changed": "Tvary se během spojování změnily: nic nebylo spojeno"
+  "shapes.join_changed": "Tvary se během spojování změnily: nic nebylo spojeno",
+  "shapes.deform_nothing": "není co deformovat",
+  "shapes.deform_grid_format": "mřížka musí obsahovat 16 bodů [x, y], od spodní řady",
+  "shapes.deform_grid_count": "mřížka musí obsahovat 16 bodů",
+  "shapes.deform_point_format": "body mřížky se zapisují jako [x, y]",
+  "shapes.deform_bad_point": "neplatný bod",
+  "shapes.deform_one_line": "body mřížky leží na jedné přímce: nic nebylo deformováno"
 }

@@ -820,5 +820,11 @@
   "lock.refused": "{id} blev afvist: {lock}-låsen er slået til (statuslinjen). Slå den fra først.",
   "machine.busy_switch": "{id} blev afvist: laseren er optaget af et job eller en ramme (eller et sat-på-pause job). Stop det først, og skift derefter enhed.",
   "machine.bridge_setup": "Broopsætningen",
-  "shapes.join_changed": "Figurerne blev ændret under sammenføjningen: intet blev sammenføjet"
+  "shapes.join_changed": "Figurerne blev ændret under sammenføjningen: intet blev sammenføjet",
+  "shapes.deform_nothing": "intet at deformere",
+  "shapes.deform_grid_format": "gitteret skal have 16 [x, y]-punkter, nederste række først",
+  "shapes.deform_grid_count": "gitteret skal have 16 punkter",
+  "shapes.deform_point_format": "gitterpunkter skrives som [x, y]",
+  "shapes.deform_bad_point": "ugyldigt punkt",
+  "shapes.deform_one_line": "gitterpunkterne ligger på én linje: intet blev deformeret"
 }

@@ -820,5 +820,11 @@
   "lock.refused": "{id} a été refusé : le verrou {lock} est activé (barre d'état). Désactivez-le d'abord.",
   "machine.busy_switch": "{id} a été refusé : le laser est occupé par une tâche ou un cadrage (ou une tâche en pause). Arrêtez-la d'abord, puis changez d'appareil.",
   "machine.bridge_setup": "La configuration du pont",
-  "shapes.join_changed": "Les formes ont changé pendant la jonction : rien n’a été joint"
+  "shapes.join_changed": "Les formes ont changé pendant la jonction : rien n’a été joint",
+  "shapes.deform_nothing": "rien à déformer",
+  "shapes.deform_grid_format": "la grille doit contenir 16 points [x, y], rangée du bas en premier",
+  "shapes.deform_grid_count": "la grille doit contenir 16 points",
+  "shapes.deform_point_format": "les points de la grille s’écrivent [x, y]",
+  "shapes.deform_bad_point": "point non valide",
+  "shapes.deform_one_line": "les points de la grille sont alignés : rien n’a été déformé"
 }

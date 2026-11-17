@@ -820,5 +820,11 @@
   "updates.unreadable": "The update server's answer could not be read:",
   "updates.up_to_date": "DarkBurn is up to date, version",
   "updates.you_have": "you have",
-  "shapes.join_changed": "The shapes changed while joining: nothing was joined"
+  "shapes.join_changed": "The shapes changed while joining: nothing was joined",
+  "shapes.deform_nothing": "nothing to deform",
+  "shapes.deform_grid_format": "grid must list 16 [x, y] points, bottom row first",
+  "shapes.deform_grid_count": "grid must list 16 points",
+  "shapes.deform_point_format": "grid points are [x, y]",
+  "shapes.deform_bad_point": "bad point",
+  "shapes.deform_one_line": "the grid points lie on one line: nothing was deformed"
 }

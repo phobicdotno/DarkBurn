@@ -820,5 +820,11 @@
   "lock.refused": "{id} è stato rifiutato: il blocco {lock} è attivo (barra di stato). Disattivalo prima.",
   "machine.busy_switch": "{id} è stato rifiutato: il laser è occupato con un lavoro o una cornice (o un lavoro in pausa). Fermalo prima, poi cambia dispositivo.",
   "machine.bridge_setup": "La configurazione del bridge",
-  "shapes.join_changed": "Le forme sono cambiate durante l’unione: non è stato unito nulla"
+  "shapes.join_changed": "Le forme sono cambiate durante l’unione: non è stato unito nulla",
+  "shapes.deform_nothing": "niente da deformare",
+  "shapes.deform_grid_format": "la griglia deve contenere 16 punti [x, y], a partire dalla riga inferiore",
+  "shapes.deform_grid_count": "la griglia deve contenere 16 punti",
+  "shapes.deform_point_format": "i punti della griglia si scrivono [x, y]",
+  "shapes.deform_bad_point": "punto non valido",
+  "shapes.deform_one_line": "i punti della griglia sono allineati: non è stato deformato nulla"
 }

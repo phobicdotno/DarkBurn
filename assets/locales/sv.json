@@ -820,5 +820,11 @@
   "lock.refused": "{id} avvisades: {lock}-låset är på (statusfältet). Stäng av det först.",
   "machine.busy_switch": "{id} avvisades: lasern är upptagen med ett jobb eller en ram (eller ett pausat jobb). Stoppa det först och byt sedan enhet.",
   "machine.bridge_setup": "Bryggkonfigurationen",
-  "shapes.join_changed": "Formerna ändrades under sammanfogningen: inget sammanfogades"
+  "shapes.join_changed": "Formerna ändrades under sammanfogningen: inget sammanfogades",
+  "shapes.deform_nothing": "inget att deformera",
+  "shapes.deform_grid_format": "rutnätet måste ha 16 [x, y]-punkter, nedersta raden först",
+  "shapes.deform_grid_count": "rutnätet måste ha 16 punkter",
+  "shapes.deform_point_format": "rutnätspunkter skrivs som [x, y]",
+  "shapes.deform_bad_point": "ogiltig punkt",
+  "shapes.deform_one_line": "rutnätspunkterna ligger på en linje: inget deformerades"
 }

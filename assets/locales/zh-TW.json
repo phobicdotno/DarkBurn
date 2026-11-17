@@ -820,5 +820,11 @@
   "lock.refused": "{id} 已被拒絕：{lock}鎖已開啟（狀態列）。請先將其關閉。",
   "machine.busy_switch": "{id} 已被拒絕：雷射正忙於工作或走邊框（或有暫停的工作）。請先停止，再更換裝置。",
   "machine.bridge_setup": "橋接設定",
-  "shapes.join_changed": "連接期間形狀已變更：未連接任何內容"
+  "shapes.join_changed": "連接期間形狀已變更：未連接任何內容",
+  "shapes.deform_nothing": "沒有可變形的物件",
+  "shapes.deform_grid_format": "網格必須列出 16 個 [x, y] 點，從底列開始",
+  "shapes.deform_grid_count": "網格必須包含 16 個點",
+  "shapes.deform_point_format": "網格點的格式為 [x, y]",
+  "shapes.deform_bad_point": "無效的點",
+  "shapes.deform_one_line": "網格點位於同一直線上：未進行任何變形"
 }

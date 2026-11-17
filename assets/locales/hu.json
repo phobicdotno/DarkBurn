@@ -820,5 +820,11 @@
   "lock.refused": "{id} elutasítva: a(z) {lock} zár be van kapcsolva (állapotsor). Előbb kapcsolja ki.",
   "machine.busy_switch": "{id} elutasítva: a lézer egy feladattal vagy keretezéssel (vagy szüneteltetett feladattal) foglalt. Előbb állítsa le, majd váltson eszközt.",
   "machine.bridge_setup": "A híd beállítása",
-  "shapes.join_changed": "Az alakzatok megváltoztak az összekapcsolás közben: semmi sem lett összekapcsolva"
+  "shapes.join_changed": "Az alakzatok megváltoztak az összekapcsolás közben: semmi sem lett összekapcsolva",
+  "shapes.deform_nothing": "nincs mit torzítani",
+  "shapes.deform_grid_format": "a rácsnak 16 [x, y] pontot kell tartalmaznia, az alsó sorral kezdve",
+  "shapes.deform_grid_count": "a rácsnak 16 pontot kell tartalmaznia",
+  "shapes.deform_point_format": "a rácspontok alakja [x, y]",
+  "shapes.deform_bad_point": "érvénytelen pont",
+  "shapes.deform_one_line": "a rácspontok egy egyenesre esnek: semmi sem torzult"
 }

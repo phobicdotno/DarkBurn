@@ -820,5 +820,11 @@
   "lock.refused": "{id} odrzucono: blokada {lock} jest włączona (pasek stanu). Najpierw ją wyłącz.",
   "machine.busy_switch": "{id} odrzucono: laser jest zajęty zadaniem lub ramką (albo wstrzymanym zadaniem). Najpierw je zatrzymaj, a potem zmień urządzenie.",
   "machine.bridge_setup": "Konfiguracja mostka",
-  "shapes.join_changed": "Kształty zmieniły się podczas łączenia: nic nie zostało połączone"
+  "shapes.join_changed": "Kształty zmieniły się podczas łączenia: nic nie zostało połączone",
+  "shapes.deform_nothing": "nie ma czego deformować",
+  "shapes.deform_grid_format": "siatka musi zawierać 16 punktów [x, y], zaczynając od dolnego rzędu",
+  "shapes.deform_grid_count": "siatka musi zawierać 16 punktów",
+  "shapes.deform_point_format": "punkty siatki zapisuje się jako [x, y]",
+  "shapes.deform_bad_point": "nieprawidłowy punkt",
+  "shapes.deform_one_line": "punkty siatki leżą na jednej linii: nic nie zostało zdeformowane"
 }

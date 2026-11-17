@@ -820,5 +820,11 @@
   "lock.refused": "{id} is geweigerd: de vergrendeling {lock} staat aan (statusbalk). Zet deze eerst uit.",
   "machine.busy_switch": "{id} is geweigerd: de laser is bezig met een taak of kader (of een gepauzeerde taak). Stop deze eerst en wissel daarna van apparaat.",
   "machine.bridge_setup": "De bridge-instelling",
-  "shapes.join_changed": "De vormen zijn tijdens het samenvoegen gewijzigd: er is niets samengevoegd"
+  "shapes.join_changed": "De vormen zijn tijdens het samenvoegen gewijzigd: er is niets samengevoegd",
+  "shapes.deform_nothing": "niets om te vervormen",
+  "shapes.deform_grid_format": "het raster moet 16 [x, y]-punten bevatten, onderste rij eerst",
+  "shapes.deform_grid_count": "het raster moet 16 punten bevatten",
+  "shapes.deform_point_format": "rasterpunten worden geschreven als [x, y]",
+  "shapes.deform_bad_point": "ongeldig punt",
+  "shapes.deform_one_line": "de rasterpunten liggen op één lijn: er is niets vervormd"
 }

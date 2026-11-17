@@ -90,11 +90,19 @@ impl Adjustments {
     }
 }
 
-/// Separable Gaussian blur with standard deviation `sigma` pixels, edges clamped.
+/// The largest blur sigma, pixels: the kernel is at most `6 * MAX_BLUR_SIGMA + 1` taps.
+pub const MAX_BLUR_SIGMA: f32 = 256.0;
+
+/// Separable Gaussian blur with standard deviation `sigma` pixels, edges clamped. A sigma above
+/// [`MAX_BLUR_SIGMA`] is held to it; one that is not a number blurs nothing.
 pub fn gaussian_blur(img: &GrayF, sigma: f32) -> GrayF {
-    if sigma <= 0.0 || img.data.is_empty() {
+    // Not a number, or no blur at all.
+    if sigma.is_nan() || sigma <= 0.0 || img.data.is_empty() {
         return img.clone();
     }
+    // A radius from a hand-edited project file can be huge; past a few hundred pixels the
+    // blur is a flat grey anyway, so the kernel is held there.
+    let sigma = sigma.min(MAX_BLUR_SIGMA);
     let r = (sigma * 3.0).ceil() as i64;
     let mut kernel: Vec<f32> = (-r..=r).map(|i| (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()).collect();
     let sum: f32 = kernel.iter().sum();
@@ -198,6 +206,16 @@ mod tests {
         let var = |img: &GrayF| (2..15).map(|x| (img.get(x, 0) - 0.2).abs()).fold(0.0f32, f32::max);
         assert!(var(&g) < var(&noisy) * 0.5);
         assert!(g.get(19, 0) < 0.25 && g.get(20, 0) > 0.75);
+    }
+
+    #[test]
+    fn blur_with_a_huge_or_nan_radius_is_held() {
+        let g = GrayF::from_fn(30, 30, |x, y| ((x * 7 + y * 3) % 11) as f32 / 10.0);
+        for sigma in [f32::MAX, f32::INFINITY, 1e30] {
+            let b = gaussian_blur(&g, sigma);
+            assert!(b.data.iter().all(|v| v.is_finite()), "{sigma}");
+        }
+        assert_eq!(gaussian_blur(&g, f32::NAN).data, g.data);
     }
 
     #[test]

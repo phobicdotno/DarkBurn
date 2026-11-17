@@ -48,7 +48,7 @@ use kurbo::{Point, Rect};
 use crate::codes::{SettingInfo, alarm_is_critical, alarm_message, error_message, setting_info};
 use crate::protocol::{
     Axes, FirmwareInfo, FirmwareKind, MachineState, RapidOverride, Response, StatusReport, apply_build_info, clean_line, feed_override_bytes,
-    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, words,
+    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, strip_noise, words,
 };
 use crate::transport::Transport;
 
@@ -1538,10 +1538,12 @@ impl Worker {
         let n = self.t.read(&mut buf, Duration::from_millis(2)).map_err(|e| e.to_string())?;
         for &b in &buf[..n] {
             if b == b'\n' {
-                let line = String::from_utf8_lossy(&self.rx_line).trim_end_matches('\r').to_owned();
+                let raw = String::from_utf8_lossy(&self.rx_line).into_owned();
                 self.rx_line.clear();
-                if !line.trim().is_empty() {
-                    self.on_line(line.trim())?;
+                // A noise byte in front of an `ok` must not cost the answer.
+                let line = strip_noise(&raw);
+                if !line.is_empty() {
+                    self.on_line(line)?;
                 }
             } else if self.rx_line.len() < 4096 {
                 self.rx_line.push(b);

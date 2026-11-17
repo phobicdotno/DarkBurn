@@ -425,24 +425,60 @@ pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
 pub const MAX_LINE_PIECES: f64 = 5_000_000.0;
 
 /// The line settings of the layer that split its outlines into pieces (dot mode, or
-/// perforation), each as (step along the outline, passes, kerf offset). The step is the dot
-/// spacing or one cut and skip, with the floors of [`cut_settings`]; passes are at least 1, as
-/// [`map_settings_with`] gives the generator.
-fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64)> {
+/// perforation), each as (step along the outline, passes, kerf offset, overcut). The step is
+/// the dot spacing or one cut and skip, with the floors of [`cut_settings`]; passes are at
+/// least 1, as [`map_settings_with`] gives the generator; dots get no overcut, as in the
+/// generator.
+fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64, f64)> {
     l.settings
         .iter()
         .filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine))
         .filter_map(|s| {
-            let step = if s.dot_mode {
-                s.dot_spacing.max(0.01)
+            let (step, overcut) = if s.dot_mode {
+                (s.dot_spacing.max(0.01), 0.0)
             } else if s.perforation && s.perf_skip > 0.0 {
-                s.perf_cut.max(0.01) + s.perf_skip
+                (s.perf_cut.max(0.01) + s.perf_skip, s.overcut.max(0.0))
             } else {
                 return None;
             };
-            Some((step, s.passes.max(1) as f64, s.kerf))
+            Some((step, s.passes.max(1) as f64, s.kerf, overcut))
         })
         .collect()
+}
+
+/// The reason a layer's dots or perforation were left out: `amount` pieces, past
+/// [`MAX_LINE_PIECES`].
+fn too_many_pieces_warning(li: usize, amount: f64) -> String {
+    too_big_warning(
+        tr(
+            "job.warn_too_many_pieces",
+            "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
+        ),
+        li,
+        amount,
+        MAX_LINE_PIECES,
+    )
+}
+
+/// Leaves out the shapes of each layer whose real dots and perforation gaps, counted on the
+/// outlines the generator cuts ([`job::line_pieces`]), pass [`MAX_LINE_PIECES`]: the whole
+/// layer goes, never a part of it, so nothing different fires. `estimates` are the amounts the
+/// early estimate gave, for the warning (the count stops just past the limit). Returns the
+/// layers left out, each with its warning.
+fn drop_too_many_pieces(layers: &mut [Option<LayerInput>], tolerance: f64, estimates: &[f64]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for entry in layers.iter_mut().flatten() {
+        if entry.shapes.is_empty() {
+            continue;
+        }
+        let n = job::line_pieces(entry, tolerance, MAX_LINE_PIECES);
+        if n.is_nan() || n > MAX_LINE_PIECES {
+            entry.shapes.clear();
+            let li = entry.index;
+            out.push((li, too_many_pieces_warning(li, n.max(estimates.get(li).copied().unwrap_or(0.0)))));
+        }
+    }
+    out
 }
 
 /// The reason a layer's shapes were left out for their size, from its translated `text`.
@@ -844,6 +880,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
+    // The outlines of each layer, framed unless the layer is left out for its size.
+    let mut line_frames: Vec<Vec<BezPath>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut tool_frame: Vec<BezPath> = Vec::new();
     let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
@@ -897,7 +935,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // kerf-offset outline, at most 2π·|kerf| longer for each closed subpath (offsets have round
     // corners), and a vision mapping (cylinder, rotary, print and cut) is measured on the
     // mapped outline, its stretch applied to the kerf allowance too. Every such setting and
-    // every pass make their own pieces.
+    // every pass make their own pieces, each at least one per outline (a dot at its start, or
+    // one gap), and a perforated closed outline is cut on over its start by the overcut. This
+    // is only a quick early exit: the real pieces are counted on the outlines the generator
+    // cuts once they are made (see drop_too_many_pieces), which also covers any mapping.
     let mut pieces = [0.0_f64; layer::LAYER_COUNT];
     for top in &tops {
         for leaf in top.leaves() {
@@ -914,7 +955,13 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let drawn = darkburn_geom::path::length(&outline);
             let subpaths = outline.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count() as f64;
             let estimate = |len: f64, stretch: f64| -> f64 {
-                splits.iter().map(|(step, passes, kerf)| (len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths) / step * passes).sum()
+                splits
+                    .iter()
+                    .map(|(step, passes, kerf, overcut)| {
+                        let cut = len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths;
+                        ((cut + (overcut * subpaths).min(cut)) / step + subpaths) * passes
+                    })
+                    .sum()
             };
             let mut here = estimate(drawn, 1.0);
             // A mapped outline is only measured while the drawn one is within the limit (an
@@ -935,15 +982,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     for li in 0..layer::LAYER_COUNT {
         if pieces[li].is_nan() || pieces[li] > MAX_LINE_PIECES {
             too_big[li] = true;
-            size_warnings.push(too_big_warning(
-                tr(
-                    "job.warn_too_many_pieces",
-                    "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
-                ),
-                li,
-                pieces[li],
-                MAX_LINE_PIECES,
-            ));
+            size_warnings.push(too_many_pieces_warning(li, pieces[li]));
         }
     }
     for li in 0..layer::LAYER_COUNT {
@@ -1092,7 +1131,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     // Nothing of the shape is left to cut.
                     continue;
                 }
-                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+                line_frames[li].extend(used.into_iter().filter(|p| !p.elements().is_empty()));
             }
             // Tabs and forced start points are stored in the shape's local coordinates; they
             // go through the same mapping as the outline (the kerf offset keeps them: each
@@ -1116,6 +1155,16 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             entry.shapes.push(si);
         }
     }
+    // The estimate above is only an early exit: the real pieces are counted on the outlines
+    // as the generator cuts them (kerf and mapping applied), and a layer past the limit is
+    // left out whole, before anything of it is generated.
+    for (li, why) in drop_too_many_pieces(&mut layers, input.device.tolerance, &pieces) {
+        line_frames[li].clear();
+        kerf_lost[li] = 0;
+        warnings.push(why.clone());
+        size_warnings.push(why);
+    }
+    frame_paths.extend(line_frames.into_iter().flatten());
     for (li, lost) in kerf_lost.iter().enumerate() {
         if *lost > 0 {
             warnings.push(format!(
@@ -1865,6 +1914,111 @@ mod tests {
         s.kerf = 10_000.0;
         d.add(Shape::rect(Rect::new(0.0, 0.0, 20.0, 20.0), 0.0, 2));
         left_out(d, "big kerf");
+    }
+
+    /// Builds `d` with a small square on layer 0 and checks that layer 2 is left out whole
+    /// with the dots-or-perforation warning, and that only the square is cut.
+    fn far_too_many_left_out(mut d: Document, why: &str) {
+        d.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+        let started = std::time::Instant::now();
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!(started.elapsed().as_secs() < 30, "{why}: held before the pieces are made");
+        let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("left out") && w.contains("dots or perforation")).collect();
+        assert!(said.len() == 1 && said[0].contains(&layer::layer_label(2)), "{why}: {:?}", b.warnings);
+        assert!(b.toolpath.ops.len() < 100, "{why}: only the small square is cut ({} operations)", b.toolpath.ops.len());
+        assert!(!b.toolpath.ops.iter().any(|o| matches!(o, Op::Dwell { .. })), "{why}: no dot of layer 2 fires");
+        assert!(b.toolpath.layers.iter().all(|l| l.layer_index == 0), "{why}: nothing of layer 2 is left");
+    }
+
+    #[test]
+    fn far_too_many_pieces_counts_the_overcut_of_perforation() {
+        // A 2 mm square perforated every 0.02 mm, 10 000 passes: 4 million gaps as drawn, but
+        // an 8 mm overcut doubles the path that is perforated.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.perforation = true;
+        s.perf_cut = 0.01;
+        s.perf_skip = 0.01;
+        s.passes = 10_000;
+        s.overcut = 8.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 2.0, 2.0), 0.0, 2));
+        far_too_many_left_out(d, "overcut");
+    }
+
+    #[test]
+    fn far_too_many_pieces_counts_one_dot_per_outline_per_pass() {
+        // A 1 mm square with dots 100 mm apart still gets its first dot on every pass:
+        // 20 million passes are 20 million dots.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 100.0;
+        s.passes = 20_000_000;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 2));
+        far_too_many_left_out(d, "short outline");
+    }
+
+    #[test]
+    fn far_too_many_pieces_are_counted_on_the_real_outline_after_a_stretch() {
+        // A print-and-cut fit that stretches X 1000 times: the estimate scales the kerf corners
+        // by the average stretch (about 0.4 million dots), but the corners become ellipses
+        // 20 m long and the real outline is about 8 million dots. The real count leaves the
+        // layer out, whole.
+        use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 20.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1000.0), 0.0, 2));
+        let mut v = crate::vision_state::VisionState::default();
+        v.pnc.fit = Some(PnCFit {
+            mode: PnCMode::FullAffine,
+            affine: Affine::scale_non_uniform(1000.0, 1.0),
+            scale: 1000f64.sqrt(),
+            rotation_deg: 0.0,
+            translation: (0.0, 0.0),
+            residuals: ResidualReport { per_target: Vec::new(), rms_mm: 0.0, max_mm: 0.0 },
+        });
+        d.vision_settings = Some(v.to_value());
+        far_too_many_left_out(d, "stretched kerf corners");
+    }
+
+    #[test]
+    fn far_too_many_real_pieces_leave_the_whole_layer_out() {
+        // The guard on the real count, called on its own: a layer past the limit loses every
+        // shape (nothing of it is generated), one within it is untouched.
+        let layer = |passes: u32| {
+            let mut d = Document::new();
+            let s = d.layer_mut(2).main_mut();
+            s.mode = Mode::Line;
+            s.dot_mode = true;
+            s.dot_spacing = 1.0;
+            for x in [0.0, 20.0, 40.0] {
+                d.add(Shape::rect(Rect::new(x, 0.0, x + 10.0, 10.0), 0.0, 2));
+            }
+            // Built at one pass (the early estimate lets it through), then given its passes.
+            let mut l = collect(&input(d), None, &mut |_| {}).unwrap().job.layers.remove(0);
+            l.settings[0].passes = passes;
+            l
+        };
+        // 3 squares of 40 dots (and the first again): 123 a pass.
+        let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
+        layers[2] = Some(layer(1_000));
+        assert!(drop_too_many_pieces(&mut layers, 0.01, &[0.0; layer::LAYER_COUNT]).is_empty());
+        assert_eq!(layers[2].as_ref().unwrap().shapes.len(), 3);
+        layers[2] = Some(layer(100_000));
+        let n = job::line_pieces(layers[2].as_ref().unwrap(), 0.01, f64::INFINITY);
+        assert!((n - 12_300_000.0).abs() < 1.0, "{n}");
+        // Counting stops at the second square, once past the limit.
+        let held = job::line_pieces(layers[2].as_ref().unwrap(), 0.01, MAX_LINE_PIECES);
+        assert!((held - 8_200_000.0).abs() < 1.0, "{held}");
+        let dropped = drop_too_many_pieces(&mut layers, 0.01, &[0.0; layer::LAYER_COUNT]);
+        assert!(dropped.len() == 1 && dropped[0].0 == 2 && dropped[0].1.contains("dots or perforation"), "{dropped:?}");
+        assert!(layers[2].as_ref().unwrap().shapes.is_empty(), "the whole layer is left out");
     }
 
     #[test]

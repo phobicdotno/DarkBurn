@@ -238,7 +238,7 @@ pub fn rebuild_overlay(app: &mut DarkBurn) -> Result<(), String> {
             }
             let covers = if cam.crop_to_page { bed } else { extent(al, bed) };
             let ppm = (1600.0 / covers.width.max(covers.height)).clamp(0.25, 4.0);
-            let mut img = al.render_bed_image(&und, covers, ppm);
+            let mut img = al.render_bed_image(&und, covers, ppm).map_err(|e| e.to_string())?;
             if cam.crop_to_page {
                 img = camera::crop_to_page(&img, covers, ppm, bed.to_rect());
             }
@@ -825,7 +825,7 @@ pub fn head_stitch(app: &mut DarkBurn) -> Result<Value, String> {
     }
     let b = bed(app);
     let ppm = (1600.0 / b.width.max(b.height)).clamp(0.25, 2.0);
-    let img = camera::stitch_mosaic(&app.vision.mosaic, &cal, b, ppm);
+    let img = camera::stitch_mosaic(&app.vision.mosaic, &cal, b, ppm).map_err(|e| e.to_string())?;
     let w = img.width();
     app.vision.overlay = Some(Overlay { img, covers: b });
     app.vision.overlay_gen += 1;

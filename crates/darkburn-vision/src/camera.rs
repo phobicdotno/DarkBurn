@@ -46,6 +46,39 @@ impl BedRect {
     }
 }
 
+/// The most pixels a bed picture made from the camera may have (16384 x 16384).
+pub const MAX_BED_IMAGE_PIXELS: f64 = 268_435_456.0;
+
+/// A bed picture that would be larger than [`MAX_BED_IMAGE_PIXELS`], or whose scale is not a
+/// positive number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageTooLarge {
+    pub px_per_mm: f64,
+}
+
+impl std::fmt::Display for ImageTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a bed picture at {} pixels per mm would be too large", self.px_per_mm)
+    }
+}
+impl std::error::Error for ImageTooLarge {}
+
+/// The pixel size of `view` at `px_per_mm`, refused past the pixel budget.
+fn checked_pixel_size(view: BedRect, px_per_mm: f64) -> Result<(u32, u32), ImageTooLarge> {
+    let (w, h) = (view.width * px_per_mm, view.height * px_per_mm);
+    if !(px_per_mm.is_finite() && px_per_mm > 0.0 && w.is_finite() && h.is_finite())
+        || w.round().max(1.0) * h.round().max(1.0) > MAX_BED_IMAGE_PIXELS
+    {
+        return Err(ImageTooLarge { px_per_mm });
+    }
+    Ok(view.pixel_size(px_per_mm))
+}
+
+/// The largest scale at which `view` stays within the pixel budget.
+fn max_px_per_mm(view: BedRect) -> f64 {
+    (MAX_BED_IMAGE_PIXELS / (view.width * view.height).max(1e-9)).sqrt() * 0.99
+}
+
 /// Camera image orientation fix-ups applied before alignment: rotate by quarter turns (clockwise) then flip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ImageOrientation {
@@ -248,19 +281,20 @@ impl CameraAlignment {
     }
 
     /// Warp an undistorted camera image into a bed-aligned image covering `view` at `px_per_mm` (north up, Y up on the bed).
+    /// A picture past [`MAX_BED_IMAGE_PIXELS`] is refused.
     pub fn render_bed_image<P: Pixel<Subpixel = u8>>(
         &self,
         undistorted: &ImageBuffer<P, Vec<u8>>,
         view: BedRect,
         px_per_mm: f64,
-    ) -> ImageBuffer<P, Vec<u8>> {
+    ) -> Result<ImageBuffer<P, Vec<u8>>, ImageTooLarge> {
+        let (ow, oh) = checked_pixel_size(view, px_per_mm)?;
         let oriented = self.orientation.apply_image(undistorted);
-        let (ow, oh) = view.pixel_size(px_per_mm);
         let inv = self.homography.inverse();
-        remap_bilinear(&oriented, ow, oh, |x, y| {
+        Ok(remap_bilinear(&oriented, ow, oh, |x, y| {
             let bed = Point::new(view.x + (x + 0.5) / px_per_mm, view.y + view.height - (y + 0.5) / px_per_mm);
             inv?.apply(bed).map(|p| (p.x, p.y))
-        })
+        }))
     }
 }
 
@@ -393,8 +427,9 @@ pub struct MosaicCapture {
 
 /// Stitch head-camera captures into a bed-aligned image covering `view` (weights fade towards each capture's edges).
 /// Pixels covered by no capture stay transparent.
-pub fn stitch_mosaic(captures: &[MosaicCapture], cal: &HeadCameraCalibration, view: BedRect, px_per_mm: f64) -> RgbaImage {
-    let (ow, oh) = view.pixel_size(px_per_mm);
+/// A picture past [`MAX_BED_IMAGE_PIXELS`] is refused.
+pub fn stitch_mosaic(captures: &[MosaicCapture], cal: &HeadCameraCalibration, view: BedRect, px_per_mm: f64) -> Result<RgbaImage, ImageTooLarge> {
+    let (ow, oh) = checked_pixel_size(view, px_per_mm)?;
     let prepared: Vec<(RgbaImage, Option<Homography>, Point)> = captures
         .iter()
         .map(|c| {
@@ -433,7 +468,7 @@ pub fn stitch_mosaic(captures: &[MosaicCapture], cal: &HeadCameraCalibration, vi
             }
         }
     }
-    out
+    Ok(out)
 }
 
 // ---------------------------------------------------------------- exposure and brightness
@@ -579,7 +614,9 @@ pub fn trace_from_capture(
     };
     match alignment {
         Some((al, view, ppm)) => {
-            let mut bed_img = al.render_bed_image(&undistorted, view, ppm);
+            // A scale past the pixel budget is held to it, so the trace still lands in place.
+            let ppm = if ppm.is_finite() && ppm > 0.0 { ppm.min(max_px_per_mm(view)) } else { 1.0 };
+            let mut bed_img = al.render_bed_image(&undistorted, view, ppm).expect("the scale is held within the pixel budget");
             // Uncovered pixels are transparent; show them as white paper.
             for p in bed_img.pixels_mut() {
                 if p.0[3] == 0 {
@@ -709,7 +746,10 @@ mod tests {
             .collect();
         let al = CameraAlignment::solve(&t, ImageOrientation::default(), (200, 120)).unwrap();
         let view = BedRect::new(0.0, 0.0, 100.0, 60.0);
-        let out = al.render_bed_image(&img, view, 4.0);
+        for huge in [1e6, f64::INFINITY, f64::NAN, -1.0] {
+            assert!(al.render_bed_image(&img, view, huge).is_err(), "{huge}");
+        }
+        let out = al.render_bed_image(&img, view, 4.0).unwrap();
         assert_eq!(out.dimensions(), (400, 240));
         // bed (25, 15) → px (100, 240-60=180)
         assert_eq!(out.get_pixel(100, 180)[0], 0);
@@ -780,7 +820,10 @@ mod tests {
             MosaicCapture { head_pos: Point::new(60.0, 30.0), image: capture(Point::new(60.0, 30.0)) },
         ];
         let view = BedRect::new(10.0, 15.0, 80.0, 30.0);
-        let out = stitch_mosaic(&caps, &cal, view, 2.0);
+        for huge in [1e6, f64::INFINITY, f64::NAN, 0.0] {
+            assert!(stitch_mosaic(&caps, &cal, view, huge).is_err(), "{huge}");
+        }
+        let out = stitch_mosaic(&caps, &cal, view, 2.0).unwrap();
         assert_eq!(out.dimensions(), (160, 60));
         // Covered area is opaque and follows the gradient at every sampled bed x.
         for bx in [15.0, 30.0, 45.0, 60.0, 75.0] {

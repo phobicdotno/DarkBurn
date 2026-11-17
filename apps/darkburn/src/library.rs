@@ -1133,7 +1133,7 @@ mod tests {
         let other = entry("Ply", Some(3.0), "Cut", 99.0);
         app.extras.library.lib.add(other.clone());
         crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
-        assert_eq!(app.extras.library.lib.entries, [other.clone()], "undo does not put a second one in");
+        assert_eq!(app.extras.library.lib.entries, std::slice::from_ref(&other), "undo does not put a second one in");
         crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
         assert_eq!(app.extras.library.lib.entries, [other], "redo does not delete the new entry");
     }

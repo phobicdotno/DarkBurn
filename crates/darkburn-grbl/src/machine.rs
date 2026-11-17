@@ -48,7 +48,7 @@ use kurbo::{Point, Rect};
 use crate::codes::{SettingInfo, alarm_is_critical, alarm_message, error_message, setting_info};
 use crate::protocol::{
     Axes, FirmwareInfo, FirmwareKind, MachineState, RapidOverride, Response, StatusReport, apply_build_info, clean_line, feed_override_bytes,
-    fmt_num, is_motion_line, parse_response, power_override_bytes, rt,
+    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, words,
 };
 use crate::transport::Transport;
 
@@ -2015,7 +2015,9 @@ impl Worker {
         self.write(&bytes)?;
         let len = bytes.len();
         let up = o.text.to_ascii_uppercase();
-        if (!up.starts_with('$') || up.starts_with("$J=")) && o.origin != Origin::Internal(Tag::Sync) {
+        // Only a line that may move the head or turn the laser on counts: an acknowledged `M5 S0`
+        // must not make a later lost link reset an idle controller (see `lost`).
+        if (is_motion_line(&o.text) || may_fire(&up)) && o.origin != Origin::Internal(Tag::Sync) {
             self.motion_pending = true;
         }
         if up.starts_with("$J=") {
@@ -2457,6 +2459,13 @@ impl Worker {
 fn is_sync_origin(origin: &Origin, text: &str) -> bool {
     matches!(origin, Origin::Internal(Tag::Info | Tag::SettingsRead { .. } | Tag::SettingWrite(..) | Tag::Home | Tag::Unlock))
         || (text.starts_with('$') && !text.to_ascii_uppercase().starts_with("$J="))
+}
+
+
+/// Whether an upper-case G-code line switches the laser on (`M3`/`M4`): with laser mode off it
+/// fires without moving, so a lost link must still try the last reset.
+fn may_fire(up: &str) -> bool {
+    !up.starts_with('$') && words(up).iter().any(|(l, v)| *l == 'M' && matches!(v.as_str(), "3" | "03" | "4" | "04"))
 }
 
 #[cfg(test)]

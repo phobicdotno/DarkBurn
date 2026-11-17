@@ -465,11 +465,25 @@ struct Collected {
     job: JobInput,
     bounds: Option<Rect>,
     selection_bounds: Option<Rect>,
+    /// Bounds the job is anchored on in place of its own, after shapes were dropped from it.
+    anchor_bounds: Option<Rect>,
     frame_paths: Vec<BezPath>,
     /// Outlines on tool layers that are framed with the job.
     tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
+}
+
+impl Collected {
+    /// The origin settings of the build: anchored where "Remove what is outside the work area"
+    /// placed the job when it dropped shapes.
+    fn origin(&self, input: &BuildInput) -> Result<OriginSettings, BuildError> {
+        let mut o = origin_for(input, self.selection_bounds)?;
+        if self.anchor_bounds.is_some() {
+            o.selection_bounds = self.anchor_bounds;
+        }
+        Ok(o)
+    }
 }
 
 fn cut_mode(m: Mode) -> CutMode {
@@ -704,6 +718,31 @@ fn is_outside(bbox: Rect, area: Rect) -> bool {
     bbox.x0 < area.x0 - tol || bbox.y0 < area.y0 - tol || bbox.x1 > area.x1 + tol || bbox.y1 > area.y1 + tol
 }
 
+/// The bounds of a shape where the job puts it: after the cylinder, rotary and print-and-cut
+/// mapping of the project (as drawn when there is none).
+fn placed_bbox(s: &Shape, map: Option<&crate::vision_state::JobMap>) -> Rect {
+    let Some(m) = map else { return s.bbox() };
+    let path = s.outline();
+    if path.elements().is_empty() {
+        let o = m.apply_point(s.transform * Point::ZERO);
+        return Rect::from_points(o, o);
+    }
+    darkburn_core::kurbo::Shape::bounding_box(&m.apply(path))
+}
+
+/// Where the start mode puts design coordinates on the bed, as a map from design to bed
+/// (design) coordinates, for a job with these bounds. As drawn for absolute jobs, and for jobs
+/// from the current position while the head position is unknown.
+fn bed_placement(input: &BuildInput, selection_bounds: Option<Rect>, job_bounds: Rect) -> Affine {
+    let Ok(origin) = origin_for(input, selection_bounds) else { return Affine::IDENTITY };
+    let to_machine = match (origin.start_from, input.head) {
+        (StartFrom::Absolute, _) | (StartFrom::CurrentPosition, None) => return Affine::IDENTITY,
+        (StartFrom::CurrentPosition, Some(h)) => Affine::translate(h.to_vec2()) * origin.transform(job_bounds),
+        (StartFrom::UserOrigin(_), _) => origin.transform(job_bounds),
+    };
+    origin.machine.affine().inverse() * to_machine
+}
+
 fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {
     // Text hook: variable text, QR codes and barcodes are evaluated for this job.
     let prepared = crate::text_render::prepare_for_output(&input.doc);
@@ -718,9 +757,6 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let area = input.device.area();
     let order_pos: HashMap<usize, usize> = doc.layer_order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
 
-    // Selection bounds for "use selection origin" (all selected shapes, burning or not).
-    let selection_bounds = input.selection.iter().filter_map(|id| doc.get(*id)).map(|s| s.bbox()).reduce(|a, b| a.union(b));
-
     let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
     let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
@@ -728,6 +764,21 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
+    // Selection bounds for "use selection origin" (all selected shapes, burning or not), where
+    // the job puts them: the anchor is measured on the same mapped shapes as the job bounds.
+    let placed = |s: &Shape| placed_bbox(s, vision_map.as_ref());
+    // A group is measured leaf by leaf, as it is mapped below: the cylinder leaves alone only
+    // the leaves it cannot reach, not the whole group. A group without leaves keeps its origin.
+    let selection_bounds = input
+        .selection
+        .iter()
+        .filter_map(|id| doc.get(*id))
+        .flat_map(|s| {
+            let leaves = s.leaves();
+            if leaves.is_empty() { vec![s.clone()] } else { leaves }
+        })
+        .map(|s| placed(&s))
+        .reduce(|a, b| a.union(b));
     let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
@@ -785,6 +836,30 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             ));
         }
     }
+    // "Remove what is outside the work area" tests each shape where the start mode puts it on
+    // the bed: from the user origin or the head, the anchor of the whole job (all the shapes
+    // that could burn) goes there. Absolute jobs, and jobs from the current position while the
+    // head position is unknown, are measured where they are mapped.
+    let placing = st.discard_out_of_bounds
+        && match st.start_from {
+            StartMode::Absolute => false,
+            StartMode::CurrentPosition => input.head.is_some(),
+            StartMode::UserOrigin => true,
+        };
+    let place_bounds = if !placing {
+        None
+    } else {
+        tops.iter()
+            .flat_map(|t| t.leaves())
+            .filter(|l| {
+                // A fill layer left out for its size is not part of the job and does not move it.
+                let li = l.layer.min(layer::LAYER_COUNT - 1);
+                doc.layer(li).outputs() && !(fill_too_big[li] && !l.is_image())
+            })
+            .map(|l| placed(&l))
+            .reduce(|a, b| a.union(b))
+    };
+    let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -810,7 +885,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let bbox = leaf.bbox();
-            if st.discard_out_of_bounds && is_outside(bbox, area) {
+            // Measured where the job puts the shape (print and cut and rotary move it, and so
+            // does the start mode).
+            if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
                 dropped += 1;
                 continue;
             }
@@ -982,7 +1059,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // Bounds of what burns, as the engine anchors the job.
     let job = JobInput { layers: list };
     let bounds = job::generate::job_bounds(&job, input.device.tolerance);
-    Ok(Collected { job, bounds, selection_bounds, frame_paths, tool_frame, warnings, dropped })
+    // The engine anchors on what is left. Once shapes are dropped, it anchors on the bounds the
+    // test used instead, so the shapes that are kept burn where they passed it.
+    let anchor_bounds = if dropped > 0 && (!st.use_selection_origin || selection_bounds.is_none()) { place_bounds } else { None };
+    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -1055,7 +1135,7 @@ fn fires_anywhere(tp: &Toolpath) -> bool {
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
-    let origin = origin_for(input, c.selection_bounds)?;
+    let origin = c.origin(input)?;
     let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: input.device.tolerance, comments: true };
     let mut scaled = |f: f32| report(0.3 + 0.7 * f);
     let mut progress = Progress::new(cancel, Some(&mut scaled));
@@ -1297,7 +1377,7 @@ pub fn frame_toolpath(points: &[Point], origin: &OriginSettings, job_bounds: Rec
 pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Option<f64>) -> Result<Toolpath, BuildError> {
     let c = collect(input, None, &mut |_| {})?;
     let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
-    let origin = origin_for(input, c.selection_bounds)?;
+    let origin = c.origin(input)?;
     let points = match kind {
         FrameKind::Rectangle => {
             let mut r = bounds;

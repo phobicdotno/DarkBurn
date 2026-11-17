@@ -117,6 +117,11 @@ impl CylinderCorrection {
         let mut start = Point::ZERO;
         let mut err: Option<CylinderError> = None;
         kurbo::flatten(path.elements().iter().copied(), 0.01, |el| {
+            // The path is refused once a point is out of reach: building on would close or
+            // continue a subpath whose start was never placed.
+            if err.is_some() {
+                return;
+            }
             let line_to = |from: Point, to: Point, out: &mut BezPath, err: &mut Option<CylinderError>| {
                 // Capped: a very long line gets a wider step instead of billions of points.
                 let n = ((to - from).hypot() / step).ceil().clamp(1.0, MAX_SEGMENTS_PER_LINE as f64) as usize;

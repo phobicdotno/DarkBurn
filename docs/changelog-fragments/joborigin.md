@@ -1,0 +1,2 @@
+- "Use selection origin" now lines the job up on the selection where print and cut or the rotary actually puts it
+- "Remove what is outside the work area" now checks shapes where print and cut or the rotary puts them, not where they are drawn

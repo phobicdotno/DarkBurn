@@ -447,6 +447,7 @@
   "library.no_description": "（无描述）",
   "library.no_entry": "没有此条目",
   "library.no_file": "切割库还没有文件：请使用“另存为”",
+  "library.undo_not_saved": "撤销或重做后无法保存切割库，将重试",
   "library.no_material": "（无材料）",
   "library.no_thickness": "任意厚度",
   "library.passes": "次数",

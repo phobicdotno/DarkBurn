@@ -447,6 +447,7 @@
   "library.no_description": "(ingen beskrivning)",
   "library.no_entry": "Posten finns inte",
   "library.no_file": "Biblioteket har ingen fil än: använd Spara som",
+  "library.undo_not_saved": "Biblioteket kunde inte sparas efter Ångra eller Gör om, det försöks igen",
   "library.no_material": "(inget material)",
   "library.no_thickness": "valfri tjocklek",
   "library.passes": "Pass",

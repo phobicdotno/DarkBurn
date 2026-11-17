@@ -447,6 +447,7 @@
   "library.no_description": "(nincs leírás)",
   "library.no_entry": "Nincs ilyen bejegyzés",
   "library.no_file": "A könyvtárnak még nincs fájlja: használja a Mentés másként parancsot",
+  "library.undo_not_saved": "A könyvtárat nem sikerült menteni a Visszavonás vagy Újra után, újrapróbálkozás",
   "library.no_material": "(nincs anyag)",
   "library.no_thickness": "bármilyen vastagság",
   "library.passes": "Menetek",

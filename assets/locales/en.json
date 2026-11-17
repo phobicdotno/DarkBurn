@@ -447,6 +447,7 @@
   "library.no_description": "(no description)",
   "library.no_entry": "No such entry",
   "library.no_file": "The library has no file yet: use Save as",
+  "library.undo_not_saved": "The library could not be saved after Undo or Redo, it is tried again",
   "library.no_material": "(no material)",
   "library.no_thickness": "any thickness",
   "library.passes": "Passes",

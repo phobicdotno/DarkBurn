@@ -331,6 +331,9 @@ pub struct LibraryState {
     pub settings_dir: Option<PathBuf>,
     /// Deleted entries by the tag of their undo step, so Undo can put them back.
     pub deleted: std::collections::HashMap<u64, Deleted>,
+    /// Libraries changed by Undo or Redo whose file could not be written: the file, the changed
+    /// library, and when it was last tried. Auto-save tries them again.
+    pub unsaved: Vec<(PathBuf, Library, Instant)>,
 }
 
 /// An entry taken out of a library, and where it was: which device's library, its file, its place.
@@ -340,6 +343,9 @@ pub struct Deleted {
     pub path: Option<PathBuf>,
     pub index: usize,
     pub entry: Entry,
+    /// Undo put this very entry back (not skipped because another entry had its name), so Redo
+    /// may take it out again.
+    pub restored: bool,
 }
 
 /// The file a library without a file of its own is kept in, one per device.
@@ -393,6 +399,7 @@ impl LibraryState {
 
     /// Write unsaved changes now (to the library's file, or the one kept in the settings folder).
     pub fn flush(&mut self) {
+        self.retry_unsaved(Instant::now() + AUTOSAVE_AFTER);
         if let Some(since) = self.dirty_since {
             let dir = self.settings_dir.clone();
             self.autosave(dir.as_deref(), since + AUTOSAVE_AFTER);
@@ -428,6 +435,7 @@ impl LibraryState {
     /// it has none, to the device's `library-autosave` file in the settings folder (which is read
     /// back the next time the device's library is loaded).
     pub fn autosave(&mut self, settings_dir: Option<&Path>, now: Instant) {
+        self.retry_unsaved(now);
         let Some(since) = self.dirty_since else { return };
         if now.duration_since(since) < AUTOSAVE_AFTER {
             return;
@@ -443,6 +451,34 @@ impl LibraryState {
         if ok {
             self.dirty_since = None;
         }
+    }
+}
+
+impl LibraryState {
+    /// Write the libraries Undo or Redo changed whose file could not be written before.
+    fn retry_unsaved(&mut self, now: Instant) {
+        if self.unsaved.is_empty() {
+            return;
+        }
+        self.unsaved.retain_mut(|(file, lib, tried)| {
+            if now.duration_since(*tried) < AUTOSAVE_AFTER {
+                return true;
+            }
+            *tried = now;
+            lib.save(file).is_err()
+        });
+        if self.unsaved.is_empty() && self.status.starts_with(&unsaved_status(None)) {
+            self.status.clear();
+        }
+    }
+}
+
+/// The status line shown while a library changed by Undo or Redo could not be written.
+fn unsaved_status(error: Option<&str>) -> String {
+    let text = tr("library.undo_not_saved", "The library could not be saved after Undo or Redo, it is tried again");
+    match error {
+        Some(e) => format!("{text} ({e})"),
+        None => text,
     }
 }
 
@@ -501,61 +537,86 @@ pub fn delete_entry(app: &mut DarkBurn, index: usize) -> Result<(), String> {
     st.editing = None;
     st.touch();
     let tag = NEXT_TAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    st.deleted.insert(tag, Deleted { device: st.device.clone(), path: st.path.clone(), index, entry });
+    st.deleted.insert(tag, Deleted { device: st.device.clone(), path: st.path.clone(), index, entry, restored: false });
     app.editor.checkpoint_tagged("Delete library entry", tag);
     unlink_all(&mut app.editor.doc, &name);
     Ok(())
 }
 
-/// After Undo of the step tagged `tag`: a deleted entry goes back into its library.
+/// After Undo of the step tagged `tag`: a deleted entry goes back into its library (unless
+/// another entry has taken its name meanwhile).
 pub fn after_undo(app: &mut DarkBurn, tag: u64) {
     let Some(d) = app.extras.library.deleted.get(&tag).cloned() else { return };
     let name = d.entry.link_name();
-    with_library_of(app, &d, |lib| {
+    let restored = with_library_of(app, &d, |lib| {
         if lib.entries.iter().any(|e| e.link_name() == name) {
             return false;
         }
         lib.entries.insert(d.index.min(lib.entries.len()), d.entry.clone());
         true
     });
+    if let Some(d) = app.extras.library.deleted.get_mut(&tag) {
+        d.restored = restored;
+    }
 }
 
-/// After Redo of the step tagged `tag`: the entry is deleted from its library again.
+/// After Redo of the step tagged `tag`: the entry Undo put back is deleted from its library
+/// again. An entry Undo did not put back (one that took its name) is left alone.
 pub fn after_redo(app: &mut DarkBurn, tag: u64) {
     let Some(d) = app.extras.library.deleted.get(&tag).cloned() else { return };
-    let name = d.entry.link_name();
+    if !d.restored {
+        return;
+    }
     with_library_of(app, &d, |lib| {
-        let Some(i) = lib.entries.iter().position(|e| e.link_name() == name) else { return false };
+        let Some(i) = lib.entries.iter().position(|e| *e == d.entry) else { return false };
         lib.entries.remove(i);
         true
     });
+    if let Some(d) = app.extras.library.deleted.get_mut(&tag) {
+        d.restored = false;
+    }
 }
 
-/// Change the library `d` came from: the one shown if it still is, else its file (the one it was
-/// opened from, or the one kept for its device in the settings folder). A library that is gone
-/// is left alone.
-fn with_library_of(app: &mut DarkBurn, d: &Deleted, f: impl FnOnce(&mut Library) -> bool) {
+/// Change the library `d` came from: the one shown if it still is (the same file, or for a
+/// library without a file the same device), else its file (the one it was opened from, or the
+/// one kept for its device in the settings folder). A library that is gone is left alone. A file
+/// that cannot be written is shown in the status line and kept to be written by auto-save.
+/// Answers whether `f` changed the library.
+fn with_library_of(app: &mut DarkBurn, d: &Deleted, f: impl FnOnce(&mut Library) -> bool) -> bool {
     let st = &mut app.extras.library;
-    if st.device == d.device && st.path == d.path {
-        if f(&mut st.lib) {
+    if st.path == d.path && (d.path.is_some() || st.device == d.device) {
+        let changed = f(&mut st.lib);
+        if changed {
             st.selected = None;
             st.editing = None;
             st.touch();
         }
-        return;
+        return changed;
     }
     let file = match (&d.path, &st.settings_dir) {
         (Some(p), _) => p.clone(),
         (None, Some(dir)) => autosave_file(dir, &d.device),
-        (None, None) => return,
+        (None, None) => return false,
     };
-    let Ok(mut lib) = Library::load(&file) else { return };
+    // A change not written yet is the newest form of that library.
+    let mut lib = match st.unsaved.iter().position(|(p, _, _)| *p == file) {
+        Some(i) => st.unsaved.remove(i).1,
+        None => match Library::load(&file) {
+            Ok(lib) => lib,
+            Err(_) => return false,
+        },
+    };
     if d.path.is_none() && lib.device != d.device {
-        return;
+        return false;
     }
-    if f(&mut lib) {
-        let _ = lib.save(&file);
+    if !f(&mut lib) {
+        return false;
     }
+    if let Err(e) = lib.save(&file) {
+        st.status = unsaved_status(Some(&e));
+        st.unsaved.push((file, lib, Instant::now()));
+    }
+    true
 }
 
 pub fn duplicate_entry(app: &mut DarkBurn, index: usize) -> Result<usize, String> {
@@ -1059,6 +1120,88 @@ mod tests {
         crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
         assert_eq!(app.editor.doc.layer(3).library_link.as_deref(), Some(name.as_str()));
         assert!(app.extras.library.lib.entries.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An entry made after a delete under the deleted one's name is not the deleted one: Undo
+    /// leaves it, and Redo does not take it out.
+    #[test]
+    fn redo_leaves_an_entry_that_took_the_deleted_ones_name() {
+        let mut app = DarkBurn::new(Prefs::default());
+        let i = app.extras.library.lib.add(entry("Ply", Some(3.0), "Cut", 10.0));
+        delete_entry(&mut app, i).unwrap();
+        let other = entry("Ply", Some(3.0), "Cut", 99.0);
+        app.extras.library.lib.add(other.clone());
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.extras.library.lib.entries, [other.clone()], "undo does not put a second one in");
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
+        assert_eq!(app.extras.library.lib.entries, [other], "redo does not delete the new entry");
+    }
+
+    /// A library file shown for another device is the same library: Undo puts the entry into
+    /// the copy shown, so that copy's next save keeps it.
+    #[test]
+    fn undo_puts_the_entry_into_the_same_file_shown_for_another_device() {
+        let dir = std::env::temp_dir().join(format!("darkburn-lib-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("shared.clb");
+        let mut prefs = Prefs::default();
+        prefs.library_paths.insert("diode".into(), file.to_string_lossy().into_owned());
+        prefs.library_paths.insert("co2".into(), file.to_string_lossy().into_owned());
+        let mut app = DarkBurn::new(Prefs::default());
+        app.extras.library.settings_dir = Some(dir.clone());
+        app.extras.library.lib.add(entry("Card", None, "Engrave", 50.0));
+        app.extras.library.save_as(&file).unwrap();
+        app.extras.library.switch_device("diode", &prefs);
+        assert_eq!(app.extras.library.lib.entries.len(), 1);
+        delete_entry(&mut app, 0).unwrap();
+        app.extras.library.switch_device("co2", &prefs);
+        assert!(app.extras.library.lib.entries.is_empty());
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.extras.library.lib.entries.len(), 1, "the copy shown has it back");
+        app.extras.library.lib.add(entry("Card", None, "Cut", 10.0));
+        app.extras.library.touch();
+        app.extras.library.flush();
+        assert_eq!(Library::load(&file).unwrap().entries.len(), 2, "the save keeps the entry undo put back");
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
+        assert_eq!(app.extras.library.lib.entries.len(), 1, "redo takes it out of the copy shown");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A library file Undo cannot write is reported in the status line, and the change is kept
+    /// and written by auto-save once the file can be written.
+    #[cfg(unix)]
+    #[test]
+    fn a_library_undo_cannot_write_is_reported_and_written_later() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("darkburn-lib-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let prefs = Prefs::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        app.extras.library.settings_dir = Some(dir.clone());
+        app.extras.library.switch_device("diode", &prefs);
+        let i = create_from_layer(&mut app, 3, "Card", None, "Engrave");
+        delete_entry(&mut app, i).unwrap();
+        app.extras.library.switch_device("co2", &prefs);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        if std::fs::write(dir.join("probe"), b"").is_ok() {
+            // Running with rights that ignore the mode (root): nothing to test.
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        let st = &app.extras.library;
+        assert!(st.status.starts_with(&unsaved_status(None)), "the failure is shown: {:?}", st.status);
+        assert_eq!(st.unsaved.len(), 1, "the change is kept");
+        let file = autosave_file(&dir, "diode");
+        assert!(Library::load(&file).unwrap().entries.is_empty());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        app.extras.library.autosave(Some(&dir), Instant::now() + AUTOSAVE_AFTER * 2);
+        let st = &app.extras.library;
+        assert!(st.unsaved.is_empty() && st.status.is_empty(), "written, and the message is gone");
+        assert_eq!(Library::load(&file).unwrap().entries.len(), 1, "the entry is back in the file");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

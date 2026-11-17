@@ -447,6 +447,7 @@
   "library.no_description": "(sin descripción)",
   "library.no_entry": "No existe esa entrada",
   "library.no_file": "La biblioteca aún no tiene archivo: usa Guardar como",
+  "library.undo_not_saved": "No se pudo guardar la biblioteca después de Deshacer o Rehacer, se volverá a intentar",
   "library.no_material": "(sin material)",
   "library.no_thickness": "cualquier espesor",
   "library.passes": "Pasadas",

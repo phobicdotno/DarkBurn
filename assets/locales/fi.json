@@ -447,6 +447,7 @@
   "library.no_description": "(ei kuvausta)",
   "library.no_entry": "Merkintää ei ole",
   "library.no_file": "Kirjastolla ei ole vielä tiedostoa: käytä Tallenna nimellä",
+  "library.undo_not_saved": "Kirjastoa ei voitu tallentaa Kumoa- tai Tee uudelleen -toiminnon jälkeen, yritetään uudelleen",
   "library.no_material": "(ei materiaalia)",
   "library.no_thickness": "mikä tahansa paksuus",
   "library.passes": "Kierrokset",

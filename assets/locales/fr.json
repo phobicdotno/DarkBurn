@@ -447,6 +447,7 @@
   "library.no_description": "(pas de description)",
   "library.no_entry": "Entrée introuvable",
   "library.no_file": "La bibliothèque n'a pas encore de fichier : utilisez Enregistrer sous",
+  "library.undo_not_saved": "La bibliothèque n'a pas pu être enregistrée après Annuler ou Rétablir, nouvel essai en cours",
   "library.no_material": "(pas de matériau)",
   "library.no_thickness": "toute épaisseur",
   "library.passes": "Passes",

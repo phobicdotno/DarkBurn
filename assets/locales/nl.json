@@ -447,6 +447,7 @@
   "library.no_description": "(geen omschrijving)",
   "library.no_entry": "Item bestaat niet",
   "library.no_file": "De bibliotheek heeft nog geen bestand: gebruik Opslaan als",
+  "library.undo_not_saved": "De bibliotheek kon na Ongedaan maken of Opnieuw niet worden opgeslagen, er wordt opnieuw geprobeerd",
   "library.no_material": "(geen materiaal)",
   "library.no_thickness": "elke dikte",
   "library.passes": "Doorgangen",

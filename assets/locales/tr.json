@@ -447,6 +447,7 @@
   "library.no_description": "(açıklama yok)",
   "library.no_entry": "Böyle bir kayıt yok",
   "library.no_file": "Kütüphanenin henüz dosyası yok: Farklı kaydet'i kullanın",
+  "library.undo_not_saved": "Kütüphane Geri Al veya Yinele sonrasında kaydedilemedi, yeniden denenecek",
   "library.no_material": "(malzeme yok)",
   "library.no_thickness": "herhangi bir kalınlık",
   "library.passes": "Geçişler",

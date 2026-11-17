@@ -447,6 +447,7 @@
   "library.no_description": "(bez popisu)",
   "library.no_entry": "Taková položka neexistuje",
   "library.no_file": "Knihovna zatím nemá soubor: použijte Uložit jako",
+  "library.undo_not_saved": "Knihovnu se po Zpět nebo Znovu nepodařilo uložit, zkusí se to znovu",
   "library.no_material": "(bez materiálu)",
   "library.no_thickness": "libovolná tloušťka",
   "library.passes": "Průchody",

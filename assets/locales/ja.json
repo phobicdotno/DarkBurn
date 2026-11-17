@@ -447,6 +447,7 @@
   "library.no_description": "(説明なし)",
   "library.no_entry": "そのエントリはありません",
   "library.no_file": "ライブラリにはまだファイルがありません: 「名前を付けて保存」を使ってください",
+  "library.undo_not_saved": "元に戻す/やり直しの後にライブラリを保存できませんでした。再試行します",
   "library.no_material": "(素材なし)",
   "library.no_thickness": "すべての厚さ",
   "library.passes": "回数",

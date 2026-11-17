@@ -447,6 +447,7 @@
   "library.no_description": "(bez opisu)",
   "library.no_entry": "Brak takiego wpisu",
   "library.no_file": "Biblioteka nie ma jeszcze pliku: użyj Zapisz jako",
+  "library.undo_not_saved": "Nie udało się zapisać biblioteki po Cofnij lub Ponów, nastąpi ponowna próba",
   "library.no_material": "(bez materiału)",
   "library.no_thickness": "dowolna grubość",
   "library.passes": "Przejścia",

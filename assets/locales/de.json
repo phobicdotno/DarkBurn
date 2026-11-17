@@ -447,6 +447,7 @@
   "library.no_description": "(keine Beschreibung)",
   "library.no_entry": "Eintrag nicht gefunden",
   "library.no_file": "Die Bibliothek hat noch keine Datei: Speichern unter verwenden",
+  "library.undo_not_saved": "Die Bibliothek konnte nach Rückgängig oder Wiederholen nicht gespeichert werden, es wird erneut versucht",
   "library.no_material": "(kein Material)",
   "library.no_thickness": "jede Dicke",
   "library.passes": "Durchgänge",

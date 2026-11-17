@@ -383,6 +383,7 @@ impl LibraryState {
     /// first, so switching never drops them.
     pub fn switch_device(&mut self, device: &str, prefs: &crate::prefs::Prefs) {
         self.flush();
+        self.park_dirty();
         self.device = device.to_string();
         self.editing = None;
         if let Some(p) = prefs.library_paths.get(device).map(PathBuf::from).filter(|p| p.is_file())
@@ -416,6 +417,7 @@ impl LibraryState {
     /// Open the library in `path`. A change Undo or Redo made to it that could not be written
     /// yet is shown instead of the file, and written by auto-save, so there is one copy of it.
     pub fn open(&mut self, path: &Path) -> Result<(), String> {
+        self.park_dirty();
         let pending = self.take_unsaved(path);
         let adopted = pending.is_some();
         self.lib = match pending {
@@ -430,6 +432,23 @@ impl LibraryState {
             self.touch();
         }
         Ok(())
+    }
+
+    /// Before the library shown is replaced: keep changes that could not be written as a
+    /// pending write to its file, so a failed save is retried and never dropped.
+    fn park_dirty(&mut self) {
+        if self.dirty_since.is_none() {
+            return;
+        }
+        let file = self.path.clone().or_else(|| self.settings_dir.as_deref().map(|d| autosave_file(d, &self.device)));
+        if let Some(file) = file {
+            self.unsaved.retain(|(p, _, _)| p != &file);
+            self.unsaved.push((file, self.lib.clone(), Instant::now()));
+            if self.status.is_empty() {
+                self.status = unsaved_status(None);
+            }
+        }
+        self.dirty_since = None;
     }
 
     /// Take out the not yet written change to `file`, if there is one.
@@ -1309,6 +1328,10 @@ mod tests {
         assert!(app.extras.library.unsaved.is_empty(), "the shown library is the one copy");
         crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
         assert!(app.extras.library.lib.entries.is_empty(), "redo takes it out of the library shown");
+        app.extras.library.switch_device("co2", &prefs);
+        assert_eq!(app.extras.library.unsaved.len(), 1, "the unwritten redo is kept when switching away");
+        app.extras.library.switch_device("diode", &prefs);
+        assert!(app.extras.library.lib.entries.is_empty(), "and shown again on switching back");
         make_writable(&dir);
         app.extras.library.flush();
         let st = &app.extras.library;

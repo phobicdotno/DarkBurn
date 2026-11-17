@@ -1096,7 +1096,14 @@ fn a_stop_right_after_a_start_always_wins_on_a_real_link() {
             std::thread::sleep(Duration::from_millis(5));
         }
         let (st, planned, rx) = emu.with(|e| (e.state_name(), e.planner_len(), e.rx_len()));
-        assert!(!st.starts_with("Run") && planned == 0 && rx == 0, "round {i} ({id}): controller {st}, {planned} planned, {rx} in rx");
+        if st.starts_with("Run") || planned != 0 || rx != 0 {
+            let journal = emu.with(|e| e.stats().journal.iter().rev().take(40).rev().cloned().collect::<Vec<_>>().join("\n  "));
+            let console: Vec<String> = a.machine.handle.console().iter().rev().take(40).rev().map(|c| format!("{:?} {}", c.kind, c.text)).collect();
+            panic!(
+                "round {i} ({id}): controller {st}, {planned} planned, {rx} in rx\ncontroller took:\n  {journal}\nconsole:\n  {}",
+                console.join("\n  ")
+            );
+        }
         assert!(matches!(state(&a), LaserState::Ready | LaserState::Alarm), "round {i} ({id}): {:?}", state(&a));
     }
 }

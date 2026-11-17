@@ -31,6 +31,9 @@ const AUDIT_KEEP: usize = 300;
 pub struct McpPrefs {
     /// Run the control server so an AI agent can use this window. Off: no port is opened.
     pub enabled: bool,
+    /// Clamped to 1024..=65535 on load, as in the window: a port of 0 would make the server bind
+    /// a random port that never equals this one, so it would restart every frame.
+    #[serde(deserialize_with = "de_port")]
     pub port: u16,
     /// "Allow AI agents to control machines".
     pub allow_hardware: bool,
@@ -40,6 +43,14 @@ pub struct McpPrefs {
     pub allow_file_write: bool,
     /// "Require my confirmation to start a job or fire".
     pub require_confirmation: bool,
+}
+
+/// Lowest port the window offers (and a loaded preferences file is held to).
+pub const MIN_PORT: u16 = 1024;
+
+fn de_port<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u16, D::Error> {
+    let v = i64::deserialize(d)?;
+    Ok(v.clamp(i64::from(MIN_PORT), i64::from(u16::MAX)) as u16)
 }
 
 impl Default for McpPrefs {
@@ -320,8 +331,8 @@ pub fn settings_page(ui: &mut Ui, prefs: &mut crate::prefs::Prefs) {
     ui_kit::checkbox(ui, "MCP control", &mut m.enabled);
     ui_kit::row(ui, "Port", |ui| {
         let mut port = u32::from(m.port);
-        ui_kit::number_field(ui, &mut port, 1024..=65535, 1.0, "");
-        m.port = port.clamp(1024, 65535) as u16;
+        ui_kit::number_field(ui, &mut port, u32::from(MIN_PORT)..=65535, 1.0, "");
+        m.port = port.clamp(u32::from(MIN_PORT), 65535) as u16;
     });
     if live.running {
         ui.label(egui::RichText::new(format!("Listening on 127.0.0.1:{}. Connected agents: {}.", live.port, live.clients)).color(t.text));
@@ -465,6 +476,20 @@ mod tests {
 
     fn press(key: egui::Key) -> egui::Event {
         egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE }
+    }
+
+    #[test]
+    fn mcp_port_from_a_prefs_file_is_clamped() {
+        let p: McpPrefs = serde_json::from_value(json!({"enabled": true, "port": 0})).unwrap();
+        assert_eq!(p.port, MIN_PORT);
+        let p: McpPrefs = serde_json::from_value(json!({"port": 80})).unwrap();
+        assert_eq!(p.port, MIN_PORT);
+        let p: McpPrefs = serde_json::from_value(json!({"port": 99999})).unwrap();
+        assert_eq!(p.port, 65535);
+        let p: McpPrefs = serde_json::from_value(json!({"port": 27879})).unwrap();
+        assert_eq!(p.port, 27879);
+        let p: McpPrefs = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(p.port, DEFAULT_PORT);
     }
 
     #[test]

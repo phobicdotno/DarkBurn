@@ -57,7 +57,7 @@ impl ControlClient {
         let reply = read_frame(&mut self.stream, self.max_frame)
             .map_err(|e| CommandError::transport(format!("lost the connection to DarkBurn: {e}")))?
             .ok_or_else(|| CommandError::transport("DarkBurn closed the connection"))?;
-        if reply["id"] != json!(id) && !reply["id"].is_null() {
+        if reply["id"] != json!(id) {
             return Err(CommandError::transport("out-of-order reply from DarkBurn"));
         }
         if reply["ok"] == true {

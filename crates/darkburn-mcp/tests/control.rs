@@ -142,6 +142,43 @@ fn base64_decode_round_trips() {
         assert_eq!(base64_decode(&enc).unwrap(), data);
     }
     assert!(base64_decode("not base64!").is_none());
+    // A last group of one character cannot hold a byte.
+    for bad in ["Z", "Zm9vY", "Zm9vY===", "Zm9vYmFyZ"] {
+        assert!(base64_decode(bad).is_none(), "{bad}");
+    }
+    assert_eq!(base64_decode("Zm9vYg").unwrap(), b"foob");
+}
+
+/// A fake app that accepts the hello and answers the first request with `reply`.
+fn fake_app_replying(reply: Value) -> (SocketAddr, std::thread::JoinHandle<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let join = std::thread::spawn(move || {
+        let (mut s, _) = listener.accept().unwrap();
+        let _hello = read_frame(&mut s, 1 << 16).unwrap();
+        write_frame(&mut s, &json!({"ok": true})).unwrap();
+        let _req = read_frame(&mut s, 1 << 16).unwrap();
+        write_frame(&mut s, &reply).unwrap();
+        let _ = read_frame(&mut s, 1 << 16);
+    });
+    (addr, join)
+}
+
+#[test]
+fn a_reply_with_a_null_or_wrong_id_is_not_taken_as_the_answer() {
+    for id in [Value::Null, json!(2), json!("1")] {
+        let (addr, join) = fake_app_replying(json!({"id": id, "ok": true, "result": 7}));
+        let mut c = ControlClient::connect(addr, TOKEN).unwrap();
+        let e = c.call("doc.get", json!({})).unwrap_err();
+        assert!(e.message.contains("out-of-order"), "{id}: {}", e.message);
+        drop(c);
+        join.join().unwrap();
+    }
+    let (addr, join) = fake_app_replying(json!({"id": 1, "ok": true, "result": 7}));
+    let mut c = ControlClient::connect(addr, TOKEN).unwrap();
+    assert_eq!(c.call("doc.get", json!({})).unwrap(), json!(7));
+    drop(c);
+    join.join().unwrap();
 }
 
 #[test]

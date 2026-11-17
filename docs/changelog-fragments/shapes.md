@@ -1,0 +1,1 @@
+- Sizing or deforming a shape down to nothing is refused instead of flattening it

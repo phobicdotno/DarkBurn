@@ -889,8 +889,23 @@ fn deform(e: &mut Editor, a: &Value) -> R {
     if !grid.iter().flatten().all(|p| within_reach(*p)) {
         return Err(OUT_OF_REACH.into());
     }
+    // A grid folded onto a line or a point would squash the shapes to nothing.
+    if outline_area(&grid).abs() < 1e-6 {
+        return Err("the grid points lie on one line: nothing was deformed".into());
+    }
     let done = e.edit("Deform", |d, _| map_shapes_in_doc(d, &ids, &mut |_, p| gxf::deform_grid(p, src, grid, TOL)) > 0);
     ok(done, &ids)
+}
+
+/// The area inside the outer ring of a deform grid (rows bottom first), signed.
+fn outline_area(grid: &[[Point; 4]; 4]) -> f64 {
+    let ring: Vec<Point> = (0..4)
+        .map(|j| grid[0][j])
+        .chain((1..4).map(|i| grid[i][3]))
+        .chain((0..3).rev().map(|j| grid[3][j]))
+        .chain((1..3).rev().map(|i| grid[i][0]))
+        .collect();
+    ring.iter().zip(ring.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f64>() / 2.0
 }
 
 fn round_corners(e: &mut Editor, a: &Value, env: &Env) -> R {

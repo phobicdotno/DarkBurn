@@ -257,6 +257,24 @@ pub fn mirror_path(path: &BezPath, a: Point, b: Point) -> BezPath {
     mirror_across_line(a, b) * path.clone()
 }
 
+/// The smallest stretch a shape's transform may have in any direction: below it the shape is
+/// squashed to a line or a point, and anything that inverts the transform breaks.
+pub const MIN_SCALE: f64 = 1e-9;
+
+/// Whether `a` keeps a shape a shape: every coefficient is a number and it stretches by at least
+/// [`MIN_SCALE`] in every direction (so its determinant is not about zero).
+pub fn keeps_size(a: Affine) -> bool {
+    let [p, q, r, s, e, f] = a.as_coeffs();
+    if ![p, q, r, s, e, f].iter().all(|c| c.is_finite()) {
+        return false;
+    }
+    // The two singular values: their squares sum to `sum` and they multiply to `det`.
+    let sum = p * p + q * q + r * r + s * s;
+    let det = (p * s - q * r).abs();
+    let big = ((sum + (sum * sum - 4.0 * det * det).max(0.0).sqrt()) / 2.0).sqrt();
+    big.is_finite() && big > 0.0 && det / big >= MIN_SCALE
+}
+
 /// Two-point rotate and scale: maps `from_a` onto `to_a` and `from_b` onto `to_b`.
 /// With `uniform` the shape scales equally in both directions; otherwise it stretches
 /// only along the `from_a`→`from_b` direction. `None` when `from_a == from_b`, and when the
@@ -270,7 +288,7 @@ pub fn two_point_rotate_scale(from_a: Point, from_b: Point, to_a: Point, to_b: P
         return None;
     }
     let s = v2.hypot() / l1;
-    if !(s.is_finite() && s >= 1e-12) {
+    if !(s.is_finite() && s >= MIN_SCALE) {
         return None;
     }
     let angle = v2.atan2() - v1.atan2();
@@ -282,7 +300,7 @@ pub fn two_point_rotate_scale(from_a: Point, from_b: Point, to_a: Point, to_b: P
         Affine::new([1.0 + k * u.x * u.x, k * u.x * u.y, k * u.x * u.y, 1.0 + k * u.y * u.y, 0.0, 0.0])
     };
     let m = Affine::translate(to_a.to_vec2()) * Affine::rotate(angle) * scale * Affine::translate(-from_a.to_vec2());
-    m.as_coeffs().iter().all(|c| c.is_finite()).then_some(m)
+    keeps_size(m).then_some(m)
 }
 
 /// Rotation about `pivot` that turns the direction to `from` into the direction to `to`.
@@ -449,6 +467,24 @@ mod tests {
             assert!(two_point_rotate_scale(Point::new(-1.7e308, 24.0), Point::new(5.7, -1.7e308), a, b, uniform).is_none());
             assert!(two_point_rotate_scale(a, b, Point::new(5.0, 5.0), Point::new(5.0, 5.0), uniform).is_none());
             assert!(two_point_rotate_scale(a, b, Point::new(-1.7e308, 0.0), Point::new(1.7e308, 0.0), uniform).is_none());
+        }
+    }
+
+    #[test]
+    fn keeps_size_refuses_squashed_and_broken_maps() {
+        assert!(keeps_size(Affine::IDENTITY));
+        assert!(keeps_size(Affine::rotate(1.0) * Affine::scale_non_uniform(-2.0, 1e-6)));
+        assert!(keeps_size(Affine::new([1.0, 0.0, 50.0, 1.0, 0.0, 0.0])), "a shear keeps the area");
+        for bad in [
+            Affine::scale_non_uniform(0.0, 1.0),
+            Affine::scale_non_uniform(1.0, 1e-12),
+            Affine::scale(0.0),
+            Affine::new([1.0, 2.0, 2.0, 4.0, 0.0, 0.0]),
+            Affine::new([f64::NAN, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            Affine::new([1.0, 0.0, 0.0, 1.0, f64::INFINITY, 0.0]),
+            Affine::scale_non_uniform(1e200, 1e200),
+        ] {
+            assert!(!keeps_size(bad), "{bad:?}");
         }
     }
 

@@ -812,5 +812,11 @@
   "net.start": "Indítás",
   "net.close": "Bezárás",
   "net.title": "Lézerhálózat tesztje",
-  "net.note": "Csak olvasás: másodpercenként egy 1000 bájtos ping és a kártya állapotának egyszeri olvasása. A gépre semmi nem íródik."
+  "net.note": "Csak olvasás: másodpercenként egy 1000 bájtos ping és a kártya állapotának egyszeri olvasása. A gépre semmi nem íródik.",
+  "lock.move": "mozgatás",
+  "lock.size": "méret",
+  "lock.rotate": "forgatás",
+  "lock.refused": "{id} elutasítva: a(z) {lock} zár be van kapcsolva (állapotsor). Előbb kapcsolja ki.",
+  "machine.busy_switch": "{id} elutasítva: a lézer egy feladattal vagy keretezéssel (vagy szüneteltetett feladattal) foglalt. Előbb állítsa le, majd váltson eszközt.",
+  "machine.bridge_setup": "A híd beállítása"
 }

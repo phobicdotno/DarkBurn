@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Schließen",
   "net.title": "Lasernetzwerk-Test",
-  "net.note": "Nur lesend: 1000-Byte-Pings einmal pro Sekunde und eine Statusabfrage der Karte. Es wird nichts an die Maschine geschrieben."
+  "net.note": "Nur lesend: 1000-Byte-Pings einmal pro Sekunde und eine Statusabfrage der Karte. Es wird nichts an die Maschine geschrieben.",
+  "lock.move": "Verschieben",
+  "lock.size": "Größe",
+  "lock.rotate": "Drehen",
+  "lock.refused": "{id} wurde abgelehnt: Die Sperre {lock} ist aktiv (Statusleiste). Schalten Sie sie zuerst aus.",
+  "machine.busy_switch": "{id} wurde abgelehnt: Der Laser ist mit einem Auftrag oder Rahmen beschäftigt (oder einem pausierten Auftrag). Stoppen Sie ihn zuerst und wechseln Sie dann das Gerät.",
+  "machine.bridge_setup": "Die Bridge-Einrichtung"
 }

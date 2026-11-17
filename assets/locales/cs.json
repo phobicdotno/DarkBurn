@@ -812,5 +812,11 @@
   "net.start": "Spustit",
   "net.close": "Zavřít",
   "net.title": "Test sítě laseru",
-  "net.note": "Jen čtení: ping 1000 bajtů každou sekundu a jedno čtení stavu karty. Do stroje se nic nezapisuje."
+  "net.note": "Jen čtení: ping 1000 bajtů každou sekundu a jedno čtení stavu karty. Do stroje se nic nezapisuje.",
+  "lock.move": "přesun",
+  "lock.size": "velikost",
+  "lock.rotate": "otočení",
+  "lock.refused": "{id} bylo odmítnuto: zámek {lock} je zapnutý (stavový řádek). Nejprve jej vypněte.",
+  "machine.busy_switch": "{id} bylo odmítnuto: laser je zaneprázdněn úlohou nebo rámováním (nebo pozastavenou úlohou). Nejprve ji zastavte a potom změňte zařízení.",
+  "machine.bridge_setup": "Nastavení mostu"
 }

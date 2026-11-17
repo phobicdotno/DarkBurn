@@ -452,6 +452,9 @@ fn every_panel_and_dialog_draws_in_every_state() {
     run(&mut a, "job.start", Value::Null).unwrap();
     wait(&mut a, "busy", |a| a.machine.handle.snapshot().job.is_some() || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     draw(&ctx, &mut a, vec![]);
+    // The device can't change while the job runs (owner, Q083): stop it first.
+    run(&mut a, "job.stop", json!({})).unwrap();
+    wait(&mut a, "the stop", |a| !a.machine.handle.job_running());
     // Connected Ruida with its file list, settings, dual tube and U axis dialogs.
     let id = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
     a.machine.devices.get_mut(id).unwrap().settings.dsp.dual_tube = true;
@@ -874,4 +877,79 @@ fn start_is_refused_everywhere_when_the_device_says_start_is_off() {
     a.machine.devices.active_mut().unwrap().settings.dsp.disable_start = false;
     run(&mut a, "machine.start", json!({})).unwrap();
     wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+}
+
+/// Owner, Q083: the device in use does not change under a running or paused job. Picking another
+/// device, removing the active one and the bridge setup are refused until the job is stopped.
+#[test]
+fn the_device_cannot_change_while_a_job_runs() {
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    draw_square(&mut a);
+    let active = a.machine.devices.active.unwrap();
+    let other = a.machine.devices.devices.iter().find(|d| d.id != active).unwrap().id;
+    run(&mut a, "job.start", json!({})).unwrap();
+    wait(&mut a, "the job to start", |a| a.machine.handle.job_running());
+    run(&mut a, "job.pause", json!({})).unwrap();
+    wait(&mut a, "the pause", |a| state(a) == LaserState::Paused);
+    assert!(machine_ui::device_locked(&a));
+    for (id, args) in [
+        ("device.select", json!({ "id": other })),
+        ("device.remove", json!({ "id": active })),
+        ("device.bridge_setup", json!({ "host": "127.0.0.1", "port": 5005, "name": "Bridge" })),
+        ("machine.connect", json!({ "device": active })),
+        ("machine.reset_connection", json!({})),
+    ] {
+        let e = run(&mut a, id, args).unwrap_err();
+        assert!(e.contains("busy"), "{id}: {e}");
+    }
+    assert_eq!(a.machine.devices.active, Some(active));
+    assert!(a.machine.handle.is_connected(), "the job's connection stays");
+    // The device in use may be picked again (nothing changes), and another one removed.
+    run(&mut a, "device.select", json!({ "id": active })).unwrap();
+    run(&mut a, "job.stop", json!({})).unwrap();
+    wait(&mut a, "the stop", |a| !a.machine.handle.job_running());
+    run(&mut a, "device.select", json!({ "id": other })).unwrap();
+    assert_eq!(a.machine.devices.active, Some(other));
+}
+
+/// Owner, Q082: the status-bar locks stop the commands too, not only the mouse.
+#[test]
+fn the_status_bar_locks_stop_the_commands() {
+    let mut a = app();
+    draw_square(&mut a);
+    run(&mut a, "edit.select_all", json!({})).unwrap();
+    let cases = [
+        (0, "shape.translate", json!({ "dx": 5, "dy": 0 })),
+        (1, "shape.resize", json!({ "width": 30, "height": 30 })),
+        (2, "shape.rotate", json!({ "degrees": 30 })),
+        (2, "arrange.flip_h", json!({})),
+        (2, "arrange.rotate_cw", json!({})),
+    ];
+    for (k, id, args) in cases.clone() {
+        a.locks = [false; 4];
+        a.locks[k] = true;
+        let rev = a.editor.revision();
+        let e = run(&mut a, id, args).unwrap_err();
+        assert!(e.contains("lock is on"), "{id}: {e}");
+        assert_eq!(a.editor.revision(), rev, "{id} changed nothing");
+    }
+    a.locks = [false; 4];
+    for (_, id, args) in cases {
+        run(&mut a, id, args).unwrap_or_else(|e| panic!("{id} with no lock: {e}"));
+    }
+    // Nesting turns the parts unless told not to, so the rotate lock stops it too.
+    a.locks[2] = true;
+    let e = run(&mut a, "arrange.quick_nest", json!({ "rotation_step": 90 })).unwrap_err();
+    assert!(e.contains("lock is on"), "{e}");
+    let e = run(&mut a, "arrange.quick_nest", json!({})).unwrap_err();
+    assert!(e.contains("lock is on"), "{e}");
+    if let Err(e) = run(&mut a, "arrange.quick_nest", json!({ "rotation_step": 0 })) {
+        assert!(!e.contains("lock is on"), "{e}");
+    }
+    a.locks = [false; 4];
+    use crate::numeric_edits::{NumEdit, lock_of};
+    assert_eq!(lock_of(NumEdit::X(1.0)), Some(0));
+    assert_eq!(lock_of(NumEdit::H(1.0)), Some(1));
+    assert_eq!(lock_of(NumEdit::RotateBy(1.0)), Some(2));
 }

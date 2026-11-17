@@ -11,6 +11,7 @@ use darkburn_core::{Mode, Shape, ShapeId};
 use serde_json::{Value, json};
 
 use crate::commands;
+use crate::i18n::tr;
 use crate::shell::DarkBurn;
 
 /// Run command `id` with `args` (a JSON object, or null when it takes none). Returns what the
@@ -18,6 +19,9 @@ use crate::shell::DarkBurn;
 pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) -> Result<Value, String> {
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
+    }
+    if let Some(e) = lock_refusal(app, id).or_else(|| turn_refusal(app, id, args)) {
+        return Err(e);
     }
     if let Some(result) = crate::laser_position::api(app, id, args) {
         return result;
@@ -72,6 +76,46 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     let before = app.editor.revision();
     app.run(ctx, id);
     Ok(json!({ "changed": app.editor.revision() != before }))
+}
+
+/// The status-bar lock (0 move, 1 size, 2 rotate) a command that changes the selection is held
+/// by. The locks stop everything that moves, sizes or turns shapes, not only the mouse (owner, Q082).
+pub fn lock_of(id: &str) -> Option<usize> {
+    match id {
+        "shape.place" | "shape.translate" | "arrange.move_selection" | "arrange.move_h_together" | "arrange.move_v_together" => Some(0),
+        "arrange.to_laser" | "arrange.nest" | "arrange.quick_nest" | "arrange.true_nest" => Some(0),
+        _ if ["arrange.align_", "arrange.distribute_", "arrange.page_", "arrange.laser_", "arrange.dock_"].iter().any(|p| id.starts_with(p)) => {
+            Some(0)
+        }
+        "shape.resize" | "arrange.same_width" | "arrange.same_height" => Some(1),
+        "shape.rotate" | "arrange.rotate_by" | "arrange.rotate_cw" | "arrange.rotate_ccw" | "arrange.flip_h" | "arrange.flip_v" => Some(2),
+        _ => None,
+    }
+}
+
+/// Why `id` is refused under a status-bar lock, or `None` when it may run.
+pub fn lock_refusal(app: &DarkBurn, id: &str) -> Option<String> {
+    let k = lock_of(id).filter(|k| app.locks[*k])?;
+    Some(refusal(id, k))
+}
+
+/// Nesting may turn the parts (and `arrange.nest` may mirror them), so under the rotate lock it
+/// is refused unless its arguments ask for neither (owner, Q082).
+fn turn_refusal(app: &DarkBurn, id: &str, args: &Value) -> Option<String> {
+    let nests = matches!(id, "arrange.nest" | "arrange.quick_nest" | "arrange.true_nest");
+    let step = args.get("rotation_step").and_then(Value::as_f64).unwrap_or(90.0);
+    let turns = !(0.0..1e-6).contains(&step) && step < 360.0;
+    let mirrors = args.get("allow_mirror").and_then(Value::as_bool).unwrap_or(false);
+    (nests && app.locks[2] && (turns || mirrors)).then(|| refusal(id, 2))
+}
+
+fn refusal(id: &str, k: usize) -> String {
+    let lock = match k {
+        0 => tr("lock.move", "move"),
+        1 => tr("lock.size", "size"),
+        _ => tr("lock.rotate", "rotate"),
+    };
+    tr("lock.refused", "{id} was refused: the {lock} lock is on (status bar). Turn it off first.").replace("{id}", id).replace("{lock}", &lock)
 }
 
 /// [`execute`] with no window: viewport commands (exit) have no effect.

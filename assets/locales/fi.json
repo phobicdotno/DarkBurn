@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Sulje",
   "net.title": "Laserverkon testi",
-  "net.note": "Vain luku: 1000 tavun ping kerran sekunnissa ja yksi kortin tilan luku. Koneelle ei kirjoiteta mitään."
+  "net.note": "Vain luku: 1000 tavun ping kerran sekunnissa ja yksi kortin tilan luku. Koneelle ei kirjoiteta mitään.",
+  "lock.move": "siirto",
+  "lock.size": "koko",
+  "lock.rotate": "kierto",
+  "lock.refused": "{id} hylättiin: {lock}-lukko on päällä (tilarivi). Poista se ensin käytöstä.",
+  "machine.busy_switch": "{id} hylättiin: laser on varattu työllä tai kehystyksellä (tai keskeytetyllä työllä). Pysäytä se ensin ja vaihda sitten laite.",
+  "machine.bridge_setup": "Sillan asetus"
 }

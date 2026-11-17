@@ -812,5 +812,11 @@
   "net.start": "開始",
   "net.close": "關閉",
   "net.title": "雷射網路測試",
-  "net.note": "唯讀：每秒一次 1000 位元組 ping，並讀取一次控制卡狀態。不會寫入任何內容到機器。"
+  "net.note": "唯讀：每秒一次 1000 位元組 ping，並讀取一次控制卡狀態。不會寫入任何內容到機器。",
+  "lock.move": "移動",
+  "lock.size": "尺寸",
+  "lock.rotate": "旋轉",
+  "lock.refused": "{id} 已被拒絕：{lock}鎖已開啟（狀態列）。請先將其關閉。",
+  "machine.busy_switch": "{id} 已被拒絕：雷射正忙於工作或走邊框（或有暫停的工作）。請先停止，再更換裝置。",
+  "machine.bridge_setup": "橋接設定"
 }

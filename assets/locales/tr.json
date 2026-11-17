@@ -812,5 +812,11 @@
   "net.start": "Başlat",
   "net.close": "Kapat",
   "net.title": "Lazer ağı testi",
-  "net.note": "Salt okunur: saniyede bir 1000 baytlık ping ve kartın bir durum okuması. Makineye hiçbir şey yazılmaz."
+  "net.note": "Salt okunur: saniyede bir 1000 baytlık ping ve kartın bir durum okuması. Makineye hiçbir şey yazılmaz.",
+  "lock.move": "taşıma",
+  "lock.size": "boyut",
+  "lock.rotate": "döndürme",
+  "lock.refused": "{id} reddedildi: {lock} kilidi açık (durum çubuğu). Önce kapatın.",
+  "machine.busy_switch": "{id} reddedildi: lazer bir iş veya çerçeveleme (ya da duraklatılmış bir iş) ile meşgul. Önce durdurun, sonra cihazı değiştirin.",
+  "machine.bridge_setup": "Köprü kurulumu"
 }

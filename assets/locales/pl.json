@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Zamknij",
   "net.title": "Test sieci lasera",
-  "net.note": "Tylko odczyt: ping 1000 bajtów co sekundę i jeden odczyt stanu karty. Nic nie jest zapisywane w maszynie."
+  "net.note": "Tylko odczyt: ping 1000 bajtów co sekundę i jeden odczyt stanu karty. Nic nie jest zapisywane w maszynie.",
+  "lock.move": "przesuwanie",
+  "lock.size": "rozmiar",
+  "lock.rotate": "obrót",
+  "lock.refused": "{id} odrzucono: blokada {lock} jest włączona (pasek stanu). Najpierw ją wyłącz.",
+  "machine.busy_switch": "{id} odrzucono: laser jest zajęty zadaniem lub ramką (albo wstrzymanym zadaniem). Najpierw je zatrzymaj, a potem zmień urządzenie.",
+  "machine.bridge_setup": "Konfiguracja mostka"
 }

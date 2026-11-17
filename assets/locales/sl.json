@@ -812,5 +812,11 @@
   "net.start": "Zaženi",
   "net.close": "Zapri",
   "net.title": "Test omrežja laserja",
-  "net.note": "Samo branje: ping s 1000 bajti vsako sekundo in eno branje stanja kartice. V stroj se nič ne zapiše."
+  "net.note": "Samo branje: ping s 1000 bajti vsako sekundo in eno branje stanja kartice. V stroj se nič ne zapiše.",
+  "lock.move": "premik",
+  "lock.size": "velikost",
+  "lock.rotate": "vrtenje",
+  "lock.refused": "{id} je bil zavrnjen: zaklep {lock} je vklopljen (vrstica stanja). Najprej ga izklopite.",
+  "machine.busy_switch": "{id} je bil zavrnjen: laser je zaseden z opravilom ali okvirjem (ali zaustavljenim opravilom). Najprej ga ustavite, nato zamenjajte napravo.",
+  "machine.bridge_setup": "Nastavitev mostu"
 }

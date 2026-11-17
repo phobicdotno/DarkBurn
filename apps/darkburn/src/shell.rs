@@ -242,6 +242,10 @@ impl DarkBurn {
             // Open already, behind a tab or another window: setting its flag again shows nothing.
             window_host::raise(ctx, key);
         }
+        if let Some(e) = crate::api::lock_refusal(self, id) {
+            self.machine.say(&e);
+            return;
+        }
         if crate::actions::run(self, ctx, id)
             || crate::files::run(self, ctx, id)
             || crate::machine_ui::run(self, ctx, id)

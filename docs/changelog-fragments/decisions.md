@@ -1,0 +1,3 @@
+- You can't switch or remove the laser in use while a job or frame is running
+- The Move, Size and Rotate locks now also lock the size and position boxes and the rotate and flip buttons
+- A mirrored shape shows its real angle in the Rotate box, and typing a new angle keeps it mirrored

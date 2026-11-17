@@ -812,5 +812,11 @@
   "net.start": "Iniciar",
   "net.close": "Fechar",
   "net.title": "Teste da rede do laser",
-  "net.note": "Só leitura: pings de 1000 bytes a cada segundo e uma leitura de estado da placa. Nada é escrito na máquina."
+  "net.note": "Só leitura: pings de 1000 bytes a cada segundo e uma leitura de estado da placa. Nada é escrito na máquina.",
+  "lock.move": "mover",
+  "lock.size": "tamanho",
+  "lock.rotate": "rodar",
+  "lock.refused": "{id} foi recusado: o bloqueio de {lock} está ativo (barra de estado). Desative-o primeiro.",
+  "machine.busy_switch": "{id} foi recusado: o laser está ocupado com um trabalho ou enquadramento (ou um trabalho em pausa). Pare-o primeiro e depois mude de dispositivo.",
+  "machine.bridge_setup": "A configuração da ponte"
 }

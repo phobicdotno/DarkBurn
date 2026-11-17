@@ -146,6 +146,13 @@ impl ViewOptions {
     }
 }
 
+/// The pieces in the order they are painted: all travel first, then the burns in job order, so
+/// burns lie on top. The window and the saved picture both paint in this order.
+pub fn paint_order(segs: &[DrawSeg]) -> impl Iterator<Item = (usize, &DrawSeg)> {
+    let travel = segs.iter().enumerate().filter(|(_, s)| s.power <= 0.0);
+    travel.chain(segs.iter().enumerate().filter(|(_, s)| s.power > 0.0))
+}
+
 /// The head position at time `t`.
 pub fn head_at(data: &PreviewData, t: f64) -> Option<Point> {
     data.sim.state_at(t).map(|s| s.pos)
@@ -215,6 +222,14 @@ mod tests {
     use crate::job_build::{BuildInput, JobDevice, build_job_simple};
     use darkburn_core::kurbo::Rect;
     use darkburn_core::{Document, Shape};
+
+    #[test]
+    fn preview_paints_travel_under_the_burns() {
+        let seg = |power: f32, op: usize| DrawSeg { a: Point::ZERO, b: Point::new(1.0, 1.0), power, rapid: power == 0.0, t0: 0.0, dur: 1.0, op };
+        let segs = [seg(50.0, 0), seg(0.0, 1), seg(30.0, 2), seg(0.0, 3)];
+        let order: Vec<usize> = paint_order(&segs).map(|(i, _)| i).collect();
+        assert_eq!(order, [1, 3, 0, 2]);
+    }
 
     fn data() -> PreviewData {
         let mut d = Document::new();

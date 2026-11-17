@@ -1,0 +1,4 @@
+- The preview window draws travel under the burn lines, like the saved picture
+- A galvo rotary job with a tiny band size now stops with a message instead of eating all memory
+- Exporting shapes that are absurdly far away no longer writes giant numbers into the file
+- Barcodes refuse text longer than 4296 characters

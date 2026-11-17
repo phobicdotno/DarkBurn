@@ -237,7 +237,7 @@ where
         out.push(opts.air_off.trim().to_owned());
     }
     out.extend(script_lines(&opts.end_script));
-    if opts.cluster { cluster(&out) } else { out }
+    if opts.cluster { cluster_lines(&out, opts.dwell_s_seconds) } else { out }
 }
 
 fn script_lines(s: &str) -> Vec<String> {
@@ -480,6 +480,13 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
 /// merged move so the modal state stays the same. This is the lossless form of "G-code
 /// clustering" for fast rasters.
 pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
+    cluster_lines(lines, false)
+}
+
+/// [`cluster`] for an output dialect. With `dwell_s_seconds` (Smoothieware), the `S` of a
+/// `G4` line is the dwell time, not laser power, so it does not become the power of the moves
+/// after it; otherwise (GRBL) an `S` on a dwell line is power and is tracked as before.
+pub fn cluster_lines<S: AsRef<str>>(lines: &[S], dwell_s_seconds: bool) -> Vec<String> {
     struct Pending {
         start: (f64, f64),
         end: (f64, f64),
@@ -557,18 +564,13 @@ pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
         } else {
             flush(&mut pend, &mut out);
             out.push(l.to_owned());
-            // A dwell's `S` is seconds (Smoothieware `G4 S`), not laser power: it must not
-            // become the power of the moves after it.
             let dwell = words.as_ref().is_some_and(|w| w.iter().any(|(c, v)| *c == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9)));
-            if dwell {
-                continue;
-            }
             if let Some(w) = words {
                 for (c, v) in &w {
                     match c {
                         'X' if abs => px = v.parse().ok().or(px),
                         'Y' if abs => py = v.parse().ok().or(py),
-                        'S' => cur_s = Some(v.clone()),
+                        'S' if !(dwell && dwell_s_seconds) => cur_s = Some(v.clone()),
                         'F' => cur_f = Some(v.clone()),
                         _ => {}
                     }
@@ -751,9 +753,13 @@ mod tests {
     #[test]
     fn a_dwell_s_word_is_not_laser_power() {
         let lines = ["M3", "G0 X0 Y0", "G1 X0 Y0 S0 F1000", "G4 S1", "G1 X10"];
-        let r = cluster(&lines);
+        let r = cluster_lines(&lines, true);
         assert_eq!(r.last().map(String::as_str), Some("G1 X10 Y0 S0 F1000"), "{r:?}");
         assert!(r.iter().any(|l| l == "G4 S1"), "{r:?}");
+        // GRBL: an `S` on a dwell line is power and still counts, and so does its `F`.
+        let grbl = ["M3", "G0 X0 Y0", "G1 X1 S500 F1000", "G4 P1 S0 F200", "G1 X10", "M5"];
+        let r = cluster(&grbl);
+        assert!(r.iter().any(|l| l == "G1 X10 Y0 S0 F200"), "{r:?}");
         let o = TranslateOptions { cluster: true, ..TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Smoothie)) };
         let out = run(&["M3", "G0 X0 Y0", "G1 X0 Y0 S0", "G4 P1", "G1 X10"], &o);
         assert!(out.iter().any(|l| l == "G4 S1"), "{out:?}");

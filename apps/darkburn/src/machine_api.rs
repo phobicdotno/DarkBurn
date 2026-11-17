@@ -800,13 +800,15 @@ impl MachineHandle {
         let mut gone = false;
         for e in &events {
             match e {
-                // The start showed itself or ended: the snapshot speaks for it from here on.
-                MachineEvent::JobStarted
-                | MachineEvent::FrameStarted
+                // The start ended (or, for an upload only, the file is stored): the snapshot speaks
+                // for it from here on. `JobStarted` alone is not enough: a Ruida file start reports
+                // it while the snapshot still says ready, and the job's end clears it instead.
+                MachineEvent::FrameStarted
                 | MachineEvent::JobFinished(_)
                 | MachineEvent::JobAborted(_)
                 | MachineEvent::Stopped
                 | MachineEvent::Done { ok: false, .. } => self.start_sent = None,
+                MachineEvent::Done { what, ok: true, .. } if what == "send" => self.start_sent = None,
                 MachineEvent::Console(c) => self.push_console(c.clone()),
                 MachineEvent::Error(m) => {
                     self.start_sent = None;

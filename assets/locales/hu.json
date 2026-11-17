@@ -819,5 +819,6 @@
   "lock.rotate": "forgatás",
   "lock.refused": "{id} elutasítva: a(z) {lock} zár be van kapcsolva (állapotsor). Előbb kapcsolja ki.",
   "machine.busy_switch": "{id} elutasítva: a lézer egy feladattal vagy keretezéssel (vagy szüneteltetett feladattal) foglalt. Előbb állítsa le, majd váltson eszközt.",
-  "machine.bridge_setup": "A híd beállítása"
+  "machine.bridge_setup": "A híd beállítása",
+  "shapes.join_changed": "Az alakzatok megváltoztak az összekapcsolás közben: semmi sem lett összekapcsolva"
 }

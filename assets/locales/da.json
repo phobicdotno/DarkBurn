@@ -819,5 +819,6 @@
   "lock.rotate": "rotere",
   "lock.refused": "{id} blev afvist: {lock}-låsen er slået til (statuslinjen). Slå den fra først.",
   "machine.busy_switch": "{id} blev afvist: laseren er optaget af et job eller en ramme (eller et sat-på-pause job). Stop det først, og skift derefter enhed.",
-  "machine.bridge_setup": "Broopsætningen"
+  "machine.bridge_setup": "Broopsætningen",
+  "shapes.join_changed": "Figurerne blev ændret under sammenføjningen: intet blev sammenføjet"
 }

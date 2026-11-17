@@ -819,5 +819,6 @@
   "updates.title": "Check for Updates",
   "updates.unreadable": "The update server's answer could not be read:",
   "updates.up_to_date": "DarkBurn is up to date, version",
-  "updates.you_have": "you have"
+  "updates.you_have": "you have",
+  "shapes.join_changed": "The shapes changed while joining: nothing was joined"
 }

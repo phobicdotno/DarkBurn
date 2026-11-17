@@ -819,5 +819,6 @@
   "lock.rotate": "rotazione",
   "lock.refused": "{id} è stato rifiutato: il blocco {lock} è attivo (barra di stato). Disattivalo prima.",
   "machine.busy_switch": "{id} è stato rifiutato: il laser è occupato con un lavoro o una cornice (o un lavoro in pausa). Fermalo prima, poi cambia dispositivo.",
-  "machine.bridge_setup": "La configurazione del bridge"
+  "machine.bridge_setup": "La configurazione del bridge",
+  "shapes.join_changed": "Le forme sono cambiate durante l’unione: non è stato unito nulla"
 }

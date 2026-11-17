@@ -819,5 +819,6 @@
   "lock.rotate": "otočení",
   "lock.refused": "{id} bylo odmítnuto: zámek {lock} je zapnutý (stavový řádek). Nejprve jej vypněte.",
   "machine.busy_switch": "{id} bylo odmítnuto: laser je zaneprázdněn úlohou nebo rámováním (nebo pozastavenou úlohou). Nejprve ji zastavte a potom změňte zařízení.",
-  "machine.bridge_setup": "Nastavení mostu"
+  "machine.bridge_setup": "Nastavení mostu",
+  "shapes.join_changed": "Tvary se během spojování změnily: nic nebylo spojeno"
 }

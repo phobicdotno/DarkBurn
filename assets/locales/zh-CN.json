@@ -819,5 +819,6 @@
   "lock.rotate": "旋转",
   "lock.refused": "{id} 已被拒绝：{lock}锁已开启（状态栏）。请先将其关闭。",
   "machine.busy_switch": "{id} 已被拒绝：激光器正忙于作业或走边框（或有暂停的作业）。请先停止，再更换设备。",
-  "machine.bridge_setup": "桥接设置"
+  "machine.bridge_setup": "桥接设置",
+  "shapes.join_changed": "连接期间形状已更改：未连接任何内容"
 }

@@ -819,5 +819,6 @@
   "lock.rotate": "kierto",
   "lock.refused": "{id} hylättiin: {lock}-lukko on päällä (tilarivi). Poista se ensin käytöstä.",
   "machine.busy_switch": "{id} hylättiin: laser on varattu työllä tai kehystyksellä (tai keskeytetyllä työllä). Pysäytä se ensin ja vaihda sitten laite.",
-  "machine.bridge_setup": "Sillan asetus"
+  "machine.bridge_setup": "Sillan asetus",
+  "shapes.join_changed": "Muodot muuttuivat yhdistämisen aikana: mitään ei yhdistetty"
 }

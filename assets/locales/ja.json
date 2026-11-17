@@ -819,5 +819,6 @@
   "lock.rotate": "回転",
   "lock.refused": "{id} は拒否されました: {lock} ロックがオンです (ステータスバー)。先にオフにしてください。",
   "machine.busy_switch": "{id} は拒否されました: レーザーはジョブまたはフレーミング (または一時停止中のジョブ) で使用中です。先に停止してからデバイスを切り替えてください。",
-  "machine.bridge_setup": "ブリッジの設定"
+  "machine.bridge_setup": "ブリッジの設定",
+  "shapes.join_changed": "結合中に図形が変更されました。何も結合されていません"
 }

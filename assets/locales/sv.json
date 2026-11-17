@@ -819,5 +819,6 @@
   "lock.rotate": "rotera",
   "lock.refused": "{id} avvisades: {lock}-låset är på (statusfältet). Stäng av det först.",
   "machine.busy_switch": "{id} avvisades: lasern är upptagen med ett jobb eller en ram (eller ett pausat jobb). Stoppa det först och byt sedan enhet.",
-  "machine.bridge_setup": "Bryggkonfigurationen"
+  "machine.bridge_setup": "Bryggkonfigurationen",
+  "shapes.join_changed": "Formerna ändrades under sammanfogningen: inget sammanfogades"
 }

@@ -819,5 +819,6 @@
   "lock.rotate": "회전",
   "lock.refused": "{id}이(가) 거부되었습니다: {lock} 잠금이 켜져 있습니다(상태 표시줄). 먼저 끄세요.",
   "machine.busy_switch": "{id}이(가) 거부되었습니다: 레이저가 작업 또는 프레이밍(또는 일시 정지된 작업)으로 사용 중입니다. 먼저 중지한 다음 장치를 바꾸세요.",
-  "machine.bridge_setup": "브리지 설정"
+  "machine.bridge_setup": "브리지 설정",
+  "shapes.join_changed": "결합하는 동안 도형이 변경되었습니다. 아무것도 결합되지 않았습니다"
 }

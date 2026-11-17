@@ -819,5 +819,6 @@
   "lock.rotate": "obrót",
   "lock.refused": "{id} odrzucono: blokada {lock} jest włączona (pasek stanu). Najpierw ją wyłącz.",
   "machine.busy_switch": "{id} odrzucono: laser jest zajęty zadaniem lub ramką (albo wstrzymanym zadaniem). Najpierw je zatrzymaj, a potem zmień urządzenie.",
-  "machine.bridge_setup": "Konfiguracja mostka"
+  "machine.bridge_setup": "Konfiguracja mostka",
+  "shapes.join_changed": "Kształty zmieniły się podczas łączenia: nic nie zostało połączone"
 }

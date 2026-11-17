@@ -819,5 +819,6 @@
   "lock.rotate": "vrtenje",
   "lock.refused": "{id} je bil zavrnjen: zaklep {lock} je vklopljen (vrstica stanja). Najprej ga izklopite.",
   "machine.busy_switch": "{id} je bil zavrnjen: laser je zaseden z opravilom ali okvirjem (ali zaustavljenim opravilom). Najprej ga ustavite, nato zamenjajte napravo.",
-  "machine.bridge_setup": "Nastavitev mostu"
+  "machine.bridge_setup": "Nastavitev mostu",
+  "shapes.join_changed": "Oblike so se med združevanjem spremenile: nič ni bilo združeno"
 }

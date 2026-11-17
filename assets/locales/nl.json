@@ -819,5 +819,6 @@
   "lock.rotate": "draaien",
   "lock.refused": "{id} is geweigerd: de vergrendeling {lock} staat aan (statusbalk). Zet deze eerst uit.",
   "machine.busy_switch": "{id} is geweigerd: de laser is bezig met een taak of kader (of een gepauzeerde taak). Stop deze eerst en wissel daarna van apparaat.",
-  "machine.bridge_setup": "De bridge-instelling"
+  "machine.bridge_setup": "De bridge-instelling",
+  "shapes.join_changed": "De vormen zijn tijdens het samenvoegen gewijzigd: er is niets samengevoegd"
 }

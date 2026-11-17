@@ -819,5 +819,6 @@
   "lock.rotate": "rodar",
   "lock.refused": "{id} foi recusado: o bloqueio de {lock} está ativo (barra de estado). Desative-o primeiro.",
   "machine.busy_switch": "{id} foi recusado: o laser está ocupado com um trabalho ou enquadramento (ou um trabalho em pausa). Pare-o primeiro e depois mude de dispositivo.",
-  "machine.bridge_setup": "A configuração da ponte"
+  "machine.bridge_setup": "A configuração da ponte",
+  "shapes.join_changed": "As formas mudaram durante a união: nada foi unido"
 }

@@ -819,5 +819,6 @@
   "lock.rotate": "döndürme",
   "lock.refused": "{id} reddedildi: {lock} kilidi açık (durum çubuğu). Önce kapatın.",
   "machine.busy_switch": "{id} reddedildi: lazer bir iş veya çerçeveleme (ya da duraklatılmış bir iş) ile meşgul. Önce durdurun, sonra cihazı değiştirin.",
-  "machine.bridge_setup": "Köprü kurulumu"
+  "machine.bridge_setup": "Köprü kurulumu",
+  "shapes.join_changed": "Birleştirme sırasında şekiller değişti: hiçbir şey birleştirilmedi"
 }

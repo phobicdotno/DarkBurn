@@ -66,8 +66,7 @@ impl std::error::Error for ImageTooLarge {}
 /// The pixel size of `view` at `px_per_mm`, refused past the pixel budget.
 fn checked_pixel_size(view: BedRect, px_per_mm: f64) -> Result<(u32, u32), ImageTooLarge> {
     let (w, h) = (view.width * px_per_mm, view.height * px_per_mm);
-    if !(px_per_mm.is_finite() && px_per_mm > 0.0 && w.is_finite() && h.is_finite())
-        || w.round().max(1.0) * h.round().max(1.0) > MAX_BED_IMAGE_PIXELS
+    if !(px_per_mm.is_finite() && px_per_mm > 0.0 && w.is_finite() && h.is_finite()) || w.round().max(1.0) * h.round().max(1.0) > MAX_BED_IMAGE_PIXELS
     {
         return Err(ImageTooLarge { px_per_mm });
     }

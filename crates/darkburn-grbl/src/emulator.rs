@@ -582,7 +582,11 @@ impl GrblEmulator {
             self.now += max;
             return max;
         }
-        if let Some(t) = self.dwell_until {
+        // A hold still slowing down finishes on its timer below; only then does the dwell freeze.
+        let holding = matches!(self.state, State::Hold { complete: false }) && self.timer_until.is_some();
+        if let Some(t) = self.dwell_until
+            && !holding
+        {
             if matches!(self.state, State::Hold { .. }) {
                 // A held dwell waits: its time does not run until the cycle resumes.
                 self.dwell_until = Some(t + max);

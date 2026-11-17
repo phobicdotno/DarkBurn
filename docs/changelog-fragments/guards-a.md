@@ -1,0 +1,1 @@
+- Console lines with a line break are refused instead of sent as several commands

@@ -32,12 +32,13 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Standard base64 decode (padding optional). `None` on a bad character.
 /// Standard base64 with padding.
 pub fn base64_encode(data: &[u8]) -> String {
     solidcraft_mcp_server::base64(data)
 }
 
+/// Standard base64 decode (padding optional). `None` on a bad character or a last group of a
+/// single character (it cannot hold a whole byte).
 pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc: u32 = 0;
@@ -59,6 +60,10 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
             bits -= 8;
             out.push(((acc >> bits) & 0xff) as u8);
         }
+    }
+    // Groups of 2, 3 or 4 characters leave 4, 2 or 0 bits over; a lone character leaves 6.
+    if bits == 6 {
+        return None;
     }
     Some(out)
 }

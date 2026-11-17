@@ -630,3 +630,20 @@ fn a_controller_that_restarts_ends_the_job_the_pause_and_the_fire_button() {
     emu.with(|e| assert!(!e.laser_on()));
     m.disconnect();
 }
+
+// ----- console lines -----
+
+#[test]
+fn a_console_line_with_a_line_break_is_refused_and_nothing_is_sent() {
+    let (m, emu) = rig();
+    for line in ["$X\nG0 X50", "G0 X51\r", "G0 X52\r\nG0 X53"] {
+        assert!(matches!(m.send_console(line), Err(GrblError::InvalidArgument(_))), "{line:?}");
+    }
+    m.send_console("G0 X5").unwrap();
+    wait_emu(&emu, "the one-line command", |e| e.stats().lines.iter().any(|l| l == "G0 X5"));
+    emu.with(|e| {
+        let l = &e.stats().lines;
+        assert!(!l.iter().any(|l| (l.contains("X5") && l != "G0 X5") || l == "$X"), "{l:?}");
+    });
+    m.disconnect();
+}

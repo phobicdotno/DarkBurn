@@ -1113,8 +1113,12 @@ impl GrblMachine {
     // ----- console and macros -----
 
     /// Sends a console line. `?`, `!` and `~` go out as real-time bytes. Motion lines are
-    /// refused while the machine is in alarm.
+    /// refused while the machine is in alarm. A line holding a line break is refused: it would go
+    /// out as several lines, with only the first checked.
     pub fn send_console(&self, line: &str) -> Result<(), GrblError> {
+        if line.contains(['\n', '\r']) {
+            return Err(GrblError::InvalidArgument("A console line cannot hold a line break; send one line at a time.".into()));
+        }
         let s = self.ready()?;
         let t = line.trim();
         match t {

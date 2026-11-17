@@ -162,7 +162,8 @@ fn an_agent_never_saves_or_exports_into_the_settings_folder() {
         refused_as_settings_folder(b.execute(id, args.clone()), &format!("{id} {args}"));
     }
     assert_eq!(std::fs::read_dir(&settings).unwrap().count(), 0, "something was written into the settings folder");
-    // Beside it is fine.
+    // Beside it, in the project's folder, is fine.
+    _app.borrow_mut().project_path = Some(dir.join("other").join("p.dbrn"));
     b.execute("project.save_as", p(dir.join("other").join("a.dbrn"))).unwrap();
     assert!(dir.join("other").join("a.dbrn").is_file());
     let _ = std::fs::remove_dir_all(&dir);
@@ -313,9 +314,98 @@ fn a_file_window_a_command_asks_for_is_dropped_and_the_agent_told() {
 fn support_data_takes_a_path_from_an_agent() {
     let dir = scratch("support");
     let app = shared();
+    app.borrow_mut().project_path = Some(dir.join("p.dbrn"));
     let mut b = agent(&app);
     let z = dir.join("s.zip");
     b.execute("help.support_data", json!({ "path": z.display().to_string() })).unwrap();
     assert!(z.is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ----- the project's folder (owner decision Q080) -------------------------------------------------
+
+/// An app whose project is `<dir>/project/p.dbrn`, with an agent in front of it.
+fn with_project(dir: &Path) -> (SharedApp, McpBackend, PathBuf) {
+    let project = dir.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let app = shared();
+    app.borrow_mut().project_path = Some(project.join("p.dbrn"));
+    let b = agent(&app);
+    (app, b, project)
+}
+
+fn refused_outside(r: Result<Value, CommandError>, what: &str) {
+    let e = r.expect_err(&format!("{what} was written"));
+    assert_eq!(e.code, ErrorCode::Denied, "{what}: {}", e.message);
+    assert!(e.message.contains("outside the project's folder"), "{what}: {}", e.message);
+}
+
+#[test]
+fn an_agent_writes_inside_the_project_folder() {
+    let dir = scratch("inproject");
+    let (_app, mut b, project) = with_project(&dir);
+    std::fs::create_dir_all(project.join("out")).unwrap();
+    b.execute("project.save_as", json!({ "path": project.join("a.dbrn").display().to_string() })).unwrap();
+    assert!(project.join("a.dbrn").is_file());
+    let svg = project.join("out").join("..").join("out").join("a.svg");
+    b.execute("project.export", json!({ "path": svg.display().to_string(), "format": "svg" })).unwrap();
+    assert!(project.join("out").join("a.svg").is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_dot_dot_escape_from_the_project_folder_is_refused() {
+    let dir = scratch("dotdot");
+    let (_app, mut b, project) = with_project(&dir);
+    for target in [project.join("..").join("a.dbrn"), project.join("sub").join("..").join("..").join("b.dbrn")] {
+        refused_outside(b.execute("project.save_as", json!({ "path": target.display().to_string() })), &target.display().to_string());
+    }
+    assert!(!dir.join("a.dbrn").exists() && !dir.join("b.dbrn").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_absolute_path_elsewhere_is_refused() {
+    let dir = scratch("elsewhere");
+    let (_app, mut b, _project) = with_project(&dir);
+    let other = scratch("elsewhere-other");
+    let tries = [
+        ("project.save_as", json!({ "path": other.join("a.dbrn").display().to_string() })),
+        ("project.export", json!({ "path": other.join("a.svg").display().to_string(), "format": "svg" })),
+        ("job.save_gcode", json!({ "path": other.join("a.gc").display().to_string() })),
+        ("help.support_data", json!({ "path": other.join("s.zip").display().to_string() })),
+        ("project.prefs_export", json!({ "path": other.join("prefs.json").display().to_string() })),
+    ];
+    for (id, args) in tries {
+        refused_outside(b.execute(id, args.clone()), &format!("{id} {args}"));
+    }
+    assert_eq!(std::fs::read_dir(&other).unwrap().count(), 0, "something was written outside the project");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_out_of_the_project_folder_is_followed() {
+    let dir = scratch("projlink");
+    let (_app, mut b, project) = with_project(&dir);
+    let other = dir.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::os::unix::fs::symlink(&other, project.join("looks-inside")).unwrap();
+    let target = project.join("looks-inside").join("a.dbrn");
+    refused_outside(b.execute("project.save_as", json!({ "path": target.display().to_string() })), "link");
+    assert_eq!(std::fs::read_dir(&other).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn with_no_saved_project_an_agent_writes_nothing() {
+    let dir = scratch("noproject");
+    let app = shared();
+    let mut b = agent(&app);
+    let e = b.execute("project.save_as", json!({ "path": dir.join("a.dbrn").display().to_string() })).expect_err("written without a project");
+    assert_eq!(e.code, ErrorCode::Denied, "{}", e.message);
+    assert!(e.message.contains("save the project first"), "{}", e.message);
+    assert!(!dir.join("a.dbrn").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

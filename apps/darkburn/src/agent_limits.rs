@@ -8,6 +8,8 @@
 //!   imports keeps all of them).
 //! * A save or export never writes into DarkBurn's own settings folder (the installed one, a
 //!   portable one, or the folder of the control file), however the path is written.
+//! * Every other save or export stays inside the open project's folder, and none is allowed
+//!   before the project is saved (owner decision Q080).
 //! * A command that would open a file dialog without a path is refused: an agent cannot answer
 //!   the dialog, and the window would wait for the person.
 //!
@@ -140,8 +142,9 @@ pub fn before(app: &DarkBurn, id: &str, args: &Value) -> Option<CommandError> {
     }
     if mcp_catalog::writes_files(id) {
         let folders: Vec<PathBuf> = protected_folders(app).iter().map(|f| resolve(f)).collect();
-        for target in write_targets(app, id, args) {
-            let real = resolve(&target);
+        let targets = write_targets(app, id, args);
+        for target in &targets {
+            let real = resolve(target);
             if let Some(folder) = folders.iter().find(|f| inside(&real, f, NAME_RULES)) {
                 return Some(CommandError::denied(format!(
                     "`{id}`: {} is in DarkBurn's own settings folder ({}); an agent may not write there. Save to another folder.",
@@ -150,8 +153,39 @@ pub fn before(app: &DarkBurn, id: &str, args: &Value) -> Option<CommandError> {
                 )));
             }
         }
+        if let Some(e) = outside_the_project(app, id, &targets) {
+            return Some(e);
+        }
     }
     None
+}
+
+/// The folder an agent may write in: the open project's folder, made real by [`resolve`].
+/// `None` while the project has not been saved. DarkBurn keeps no exports folder of its own (the
+/// remembered export folder is wherever the person last exported), so that is the only one.
+pub fn project_folder(app: &DarkBurn) -> Option<PathBuf> {
+    let file = app.project_path.as_deref()?;
+    let dir = file.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    Some(resolve(dir))
+}
+
+/// Owner decision Q080: an agent writes only inside the open project's folder, and nothing
+/// before the project is saved. Links and `..` are worked out first, so neither gets out.
+fn outside_the_project(app: &DarkBurn, id: &str, targets: &[PathBuf]) -> Option<CommandError> {
+    if targets.is_empty() {
+        return None;
+    }
+    let Some(folder) = project_folder(app) else {
+        return Some(CommandError::denied(format!(
+            "`{id}`: save the project first: an agent may only write inside the open project's folder, and this project has not been saved yet. Ask the user to save it."
+        )));
+    };
+    let target = targets.iter().find(|t| !inside(&resolve(t), &folder, NAME_RULES))?;
+    Some(CommandError::denied(format!(
+        "`{id}`: {} is outside the project's folder ({}); an agent may only write inside the open project's folder. Pick a path in that folder.",
+        target.display(),
+        folder.display()
+    )))
 }
 
 /// After an agent's command: put back what it may not change, and refuse what it should not

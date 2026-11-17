@@ -1,0 +1,1 @@
+- AI agents can now only save and export inside your project's folder

@@ -300,16 +300,35 @@ fn tabs_clear(e: &mut Editor, a: &Value) -> R {
     ok(done, &ids)
 }
 
-/// The gaps the layer's automatic tab settings leave in shape `id` (none when its layer's tabs
-/// are off, unless `force`, and none on a shape with manual tabs: those replace them). For a
-/// group: the gaps of every shape in it.
+/// The cut settings of `layer` that cut its shapes as lines, the way the job picks them: every
+/// sub-layer that is on, has passes and runs in Line or Fill+Line mode. Each one cuts the
+/// outline again with its own tab settings.
+fn line_settings(doc: &Document, layer: usize) -> Vec<&darkburn_core::layer::CutSetting> {
+    use darkburn_core::layer::Mode;
+    doc.layer(layer).settings.iter().filter(|c| c.enabled && c.passes > 0 && matches!(c.mode, Mode::Line | Mode::FillLine)).collect()
+}
+
+/// The gaps the automatic tab settings leave in shape `id`: those of every sub-layer of its
+/// layer that cuts it as lines (none from a sub-layer whose tabs are off, unless `force`; with
+/// `force` a layer that cuts no lines shows its main settings), and none on a shape with manual
+/// tabs: those replace them. For a group: the gaps of every shape in it.
 pub fn auto_gaps(doc: &Document, id: ShapeId, force: bool) -> Vec<Gap> {
     cut_leaves(doc, id).iter().flat_map(|(_, l)| leaf_auto_gaps(doc, l, force)).collect()
 }
 
 fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
-    let t = doc.layer(s.layer).main().tabs;
-    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() || t.size <= 0.0 {
+    if !s.tabs.is_empty() {
+        return Vec::new();
+    }
+    let mut settings = line_settings(doc, s.layer);
+    if settings.is_empty() && force {
+        settings.push(doc.layer(s.layer).main());
+    }
+    settings.iter().flat_map(|c| setting_auto_gaps(doc, s, &c.tabs, force)).collect()
+}
+
+fn setting_auto_gaps(doc: &Document, s: &Shape, t: &darkburn_core::layer::Tabs, force: bool) -> Vec<Gap> {
+    if (!t.enabled && !force) || !t.auto_spacing || t.size <= 0.0 {
         return Vec::new();
     }
     let subs = gpath::subpaths(&s.outline());
@@ -344,6 +363,69 @@ fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
         out.extend(tabs::place_tabs(sub, &opts).gaps);
     }
     out
+}
+
+/// The bars the manual tabs of `id` (and `extra`, tabs not placed yet, in document
+/// coordinates) leave in the cut, as (centre, length), the way the job cuts them: for every
+/// sub-layer that cuts the shape as lines with its tabs on and a Tab size above 0, each tab
+/// belongs to the sub-path nearest to it, and the tabs of one sub-path together take at most
+/// half of it. An `extra` tab goes on the shape of a group whose outline is nearest to it.
+/// `tolerance` is the device's curve tolerance, so the kerf outline matches the job's.
+pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point], tolerance: f64) -> Vec<(Point, f64)> {
+    let leaves = cut_leaves(doc, id);
+    let outlines: Vec<BezPath> = leaves.iter().map(|(_, l)| l.outline()).collect();
+    let mut placed: Vec<Vec<Point>> = leaves.iter().map(|(_, l)| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1])).collect()).collect();
+    for p in extra {
+        if let Some(k) = nearest_path(&outlines, *p) {
+            placed[k].push(*p);
+        }
+    }
+    let mut out = Vec::new();
+    let mut around = None;
+    for (((k, leaf), outline), tabs) in leaves.iter().zip(&outlines).zip(&placed) {
+        if tabs.is_empty() {
+            continue;
+        }
+        for c in line_settings(doc, leaf.layer) {
+            if !c.tabs.enabled || c.tabs.size <= 0.0 {
+                continue;
+            }
+            // The job cuts the kerf-offset outline (`job_build`), and holds the tabs to half of
+            // that: a kerf grows a part and shrinks a hole.
+            let cut = if c.kerf != 0.0 {
+                let around = around.get_or_insert_with(|| crate::job_build::kerf_outlines(doc, tolerance));
+                let depth = crate::job_build::kerf_depth(around, (id, *k), leaf.bbox(), outline);
+                darkburn_geom::offset::kerf_offset(outline, if depth % 2 == 1 { -c.kerf } else { c.kerf }, tolerance)
+            } else {
+                outline.clone()
+            };
+            let subs = gpath::subpaths(&cut);
+            let mut per_sub: Vec<Vec<Point>> = vec![Vec::new(); subs.len()];
+            for t in tabs {
+                if let Some(k) = nearest_path(&subs, *t) {
+                    per_sub[k].push(*t);
+                }
+            }
+            for (sp, ts) in subs.iter().zip(&per_sub) {
+                if ts.is_empty() {
+                    continue;
+                }
+                let size = c.tabs.size.min(gpath::length(sp) / (2.0 * ts.len() as f64));
+                out.extend(ts.iter().map(|t| (*t, size)));
+            }
+        }
+    }
+    out
+}
+
+/// Which of `paths` passes nearest to `p`.
+fn nearest_path(paths: &[BezPath], p: Point) -> Option<usize> {
+    paths
+        .iter()
+        .enumerate()
+        .filter_map(|(k, o)| query::nearest_point(o, p).map(|h| (k, h.distance)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(k, _)| k)
 }
 
 /// The closed outlines that make a shape of `layer` an inner shape when it lies inside one: the

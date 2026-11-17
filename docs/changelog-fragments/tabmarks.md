@@ -1,0 +1,2 @@
+- Tabs you place by hand now show the size they will really cut, and disappear when the tab size is 0
+- Tab marks now show the tabs of every sub-layer

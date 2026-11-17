@@ -95,6 +95,68 @@ fn automatic_tab_marks_match_the_job_with_skip_inner_shapes_and_one_shape_inside
     assert_marks_are_the_job_gaps(&a, &[outer, inner], "a square inside a square, two shapes");
 }
 
+/// How long the job leaves the laser off inside its cuts, in total.
+fn job_gap_length(tp: &Toolpath) -> f64 {
+    segs(tp).iter().filter(|s| s.kind == 'C' && s.power == 0.0).map(|s| s.from.distance(s.to)).sum()
+}
+
+#[test]
+fn manual_tab_marks_are_as_long_as_the_job_leaves_them() {
+    // Tab size 0: the job leaves no tab, and the tool draws no mark.
+    let mut a = auto_tab_app(40.0, 1, 10, 0.0);
+    let r = add_rect(&mut a, 10.0, 10.0, 40.0, 40.0, 0);
+    crate::shape_ops::tests::run(&mut a, "tabs.add", serde_json::json!({ "shape": r.0, "x": 30.0, "y": 10.0 })).unwrap();
+    assert!(crate::shape_nodes::manual_tab_marks(&a.editor.doc, r, &[], crate::job_build::TOLERANCE).is_empty(), "no mark with Tab size 0");
+    assert_eq!(job_gap_length(&job(&a)), 0.0, "and no tab in the job");
+    // A tab longer than a small shape is held to half of its outline, on the canvas and in the job.
+    let mut a = auto_tab_app(40.0, 1, 10, 10.0);
+    let r = add_rect(&mut a, 10.0, 10.0, 2.0, 2.0, 0);
+    crate::shape_ops::tests::run(&mut a, "tabs.add", serde_json::json!({ "shape": r.0, "x": 11.0, "y": 10.0 })).unwrap();
+    let marks = crate::shape_nodes::manual_tab_marks(&a.editor.doc, r, &[], crate::job_build::TOLERANCE);
+    assert_eq!(marks.len(), 1);
+    assert!((marks[0].1 - 4.0).abs() < 1e-6, "half of an 8 mm outline: {marks:?}");
+    assert!((job_gap_length(&job(&a)) - 4.0).abs() < 1e-6, "the job leaves the same 4 mm");
+    // With a kerf the job cuts the offset outline and holds the tab to half of that: a -0.5 mm
+    // kerf cuts a 1 mm square, so 2 mm.
+    a.editor.doc.layer_mut(0).main_mut().kerf = -0.5;
+    let marks = crate::shape_nodes::manual_tab_marks(&a.editor.doc, r, &[], crate::job_build::TOLERANCE);
+    assert_eq!(marks.len(), 1);
+    assert!((marks[0].1 - 2.0).abs() < 1e-6, "half of the 4 mm kerf outline: {marks:?}");
+    assert!((job_gap_length(&job(&a)) - 2.0).abs() < 1e-6, "the job leaves the same 2 mm");
+    // A small tab on a big shape keeps its size, and a tab not placed yet shares the outline.
+    let mut a = auto_tab_app(40.0, 1, 10, 2.0);
+    let r = add_rect(&mut a, 10.0, 10.0, 40.0, 40.0, 0);
+    crate::shape_ops::tests::run(&mut a, "tabs.add", serde_json::json!({ "shape": r.0, "x": 30.0, "y": 10.0 })).unwrap();
+    let marks = crate::shape_nodes::manual_tab_marks(&a.editor.doc, r, &[Point::new(30.0, 50.0)], crate::job_build::TOLERANCE);
+    assert_eq!(marks.len(), 2);
+    assert!(marks.iter().all(|m| (m.1 - 2.0).abs() < 1e-6), "{marks:?}");
+    assert!((job_gap_length(&job(&a)) - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn automatic_tab_marks_follow_each_sub_layer() {
+    // The main settings cut without tabs; a sub-layer cuts again with tabs.
+    let mut a = auto_tab_app(40.0, 1, 10, 2.0);
+    let sub = a.editor.doc.layer(0).main().clone();
+    a.editor.doc.layer_mut(0).settings.push(sub);
+    a.editor.doc.layer_mut(0).main_mut().tabs.enabled = false;
+    let r = add_rect(&mut a, 10.0, 10.0, 40.0, 40.0, 0);
+    assert_eq!(crate::shape_nodes::auto_gaps(&a.editor.doc, r, false).len(), 4, "the sub-layer's tabs show");
+    assert_marks_are_the_job_gaps(&a, &[r], "tabs on the sub-layer only");
+    // Both cut with tabs, spaced differently: the marks of both show.
+    a.editor.doc.layer_mut(0).main_mut().tabs.enabled = true;
+    a.editor.doc.layer_mut(0).settings[1].tabs.spacing = 20.0;
+    assert_eq!(crate::shape_nodes::auto_gaps(&a.editor.doc, r, false).len(), 12);
+    assert_marks_are_the_job_gaps(&a, &[r], "main and sub-layer spaced differently");
+    // A sub-layer that is off, or fills, cuts no tabs.
+    a.editor.doc.layer_mut(0).settings[1].mode = Mode::Fill;
+    assert_eq!(crate::shape_nodes::auto_gaps(&a.editor.doc, r, false).len(), 4, "a fill sub-layer cuts no tabs");
+    a.editor.doc.layer_mut(0).main_mut().enabled = false;
+    a.editor.doc.layer_mut(0).settings[1].mode = Mode::Line;
+    assert_eq!(crate::shape_nodes::auto_gaps(&a.editor.doc, r, false).len(), 8);
+    assert_marks_are_the_job_gaps(&a, &[r], "main off, sub-layer on");
+}
+
 // ---------------------------------------------------------------- cut settings: editor and agent
 
 /// Every number of a cut setting with the range the Cut Settings editor holds it to

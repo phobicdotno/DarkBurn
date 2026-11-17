@@ -524,12 +524,13 @@ mod tests {
     fn a_shape_listed_twice_is_transformed_once() {
         let (mut d, ids) = three();
         let twice = [ids[0], ids[0]];
+        let t0 = d.get(ids[0]).unwrap().transform;
         assert!(transform(&mut d, &twice, Affine::scale(1e-5)));
         let t = d.get(ids[0]).unwrap().transform;
-        assert_eq!(t, Affine::scale(1e-5), "applied once");
+        assert_eq!(t, Affine::scale(1e-5) * t0, "applied once");
         assert!(darkburn_geom::transform::keeps_size(t));
         assert!(translate(&mut d, &twice, Vec2::new(1.0, 0.0)));
-        assert_eq!(d.get(ids[0]).unwrap().transform, Affine::translate((1.0, 0.0)) * Affine::scale(1e-5));
+        assert_eq!(d.get(ids[0]).unwrap().transform, Affine::translate((1.0, 0.0)) * t);
     }
 
     fn three() -> (Document, Vec<ShapeId>) {

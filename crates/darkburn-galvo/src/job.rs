@@ -651,8 +651,20 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
     let ymin = shapes.iter().map(|s| s.1.y0).fold(f64::MAX, f64::min);
     let ymax = shapes.iter().map(|s| s.1.y1).fold(f64::MIN, f64::max);
     let mut windows = Vec::new();
-    let bands = |a: f64, b: f64, shapes: Option<Vec<(usize, usize)>>, out: &mut Vec<Window>| {
-        let n = (((b - a) / rc.max_size_mm).ceil() as usize).max(1);
+    let too_many = |n: usize| {
+        CompileError::Invalid(format!(
+            "The rotary job needs {} positions, which is more than the limit of {}.",
+            n, opt.max_rotary_windows
+        ))
+    };
+    let bands = |a: f64, b: f64, shapes: Option<Vec<(usize, usize)>>, out: &mut Vec<Window>| -> Result<(), CompileError> {
+        // Check the count before pushing anything: a tiny band size would otherwise allocate
+        // billions of windows before the limit check below runs.
+        let nf = ((b - a) / rc.max_size_mm).ceil();
+        if !(nf <= (opt.max_rotary_windows.saturating_sub(out.len())) as f64) {
+            return Err(too_many(out.len().saturating_add(nf as usize)));
+        }
+        let n = (nf as usize).max(1);
         let h = (b - a) / n as f64;
         for k in 0..n {
             let (y0, y1) = (a + h * k as f64, a + h * (k + 1) as f64);
@@ -664,9 +676,10 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
                 last_band: k + 1 == n,
             });
         }
+        Ok(())
     };
     match rc.mode {
-        RotaryMode::BySlice => bands(ymin, ymax, None, &mut windows),
+        RotaryMode::BySlice => bands(ymin, ymax, None, &mut windows)?,
         RotaryMode::ByShape => {
             shapes.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0));
             let mut group: Vec<(usize, usize)> = Vec::new();
@@ -685,7 +698,7 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
             for (id, r) in shapes {
                 if r.height() > rc.max_size_mm {
                     close(&mut group, g0, g1, &mut windows);
-                    bands(r.y0, r.y1, Some(vec![id]), &mut windows);
+                    bands(r.y0, r.y1, Some(vec![id]), &mut windows)?;
                     continue;
                 }
                 if group.is_empty() {
@@ -702,11 +715,7 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
         }
     }
     if windows.len() > opt.max_rotary_windows {
-        return Err(CompileError::Invalid(format!(
-            "The rotary job needs {} positions, which is more than the limit of {}.",
-            windows.len(),
-            opt.max_rotary_windows
-        )));
+        return Err(too_many(windows.len()));
     }
     Ok(windows)
 }
@@ -1693,6 +1702,21 @@ mod tests {
         job.layers[0].geometry = vec![rect_path(0.0, 0.0, 10.0, 90.0)];
         let opt = CompileOptions { max_rotary_windows: 10, ..Default::default() };
         assert!(matches!(compile(&job, &dev(), &opt), Err(CompileError::Invalid(_))));
+    }
+
+    #[test]
+    fn rotary_tiny_band_is_refused_before_allocating() {
+        // A 1e-9 mm band over 90 mm would mean ~9e10 windows; it must fail fast, not run out of memory.
+        let mut job = Job::new();
+        job.layers.push(line_layer(vec![rect_path(0.0, 0.0, 10.0, 90.0)]));
+        for mode in [RotaryMode::BySlice, RotaryMode::ByShape] {
+            job.rotary = Some(RotaryConfig { mode, max_size_mm: 1e-9, axis: 0 });
+            match compile(&job, &dev(), &CompileOptions::default()) {
+                Err(CompileError::Invalid(m)) => assert!(m.contains("limit"), "{m}"),
+                Err(e) => panic!("expected a limit error, got {e:?}"),
+                Ok(_) => panic!("a 1e-9 mm band compiled"),
+            }
+        }
     }
 
     #[test]

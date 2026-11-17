@@ -431,9 +431,14 @@ pub fn flatten_polylines(path: &BezPath, tol: f64) -> Vec<(Vec<Point>, bool)> {
     out
 }
 
-/// Formats a number with up to `decimals` decimals and no trailing zeros.
+/// The largest magnitude an exported number may have; anything beyond is clamped to it so a
+/// stray huge coordinate can't write a 300-digit number into the file.
+pub const MAX_EXPORT_NUM: f64 = 1e9;
+
+/// Formats a number with up to `decimals` decimals and no trailing zeros, clamped to
+/// ±[`MAX_EXPORT_NUM`].
 pub fn fmt_num(v: f64, decimals: usize) -> String {
-    let v = if v.is_finite() { v } else { 0.0 };
+    let v = if v.is_finite() { v.clamp(-MAX_EXPORT_NUM, MAX_EXPORT_NUM) } else { 0.0 };
     let mut s = format!("{v:.decimals$}");
     if s.contains('.') {
         while s.ends_with('0') {
@@ -455,6 +460,14 @@ mod tests {
         p.move_to(a);
         p.line_to(b);
         p
+    }
+
+    #[test]
+    fn fmt_num_clamps_huge_values() {
+        assert_eq!(fmt_num(1e300, 4), "1000000000");
+        assert_eq!(fmt_num(-1e300, 6), "-1000000000");
+        assert_eq!(fmt_num(123.45, 4), "123.45");
+        assert!(fmt_num(f64::MAX, 4).len() <= 10);
     }
 
     #[test]

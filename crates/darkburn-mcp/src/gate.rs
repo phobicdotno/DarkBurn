@@ -376,10 +376,7 @@ impl<B: Backend> Gate<B> {
         let info = self.lookup(id)?;
         let params = Self::check_params(&info, &args)?;
         if !info.enabled {
-            return Err(CommandError::new(
-                ErrorCode::Disabled,
-                format!("`{id}` is disabled right now (nothing selected, wrong tool, or no document); inspect_design / inspect_ui show why"),
-            ));
+            return Err(disabled(id));
         }
         match self.verdict(&info) {
             Verdict::Deny(m) => return Err(CommandError::denied(m)),
@@ -464,6 +461,10 @@ impl<B: Backend> Gate<B> {
     /// the state the user confirmed the step in, for a step that came with a token.
     fn judge_again(&mut self, id: &str, confirmed: Option<&str>) -> Result<(), CommandError> {
         let info = self.lookup(id)?;
+        // Judged now, not when the batch came in: an earlier step may select what this one needs.
+        if !info.enabled {
+            return Err(disabled(id));
+        }
         let changed = "an earlier step of the batch changed";
         match self.verdict(&info) {
             Verdict::Deny(m) => Err(CommandError::denied(m)),
@@ -480,6 +481,14 @@ impl<B: Backend> Gate<B> {
             },
         }
     }
+}
+
+/// The refusal of a command that is disabled right now, the same for single calls and batch steps.
+fn disabled(id: &str) -> CommandError {
+    CommandError::new(
+        ErrorCode::Disabled,
+        format!("`{id}` is disabled right now (nothing selected, wrong tool, or no document); inspect_design / inspect_ui show why"),
+    )
 }
 
 impl<B: Backend> Backend for Gate<B> {

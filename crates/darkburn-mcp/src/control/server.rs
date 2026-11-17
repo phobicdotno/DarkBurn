@@ -428,8 +428,14 @@ fn serve(stream: &mut TcpStream, tx: Sender<Job>, token: &str, refused: &AtomicU
                 return;
             }
         };
-        let id = req["id"].clone();
+        let mut id = req["id"].clone();
+        let bad_id = !(id.is_string() || id.is_number() || id.is_null());
+        if bad_id {
+            // Like JSON-RPC: an `id` is a string, a number or null, and anything else is not echoed back.
+            id = Value::Null;
+        }
         let reply = match req["method"].as_str() {
+            _ if bad_id => Err(CommandError::invalid("`id` must be a string, a number or null")),
             None => Err(CommandError::invalid("request has no `method`")),
             Some(m) => {
                 let (rtx, rrx) = mpsc::sync_channel(1);

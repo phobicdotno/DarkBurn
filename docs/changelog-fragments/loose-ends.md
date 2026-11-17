@@ -1,0 +1,3 @@
+- QR codes with way too much text are refused with a clear message
+- Galvo drilling with a near-zero spacing is refused instead of freezing
+- AI agents: malformed requests get a proper error, and batches skip commands that are greyed out

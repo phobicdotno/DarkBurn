@@ -517,7 +517,7 @@ fn order_bucket(
                 .min_by(|&&a, &&b| {
                     let ka = direction_key(bounds[a], dir);
                     let kb = direction_key(bounds[b], dir);
-                    ka.partial_cmp(&kb).unwrap().then(a.cmp(&b))
+                    ka.total_cmp(&kb).then(a.cmp(&b))
                 })
                 .unwrap();
             best_choice(items, idx[k], s, pos, heading).1
@@ -862,6 +862,15 @@ mod tests {
         let s = PlannerSettings { direction_order: Some(ScanDirection::BottomToTop), ..Default::default() };
         let p = plan(&items, &s, Point::new(0.0, 100.0), &mut Progress::none()).unwrap();
         assert_eq!(p.iter().map(|p| p.item).collect::<Vec<_>>(), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn direction_order_survives_nan_bounds() {
+        let mut items: Vec<PlanItem> = [50.0, 10.0].iter().map(|&y| PlanItem::new(ItemGeom::Closed(square(0.0, y, 5.0)))).collect();
+        items.push(PlanItem::new(ItemGeom::Closed(square(f64::NAN, f64::NAN, 5.0))));
+        let s = PlannerSettings { direction_order: Some(ScanDirection::BottomToTop), ..Default::default() };
+        let p = plan(&items, &s, Point::ZERO, &mut Progress::none()).unwrap();
+        assert_eq!(p.len(), 3);
     }
 
     #[test]

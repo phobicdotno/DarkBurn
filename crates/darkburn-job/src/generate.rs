@@ -35,6 +35,8 @@ pub enum JobError {
     Cancelled,
     /// Nothing to burn.
     Empty,
+    /// A shape or picture has a coordinate that is not a finite number.
+    NotANumber,
 }
 
 impl std::fmt::Display for JobError {
@@ -42,6 +44,7 @@ impl std::fmt::Display for JobError {
         match self {
             JobError::Cancelled => f.write_str("job generation was cancelled"),
             JobError::Empty => f.write_str("nothing to burn"),
+            JobError::NotANumber => f.write_str("a shape or picture has a coordinate that is not a number"),
         }
     }
 }
@@ -98,6 +101,9 @@ struct Unit {
 /// Generate the toolpath for a job.
 pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) -> Result<Toolpath, JobError> {
     let tol = opts.tolerance.max(1e-4);
+    if !input_is_finite(input) {
+        return Err(JobError::NotANumber);
+    }
     // Layers in priority order.
     let mut order: Vec<usize> = (0..input.layers.len()).filter(|&i| input.layers[i].output).collect();
     order.sort_by_key(|&i| (input.layers[i].priority, i));
@@ -663,17 +669,39 @@ fn shift_by_direction(ordered: &mut [(ScanRow, bool)], offset: f64) {
     }
 }
 
+/// Every coordinate of the job's shapes and pictures is a finite number. Sorting and planning
+/// cannot order coordinates that are not numbers, so such a job is refused up front.
+fn input_is_finite(input: &JobInput) -> bool {
+    let pt = |p: Point| p.x.is_finite() && p.y.is_finite();
+    let affine = |a: Affine| a.as_coeffs().iter().all(|c| c.is_finite());
+    input.layers.iter().filter(|l| l.output).all(|l| {
+        l.shapes.iter().all(|s| {
+            s.path.elements().iter().all(|e| match *e {
+                kurbo::PathEl::MoveTo(a) | kurbo::PathEl::LineTo(a) => pt(a),
+                kurbo::PathEl::QuadTo(a, b) => pt(a) && pt(b),
+                kurbo::PathEl::CurveTo(a, b, c) => pt(a) && pt(b) && pt(c),
+                kurbo::PathEl::ClosePath => true,
+            }) && s.start_point.is_none_or(pt)
+                && s.extra_start_points.iter().all(|&p| pt(p))
+        }) && l.images.iter().all(|img| {
+            affine(img.transform)
+                && img.outline.iter().all(|&p| pt(p))
+                && img.scanlines.iter().all(|sl| sl.y.is_finite() && sl.runs.iter().all(|r| r.0.is_finite() && r.1.is_finite()))
+        })
+    })
+}
+
 /// Operations for an image's scanlines.
 fn image_ops(img: &ImageInput, s: &CutSettings, reversed: bool) -> Vec<Op> {
     let is = &s.image;
     let mut rows: Vec<ScanRow> = Vec::new();
     let mut sorted: Vec<&crate::input::Scanline> = img.scanlines.iter().collect();
-    sorted.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap());
+    sorted.sort_by(|a, b| a.y.total_cmp(&b.y));
     for sl in sorted {
         let mut runs: Vec<ScanRun> = Vec::new();
         let mut raw: Vec<(f64, f64, f64)> =
             sl.runs.iter().map(|&(a, b, p)| (a.min(b), a.max(b), p.clamp(0.0, 1.0))).filter(|r| r.1 - r.0 > EPS).collect();
-        raw.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        raw.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (x0, x1, p) in raw {
             // Power scale is a share of the power, as on lines and fills (Q078).
             let power = if p > 0.0 { (s.min_power + (s.max_power - s.min_power) * p) * img.power_scale } else { 0.0 };
@@ -1312,5 +1340,29 @@ mod tests {
         let tp = generate(&JobInput { layers: vec![l] }, &opts, &mut Progress::none()).unwrap();
         let rapids: Vec<Point> = tp.ops.iter().filter_map(|o| if let Op::Rapid { to } = o { Some(*to) } else { None }).collect();
         assert_eq!(rapids, vec![Point::new(4.5, 4.5), Point::new(5.0, 5.0)]);
+    }
+
+    #[test]
+    fn coordinates_that_are_not_numbers_are_refused() {
+        let nan = || {
+            let mut p = BezPath::new();
+            p.move_to((0.0, 0.0));
+            p.line_to((f64::NAN, 5.0));
+            p.line_to((10.0, 10.0));
+            p
+        };
+        let l = LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(ShapeInput::new(nan()));
+        let r = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none());
+        assert!(matches!(r, Err(JobError::NotANumber)), "{r:?}");
+        let mut l = LayerInput::new(0, "A", CutSettings::image(100.0, 50.0, 0.0));
+        l.images.push(ImageInput::new(vec![
+            crate::input::Scanline { y: 1.0, runs: vec![(0.0, 6.0, 1.0)] },
+            crate::input::Scanline { y: f64::NAN, runs: vec![(f64::INFINITY, 6.0, 1.0)] },
+        ]));
+        let r = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none());
+        assert!(matches!(r, Err(JobError::NotANumber)), "{r:?}");
+        // The sort itself no longer panics on such rows.
+        let img = ImageInput::new(vec![crate::input::Scanline { y: f64::NAN, runs: vec![(0.0, 1.0, 1.0), (f64::NAN, 3.0, 1.0)] }]);
+        let _ = image_ops(&img, &CutSettings::image(100.0, 50.0, 0.0), false);
     }
 }

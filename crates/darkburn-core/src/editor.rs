@@ -706,19 +706,23 @@ mod tests {
     #[test]
     fn grouping_past_the_depth_cap_is_refused() {
         let mut e = Editor::new();
-        let mut id = None;
+        let mut ids = Vec::new();
         assert!(e.edit("Add", |d, _| {
-            id = Some(d.add(nested(MAX_GROUP_DEPTH - 1)));
+            ids = vec![d.add(nested(MAX_GROUP_DEPTH - 1)), d.add(square(50.0))];
             true
         }));
-        let id = id.unwrap();
-        assert!(can_group(&e.doc, &[id]));
-        assert!(e.edit("Group", |d, _| crate::arrange::group(d, &[id]).is_some()), "up to the cap is fine");
+        assert!(can_group(&e.doc, &ids));
+        assert!(e.edit("Group", |d, _| crate::arrange::group(d, &ids).is_some()), "up to the cap is fine");
         let top = e.doc.iter().next().unwrap().id;
         assert_eq!(e.doc.get(top).unwrap().group_depth(), MAX_GROUP_DEPTH);
-        assert!(!can_group(&e.doc, &[top]));
+        let mut pair = Vec::new();
+        assert!(e.edit("Add", |d, _| {
+            pair = vec![top, d.add(square(80.0))];
+            true
+        }));
+        assert!(!can_group(&e.doc, &pair));
         let before = e.doc.clone();
-        assert!(!e.edit("Group", |d, _| crate::arrange::group(d, &[top]).is_some()), "one more level is refused");
+        assert!(!e.edit("Group", |d, _| crate::arrange::group(d, &pair).is_some()), "one more level is refused");
         assert_eq!(e.doc, before, "nothing changed");
         assert!(!e.edit("Paste", |d, _| {
             d.add(nested(MAX_GROUP_DEPTH + 1));

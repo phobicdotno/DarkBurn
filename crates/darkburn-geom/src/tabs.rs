@@ -8,6 +8,10 @@ use kurbo::{Arc, BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, PathEl, 
 
 const EPS: f64 = 1e-9;
 
+/// Most tabs [`place_tabs`] puts on one subpath, whatever count or spacing is asked for
+/// (the app holds its tab count to the same number).
+pub const MAX_TABS_PER_SUBPATH: usize = 1000;
+
 /// Length of each segment of a contour.
 pub fn seg_lengths(c: &Contour) -> Vec<f64> {
     c.segs.iter().map(|s| s.arclen(DEFAULT_ACCURACY)).collect()
@@ -155,7 +159,7 @@ pub fn place_tabs(path: &BezPath, opts: &TabOptions) -> TabResult {
             Some(s) if s > 0.0 => (l / s).round() as usize,
             _ => opts.count,
         };
-        n = n.max(opts.min_count).min(opts.max_count);
+        n = n.max(opts.min_count).min(opts.max_count).min(MAX_TABS_PER_SUBPATH);
         let fit = ((l - EPS) / opts.size).floor().max(0.0) as usize;
         if n >= fit {
             n = fit.saturating_sub(if fit as f64 * opts.size >= l - EPS { 1 } else { 0 });
@@ -174,12 +178,13 @@ pub fn place_tabs(path: &BezPath, opts: &TabOptions) -> TabResult {
 
 /// Places tabs of length `size` centred at the given distances, measured along the whole
 /// path (subpaths one after the other, in order). Works on open and closed subpaths.
+/// Distances that are not finite place no tab.
 pub fn place_tabs_at(path: &BezPath, distances: &[f64], size: f64) -> TabResult {
     let cs = contours(path);
     let lens: Vec<f64> = cs.iter().map(Contour::length).collect();
     let mut per: Vec<Vec<(f64, f64)>> = vec![Vec::new(); cs.len()];
-    if size > 0.0 {
-        for &d in distances {
+    if size > 0.0 && size.is_finite() {
+        for &d in distances.iter().filter(|d| d.is_finite()) {
             let mut acc = 0.0;
             for (i, l) in lens.iter().enumerate() {
                 if d <= acc + l || i + 1 == lens.len() {
@@ -217,6 +222,11 @@ fn apply_gaps(cs: &[Contour], per: Vec<Vec<(f64, f64)>>) -> TabResult {
             .filter(|(a, b)| b > a)
             .collect();
         iv.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // No gap left (all of them not a number or empty): the contour is cut whole.
+        if iv.is_empty() {
+            append_contour(&mut res.cut, c);
+            continue;
+        }
         let mut merged: Vec<(f64, f64)> = Vec::new();
         for (a, b) in iv {
             match merged.last_mut() {

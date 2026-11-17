@@ -184,9 +184,7 @@ fn grbl_behind_tcp(emu: grbl::EmulatorHandle) -> u16 {
                         match s.write(out) {
                             Ok(0) => return end("socket write: closed".into()),
                             Ok(k) => out = &out[k..],
-                            Err(e) if timed_out(&e) || e.kind() == std::io::ErrorKind::Interrupted => {
-                                std::thread::sleep(Duration::from_millis(1))
-                            }
+                            Err(e) if timed_out(&e) || e.kind() == std::io::ErrorKind::Interrupted => std::thread::sleep(Duration::from_millis(1)),
                             Err(e) => return end(format!("socket write: {e}")),
                         }
                     }

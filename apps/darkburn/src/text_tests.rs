@@ -460,16 +460,18 @@ fn booleans_and_offsets_use_the_letters_of_a_text_never_drawn() {
 
     // The offset preview reads the letters of the stored document as it is.
     let p = crate::shape_ops::OffsetParams { distance: 0.5, ..Default::default() };
+    let sum = |paths: &[darkburn_core::kurbo::BezPath]| paths.iter().map(area).sum::<f64>();
+    let want = crate::shape_ops::offset_preview(&drawn, &[id], &p);
     let preview = crate::shape_ops::offset_preview(&a.editor.doc, &[id], &p);
-    assert_eq!(preview.iter().map(|q| gpath::contours(q).len()).sum::<usize>(), 2, "offset preview follows the O, not a box");
+    assert!((sum(&preview) - sum(&want)).abs() < 1e-6 * sum(&want).max(1.0), "offset preview follows the O: {} vs {}", sum(&preview), sum(&want));
 
     // Offset: two rings around the O, not one box.
     let (mut a, id, _) = unrendered();
     select(&mut a, &[id]);
     let r = run(&mut a, "tools.offset", json!({ "distance": 0.5 })).unwrap();
     let ids: Vec<ShapeId> = r["ids"].as_array().unwrap().iter().map(|v| ShapeId(v.as_u64().unwrap())).collect();
-    let rings: usize = ids.iter().map(|i| gpath::contours(&a.editor.doc.get(*i).unwrap().outline()).len()).sum();
-    assert_eq!(rings, 2, "offset follows the O");
+    let got: Vec<darkburn_core::kurbo::BezPath> = ids.iter().map(|i| a.editor.doc.get(*i).unwrap().outline()).collect();
+    assert!((sum(&got) - sum(&want)).abs() < 1e-6 * sum(&want).max(1.0), "offset follows the O: {} vs {}", sum(&got), sum(&want));
 
     // Union and weld with a square far away: the letter's area plus the square's.
     for cmd in ["tools.union", "tools.weld"] {

@@ -557,6 +557,14 @@ pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
         } else {
             flush(&mut pend, &mut out);
             out.push(l.to_owned());
+            // A dwell's `S` is seconds (Smoothieware `G4 S`), not laser power: it must not
+            // become the power of the moves after it.
+            let dwell = words.as_ref().is_some_and(|w| {
+                w.iter().any(|(c, v)| *c == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9))
+            });
+            if dwell {
+                continue;
+            }
             if let Some(w) = words {
                 for (c, v) in &w {
                     match c {
@@ -740,6 +748,19 @@ mod tests {
         let lines = ["G0 X0 Y0", "G1 X1 Y0 S500 F3000", "G1 X2 Y0 S500", "G1 X3 Y0 S500", "G1 X4 Y0 S0", "G1 X5 Y0 S0", "G1 X5 Y1 S0"];
         let r = cluster(&lines);
         assert_eq!(r, vec!["G0 X0 Y0", "G1 X3 Y0 S500 F3000", "G1 X5 Y0 S0 F3000", "G1 X5 Y1 S0 F3000"]);
+    }
+
+    #[test]
+    fn a_dwell_s_word_is_not_laser_power() {
+        let lines = ["M3", "G0 X0 Y0", "G1 X0 Y0 S0 F1000", "G4 S1", "G1 X10"];
+        let r = cluster(&lines);
+        assert_eq!(r.last().map(String::as_str), Some("G1 X10 Y0 S0 F1000"), "{r:?}");
+        assert!(r.iter().any(|l| l == "G4 S1"), "{r:?}");
+        let o = TranslateOptions { cluster: true, ..TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Smoothie)) };
+        let out = run(&["M3", "G0 X0 Y0", "G1 X0 Y0 S0", "G4 P1", "G1 X10"], &o);
+        assert!(out.iter().any(|l| l == "G4 S1"), "{out:?}");
+        let last = out.iter().rev().find(|l| l.starts_with("G1")).unwrap();
+        assert!(!last.contains("S1"), "the dwell's seconds became power: {out:?}");
     }
 
     #[test]

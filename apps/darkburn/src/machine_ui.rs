@@ -721,9 +721,10 @@ fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
 pub const BUSY_SWITCH: &str = "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.";
 
 /// Whether the machine is running, framing or holding a paused job: the device in use must not
-/// change then, since that would end the connection under the job (owner, Q083).
+/// change then, since that would end the connection under the job (owner, Q083). A job or frame
+/// the machine accepted but has not reported yet counts as well.
 pub fn device_locked(app: &DarkBurn) -> bool {
-    app.machine.handle.job_running()
+    app.machine.handle.job_running() || app.machine.handle.start_pending()
 }
 
 /// A command that would change or drop the device in use while [`device_locked`]. Picking the
@@ -734,6 +735,7 @@ fn switch_while_busy(app: &DarkBurn, id: &str, a: &Value) -> bool {
     }
     match id {
         "device.select" => a.get("id").and_then(Value::as_u64) != app.machine.devices.active,
+        "machine.connect" => a.get("device").and_then(Value::as_u64).is_some_and(|d| app.machine.devices.active != Some(d)),
         _ => drops_the_link(app, id, a),
     }
 }

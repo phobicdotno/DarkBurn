@@ -687,6 +687,9 @@ pub struct MachineHandle {
     /// When the last resume was sent, until the machine shows the job going (see
     /// [`MachineHandle::resume_pending`]).
     resume_sent: Option<Instant>,
+    /// When the last job or frame was accepted, until the machine shows it working (see
+    /// [`MachineHandle::start_pending`]).
+    start_sent: Option<Instant>,
 }
 
 impl Default for MachineHandle {
@@ -697,7 +700,7 @@ impl Default for MachineHandle {
 
 impl MachineHandle {
     pub fn new() -> Self {
-        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None, resume_sent: None }
+        Self { adapter: None, snapshot: Snapshot::default(), console: VecDeque::new(), last_link: None, resume_sent: None, start_sent: None }
     }
 
     /// A handle already connected to a simulator (tests, demos). Returns once the connection is
@@ -771,6 +774,7 @@ impl MachineHandle {
         let (family, bed) = (self.snapshot.family, self.snapshot.bed);
         self.snapshot = Snapshot { family, bed, ..Default::default() };
         self.resume_sent = None;
+        self.start_sent = None;
     }
 
     /// Drop the connection and open the same link again (right-click on Devices) [LASER-17].
@@ -788,6 +792,10 @@ impl MachineHandle {
         if self.snapshot.state != LaserState::Paused {
             // The machine shows the resume (or the job ended): the snapshot is up to date.
             self.resume_sent = None;
+        }
+        if self.snapshot.state.is_working() {
+            // The machine shows the job or frame: the snapshot is up to date.
+            self.start_sent = None;
         }
         let mut gone = false;
         for e in &events {
@@ -813,6 +821,7 @@ impl MachineHandle {
                 self.snapshot.link = LinkState::Disconnected;
             }
             self.snapshot.job = None;
+            self.start_sent = None;
             // Nothing of the old link is still on: a flag left set would be shown as a laser
             // that fires, and be met again by the next connection.
             self.snapshot.fire_on = false;
@@ -838,16 +847,32 @@ impl MachineHandle {
         if family.no_laser() {
             return Err(MachineError::Refused("This device is design only; there is no laser to command.".into()));
         }
-        match self.adapter.as_mut() {
+        if matches!(cmd, MachineCommand::Stop | MachineCommand::EmergencyStop) {
+            self.start_sent = None;
+        }
+        let starts = matches!(
+            cmd,
+            MachineCommand::StartJob(_) | MachineCommand::FrameRect(..) | MachineCommand::FrameOutline(..) | MachineCommand::FrameOnController
+        );
+        let r = match self.adapter.as_mut() {
             Some(a) => a.command(cmd),
             None => Err(MachineError::NotConnected),
+        };
+        if starts && r.is_ok() {
+            self.start_sent = Some(Instant::now());
         }
+        r
     }
 
     // ----- named wrappers -----
 
     pub fn start_job(&mut self, job: JobRequest) -> Result<(), MachineError> {
         self.command(MachineCommand::StartJob(Box::new(job)))
+    }
+    /// A job or frame was accepted less than [`RESUME_SETTLE`] ago and the machine has not shown
+    /// it working yet: the snapshot may still say ready, but the machine is about to be busy.
+    pub fn start_pending(&self) -> bool {
+        self.start_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
     }
     /// Always sent while connected.
     pub fn pause(&mut self) -> Result<(), MachineError> {
@@ -865,6 +890,11 @@ impl MachineHandle {
     /// that the job goes on: the snapshot says paused, but the job is most likely running again.
     pub fn resume_pending(&self) -> bool {
         self.snapshot.state == LaserState::Paused && self.resume_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
+    }
+    /// A job or frame was accepted less than [`RESUME_SETTLE`] ago and the machine has not shown
+    /// it working since: the snapshot may still say ready, but the machine is about to be busy.
+    pub fn start_pending(&self) -> bool {
+        self.start_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
     }
     /// Always sent while connected.
     pub fn stop(&mut self) -> Result<(), MachineError> {

@@ -713,6 +713,40 @@ fn kerfs_of(layer: &Layer) -> Vec<(usize, f64)> {
         .collect()
 }
 
+/// The closed outlines of the shapes on the layers that cut lines, each known by its top shape
+/// and its place among its leaves: a shape drawn inside one of them is a hole, and its kerf
+/// goes the other way.
+pub(crate) fn kerf_outlines(doc: &Document, tolerance: f64) -> Vec<((ShapeId, usize), Rect, Vec<Point>)> {
+    let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
+    let mut out = Vec::new();
+    for top in doc.iter() {
+        for (k, leaf) in top.leaves().into_iter().enumerate() {
+            let l = doc.layer(leaf.layer.min(layer::LAYER_COUNT - 1));
+            if !l.outputs() || leaf.is_image() || !cuts_lines(l) {
+                continue;
+            }
+            for poly in job::geom::flatten(&leaf.outline(), tolerance.max(0.01)) {
+                if poly.closed {
+                    out.push(((top.id, k), job::geom::bbox(&poly.pts), poly.pts));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// How many of `outlines` (from [`kerf_outlines`]) the leaf `no`, drawn as `path` within
+/// `bbox`, lies inside: odd means a hole.
+pub(crate) fn kerf_depth(outlines: &[((ShapeId, usize), Rect, Vec<Point>)], no: (ShapeId, usize), bbox: Rect, path: &BezPath) -> usize {
+    match path.elements().first() {
+        Some(PathEl::MoveTo(p0)) => outlines
+            .iter()
+            .filter(|(o, r, pts)| *o != no && r.area() > bbox.area() + 1e-9 && job::geom::rect_inside(bbox, *r) && job::geom::point_in_polygon(*p0, pts))
+            .count(),
+        _ => 0,
+    }
+}
+
 fn is_outside(bbox: Rect, area: Rect) -> bool {
     let tol = 1e-6;
     bbox.x0 < area.x0 - tol || bbox.y0 < area.y0 - tol || bbox.x1 > area.x1 + tol || bbox.y1 > area.y1 + tol
@@ -790,23 +824,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // has a kerf offset. With "Cut selected graphics" the shapes that are not selected still
     // count here (a selected hole in an unselected outline is still a hole); only the selected
     // ones are cut. Each outline is known by its top shape and its place among its leaves.
-    let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
     let any_kerf = (0..layer::LAYER_COUNT).any(|li| doc.layer(li).outputs() && !kerfs_of(doc.layer(li)).is_empty());
-    let mut kerf_outlines: Vec<((ShapeId, usize), Rect, Vec<Point>)> = Vec::new();
-    for top in doc.iter() {
-        for (k, leaf) in top.leaves().into_iter().enumerate() {
-            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
-            let l = doc.layer(li);
-            if !any_kerf || !l.outputs() || leaf.is_image() || !cuts_lines(l) {
-                continue;
-            }
-            for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
-                if poly.closed {
-                    kerf_outlines.push(((top.id, k), job::geom::bbox(&poly.pts), poly.pts));
-                }
-            }
-        }
-    }
+    let kerf_outlines = if any_kerf { kerf_outlines(doc, input.device.tolerance) } else { Vec::new() };
     // A fill is scanned line by line across everything on its layer. Shapes scaled up by
     // accident to kilometres would be more lines than there is memory for, so a layer whose
     // fill is that large is left out before any of it is worked out.
@@ -937,18 +956,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
             if !kerfs.is_empty() {
                 // How many other cut shapes this one lies inside: odd means a hole.
-                let depth = match path.elements().first() {
-                    Some(PathEl::MoveTo(p0)) => kerf_outlines
-                        .iter()
-                        .filter(|(no, r, pts)| {
-                            *no != (top.id, k)
-                                && r.area() > bbox.area() + 1e-9
-                                && job::geom::rect_inside(bbox, *r)
-                                && job::geom::point_in_polygon(*p0, pts)
-                        })
-                        .count(),
-                    _ => 0,
-                };
+                let depth = kerf_depth(&kerf_outlines, (top.id, k), bbox, &path);
                 let mut lost_most = 0;
                 for (setting, kerf) in kerfs {
                     let kerf = if depth % 2 == 1 { -kerf } else { kerf };

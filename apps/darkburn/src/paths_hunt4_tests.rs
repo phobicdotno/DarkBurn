@@ -116,6 +116,13 @@ fn manual_tab_marks_are_as_long_as_the_job_leaves_them() {
     assert_eq!(marks.len(), 1);
     assert!((marks[0].1 - 4.0).abs() < 1e-6, "half of an 8 mm outline: {marks:?}");
     assert!((job_gap_length(&job(&a)) - 4.0).abs() < 1e-6, "the job leaves the same 4 mm");
+    // With a kerf the job cuts the offset outline and holds the tab to half of that: a -0.5 mm
+    // kerf cuts a 1 mm square, so 2 mm.
+    a.editor.doc.layer_mut(0).main_mut().kerf = -0.5;
+    let marks = crate::shape_nodes::manual_tab_marks(&a.editor.doc, r, &[]);
+    assert_eq!(marks.len(), 1);
+    assert!((marks[0].1 - 2.0).abs() < 1e-6, "half of the 4 mm kerf outline: {marks:?}");
+    assert!((job_gap_length(&job(&a)) - 2.0).abs() < 1e-6, "the job leaves the same 2 mm");
     // A small tab on a big shape keeps its size, and a tab not placed yet shares the outline.
     let mut a = auto_tab_app(40.0, 1, 10, 2.0);
     let r = add_rect(&mut a, 10.0, 10.0, 40.0, 40.0, 0);

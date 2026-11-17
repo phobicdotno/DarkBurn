@@ -380,20 +380,30 @@ pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Po
         }
     }
     let mut out = Vec::new();
-    for (((_, leaf), outline), tabs) in leaves.iter().zip(&outlines).zip(&placed) {
+    let mut around = None;
+    for (((k, leaf), outline), tabs) in leaves.iter().zip(&outlines).zip(&placed) {
         if tabs.is_empty() {
             continue;
-        }
-        let subs = gpath::subpaths(outline);
-        let mut per_sub: Vec<Vec<Point>> = vec![Vec::new(); subs.len()];
-        for t in tabs {
-            if let Some(k) = nearest_path(&subs, *t) {
-                per_sub[k].push(*t);
-            }
         }
         for c in line_settings(doc, leaf.layer) {
             if !c.tabs.enabled || c.tabs.size <= 0.0 {
                 continue;
+            }
+            // The job cuts the kerf-offset outline (`job_build`), and holds the tabs to half of
+            // that: a kerf grows a part and shrinks a hole.
+            let cut = if c.kerf != 0.0 {
+                let around = around.get_or_insert_with(|| crate::job_build::kerf_outlines(doc, crate::job_build::TOLERANCE));
+                let depth = crate::job_build::kerf_depth(around, (id, *k), leaf.bbox(), outline);
+                darkburn_geom::offset::kerf_offset(outline, if depth % 2 == 1 { -c.kerf } else { c.kerf }, crate::job_build::TOLERANCE)
+            } else {
+                outline.clone()
+            };
+            let subs = gpath::subpaths(&cut);
+            let mut per_sub: Vec<Vec<Point>> = vec![Vec::new(); subs.len()];
+            for t in tabs {
+                if let Some(k) = nearest_path(&subs, *t) {
+                    per_sub[k].push(*t);
+                }
             }
             for (sp, ts) in subs.iter().zip(&per_sub) {
                 if ts.is_empty() {

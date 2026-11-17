@@ -939,7 +939,8 @@ fn a_lost_link_after_a_laser_off_line_leaves_the_idle_controller_alone() {
     wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
     m.send_console("M5 S0").unwrap();
     wait_emu(&emu, "laser-off line arrives", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
-    assert!(m.wait_until(T, |s| s.rx_in_flight == 0), "laser-off line acknowledged");
+    // Its own `ok`, not an earlier empty in-flight snapshot.
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
     let resets = emu.with(|e| e.stats().soft_resets);
     faults.read_fails.store(true, std::sync::atomic::Ordering::SeqCst);
     collect_until(&m, |e| matches!(e, Event::Disconnected(Some(_))));
@@ -947,6 +948,23 @@ fn a_lost_link_after_a_laser_off_line_leaves_the_idle_controller_alone() {
     std::thread::sleep(Duration::from_millis(300));
     // GRBL runs its `$N` start-up blocks after a reset, which could move the head.
     emu.with(|e| assert_eq!(e.stats().soft_resets, resets, "an idle controller is not reset"));
+}
+
+#[test]
+fn a_lost_link_with_the_laser_left_on_still_resets() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
+    // Laser mode off fires without motion; `M003` is `M3`. A later `$G` settles the motion state.
+    m.send_console("M003 S0").unwrap();
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
+    m.send_console("$G").unwrap();
+    wait_emu(&emu, "$G arrives", |e| e.stats().lines.last().is_some_and(|l| l == "$G"));
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
+    let resets = emu.with(|e| e.stats().soft_resets);
+    faults.read_fails.store(true, std::sync::atomic::Ordering::SeqCst);
+    collect_until(&m, |e| matches!(e, Event::Disconnected(Some(_))));
+    wait_emu(&emu, "the last-try reset", |e| e.stats().soft_resets > resets);
 }
 
 #[test]

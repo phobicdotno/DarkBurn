@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Cut selected graphics is on and nothing is selected",
   "job.error_nothing_to_burn": "there is nothing to burn: no shapes on layers that output",
   "job.error_picture": "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own",
+  "job.work_area_unchecked": "The work area could not be checked because the head position is unknown.",
   "library.any_device": "any device",
   "library.apply": "Apply",
   "library.assign": "Assign to layer",

@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Kutt valgte grafikker er på, og ingenting er valgt",
   "job.error_nothing_to_burn": "det er ingenting å brenne: ingen figurer på lag med utdata",
   "job.error_picture": "sylinderkorrigering kan ikke bøye bilder: slå den av, eller brenn bildene i en egen jobb",
+  "job.work_area_unchecked": "Arbeidsområdet kunne ikke sjekkes fordi posisjonen til laserhodet er ukjent.",
   "library.any_device": "alle enheter",
   "library.apply": "Bruk",
   "library.assign": "Bruk på lag",

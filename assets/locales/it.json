@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Taglia solo la selezione è attivo e non è selezionato nulla",
   "job.error_nothing_to_burn": "non c’è niente da incidere: nessuna forma sui livelli con output",
   "job.error_picture": "la correzione cilindro non può curvare le immagini: disattivala, oppure incidi le immagini in un lavoro a parte",
+  "job.work_area_unchecked": "Non è stato possibile controllare l'area di lavoro perché la posizione della testa laser è sconosciuta.",
   "library.any_device": "qualsiasi dispositivo",
   "library.apply": "Applica",
   "library.assign": "Assegna al livello",

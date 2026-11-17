@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Tnij tylko zaznaczone jest włączone, a nic nie jest zaznaczone",
   "job.error_nothing_to_burn": "nie ma nic do wypalenia: brak kształtów na warstwach z wyjściem",
   "job.error_picture": "korekcja walca nie potrafi wyginać obrazów: wyłącz ją lub wypal obrazy w osobnym zadaniu",
+  "job.work_area_unchecked": "Nie można sprawdzić obszaru roboczego, ponieważ położenie głowicy jest nieznane.",
   "library.any_device": "dowolne urządzenie",
   "library.apply": "Zastosuj",
   "library.assign": "Przypisz do warstwy",

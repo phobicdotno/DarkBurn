@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Nur Auswahl schneiden ist an, aber nichts ist ausgewählt",
   "job.error_nothing_to_burn": "es gibt nichts zu lasern: keine Formen auf Ebenen mit Ausgabe",
   "job.error_picture": "Zylinderkorrektur kann keine Bilder biegen: schalten Sie sie aus oder lasern Sie die Bilder in einem eigenen Auftrag",
+  "job.work_area_unchecked": "Der Arbeitsbereich konnte nicht geprüft werden, weil die Position des Laserkopfs unbekannt ist.",
   "library.any_device": "jedes Gerät",
   "library.apply": "Anwenden",
   "library.assign": "Ebene zuweisen",

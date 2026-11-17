@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "已開啟僅切割選取的圖形，但未選取任何內容",
   "job.error_nothing_to_burn": "沒有可加工的內容：輸出圖層上沒有圖形",
   "job.error_picture": "圓柱校正無法彎曲圖片：請將其關閉，或將圖片放在單獨的作業中加工",
+  "job.work_area_unchecked": "雷射頭位置未知，無法檢查工作區域。",
   "library.any_device": "任何裝置",
   "library.apply": "套用",
   "library.assign": "指派到圖層",

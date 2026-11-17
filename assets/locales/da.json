@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Skær markeret grafik er slået til, og intet er markeret",
   "job.error_nothing_to_burn": "der er intet at brænde: ingen figurer på lag med output",
   "job.error_picture": "cylinderkorrektion kan ikke bøje billeder: slå den fra, eller brænd billederne i et job for sig",
+  "job.work_area_unchecked": "Arbejdsområdet kunne ikke kontrolleres, fordi laserhovedets position er ukendt.",
   "library.any_device": "enhver enhed",
   "library.apply": "Anvend",
   "library.assign": "Tildel til lag",

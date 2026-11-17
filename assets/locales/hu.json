@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "A kijelölt grafika vágása be van kapcsolva, de semmi sincs kijelölve",
   "job.error_nothing_to_burn": "nincs mit égetni: a kimenettel rendelkező rétegeken nincs alakzat",
   "job.error_picture": "a hengerkorrekció nem tud képeket hajlítani: kapcsolja ki, vagy égesse a képeket külön munkában",
+  "job.work_area_unchecked": "A munkaterületet nem lehetett ellenőrizni, mert a lézerfej helyzete ismeretlen.",
   "library.any_device": "bármely eszköz",
   "library.apply": "Alkalmazás",
   "library.assign": "Hozzárendelés a réteghez",

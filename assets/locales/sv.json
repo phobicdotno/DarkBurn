@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Skär markerad grafik är på och inget är markerat",
   "job.error_nothing_to_burn": "det finns inget att bränna: inga former på lager med utdata",
   "job.error_picture": "cylinderkorrigering kan inte böja bilder: stäng av den, eller bränn bilderna i ett eget jobb",
+  "job.work_area_unchecked": "Arbetsområdet kunde inte kontrolleras eftersom laserhuvudets position är okänd.",
   "library.any_device": "valfri enhet",
   "library.apply": "Verkställ",
   "library.assign": "Tilldela till lager",

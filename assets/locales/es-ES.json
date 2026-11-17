@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Cortar solo lo seleccionado está activado y no hay nada seleccionado",
   "job.error_nothing_to_burn": "no hay nada que grabar: no hay formas en capas con salida",
   "job.error_picture": "la corrección de cilindro no puede curvar imágenes: desactívala o graba las imágenes en un trabajo aparte",
+  "job.work_area_unchecked": "No se pudo comprobar el área de trabajo porque se desconoce la posición del cabezal.",
   "library.any_device": "cualquier dispositivo",
   "library.apply": "Aplicar",
   "library.assign": "Asignar a la capa",

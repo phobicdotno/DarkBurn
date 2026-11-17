@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Seçili grafiği kes açık ve hiçbir şey seçili değil",
   "job.error_nothing_to_burn": "yakılacak bir şey yok: çıktısı olan katmanlarda şekil yok",
   "job.error_picture": "silindir düzeltmesi resimleri bükemez: kapatın veya resimleri ayrı bir işte yakın",
+  "job.work_area_unchecked": "Lazer kafasının konumu bilinmediği için çalışma alanı denetlenemedi.",
   "library.any_device": "herhangi bir cihaz",
   "library.apply": "Uygula",
   "library.assign": "Katmana ata",

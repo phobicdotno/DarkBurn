@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Geselecteerde vormen snijden staat aan en er is niets geselecteerd",
   "job.error_nothing_to_burn": "er is niets te branden: geen vormen op lagen met uitvoer",
   "job.error_picture": "cilindercorrectie kan geen afbeeldingen buigen: zet haar uit, of brand de afbeeldingen in een aparte taak",
+  "job.work_area_unchecked": "Het werkgebied kon niet worden gecontroleerd omdat de positie van de laserkop onbekend is.",
   "library.any_device": "elk apparaat",
   "library.apply": "Toepassen",
   "library.assign": "Aan laag toewijzen",

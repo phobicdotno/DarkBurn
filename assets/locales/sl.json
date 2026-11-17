@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Reži izbrano grafiko je vklopljeno, a nič ni izbrano",
   "job.error_nothing_to_burn": "ničesar ni za žganje: na plasteh z izhodom ni oblik",
   "job.error_picture": "popravek valja ne more upogniti slik: izklopite ga ali slike žgite v ločenem opravilu",
+  "job.work_area_unchecked": "Delovnega območja ni bilo mogoče preveriti, ker položaj laserske glave ni znan.",
   "library.any_device": "katera koli naprava",
   "library.apply": "Uporabi",
   "library.assign": "Dodeli plasti",

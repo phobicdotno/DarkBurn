@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Leikkaa vain valitut on päällä, eikä mitään ole valittu",
   "job.error_nothing_to_burn": "ei mitään poltettavaa: ajettavilla tasoilla ei ole muotoja",
   "job.error_picture": "lieriökorjaus ei voi taivuttaa kuvia: kytke se pois tai polta kuvat omana työnään",
+  "job.work_area_unchecked": "Työaluetta ei voitu tarkistaa, koska laserpään sijainti ei ole tiedossa.",
   "library.any_device": "mikä tahansa laite",
   "library.apply": "Käytä",
   "library.assign": "Aseta tasolle",

@@ -418,6 +418,7 @@
   "job.error_nothing_selected": "Découper seulement la sélection est activé et rien n’est sélectionné",
   "job.error_nothing_to_burn": "il n’y a rien à graver : aucune forme sur les calques avec sortie",
   "job.error_picture": "la correction de cylindre ne peut pas courber les images : désactivez-la, ou gravez les images dans une tâche à part",
+  "job.work_area_unchecked": "La zone de travail n’a pas pu être vérifiée, car la position de la tête laser est inconnue.",
   "library.any_device": "tout appareil",
   "library.apply": "Appliquer",
   "library.assign": "Attribuer au calque",

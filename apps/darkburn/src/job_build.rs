@@ -1174,6 +1174,9 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
         let burning = bounds_report.violations.iter().filter(|v| v.burning).count();
         warnings.push(format!("The job leaves the work area ({} moves, {burning} of them burning).", bounds_report.violations.len()));
     }
+    if work_area_unchecked(input, &toolpath) {
+        warnings.push(work_area_unchecked_note());
+    }
     Ok(BuiltJob {
         toolpath,
         design,
@@ -1197,6 +1200,17 @@ fn check_work_area(input: &BuildInput, tp: &Toolpath) -> BoundsReport {
         },
         job::CoordSpace::Design => check_bounds(tp, input.device.area()),
     }
+}
+
+/// True when `check_work_area` cannot check `tp`: it starts from the current position and the
+/// head position is unknown (nothing connected).
+fn work_area_unchecked(input: &BuildInput, tp: &Toolpath) -> bool {
+    matches!(tp.space, job::CoordSpace::RelativeToStart) && input.head.is_none()
+}
+
+/// The warning shown when the work area could not be checked.
+pub fn work_area_unchecked_note() -> String {
+    crate::i18n::tr("job.work_area_unchecked", "The work area could not be checked because the head position is unknown.")
 }
 
 /// Refuse a frame that leaves the work area (DS-17 "check bounds when framing").

@@ -300,16 +300,35 @@ fn tabs_clear(e: &mut Editor, a: &Value) -> R {
     ok(done, &ids)
 }
 
-/// The gaps the layer's automatic tab settings leave in shape `id` (none when its layer's tabs
-/// are off, unless `force`, and none on a shape with manual tabs: those replace them). For a
-/// group: the gaps of every shape in it.
+/// The cut settings of `layer` that cut its shapes as lines, the way the job picks them: every
+/// sub-layer that is on, has passes and runs in Line or Fill+Line mode. Each one cuts the
+/// outline again with its own tab settings.
+fn line_settings(doc: &Document, layer: usize) -> Vec<&darkburn_core::layer::CutSetting> {
+    use darkburn_core::layer::Mode;
+    doc.layer(layer).settings.iter().filter(|c| c.enabled && c.passes > 0 && matches!(c.mode, Mode::Line | Mode::FillLine)).collect()
+}
+
+/// The gaps the automatic tab settings leave in shape `id`: those of every sub-layer of its
+/// layer that cuts it as lines (none from a sub-layer whose tabs are off, unless `force`; with
+/// `force` a layer that cuts no lines shows its main settings), and none on a shape with manual
+/// tabs: those replace them. For a group: the gaps of every shape in it.
 pub fn auto_gaps(doc: &Document, id: ShapeId, force: bool) -> Vec<Gap> {
     cut_leaves(doc, id).iter().flat_map(|(_, l)| leaf_auto_gaps(doc, l, force)).collect()
 }
 
 fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
-    let t = doc.layer(s.layer).main().tabs;
-    if (!t.enabled && !force) || !t.auto_spacing || !s.tabs.is_empty() || t.size <= 0.0 {
+    if !s.tabs.is_empty() {
+        return Vec::new();
+    }
+    let mut settings = line_settings(doc, s.layer);
+    if settings.is_empty() && force {
+        settings.push(doc.layer(s.layer).main());
+    }
+    settings.iter().flat_map(|c| setting_auto_gaps(doc, s, &c.tabs, force)).collect()
+}
+
+fn setting_auto_gaps(doc: &Document, s: &Shape, t: &darkburn_core::layer::Tabs, force: bool) -> Vec<Gap> {
+    if (!t.enabled && !force) || !t.auto_spacing || t.size <= 0.0 {
         return Vec::new();
     }
     let subs = gpath::subpaths(&s.outline());
@@ -342,6 +361,58 @@ fn leaf_auto_gaps(doc: &Document, s: &Shape, force: bool) -> Vec<Gap> {
             offset_from_start: 0.0,
         };
         out.extend(tabs::place_tabs(sub, &opts).gaps);
+    }
+    out
+}
+
+/// The bars the manual tabs of `id` (and `extra`, tabs not placed yet, in document
+/// coordinates) leave in the cut, as (centre, length), the way the job cuts them: for every
+/// sub-layer that cuts the shape as lines with its tabs on and a Tab size above 0, each tab
+/// belongs to the sub-path nearest to it, and the tabs of one sub-path together take at most
+/// half of it. An `extra` tab goes on the shape of a group whose outline is nearest to it.
+pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Point, f64)> {
+    let leaves = cut_leaves(doc, id);
+    let outlines: Vec<BezPath> = leaves.iter().map(|(_, l)| l.outline()).collect();
+    let mut placed: Vec<Vec<Point>> = leaves.iter().map(|(_, l)| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1])).collect()).collect();
+    for p in extra {
+        let near = outlines
+            .iter()
+            .enumerate()
+            .filter_map(|(k, o)| query::nearest_point(o, *p).map(|h| (k, h.distance)))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((k, _)) = near {
+            placed[k].push(*p);
+        }
+    }
+    let mut out = Vec::new();
+    for (((_, leaf), outline), tabs) in leaves.iter().zip(&outlines).zip(&placed) {
+        if tabs.is_empty() {
+            continue;
+        }
+        let subs = gpath::subpaths(outline);
+        let mut per_sub: Vec<Vec<Point>> = vec![Vec::new(); subs.len()];
+        for t in tabs {
+            let near = subs
+                .iter()
+                .enumerate()
+                .filter_map(|(k, sp)| query::nearest_point(sp, *t).map(|h| (k, h.distance)))
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((k, _)) = near {
+                per_sub[k].push(*t);
+            }
+        }
+        for c in line_settings(doc, leaf.layer) {
+            if !c.tabs.enabled || c.tabs.size <= 0.0 {
+                continue;
+            }
+            for (sp, ts) in subs.iter().zip(&per_sub) {
+                if ts.is_empty() {
+                    continue;
+                }
+                let size = c.tabs.size.min(gpath::length(sp) / (2.0 * ts.len() as f64));
+                out.extend(ts.iter().map(|t| (*t, size)));
+            }
+        }
     }
     out
 }

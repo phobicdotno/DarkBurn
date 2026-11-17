@@ -1070,6 +1070,8 @@ fn cut_hit(app: &DarkBurn, p: Point, tol: f64) -> Option<ShapeId> {
     crate::shape_nodes::cut_outline(&app.editor.doc, id).map(|_| id)
 }
 
+/// How near a click must come to a manual tab to take it off (the marks themselves follow the
+/// job: [`crate::shape_nodes::manual_tab_marks`]).
 fn tab_size(app: &DarkBurn, id: ShapeId) -> f64 {
     app.editor.doc.get(id).map(|s| app.editor.doc.layer(s.layer).main().tabs.size).unwrap_or(1.0).max(0.1)
 }
@@ -1523,21 +1525,30 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
             }
             for id in &ids {
                 let Some(path) = crate::shape_nodes::cut_outline(&app.editor.doc, *id) else { continue };
-                let size = tab_size(app, *id);
                 for g in crate::shape_nodes::auto_gaps(&app.editor.doc, *id, false) {
                     painter.line_segment([xf.to_screen(g.from), xf.to_screen(g.to)], Stroke::new(5.0, ORANGE.gamma_multiply(0.8)));
                 }
-                for t in tab_points(app, *id) {
+                // The manual tabs as long as the job leaves them: none with Tab size 0, shorter
+                // on a small shape.
+                for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[]) {
                     if let Some((a, b)) = tab_marker(&path, t, size) {
                         painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(5.0, accent));
                     }
+                }
+                for t in tab_points(app, *id) {
                     painter.circle_stroke(xf.to_screen(t), 4.0, Stroke::new(1.0, text));
                 }
                 if let Some(p) = hover
                     && let Some(h) = query::nearest_point(&path, p).filter(|h| h.distance <= tol * 2.0)
-                    && let Some((a, b)) = tab_marker(&path, h.point, size)
                 {
-                    painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(5.0, GREEN.gamma_multiply(0.7)));
+                    // The tab a click would add, with the length it would get next to the others.
+                    for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[h.point]) {
+                        if t.distance(h.point) < 1e-9
+                            && let Some((a, b)) = tab_marker(&path, t, size)
+                        {
+                            painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(5.0, GREEN.gamma_multiply(0.7)));
+                        }
+                    }
                 }
             }
         }

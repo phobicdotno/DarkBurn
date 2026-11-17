@@ -646,7 +646,7 @@ pub struct GrblMachine {
     /// Set when `disconnect` stops waiting: the worker then resets the controller and lets the
     /// link go at once.
     give_up: Arc<AtomicBool>,
-    /// Starts and stops sent that the worker has not taken and published yet: until it has, the
+    /// Stops sent that the worker has not taken and published yet: until it has, the
     /// snapshot is older than them and shows the machine busy, never ready.
     pending: Arc<AtomicUsize>,
 }
@@ -746,7 +746,7 @@ impl GrblMachine {
     }
 
     fn send(&self, cmd: Cmd) -> Result<(), GrblError> {
-        let counted = matches!(cmd, Cmd::StartJob(..) | Cmd::Stop);
+        let counted = matches!(cmd, Cmd::Stop);
         if counted {
             self.pending.fetch_add(1, Ordering::SeqCst);
         }
@@ -1469,7 +1469,7 @@ impl Worker {
                         break;
                     }
                     Ok(cmd) => {
-                        if matches!(cmd, Cmd::StartJob(..) | Cmd::Stop) {
+                        if matches!(cmd, Cmd::Stop) {
                             taken += 1;
                         }
                         let r = self.command(cmd);

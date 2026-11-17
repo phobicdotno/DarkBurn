@@ -816,7 +816,7 @@
   "lock.move": "déplacement",
   "lock.size": "taille",
   "lock.rotate": "rotation",
-  "lock.refused": "{id} a été refusé : le verrou {lock} est activé (barre d'état). Désactivez-le d'abord.",
-  "machine.busy_switch": "{id} a été refusé : le laser est occupé par une tâche ou un cadrage (ou une tâche en pause). Arrêtez-la d'abord, puis changez d'appareil.",
+  "lock.refused": "{id} a été refusé : le verrou {lock} est activé (barre d'état). Désactivez-le d'abord.",
+  "machine.busy_switch": "{id} a été refusé : le laser est occupé par une tâche ou un cadrage (ou une tâche en pause). Arrêtez-la d'abord, puis changez d'appareil.",
   "machine.bridge_setup": "La configuration du pont"
 }

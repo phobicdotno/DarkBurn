@@ -656,7 +656,6 @@ mod tests {
         assert_eq!(span(&d, ids[1]), (95.0, 105.0));
     }
 
-    #[test]
     /// Shapes overlapping so much that the gap is negative, with one swallowing another: the two
     /// with the outermost centres never move, and the inner ones get equal (negative) gaps.
     #[test]

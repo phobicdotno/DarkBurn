@@ -1,0 +1,2 @@
+- Distribute keeps the outer two shapes in place, even when the shapes overlap a lot
+- Tabs: a huge tab count no longer runs out of memory, and a shape is never lost from the cut

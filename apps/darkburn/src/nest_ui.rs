@@ -95,9 +95,20 @@ pub struct NestUi {
     pub error: Option<String>,
     /// What the last run did.
     pub note: Option<String>,
+    /// Locks turned on while the current run went on, even if turned off again.
+    locks_seen: [bool; 4],
 }
 
 impl NestUi {
+    /// Note the status-bar locks after a change; one turned on during a run voids that run.
+    pub fn locks_changed(&mut self, locks: [bool; 4]) {
+        if self.job.is_some() {
+            for (seen, on) in self.locks_seen.iter_mut().zip(locks) {
+                *seen |= on;
+            }
+        }
+    }
+
     fn close(&mut self) {
         self.open = None;
         self.error = None;
@@ -173,6 +184,7 @@ fn start(app: &mut DarkBurn, id: &str) -> Result<(), String> {
         return Err(e);
     }
     let s = nest_cmds::settings(id, &args, nest_cmds::page(app))?;
+    app.nest_ui.locks_seen = [false; 4];
     app.nest_ui.job = Some(NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision()));
     Ok(())
 }
@@ -193,11 +205,14 @@ fn summary(v: &Value) -> String {
 
 /// Take the finished run and move the shapes.
 fn finish(app: &mut DarkBurn) {
+    let now = app.locks;
+    app.nest_ui.locks_changed(now);
     if !app.nest_ui.job.as_ref().is_some_and(NestJob::finished) {
         return;
     }
     let Some(worker) = app.nest_ui.job.take() else { return };
-    let locks = app.locks;
+    let seen = app.nest_ui.locks_seen;
+    let locks: [bool; 4] = std::array::from_fn(|i| now[i] || seen[i]);
     let id = app.nest_ui.open.unwrap_or(QUICK);
     // A lock turned on while the run went on: its layout is not used.
     let locked = move |job: &nest_cmds::Job| match (locks[0], locks[2] && job.settings.opts.rotations.len() > 1) {
@@ -476,6 +491,15 @@ mod tests {
         wait(&mut g);
         assert_eq!(g.app().editor.revision(), rev, "nothing moved");
         g.app().locks = [false; 4];
+        // A lock turned on and off again while it runs: still not used.
+        start(&mut g.app(), QUICK).unwrap();
+        g.app().locks[0] = true;
+        let locks = g.app().locks;
+        g.app().nest_ui.locks_changed(locks);
+        g.app().locks[0] = false;
+        wait(&mut g);
+        assert_eq!(g.app().editor.revision(), rev, "nothing moved after an on-off lock");
+        assert!(g.app().nest_ui.error.as_deref().is_some_and(|e| e.contains("lock is on")), "{:?}", g.app().nest_ui.error);
         g.close_dialogs();
     }
 }

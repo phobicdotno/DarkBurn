@@ -754,6 +754,7 @@ impl DarkBurn {
                 }
                 if resp.backing_on_hover_text(tip).clicked() {
                     self.locks[i] = !on;
+                    self.nest_ui.locks_changed(self.locks);
                 }
                 x = br.right() + 4.0;
             }

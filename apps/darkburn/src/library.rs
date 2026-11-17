@@ -329,6 +329,17 @@ pub struct LibraryState {
     pub loaded: bool,
     /// The settings folder: where a library without a file of its own is kept.
     pub settings_dir: Option<PathBuf>,
+    /// Deleted entries by the tag of their undo step, so Undo can put them back.
+    pub deleted: std::collections::HashMap<u64, Deleted>,
+}
+
+/// An entry taken out of a library, and where it was: which device's library, its file, its place.
+#[derive(Clone, Debug)]
+pub struct Deleted {
+    pub device: String,
+    pub path: Option<PathBuf>,
+    pub index: usize,
+    pub entry: Entry,
 }
 
 /// The file a library without a file of its own is kept in, one per device.
@@ -478,15 +489,73 @@ pub fn unlink_layer(app: &mut DarkBurn, layer: usize) {
     });
 }
 
-/// Delete entry `index`; layers linked to it are unlinked.
+/// Delete entry `index`; layers linked to it are unlinked. One undo step takes both back (it is
+/// recorded even when no layer was linked).
 pub fn delete_entry(app: &mut DarkBurn, index: usize) -> Result<(), String> {
-    let name = app.extras.library.lib.entries.get(index).map(Entry::link_name).ok_or_else(|| tr("library.no_entry", "No such entry"))?;
-    app.extras.library.lib.entries.remove(index);
-    app.extras.library.selected = None;
-    app.extras.library.editing = None;
-    app.extras.library.touch();
-    app.editor.edit("Delete library entry", |d, _| unlink_all(d, &name) > 0);
+    static NEXT_TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let st = &mut app.extras.library;
+    let entry = st.lib.entries.get(index).cloned().ok_or_else(|| tr("library.no_entry", "No such entry"))?;
+    let name = entry.link_name();
+    st.lib.entries.remove(index);
+    st.selected = None;
+    st.editing = None;
+    st.touch();
+    let tag = NEXT_TAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    st.deleted.insert(tag, Deleted { device: st.device.clone(), path: st.path.clone(), index, entry });
+    app.editor.checkpoint_tagged("Delete library entry", tag);
+    unlink_all(&mut app.editor.doc, &name);
     Ok(())
+}
+
+/// After Undo of the step tagged `tag`: a deleted entry goes back into its library.
+pub fn after_undo(app: &mut DarkBurn, tag: u64) {
+    let Some(d) = app.extras.library.deleted.get(&tag).cloned() else { return };
+    let name = d.entry.link_name();
+    with_library_of(app, &d, |lib| {
+        if lib.entries.iter().any(|e| e.link_name() == name) {
+            return false;
+        }
+        lib.entries.insert(d.index.min(lib.entries.len()), d.entry.clone());
+        true
+    });
+}
+
+/// After Redo of the step tagged `tag`: the entry is deleted from its library again.
+pub fn after_redo(app: &mut DarkBurn, tag: u64) {
+    let Some(d) = app.extras.library.deleted.get(&tag).cloned() else { return };
+    let name = d.entry.link_name();
+    with_library_of(app, &d, |lib| {
+        let Some(i) = lib.entries.iter().position(|e| e.link_name() == name) else { return false };
+        lib.entries.remove(i);
+        true
+    });
+}
+
+/// Change the library `d` came from: the one shown if it still is, else its file (the one it was
+/// opened from, or the one kept for its device in the settings folder). A library that is gone
+/// is left alone.
+fn with_library_of(app: &mut DarkBurn, d: &Deleted, f: impl FnOnce(&mut Library) -> bool) {
+    let st = &mut app.extras.library;
+    if st.device == d.device && st.path == d.path {
+        if f(&mut st.lib) {
+            st.selected = None;
+            st.editing = None;
+            st.touch();
+        }
+        return;
+    }
+    let file = match (&d.path, &st.settings_dir) {
+        (Some(p), _) => p.clone(),
+        (None, Some(dir)) => autosave_file(dir, &d.device),
+        (None, None) => return,
+    };
+    let Ok(mut lib) = Library::load(&file) else { return };
+    if d.path.is_none() && lib.device != d.device {
+        return;
+    }
+    if f(&mut lib) {
+        let _ = lib.save(&file);
+    }
 }
 
 pub fn duplicate_entry(app: &mut DarkBurn, index: usize) -> Result<usize, String> {
@@ -925,6 +994,72 @@ mod tests {
         delete_entry(&mut app, i).unwrap();
         assert!(app.editor.doc.layer(5).library_link.is_none(), "deleting the entry unlinks layers");
         assert_eq!(app.extras.library.lib.entries.len(), 1);
+    }
+
+    #[test]
+    fn deleting_an_entry_is_one_undo_step() {
+        let mut app = DarkBurn::new(Prefs::default());
+        let a = create_from_layer(&mut app, 3, "Ply", Some(3.0), "Cut");
+        let b = create_from_layer(&mut app, 4, "Ply", Some(3.0), "Score");
+        create_from_layer(&mut app, 4, "Ply", Some(3.0), "Engrave");
+        let name = app.extras.library.lib.entries[b].link_name();
+        assign_to_layer(&mut app, b, 5).unwrap();
+        link_layer(&mut app, b, 6).unwrap();
+        let steps = app.editor.history.len();
+        delete_entry(&mut app, b).unwrap();
+        assert_eq!(app.editor.history.len(), steps + 1, "one step for the entry and the unlinking");
+        assert_eq!(app.extras.library.lib.entries.len(), 2);
+        assert!(app.editor.doc.layer(5).library_link.is_none() && app.editor.doc.layer(6).library_link.is_none());
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.extras.library.lib.entries.len(), 3);
+        assert_eq!(app.extras.library.lib.entries[b].link_name(), name, "back at its place");
+        assert_eq!(app.editor.doc.layer(5).library_link.as_deref(), Some(name.as_str()));
+        assert_eq!(app.editor.doc.layer(6).library_link.as_deref(), Some(name.as_str()));
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
+        assert_eq!(app.extras.library.lib.entries.len(), 2);
+        assert!(!app.extras.library.lib.entries.iter().any(|e| e.link_name() == name));
+        assert!(app.editor.doc.layer(5).library_link.is_none());
+        // An entry no layer follows still gets a step.
+        let steps = app.editor.history.len();
+        delete_entry(&mut app, a).unwrap();
+        assert_eq!(app.editor.history.len(), steps + 1);
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.extras.library.lib.entries.len(), 2);
+        assert_eq!(app.extras.library.lib.entries[a].description, "Cut");
+    }
+
+    /// Undo after a switch to another device puts the entry back in the first device's library,
+    /// not the one shown; with no library left to put it in, nothing happens.
+    #[test]
+    fn undoing_a_delete_after_a_device_switch() {
+        let dir = std::env::temp_dir().join(format!("darkburn-lib-undo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let prefs = Prefs::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        app.extras.library.settings_dir = Some(dir.clone());
+        app.extras.library.switch_device("diode", &prefs);
+        let i = create_from_layer(&mut app, 3, "Card", None, "Engrave");
+        let name = app.extras.library.lib.entries[i].link_name();
+        assign_to_layer(&mut app, i, 3).unwrap();
+        delete_entry(&mut app, i).unwrap();
+        app.extras.library.switch_device("co2", &prefs);
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.editor.doc.layer(3).library_link.as_deref(), Some(name.as_str()), "the layer is linked again");
+        assert!(app.extras.library.lib.entries.is_empty(), "not put in the co2 library");
+        app.extras.library.switch_device("diode", &prefs);
+        assert_eq!(app.extras.library.lib.entries.len(), 1, "back in the diode library");
+        // Redo with another device shown takes it out of the diode file again.
+        app.extras.library.switch_device("co2", &prefs);
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.redo");
+        app.extras.library.switch_device("diode", &prefs);
+        assert!(app.extras.library.lib.entries.is_empty());
+        // The library is gone: undo still relinks the layer and does not fail.
+        app.extras.library.switch_device("co2", &prefs);
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::actions::run(&mut app, &egui::Context::default(), "edit.undo");
+        assert_eq!(app.editor.doc.layer(3).library_link.as_deref(), Some(name.as_str()));
+        assert!(app.extras.library.lib.entries.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

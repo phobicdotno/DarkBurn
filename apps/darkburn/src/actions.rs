@@ -299,7 +299,8 @@ mod tests {
         }
         app.editor.edit("Add", |d, sel| {
             let a = d.add(s.clone());
-            sel.set([a]);
+            let b = d.add(Shape::rect(Rect::new(50.0, 0.0, 60.0, 10.0), 0.0, 0));
+            sel.set([a, b]);
             true
         });
         let before = app.editor.doc.clone();

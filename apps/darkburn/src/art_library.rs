@@ -128,6 +128,8 @@ impl ArtLibrary {
                 }
                 let at = match self.folders.iter().position(|f| f.name == folder.name) {
                     Some(at) => at,
+                    // This copy removed the folder: what the other copy put in it goes with it.
+                    None if base.folders.iter().any(|f| f.name == folder.name) => continue,
                     None => {
                         self.folders.push(Folder { name: folder.name.clone(), items: Vec::new() });
                         self.folders.len() - 1
@@ -270,14 +272,16 @@ impl Open {
     }
 
     /// Save to the library's own file, whatever it is called. When another running copy changed
-    /// the file since it was read, what that copy added is taken in first instead of lost.
+    /// the file since it was read, what that copy added is taken in first instead of lost. A
+    /// changed file that cannot be read or is not a library is left alone: the save fails and
+    /// the changes here stay unsaved.
     pub fn save(&mut self) -> Result<(), String> {
         let path = self.path.clone().ok_or_else(|| tr("art.no_file", "The library has no file yet: use Save as"))?;
         if let Some(m) = mtime(&path)
             && self.mtime != Some(m)
-            && let Ok(text) = std::fs::read_to_string(&path)
-            && let Ok(disk) = ArtLibrary::from_json(&text)
         {
+            let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let disk = ArtLibrary::from_json(&text)?;
             self.lib.take_in_added(&disk, &self.base);
         }
         self.write_to(path)
@@ -930,6 +934,66 @@ mod tests {
         let names: Vec<&str> = saved.folders[0].items.iter().map(|it| it.name.as_str()).collect();
         assert_eq!(names, ["Old", "Mine", "Theirs"], "the other copy's item is kept, the removed one stays removed");
         assert!(saved.folders.iter().any(|f| f.name == "New folder"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_removed_here_stays_removed_when_another_copy_added_to_it() {
+        let dir = std::env::temp_dir().join(format!("darkburn-art-gone-folder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.dbart");
+        let mut first = ArtState::default();
+        let i = first.new_library();
+        first.libs[i].lib.folders.push(Folder { name: "Doomed".into(), items: vec![Item { name: "A".into(), payload: "a".into() }] });
+        first.libs[i].save_as(&path).unwrap();
+        let mut second = ArtState::default();
+        second.open(&path).unwrap();
+        let doomed = second.libs[0].lib.folders.iter().position(|f| f.name == "Doomed").unwrap();
+        second.libs[0].lib.add(doomed, Item { name: "B".into(), payload: "b".into() }, OnDuplicate::KeepBoth);
+        second.libs[0].lib.folders.push(Folder { name: "Brand new".into(), items: vec![Item { name: "C".into(), payload: "c".into() }] });
+        second.libs[0].save().unwrap();
+        // The first copy removes the folder and saves over the file the second copy changed.
+        first.libs[0].mtime = Some(SystemTime::UNIX_EPOCH);
+        first.libs[0].lib.folders.retain(|f| f.name != "Doomed");
+        first.libs[0].dirty = true;
+        first.libs[0].save().unwrap();
+        let saved = Open::load(&path).unwrap().lib;
+        assert!(!saved.folders.iter().any(|f| f.name == "Doomed"), "the removed folder is not brought back");
+        assert!(saved.find("Brand new", "C").is_some(), "a folder the other copy made is still taken in");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_changed_file_that_cannot_be_read_is_not_overwritten_and_a_missing_one_is_a_first_save() {
+        let dir = std::env::temp_dir().join(format!("darkburn-art-bad-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.dbart");
+        let mut art = ArtState::default();
+        let i = art.new_library();
+        art.libs[i].lib.add(0, Item { name: "Mine".into(), payload: "m".into() }, OnDuplicate::KeepBoth);
+        art.libs[i].save_as(&path).unwrap();
+
+        // Another program left something that is not a library: the save fails and leaves it.
+        std::fs::write(&path, "not json").unwrap();
+        art.libs[i].mtime = Some(SystemTime::UNIX_EPOCH);
+        art.libs[i].lib.add(0, Item { name: "More".into(), payload: "x".into() }, OnDuplicate::KeepBoth);
+        art.libs[i].dirty = true;
+        assert!(art.libs[i].save().is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json", "the file is not overwritten");
+        assert!(art.libs[i].dirty, "the changes stay unsaved");
+
+        // The path cannot be read as a file (a folder is there): an error too, nothing replaced.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(art.libs[i].save().is_err());
+        assert!(path.is_dir());
+        std::fs::remove_dir(&path).unwrap();
+
+        // The file is gone: saving writes it as a first save.
+        art.libs[i].save().unwrap();
+        assert!(!art.libs[i].dirty);
+        let saved = Open::load(&path).unwrap().lib;
+        assert!(saved.find("General", "More").is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

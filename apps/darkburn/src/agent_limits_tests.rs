@@ -348,7 +348,8 @@ fn an_agent_writes_inside_the_project_folder() {
     b.execute("project.save_as", json!({ "path": project.join("a.dbrn").display().to_string() })).unwrap();
     assert!(project.join("a.dbrn").is_file());
     let svg = project.join("out").join("..").join("out").join("a.svg");
-    b.execute("project.export", json!({ "path": svg.display().to_string(), "format": "svg" })).unwrap();
+    b.execute("shape.add_rect", json!({ "x": 10, "y": 10, "width": 20, "height": 20, "layer": 0 })).unwrap();
+    b.execute("project.export", json!({ "path": svg.display().to_string(), "format": "svg" })).unwrap_or_else(|e| panic!("export: {}", e.message));
     assert!(project.join("out").join("a.svg").is_file());
     let _ = std::fs::remove_dir_all(&dir);
 }

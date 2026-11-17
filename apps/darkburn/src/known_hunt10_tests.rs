@@ -122,7 +122,16 @@ fn joining_two_touching_ends_on_release_marks_the_document_changed() {
     use darkburn_core::kurbo::PathEl;
     // Two open lines in one shape; the join on release makes them one.
     let starts = |rig: &Rig, id: ShapeId| -> Vec<Point> {
-        rig.app.editor.doc.get(id).unwrap().outline().elements().iter().filter_map(|e| if let PathEl::MoveTo(p) = e { Some(*p) } else { None }).collect()
+        rig.app
+            .editor
+            .doc
+            .get(id)
+            .unwrap()
+            .outline()
+            .elements()
+            .iter()
+            .filter_map(|e| if let PathEl::MoveTo(p) = e { Some(*p) } else { None })
+            .collect()
     };
     let mut rig = Rig::new();
     let out = run(&mut rig.app, "shape.add_path", json!({ "svg_path": "M100 100 L160 100 M130 140 L190 140" })).unwrap();

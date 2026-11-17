@@ -156,21 +156,45 @@ impl TcpTransport {
     pub fn connect(addr: std::net::SocketAddr, timeout: Duration) -> io::Result<Self> {
         let stream = std::net::TcpStream::connect_timeout(&addr, timeout)?;
         stream.set_nodelay(true)?;
+        // Non-blocking with our own short waits instead of a socket receive timeout: on Windows a
+        // timed-out receive leaves the socket "indeterminate", and a slow host can drop the link.
+        stream.set_nonblocking(true)?;
         Ok(Self { stream, label: format!("tcp://{addr}") })
     }
 }
 
+fn would_block(e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted)
+}
+
 impl Transport for TcpTransport {
-    fn write_all(&mut self, data: &[u8]) -> io::Result<()> {
-        io::Write::write_all(&mut self.stream, data)
+    fn write_all(&mut self, mut data: &[u8]) -> io::Result<()> {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !data.is_empty() {
+            match io::Write::write(&mut self.stream, data) {
+                Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "connection closed")),
+                Ok(n) => data = &data[n..],
+                Err(e) if would_block(&e) && Instant::now() < end => std::thread::sleep(Duration::from_millis(1)),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
     fn read(&mut self, buf: &mut [u8], timeout: Duration) -> io::Result<usize> {
-        self.stream.set_read_timeout(Some(timeout.max(Duration::from_millis(1))))?;
-        match io::Read::read(&mut self.stream, buf) {
-            Ok(0) => Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed")),
-            Ok(n) => Ok(n),
-            Err(e) if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => Ok(0),
-            Err(e) => Err(e),
+        let end = Instant::now() + timeout.max(Duration::from_millis(1));
+        loop {
+            match io::Read::read(&mut self.stream, buf) {
+                Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed")),
+                Ok(n) => return Ok(n),
+                Err(e) if would_block(&e) => {
+                    let now = Instant::now();
+                    if now >= end {
+                        return Ok(0);
+                    }
+                    std::thread::sleep((end - now).min(Duration::from_millis(1)));
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
     fn name(&self) -> String {

@@ -1,0 +1,1 @@
+- Network-connected lasers no longer drop the link on a slow computer, and a lost link mid-job tells the laser to stop

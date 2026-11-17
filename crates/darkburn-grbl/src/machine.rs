@@ -1557,6 +1557,13 @@ impl Worker {
     }
 
     fn lost(&mut self, reason: String) {
+        // A link that failed one way may still carry bytes the other way (a half-closed socket,
+        // a bridge that dropped its reader). A job the app gives up on, or a pause or stop not
+        // yet confirmed, must not run on unseen: hold, then reset, as a last try.
+        if self.job.is_some() || self.pause_unconfirmed.is_some() || self.stop.is_some() {
+            let _ = self.t.write_all(&[rt::FEED_HOLD, rt::SOFT_RESET]);
+        }
+        self.pause_unconfirmed = None;
         if let Some(mut j) = self.job.take() {
             self.emit(Event::JobAborted { progress: j.progress(), reason: "Connection lost".into() });
         }

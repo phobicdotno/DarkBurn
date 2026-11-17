@@ -144,6 +144,8 @@ fn devices_dialog(ctx: &Context, app: &mut DarkBurn) {
                 if small(ui, "Edit", "Open its settings", has)
                     && let Some(d) = sel.and_then(|id| app.machine.devices.get(id).cloned())
                 {
+                    // Edit loads the stored device afresh: it is also what OK counts edits from.
+                    app.machine.dlg.settings_base = Some(d.clone());
                     app.machine.dlg.settings = Some((d, 0));
                     ui_kit::window_host::raise(ui.ctx(), "db_device_settings");
                 }

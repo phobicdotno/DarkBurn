@@ -824,6 +824,8 @@ struct LinkFaults {
     unheard: std::sync::Mutex<Vec<u8>>,
     /// The driver let the link go (a real port would be free again).
     released: std::sync::atomic::AtomicBool,
+    /// Reads fail, but writes still reach the controller (a half-closed link).
+    read_fails: std::sync::atomic::AtomicBool,
 }
 
 struct Lossy<T: Transport> {
@@ -854,6 +856,9 @@ impl<T: Transport> Transport for Lossy<T> {
         if self.faults.silent.load(SeqCst) {
             std::thread::sleep(timeout);
             return Ok(0);
+        }
+        if self.faults.read_fails.load(SeqCst) {
+            return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "read failed"));
         }
         if self.ready.is_empty() {
             let mut raw = [0u8; 512];
@@ -925,6 +930,41 @@ fn a_stop_whose_reset_is_not_answered_still_frees_the_send_buffer() {
     wait_snap(&m, "idle after the stop", |s| s.activity == Activity::Idle);
     m.send_console("G4 P0").unwrap();
     wait_emu(&emu, "the next command arrives", |e| e.stats().lines.last().is_some_and(|l| l == "G4 P0"));
+}
+
+#[test]
+fn a_lost_link_after_a_laser_off_line_leaves_the_idle_controller_alone() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
+    m.send_console("M5 S0").unwrap();
+    wait_emu(&emu, "laser-off line arrives", |e| e.stats().lines.last().is_some_and(|l| l == "M5 S0"));
+    // Its own `ok`, not an earlier empty in-flight snapshot.
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
+    let resets = emu.with(|e| e.stats().soft_resets);
+    faults.read_fails.store(true, std::sync::atomic::Ordering::SeqCst);
+    collect_until(&m, |e| matches!(e, Event::Disconnected(Some(_))));
+    // The last try would follow the disconnect event.
+    std::thread::sleep(Duration::from_millis(300));
+    // GRBL runs its `$N` start-up blocks after a reset, which could move the head.
+    emu.with(|e| assert_eq!(e.stats().soft_resets, resets, "an idle controller is not reset"));
+}
+
+#[test]
+fn a_lost_link_with_the_laser_left_on_still_resets() {
+    let emu = emulator(EmulatorConfig::atomstack());
+    let (m, faults) = connect_lossy(&emu, ConnectOptions::default());
+    wait_snap(&m, "idle", |s| s.status.state == MachineState::Idle);
+    // Laser mode off fires without motion; `M003` is `M3`. A later `$G` settles the motion state.
+    m.send_console("M003 S0").unwrap();
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
+    m.send_console("$G").unwrap();
+    wait_emu(&emu, "$G arrives", |e| e.stats().lines.last().is_some_and(|l| l == "$G"));
+    collect_until(&m, |e| matches!(e, Event::Console(c) if c.kind == ConsoleKind::Received && c.text == "ok"));
+    let resets = emu.with(|e| e.stats().soft_resets);
+    faults.read_fails.store(true, std::sync::atomic::Ordering::SeqCst);
+    collect_until(&m, |e| matches!(e, Event::Disconnected(Some(_))));
+    wait_emu(&emu, "the last-try reset", |e| e.stats().soft_resets > resets);
 }
 
 #[test]

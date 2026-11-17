@@ -947,6 +947,9 @@ fn the_status_bar_locks_stop_the_commands() {
     if let Err(e) = run(&mut a, "arrange.quick_nest", json!({ "rotation_step": 0 })) {
         assert!(!e.contains("lock is on"), "{e}");
     }
+    // A step too fine for the rule-based nester still turns: it rounds up to a tenth of a degree.
+    let e = run(&mut a, "arrange.nest", json!({ "rotation_step": 0.0000005 })).unwrap_err();
+    assert!(e.contains("lock is on"), "{e}");
     a.locks = [false; 4];
     use crate::numeric_edits::{NumEdit, lock_of};
     assert_eq!(lock_of(NumEdit::X(1.0)), Some(0));

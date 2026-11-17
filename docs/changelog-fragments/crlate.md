@@ -1,0 +1,3 @@
+- Losing the connection to an idle GRBL laser no longer resets it after a console laser-off line
+- The rotate lock now also stops Quick Nest and True Nest from the dialog
+- Device controls unlock again after a Ruida file is only uploaded, and stay locked until a started Ruida file really runs

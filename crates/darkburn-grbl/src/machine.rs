@@ -48,7 +48,7 @@ use kurbo::{Point, Rect};
 use crate::codes::{SettingInfo, alarm_is_critical, alarm_message, error_message, setting_info};
 use crate::protocol::{
     Axes, FirmwareInfo, FirmwareKind, MachineState, RapidOverride, Response, StatusReport, apply_build_info, clean_line, feed_override_bytes,
-    fmt_num, is_motion_line, parse_response, power_override_bytes, rt,
+    fmt_num, is_motion_line, parse_response, power_override_bytes, rt, words,
 };
 use crate::transport::Transport;
 
@@ -1356,6 +1356,10 @@ struct Worker {
     queue: VecDeque<Outgoing>,
     job: Option<ActiveJob>,
     motion_pending: bool,
+    /// The modal spindle state from the lines sent: `M3`/`M4` turn it on, `M5`/`M2`/`M30` and a
+    /// reset turn it off. While on, the laser may fire without motion (laser mode off), so a
+    /// lost link still tries the last reset.
+    spindle_on: bool,
     /// When the last jog line went out, until a status report asked for after it shows the
     /// machine out of the jog. A jogging controller answers G-code with an error and drops it.
     jog_sent: Option<Instant>,
@@ -1405,6 +1409,7 @@ impl Worker {
             queue: VecDeque::new(),
             job: None,
             motion_pending: false,
+            spindle_on: false,
             jog_sent: None,
             hold_laser_stopped: false,
             pause_unconfirmed: None,
@@ -1569,6 +1574,7 @@ impl Worker {
             || state.is_moving()
             || matches!(state, MachineState::Hold(_) | MachineState::Home)
             || self.motion_pending
+            || self.spindle_on
             || !self.in_flight.is_empty();
         self.pause_unconfirmed = None;
         if let Some(mut j) = self.job.take() {
@@ -2015,7 +2021,20 @@ impl Worker {
         self.write(&bytes)?;
         let len = bytes.len();
         let up = o.text.to_ascii_uppercase();
-        if (!up.starts_with('$') || up.starts_with("$J=")) && o.origin != Origin::Internal(Tag::Sync) {
+        // Only a line that may move the head or turn the laser on counts: an acknowledged `M5 S0`
+        // must not make a later lost link reset an idle controller (see `lost`). A power change
+        // under a retained `M3`/`M4` may fire too.
+        let fires = may_fire(&up);
+        if !up.starts_with('$') {
+            if m_codes(&up).any(|m| matches!(m, 2 | 5 | 30)) {
+                self.spindle_on = false;
+            }
+            if fires {
+                self.spindle_on = true;
+            }
+        }
+        let power = self.spindle_on && !up.starts_with('$') && words(&up).iter().any(|(l, _)| *l == 'S');
+        if (is_motion_line(&o.text) || fires || power) && o.origin != Origin::Internal(Tag::Sync) {
             self.motion_pending = true;
         }
         if up.starts_with("$J=") {
@@ -2255,6 +2274,7 @@ impl Worker {
         self.in_flight.clear();
         self.in_flight_bytes = 0;
         self.motion_pending = false;
+        self.spindle_on = false;
         self.jog_sent = None;
         self.settings_collect.clear();
         self.fire_until = None;
@@ -2444,6 +2464,7 @@ impl Worker {
                     self.in_flight.clear();
                     self.in_flight_bytes = 0;
                     self.motion_pending = false;
+                    self.spindle_on = false;
                     self.jog_sent = None;
                     self.finish_stop();
                 }
@@ -2459,9 +2480,33 @@ fn is_sync_origin(origin: &Origin, text: &str) -> bool {
         || (text.starts_with('$') && !text.to_ascii_uppercase().starts_with("$J="))
 }
 
+/// Whether an upper-case G-code line switches the laser on (`M3`/`M4`): with laser mode off it
+/// fires without moving, so a lost link must still try the last reset.
+fn may_fire(up: &str) -> bool {
+    !up.starts_with('$') && m_codes(up).any(|m| matches!(m, 3 | 4))
+}
+
+/// The whole-number M codes of a line, by value: `M3`, `M03`, `M003` and `M3.0` are all 3.
+fn m_codes(up: &str) -> impl Iterator<Item = u32> {
+    words(up).into_iter().filter(|(l, _)| *l == 'M').filter_map(|(_, v)| {
+        let n: f64 = v.parse().ok()?;
+        (n >= 0.0 && n.fract() == 0.0 && n <= u32::MAX as f64).then_some(n as u32)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn laser_on_spellings_count_by_value() {
+        for l in ["M3 S100", "M03 S100", "M003 S100", "M3.0 S100", "M4", "M04S5"] {
+            assert!(may_fire(l), "{l}");
+        }
+        for l in ["M5 S0", "M30", "M13", "M3.5", "S100", "$32=0"] {
+            assert!(!may_fire(l), "{l}");
+        }
+    }
 
     #[test]
     fn backup_text_round_trip() {

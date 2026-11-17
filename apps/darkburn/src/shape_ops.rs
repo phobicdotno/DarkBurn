@@ -93,7 +93,7 @@ pub struct Part {
 /// The outline parts of shape `id` (a group gives one part per descendant; images none).
 pub fn parts_of(doc: &Document, id: ShapeId) -> Vec<Part> {
     let Some(s) = doc.get(id) else { return Vec::new() };
-    s.leaves().into_iter().filter(|l| !l.is_image()).map(|l| Part { path: l.outline(), layer: l.layer, name: l.name.clone() }).collect()
+    s.leaves().into_iter().filter(|l| !l.is_image()).map(|l| Part { path: crate::text_render::drawn_outline(doc, &l), layer: l.layer, name: l.name.clone() }).collect()
 }
 
 /// `ids` that exist and can be edited, bottom of the draw order first.
@@ -1162,8 +1162,23 @@ fn env_of(app: &DarkBurn) -> Env {
     }
 }
 
+/// Render every text and code whose outline is missing or out of date, so that booleans,
+/// offsets, weld and the rest work on the letters, not on a text's placeholder box (a text that
+/// came from a file or a script without ever being drawn). Like the once-a-frame render, this is
+/// not an undo step and does not mark a saved document as changed.
+fn render_texts(e: &mut Editor) {
+    let was_modified = e.is_modified();
+    if crate::text_render::refresh(&mut e.doc) > 0 {
+        e.touch();
+        if !was_modified {
+            e.mark_saved();
+        }
+    }
+}
+
 /// Run `id` on `e` with JSON `a` (None when this module does not have the command).
 pub fn exec(e: &mut Editor, env: &Env, id: &str, a: &Value) -> Option<R> {
+    render_texts(e);
     let null = Value::Object(Default::default());
     let a = if a.is_null() { &null } else { a };
     Some(match id {

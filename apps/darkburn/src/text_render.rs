@@ -361,6 +361,31 @@ pub fn prepare_for_output(doc: &Document) -> Document {
     d
 }
 
+/// The outline of shape `s` of `doc` (not a group) with its letters or code drawn: a text or
+/// code that was never rendered is rendered on a copy first instead of giving its placeholder.
+pub fn drawn_outline(doc: &Document, s: &Shape) -> BezPath {
+    let missing = match &s.kind {
+        ShapeKind::Text(t) => t.backup.is_none(),
+        ShapeKind::Code(c) => c.cache.is_none(),
+        _ => false,
+    };
+    if !missing {
+        return s.outline();
+    }
+    let mut c = s.clone();
+    let now = EvalContext::local_now();
+    match &mut c.kind {
+        ShapeKind::Text(t) => {
+            render_text(doc, s.layer, t, &now);
+        }
+        ShapeKind::Code(code) => {
+            render_code(doc, s.layer, code, &now);
+        }
+        _ => {}
+    }
+    c.outline()
+}
+
 /// Whether the document holds any variable text or code (auto-advance only counts these).
 pub fn has_variable_text(doc: &Document) -> bool {
     fn walk(s: &Shape) -> bool {

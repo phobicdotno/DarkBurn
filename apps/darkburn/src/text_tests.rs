@@ -434,3 +434,50 @@ fn text_is_not_put_on_a_path_without_length() {
     assert!(text_of(&a, t).on_path.is_none());
     assert_eq!(bbox(&a, t), before);
 }
+
+#[test]
+fn booleans_and_offsets_use_the_letters_of_a_text_never_drawn() {
+    use darkburn_core::kurbo::Affine;
+    use darkburn_geom::FillRule;
+    use darkburn_geom::path as gpath;
+    // A text as a file or a script can hand over: no outline yet, so `outline()` is its
+    // placeholder box until it is rendered.
+    let unrendered = || {
+        let mut a = app();
+        let t = TextShape { text: "O".into(), font: "IBM Plex Sans".into(), height: 10.0, ..Default::default() };
+        let id = a.editor.doc.add(Shape::new(ShapeKind::Text(t), Affine::translate((10.0, 10.0)), 0));
+        let far = a.editor.doc.add(Shape::rect(Rect::new(100.0, 100.0, 102.0, 102.0), 0.0, 0));
+        (a, id, far)
+    };
+    let area = |p: &darkburn_core::kurbo::BezPath| gpath::area(p, FillRule::EvenOdd, 0.01);
+    let (a, id, _) = unrendered();
+    let placeholder = a.editor.doc.get(id).unwrap().outline();
+    let mut drawn = a.editor.doc.clone();
+    render::refresh(&mut drawn);
+    let letters = drawn.get(id).unwrap().outline();
+    assert_eq!(gpath::contours(&letters).len(), 2, "an O has an outside and a hole");
+    assert!((area(&placeholder) - area(&letters)).abs() > 5.0, "the placeholder box is not the letter");
+
+    // The offset preview reads the letters of the stored document as it is.
+    let p = crate::shape_ops::OffsetParams { distance: 0.5, ..Default::default() };
+    let preview = crate::shape_ops::offset_preview(&a.editor.doc, &[id], &p);
+    assert_eq!(preview.iter().map(|q| gpath::contours(q).len()).sum::<usize>(), 2, "offset preview follows the O, not a box");
+
+    // Offset: two rings around the O, not one box.
+    let (mut a, id, _) = unrendered();
+    select(&mut a, &[id]);
+    let r = run(&mut a, "tools.offset", json!({ "distance": 0.5 })).unwrap();
+    let ids: Vec<ShapeId> = r["ids"].as_array().unwrap().iter().map(|v| ShapeId(v.as_u64().unwrap())).collect();
+    let rings: usize = ids.iter().map(|i| gpath::contours(&a.editor.doc.get(*i).unwrap().outline()).len()).sum();
+    assert_eq!(rings, 2, "offset follows the O");
+
+    // Union and weld with a square far away: the letter's area plus the square's.
+    for cmd in ["tools.union", "tools.weld"] {
+        let (mut a, id, far) = unrendered();
+        select(&mut a, &[id, far]);
+        run(&mut a, cmd, json!({})).unwrap();
+        let total: f64 = a.editor.doc.iter().map(|s| area(&s.outline())).sum();
+        let want = area(&letters) + 4.0;
+        assert!((total - want).abs() < 0.05 * want, "{cmd}: {total} should be the O plus the square ({want})");
+    }
+}

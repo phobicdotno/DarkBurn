@@ -55,6 +55,9 @@ pub struct TranslateOptions {
     /// Write the time of a dwell (`G4 P`) in milliseconds. The input gives seconds, as GRBL
     /// reads it; Marlin and its relatives read `P` as milliseconds.
     pub dwell_p_ms: bool,
+    /// Write a dwell as `G4 S<seconds>`. Smoothieware reads `P` as milliseconds outside grbl
+    /// mode and as seconds in it; `S` is seconds in both (smoothieware.org/g4).
+    pub dwell_s_seconds: bool,
 }
 
 impl Default for TranslateOptions {
@@ -76,6 +79,7 @@ impl Default for TranslateOptions {
             home_command: None,
             travel_s0: false,
             dwell_p_ms: false,
+            dwell_s_seconds: false,
         }
     }
 }
@@ -117,6 +121,7 @@ impl TranslateOptions {
             home_command: g.auto_home_on_start.then(|| home_command(p)),
             travel_s0: p.kind == DeviceKind::Custom,
             dwell_p_ms: matches!(p.kind, DeviceKind::Marlin | DeviceKind::Snapmaker),
+            dwell_s_seconds: p.kind == DeviceKind::Smoothie,
         }
     }
 }
@@ -374,7 +379,13 @@ fn translate_line(line: &str, opts: &TranslateOptions, st: &mut State, out: &mut
 
     if !is_motion_word && !words.iter().any(|(l, _)| *l == 'S') {
         let dwell = words.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9));
-        if dwell && opts.dwell_p_ms {
+        if dwell && opts.dwell_s_seconds {
+            for w in &mut words {
+                if w.0 == 'P' && w.1.parse::<f64>().is_ok() {
+                    w.0 = 'S';
+                }
+            }
+        } else if dwell && opts.dwell_p_ms {
             for w in &mut words {
                 if w.0 == 'P'
                     && let Ok(seconds) = w.1.parse::<f64>()
@@ -589,11 +600,14 @@ mod tests {
             assert!(out.iter().any(|l| l == "G4 P250") && out.iter().any(|l| l == "G4 P1500"), "{kind:?}: {out:?}");
             assert!(!out.iter().any(|l| l.contains("P0.25")), "{kind:?}: {out:?}");
         }
-        // Seconds stay for a controller that reads them (and where the unit is not known).
-        for kind in [DeviceKind::Smoothie, DeviceKind::Custom] {
-            let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(kind)));
-            assert!(out.iter().any(|l| l == "G4 P0.25") && out.iter().any(|l| l == "G4 P1.5"), "{kind:?}: {out:?}");
-        }
+        // Smoothieware reads `P` as milliseconds outside grbl mode and as seconds in it; `S` is
+        // seconds in both (smoothieware.org/g4).
+        let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Smoothie)));
+        assert!(out.iter().any(|l| l == "G4 S0.25") && out.iter().any(|l| l == "G4 S1.5"), "{out:?}");
+        assert!(!out.iter().any(|l| l.starts_with("G4 P")), "{out:?}");
+        // Seconds stay for a custom device, where the unit is not known.
+        let out = run(&src, &TranslateOptions::for_profile(&DeviceProfile::for_kind(DeviceKind::Custom)));
+        assert!(out.iter().any(|l| l == "G4 P0.25") && out.iter().any(|l| l == "G4 P1.5"), "{out:?}");
     }
 
     /// A custom controller is not known to switch the laser off for `G0` by itself.

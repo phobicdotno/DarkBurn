@@ -741,7 +741,9 @@ pub(crate) fn kerf_depth(outlines: &[((ShapeId, usize), Rect, Vec<Point>)], no: 
     match path.elements().first() {
         Some(PathEl::MoveTo(p0)) => outlines
             .iter()
-            .filter(|(o, r, pts)| *o != no && r.area() > bbox.area() + 1e-9 && job::geom::rect_inside(bbox, *r) && job::geom::point_in_polygon(*p0, pts))
+            .filter(|(o, r, pts)| {
+                *o != no && r.area() > bbox.area() + 1e-9 && job::geom::rect_inside(bbox, *r) && job::geom::point_in_polygon(*p0, pts)
+            })
             .count(),
         _ => 0,
     }

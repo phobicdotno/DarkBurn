@@ -82,8 +82,9 @@ impl ArtLibrary {
         crate::files::write_atomic(path, self.to_json().as_bytes()).map_err(|e| e.to_string())
     }
 
-    /// Add `item` to folder `folder` (created if the index is past the end). An item with the same
-    /// name is replaced or kept beside the new one with a number after its name.
+    /// Add `item` to folder `folder`; an index past the end means the last folder (a library
+    /// with no folder gets a "General" one first). An item with the same name is replaced or
+    /// kept beside the new one with a number after its name.
     pub fn add(&mut self, folder: usize, mut item: Item, on_duplicate: OnDuplicate) -> usize {
         if self.folders.is_empty() {
             self.folders.push(Folder { name: "General".into(), items: Vec::new() });
@@ -108,6 +109,34 @@ impl ArtLibrary {
             (None, _) => {
                 items.push(item);
                 items.len() - 1
+            }
+        }
+    }
+
+    fn find(&self, folder: &str, item: &str) -> Option<&Item> {
+        self.folders.iter().filter(|f| f.name == folder).flat_map(|f| &f.items).find(|i| i.name == item)
+    }
+
+    /// Take in what another running copy added to the file since `base` was read: items (and
+    /// folders) `disk` has that `base` had not and this library has not either. What this copy
+    /// changed or removed itself stays as it is here.
+    pub fn take_in_added(&mut self, disk: &ArtLibrary, base: &ArtLibrary) {
+        for folder in &disk.folders {
+            for item in &folder.items {
+                if base.find(&folder.name, &item.name).is_some() || self.find(&folder.name, &item.name).is_some() {
+                    continue;
+                }
+                let at = match self.folders.iter().position(|f| f.name == folder.name) {
+                    Some(at) => at,
+                    None => {
+                        self.folders.push(Folder { name: folder.name.clone(), items: Vec::new() });
+                        self.folders.len() - 1
+                    }
+                };
+                self.folders[at].items.push(item.clone());
+            }
+            if folder.items.is_empty() && !base.folders.iter().chain(&self.folders).any(|f| f.name == folder.name) {
+                self.folders.push(Folder { name: folder.name.clone(), items: Vec::new() });
             }
         }
     }
@@ -219,6 +248,9 @@ pub struct Open {
     pub path: Option<PathBuf>,
     pub dirty: bool,
     pub mtime: Option<SystemTime>,
+    /// The library as it was last read from or written to its file, to tell what another
+    /// running copy added to the file since.
+    pub base: ArtLibrary,
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {
@@ -228,7 +260,7 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 impl Open {
     pub fn load(path: &Path) -> Result<Open, String> {
         let lib = ArtLibrary::from_json(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)?;
-        Ok(Open { lib, path: Some(path.to_path_buf()), dirty: false, mtime: mtime(path) })
+        Ok(Open { base: lib.clone(), lib, path: Some(path.to_path_buf()), dirty: false, mtime: mtime(path) })
     }
 
     /// Save under a name the person gave: the file ending is added when it is not there.
@@ -237,14 +269,23 @@ impl Open {
         self.write_to(crate::files::with_ending(path, FILE_EXTENSION))
     }
 
-    /// Save to the library's own file, whatever it is called.
+    /// Save to the library's own file, whatever it is called. When another running copy changed
+    /// the file since it was read, what that copy added is taken in first instead of lost.
     pub fn save(&mut self) -> Result<(), String> {
         let path = self.path.clone().ok_or_else(|| tr("art.no_file", "The library has no file yet: use Save as"))?;
+        if let Some(m) = mtime(&path)
+            && self.mtime != Some(m)
+            && let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(disk) = ArtLibrary::from_json(&text)
+        {
+            self.lib.take_in_added(&disk, &self.base);
+        }
         self.write_to(path)
     }
 
     fn write_to(&mut self, path: PathBuf) -> Result<(), String> {
         self.lib.save(&path)?;
+        self.base = self.lib.clone();
         self.mtime = mtime(&path);
         self.path = Some(path);
         self.dirty = false;
@@ -302,7 +343,7 @@ impl ArtState {
     }
 
     pub fn new_library(&mut self) -> usize {
-        self.libs.push(Open { lib: ArtLibrary::default(), path: None, dirty: false, mtime: None });
+        self.libs.push(Open { lib: ArtLibrary::default(), path: None, dirty: false, mtime: None, base: ArtLibrary::default() });
         self.libs.len() - 1
     }
 
@@ -856,6 +897,39 @@ mod tests {
         a.refresh(std::time::Instant::now());
         assert_eq!(a.libs[0].lib.folders[0].items.len(), 2);
         assert!(ArtLibrary::from_json("{}").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn saving_keeps_what_another_copy_added_and_a_folder_past_the_end_is_the_last() {
+        let mut lib = ArtLibrary::default();
+        lib.folders.push(Folder { name: "Extra".into(), items: vec![] });
+        let at = lib.add(9, Item { name: "Far".into(), payload: "f".into() }, OnDuplicate::KeepBoth);
+        assert_eq!((lib.folders.len(), lib.folders[1].items[at].name.as_str()), (2, "Far"), "past the end goes to the last folder");
+
+        let dir = std::env::temp_dir().join(format!("darkburn-art-merge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.dbart");
+        let mut first = ArtState::default();
+        let i = first.new_library();
+        first.libs[i].lib.add(0, Item { name: "Old".into(), payload: "o".into() }, OnDuplicate::KeepBoth);
+        first.libs[i].lib.add(0, Item { name: "Gone".into(), payload: "g".into() }, OnDuplicate::KeepBoth);
+        first.libs[i].save_as(&path).unwrap();
+        let mut second = ArtState::default();
+        second.open(&path).unwrap();
+        second.libs[0].lib.add(0, Item { name: "Theirs".into(), payload: "t".into() }, OnDuplicate::KeepBoth);
+        second.libs[0].lib.folders.push(Folder { name: "New folder".into(), items: vec![] });
+        second.libs[0].save().unwrap();
+        // The first copy has its own changes (one added, one removed) and saves over the file.
+        first.libs[0].mtime = Some(SystemTime::UNIX_EPOCH);
+        first.libs[0].lib.add(0, Item { name: "Mine".into(), payload: "m".into() }, OnDuplicate::KeepBoth);
+        first.libs[0].lib.folders[0].items.retain(|it| it.name != "Gone");
+        first.libs[0].dirty = true;
+        first.libs[0].save().unwrap();
+        let saved = Open::load(&path).unwrap().lib;
+        let names: Vec<&str> = saved.folders[0].items.iter().map(|it| it.name.as_str()).collect();
+        assert_eq!(names, ["Old", "Mine", "Theirs"], "the other copy's item is kept, the removed one stays removed");
+        assert!(saved.folders.iter().any(|f| f.name == "New folder"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -386,6 +386,8 @@ pub enum BuildError {
     NoUserOrigin,
     /// A shape or picture has a coordinate that is not a finite number.
     NotANumber,
+    /// Cylinder correction is on and the job has pictures, which it cannot bend.
+    PictureNotMapped,
 }
 
 impl std::fmt::Display for BuildError {
@@ -396,6 +398,7 @@ impl std::fmt::Display for BuildError {
             BuildError::NothingSelected => "Cut selected graphics is on and nothing is selected",
             BuildError::NoUserOrigin => "Start from is User origin, but no user origin is set",
             BuildError::NotANumber => "a shape or picture has a coordinate that is not a number",
+            BuildError::PictureNotMapped => "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own",
         })
     }
 }
@@ -588,10 +591,12 @@ fn pixel_to_local(img: &ImageShape, px_w: u32, px_h: u32) -> Affine {
     Affine::new([sx, 0.0, 0.0, -sy, -img.width / 2.0, img.height / 2.0])
 }
 
-/// Scan lines of the images of one layer, using the layer's image settings.
+/// Scan lines of the images of one layer, using the layer's image settings. `map` is the
+/// print-and-cut and rotary mapping of the job, which moves the pictures with the outlines.
 fn image_inputs(
     doc: &Document,
     leaves: &[(&Shape, Option<u32>)],
+    map: Affine,
     s: &CutSetting,
     tuning: &crate::scan_offsets::ScanTuning,
     warnings: &mut Vec<String>,
@@ -632,9 +637,9 @@ fn image_inputs(
                 continue;
             }
         };
-        let to_mm = shape.transform * pixel_to_local(img, gray.width, gray.height);
+        let to_mm = map * shape.transform * pixel_to_local(img, gray.width, gray.height);
         let p = darkburn_raster::process_image(&gray, to_mm, &crate::images::adjustments(&img.adjust), &settings);
-        let outline: Vec<Point> = job::geom::flatten(&shape.outline(), TOLERANCE).into_iter().flat_map(|poly| poly.pts).collect();
+        let outline: Vec<Point> = job::geom::flatten(&(map * shape.outline()), TOLERANCE).into_iter().flat_map(|poly| poly.pts).collect();
         processed.push((p, *group, shape.priority, (shape.power_scale / 100.0).clamp(0.0, 1.0), outline));
     }
     let mut out = Vec::new();
@@ -727,14 +732,14 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // other way. The shape around it may be on another layer (holes are often given a layer of
     // their own to cut them first). These are the closed outlines of the shapes on the layers
     // that cut lines, each with the number of its shape; they are only needed when some layer
-    // has a kerf offset.
+    // has a kerf offset. With "Cut selected graphics" the shapes that are not selected still
+    // count here (a selected hole in an unselected outline is still a hole); only the selected
+    // ones are cut. Each outline is known by its top shape and its place among its leaves.
     let cuts_lines = |l: &Layer| l.settings.iter().any(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine));
     let any_kerf = (0..layer::LAYER_COUNT).any(|li| doc.layer(li).outputs() && !kerfs_of(doc.layer(li)).is_empty());
-    let mut kerf_outlines: Vec<(usize, Rect, Vec<Point>)> = Vec::new();
-    let mut leaf_no = 0usize;
-    for top in &tops {
-        for leaf in top.leaves() {
-            leaf_no += 1;
+    let mut kerf_outlines: Vec<((ShapeId, usize), Rect, Vec<Point>)> = Vec::new();
+    for top in doc.iter() {
+        for (k, leaf) in top.leaves().into_iter().enumerate() {
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !any_kerf || !l.outputs() || leaf.is_image() || !cuts_lines(l) {
@@ -742,7 +747,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
             for poly in job::geom::flatten(&leaf.outline(), input.device.tolerance.max(0.01)) {
                 if poly.closed {
-                    kerf_outlines.push((leaf_no, job::geom::bbox(&poly.pts), poly.pts));
+                    kerf_outlines.push(((top.id, k), job::geom::bbox(&poly.pts), poly.pts));
                 }
             }
         }
@@ -776,15 +781,13 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             ));
         }
     }
-    let mut leaf_no = 0usize;
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
         }
         report(0.25 * n as f32 / total as f32);
         let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
-        for leaf in top.leaves() {
-            leaf_no += 1;
+        for (k, leaf) in top.leaves().into_iter().enumerate() {
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
             if !l.outputs() {
@@ -857,7 +860,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     Some(PathEl::MoveTo(p0)) => kerf_outlines
                         .iter()
                         .filter(|(no, r, pts)| {
-                            *no != leaf_no
+                            *no != (top.id, k)
                                 && r.area() > bbox.area() + 1e-9
                                 && job::geom::rect_inside(bbox, *r)
                                 && job::geom::point_in_polygon(*p0, pts)
@@ -941,8 +944,14 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         let image_setting = l.settings.iter().find(|s| s.enabled && s.mode == Mode::Image);
         match image_setting {
             Some(s) => {
+                // Pictures go through the same print-and-cut and rotary mapping as the outlines.
+                // Cylinder correction bends paths, which a picture cannot follow: refused rather
+                // than burned in the wrong place.
+                let Some(map) = vision_map.as_ref().map_or(Some(Affine::IDENTITY), |m| m.affine()) else {
+                    return Err(BuildError::PictureNotMapped);
+                };
                 let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, s, &tuning, &mut warnings);
+                entry.images = image_inputs(doc, &refs, map, s, &tuning, &mut warnings);
                 // Only the pictures that burn are framed (one left out is not part of the job).
                 for img in &entry.images {
                     let mut p = BezPath::new();

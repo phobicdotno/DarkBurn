@@ -270,6 +270,9 @@ pub struct Dialogs {
     pub find: Option<Vec<Candidate>>,
     /// Device Settings: the draft and the page (0 Basic, 1 GCode, 2 DSP, 3 Additional).
     pub settings: Option<(Device, usize)>,
+    /// Device Settings: the device as the window took it, so OK writes only what was edited in
+    /// the window and keeps changes made to the device meanwhile.
+    pub settings_base: Option<Device>,
     pub machine_settings: bool,
     pub controller_info: bool,
     /// A real connection waits for the user's confirmation.
@@ -892,6 +895,7 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
         }
         "edit.device_settings" => {
             m.dlg.settings = Some((m.active().clone(), 0));
+            m.dlg.settings_base = Some(m.active().clone());
             Ok(json!({ "ok": true }))
         }
         "edit.machine_settings" => {
@@ -1127,6 +1131,9 @@ fn run_command(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Result<V
                 && m.devices.active == Some(draft.id)
             {
                 draft.settings.additional = new;
+                if let Some(base) = m.dlg.settings_base.as_mut().filter(|b| b.id == draft.id) {
+                    base.settings.additional = new;
+                }
             }
             Ok(json!({ "accel": new.accel, "engrave_accel": new.engrave_accel, "max_speed": new.max_speed, "rapid_speed": new.rapid_speed }))
         }

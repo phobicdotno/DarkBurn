@@ -1526,3 +1526,36 @@ mod tests {
         assert!(m.accel >= 1.0 && m.rapid_speed >= 1.0);
     }
 }
+
+/// `current` with the fields that differ between `base` (the device as a settings window took
+/// it) and `draft` (the window's copy) taken from the draft: OK in Device Settings writes what
+/// the user edited and keeps changes made to the device meanwhile (for example by "read motion").
+/// Lists count as one field.
+pub fn merge_edits(base: &Device, draft: &Device, current: &Device) -> Device {
+    fn merge(base: &serde_json::Value, draft: &serde_json::Value, current: &mut serde_json::Value) {
+        use serde_json::Value::Object;
+        match (base, draft, current) {
+            (Object(b), Object(d), Object(c)) => {
+                for (k, dv) in d {
+                    match (b.get(k), c.get_mut(k)) {
+                        (Some(bv), Some(cv)) => merge(bv, dv, cv),
+                        (Some(bv), None) if bv == dv => {}
+                        _ => {
+                            c.insert(k.clone(), dv.clone());
+                        }
+                    }
+                }
+            }
+            (b, d, c) => {
+                if b != d {
+                    *c = d.clone();
+                }
+            }
+        }
+    }
+    let (Ok(b), Ok(d), Ok(mut c)) = (serde_json::to_value(base), serde_json::to_value(draft), serde_json::to_value(current)) else {
+        return draft.clone();
+    };
+    merge(&b, &d, &mut c);
+    serde_json::from_value(c).unwrap_or_else(|_| draft.clone())
+}

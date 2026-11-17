@@ -613,3 +613,26 @@ fn planning_a_rotary_test_does_not_keep_the_settings() {
     g.frames(2);
     assert!(!g.app().vision.state.rotary.enabled, "one undo takes Apply back");
 }
+
+/// OK in Device Settings put back the copy taken when the window opened, so a change made to
+/// the device meanwhile (here: its red dot offset, set from elsewhere) was lost.
+#[test]
+fn device_settings_ok_keeps_changes_made_to_the_device_meanwhile() {
+    let mut g = Gui::standard();
+    let id = g.app().machine.devices.active.unwrap();
+    crate::machine_ui::run_with(g.app(), "edit.device_settings", &serde_json::json!({}));
+    g.settle();
+    // Edited in the window.
+    g.app().machine.dlg.settings.as_mut().unwrap().0.settings.red_dot_y = 4.5;
+    // Changed on the device while the window is open.
+    g.app().machine.devices.get_mut(id).unwrap().settings.red_dot_x = 7.25;
+    g.app().machine.devices.get_mut(id).unwrap().settings.tab_pulse_width = 0.5;
+    g.settle();
+    g.click_id("dialog:ok");
+    g.frames(3);
+    assert!(g.app().machine.dlg.settings.is_none());
+    let dev = g.app().machine.devices.get(id).unwrap();
+    assert_eq!(dev.settings.red_dot_y, 4.5, "the window's edit was written");
+    assert_eq!(dev.settings.red_dot_x, 7.25, "the change made meanwhile was lost");
+    assert_eq!(dev.settings.tab_pulse_width, 0.5, "the change made meanwhile was lost");
+}

@@ -1,1 +1,2 @@
 - The galvo panel only says framing is done when the frame matches the job you are about to start
+- Device Settings no longer throws away changes made to the device while the window was open

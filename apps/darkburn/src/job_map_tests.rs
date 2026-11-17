@@ -168,3 +168,58 @@ fn shapes_outside_the_work_area_are_measured_where_print_and_cut_puts_them() {
     assert!(!b.out_of_bounds(), "the square moved off the bed was kept: {:?}", b.bounds);
     near(b.bounds, Rect::new(10.0, 10.0, 30.0, 30.0), 1e-6);
 }
+
+#[test]
+fn selection_origin_measures_a_group_leaf_by_leaf_under_the_cylinder() {
+    // Cylinder radius 40 along X, centre 0: it reaches 62.8 mm round the surface. Of the two
+    // squares in the group, the first (Y 30 to 50) is bent and the second (Y 70 to 90) is left
+    // alone. Measured as one outline the whole group was left alone, and the job started
+    // 2.7 mm below the user origin.
+    let mut d = line_doc();
+    let a = d.add(darkburn_core::Shape::rect(Rect::new(10.0, 30.0, 30.0, 50.0), 0.0, 0));
+    let b = d.add(darkburn_core::Shape::rect(Rect::new(10.0, 70.0, 30.0, 90.0), 0.0, 0));
+    let g = darkburn_core::arrange::group(&mut d, &[a, b]).unwrap();
+    with_vision(&mut d, |s| s.cylinder.enabled = true);
+    let mut i = input(d);
+    i.selection = vec![g];
+    i.settings.start_from = StartMode::UserOrigin;
+    i.user_origin = Some(Point::new(0.0, 0.0));
+    i.settings.use_selection_origin = true;
+    let with_selection = build_job_simple(&i).unwrap();
+    i.settings.use_selection_origin = false;
+    let leaf_mapped = build_job_simple(&i).unwrap();
+    let (min, want) = (machine_min(&with_selection), machine_min(&leaf_mapped));
+    assert!((min.x - want.x).abs() < 1e-6 && (min.y - want.y).abs() < 1e-6, "the job starts at {min:?}, not at {want:?}");
+    assert!(min.x.abs() < 1e-6 && min.y.abs() < 1e-6, "the job starts at {min:?}, not at the user origin");
+}
+
+#[test]
+fn shapes_outside_the_work_area_are_measured_where_the_start_mode_puts_them() {
+    // Drawn at (150, 10) to (170, 30) on the 200 mm bed and moved 40 mm right by the alignment:
+    // past the bed edge as mapped, but started from the user origin it burns at (0, 0) to
+    // (20, 20), well inside.
+    let mut d = line_doc();
+    d.add(darkburn_core::Shape::rect(Rect::new(150.0, 10.0, 170.0, 30.0), 0.0, 0));
+    with_vision(&mut d, |s| s.pnc.fit = Some(fit(Affine::translate((40.0, 0.0)))));
+    let mut i = input(d);
+    i.settings.discard_out_of_bounds = true;
+    i.settings.start_from = StartMode::UserOrigin;
+    i.user_origin = Some(Point::new(0.0, 0.0));
+    let b = build_job_simple(&i).unwrap();
+    assert_eq!(b.dropped_shapes, 0);
+    let min = machine_min(&b);
+    assert!(min.x.abs() < 1e-6 && min.y.abs() < 1e-6, "the job starts at {min:?}, not at the user origin");
+    // A user origin near the far edge puts it off the bed: dropped.
+    i.user_origin = Some(Point::new(190.0, 0.0));
+    assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NothingToBurn);
+    // From the current position with the head at (0, 0) it fits as well.
+    i.settings.start_from = StartMode::CurrentPosition;
+    i.head = Some(Point::new(0.0, 0.0));
+    assert_eq!(build_job_simple(&i).unwrap().dropped_shapes, 0);
+    // With the head position unknown it is measured where it is mapped, as before: dropped.
+    i.head = None;
+    assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NothingToBurn);
+    // Absolute jobs are measured where they are mapped too.
+    i.settings.start_from = StartMode::Absolute;
+    assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NothingToBurn);
+}

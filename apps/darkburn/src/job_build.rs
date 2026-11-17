@@ -716,6 +716,19 @@ fn placed_bbox(s: &Shape, map: Option<&crate::vision_state::JobMap>) -> Rect {
     darkburn_core::kurbo::Shape::bounding_box(&m.apply(path))
 }
 
+/// Where the start mode puts design coordinates on the bed, as a map from design to bed
+/// (design) coordinates, for a job with these bounds. As drawn for absolute jobs, and for jobs
+/// from the current position while the head position is unknown.
+fn bed_placement(input: &BuildInput, selection_bounds: Option<Rect>, job_bounds: Rect) -> Affine {
+    let Ok(origin) = origin_for(input, selection_bounds) else { return Affine::IDENTITY };
+    let to_machine = match (origin.start_from, input.head) {
+        (StartFrom::Absolute, _) | (StartFrom::CurrentPosition, None) => return Affine::IDENTITY,
+        (StartFrom::CurrentPosition, Some(h)) => Affine::translate(h.to_vec2()) * origin.transform(job_bounds),
+        (StartFrom::UserOrigin(_), _) => origin.transform(job_bounds),
+    };
+    origin.machine.affine().inverse() * to_machine
+}
+
 fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<Collected, BuildError> {
     // Text hook: variable text, QR codes and barcodes are evaluated for this job.
     let prepared = crate::text_render::prepare_for_output(&input.doc);
@@ -740,7 +753,18 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // Selection bounds for "use selection origin" (all selected shapes, burning or not), where
     // the job puts them: the anchor is measured on the same mapped shapes as the job bounds.
     let placed = |s: &Shape| placed_bbox(s, vision_map.as_ref());
-    let selection_bounds = input.selection.iter().filter_map(|id| doc.get(*id)).map(placed).reduce(|a, b| a.union(b));
+    // A group is measured leaf by leaf, as it is mapped below: the cylinder leaves alone only
+    // the leaves it cannot reach, not the whole group. A group without leaves keeps its origin.
+    let selection_bounds = input
+        .selection
+        .iter()
+        .filter_map(|id| doc.get(*id))
+        .flat_map(|s| {
+            let leaves = s.leaves();
+            if leaves.is_empty() { vec![s.clone()] } else { leaves }
+        })
+        .map(|s| placed(&s))
+        .reduce(|a, b| a.union(b));
     let tuning = input.tuning.clone().unwrap_or_else(crate::scan_offsets::current);
 
     let tops: Vec<&Shape> = doc.iter().filter(|s| !st.cut_selected || input.selection.contains(&s.id)).collect();
@@ -798,6 +822,20 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             ));
         }
     }
+    // "Remove what is outside the work area" tests each shape where the start mode puts it on
+    // the bed: from the user origin or the head, the anchor of the whole job (all the shapes
+    // that could burn) goes there. Absolute jobs, and jobs from the current position while the
+    // head position is unknown, are measured where they are mapped.
+    let bed_place = if !st.discard_out_of_bounds || matches!(st.start_from, StartMode::Absolute) {
+        Affine::IDENTITY
+    } else {
+        tops.iter()
+            .flat_map(|t| t.leaves())
+            .filter(|l| doc.layer(l.layer.min(layer::LAYER_COUNT - 1)).outputs())
+            .map(|l| placed(&l))
+            .reduce(|a, b| a.union(b))
+            .map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b))
+    };
     for (n, top) in tops.iter().enumerate() {
         if cancelled() {
             return Err(BuildError::Cancelled);
@@ -823,8 +861,9 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                 continue;
             }
             let bbox = leaf.bbox();
-            // Measured where the job puts the shape (print and cut and rotary move it).
-            if st.discard_out_of_bounds && is_outside(placed(&leaf), area) {
+            // Measured where the job puts the shape (print and cut and rotary move it, and so
+            // does the start mode).
+            if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
                 dropped += 1;
                 continue;
             }

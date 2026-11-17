@@ -108,6 +108,14 @@ struct ImageEntry {
 
 /// The project as file bytes. `app_version` is recorded; `thumbnail` is a PNG.
 pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Result<Vec<u8>, ProjectError> {
+    save_reporting(doc, app_version, thumbnail).map(|(bytes, _)| bytes)
+}
+
+/// As [`save`], with the number of shapes left out of the file because they could not be
+/// written and read back (a coordinate that is not a number, or nested too deep for the
+/// reader). Groups count with their children.
+pub fn save_reporting(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Result<(Vec<u8>, usize), ProjectError> {
+    let mut left_out = 0;
     let mut doc = doc.clone();
     doc.prune_images();
     let images: Vec<ImageEntry> = doc
@@ -141,7 +149,9 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
     // So what is written is read back first; shapes that do not survive that are left out (they
     // cannot be drawn or burned either), and anything else that stops it refuses the save.
     if from_json::<ProjectJson>(&text).is_err() {
+        let all = count(&json.shapes);
         json.shapes = json.shapes.iter().filter_map(readable).collect();
+        left_out = all - count(&json.shapes);
         for l in &mut json.layers {
             for s in &mut l.settings {
                 s.sanitise();
@@ -164,7 +174,18 @@ pub fn save(doc: &Document, app_version: &str, thumbnail: Option<&[u8]>) -> Resu
         zip.start_file("thumbnail.png", stored).map_err(zerr)?;
         zip.write_all(png)?;
     }
-    Ok(zip.finish().map_err(zerr)?.into_inner())
+    Ok((zip.finish().map_err(zerr)?.into_inner(), left_out))
+}
+
+/// How many shapes `shapes` holds, counting every group and what it holds at every depth.
+fn count(shapes: &[Shape]) -> usize {
+    shapes
+        .iter()
+        .map(|s| match &s.kind {
+            crate::shape::ShapeKind::Group { children } => 1 + count(children),
+            _ => 1,
+        })
+        .sum()
 }
 
 /// `shape` as it can be written and read back: a group keeps its readable children, anything
@@ -580,5 +601,20 @@ mod tests {
         assert!(bytes.len() < 20_000, "{} bytes on disk", bytes.len());
         assert!(load_within(&bytes, 4_000_000).is_ok());
         assert!(matches!(load_within(&bytes, 1_000_000), Err(ProjectError::Damaged(_))));
+    }
+
+    #[test]
+    fn a_shape_too_deep_to_read_back_is_counted_as_left_out() {
+        let mut d = sample();
+        let shapes_before = d.len();
+        let mut s = Shape::rect(Rect::new(0.0, 0.0, 5.0, 5.0), 0.0, 0);
+        for _ in 0..250 {
+            s = Shape::new(ShapeKind::Group { children: vec![s] }, Affine::IDENTITY, 0);
+        }
+        d.add(s);
+        let (bytes, left_out) = save_reporting(&d, "t", None).unwrap();
+        assert_eq!(left_out, 251, "the leaf and its 250 groups");
+        assert_eq!(load(&bytes).unwrap().doc.len(), shapes_before, "the rest is saved");
+        assert_eq!(save_reporting(&sample(), "t", None).unwrap().1, 0, "nothing left out of an ordinary project");
     }
 }

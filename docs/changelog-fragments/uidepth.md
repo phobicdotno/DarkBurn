@@ -1,0 +1,1 @@
+- Grouping now stops at 100 levels deep, and saving tells you if anything couldn't be written

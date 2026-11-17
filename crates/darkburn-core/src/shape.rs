@@ -437,6 +437,17 @@ impl Shape {
         self.is_closed() && self.outline().winding(p) != 0
     }
 
+    /// How many levels of shapes sit inside this one: 0 for a plain shape, one more than its
+    /// deepest child for a group, and likewise through the originals of a virtual array.
+    pub fn group_depth(&self) -> usize {
+        let children = match &self.kind {
+            ShapeKind::Group { children } => children.as_slice(),
+            _ => &[],
+        };
+        let sources = self.array.as_ref().map(|a| a.source.as_slice()).unwrap_or(&[]);
+        children.iter().chain(sources).map(|c| c.group_depth() + 1).max().unwrap_or(0)
+    }
+
     /// This shape, or for a group every descendant, with document transforms applied.
     pub fn leaves(&self) -> Vec<Shape> {
         match &self.kind {

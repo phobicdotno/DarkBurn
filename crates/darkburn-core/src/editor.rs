@@ -6,7 +6,7 @@
 
 use crate::clipboard::Clipboard;
 use crate::document::Document;
-use crate::shape::ShapeId;
+use crate::shape::{Shape, ShapeId};
 
 /// The selected shapes, in the order they were selected (the last is the reference for align).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -271,7 +271,7 @@ impl Editor {
 
     /// Make an undoable change: `f` changes the document and selection. A change that leaves a
     /// shape further out than [`MAX_COORD`], or with a position or size that is not a number,
-    /// is not made at all (false comes back, as if `f` had declined). Nothing is recorded
+    /// or nested deeper than [`MAX_GROUP_DEPTH`], is not made at all (false comes back, as if `f` had declined). Nothing is recorded
     /// when it returns false, nor when it says it changed something and the document is the one
     /// it was (the selection `f` made is kept then, and what could be redone still can).
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
@@ -368,9 +368,21 @@ impl Editor {
 /// script asking for 1e300 is refused instead of putting "infinity" into the job.
 pub const MAX_COORD: f64 = 1e9;
 
+/// How many groups (or array originals) deep a shape may sit, counted from the top of the
+/// document. A project file holds about 170 levels before its reader refuses it; this leaves
+/// room to spare. Grouping, pasting or arraying that would go deeper is refused.
+pub const MAX_GROUP_DEPTH: usize = 100;
+
+/// Whether `ids` can be grouped without putting a shape deeper than [`MAX_GROUP_DEPTH`].
+pub fn can_group(doc: &Document, ids: &[ShapeId]) -> bool {
+    ids.iter().filter_map(|id| doc.get(*id)).all(|s| s.group_depth() < MAX_GROUP_DEPTH)
+}
+
 /// Whether every shape that `doc` has and `before` had not (new or changed) lies within
-/// [`MAX_COORD`]. Shapes that were already there are left alone, so a document that came in
-/// with something far out can still be worked on.
+/// [`MAX_COORD`] and is nested no deeper than [`MAX_GROUP_DEPTH`] (or than the deepest shape
+/// `before` had, so a document that came in nested deeper can still be ungrouped). Shapes that
+/// were already there are left alone, so a document that came in with something far out can
+/// still be worked on.
 fn within_reach(doc: &Document, before: &Document) -> bool {
     doc.shapes.iter().enumerate().all(|(i, s)| {
         if before.shapes.get(i).is_some_and(|b| std::sync::Arc::ptr_eq(b, s)) {
@@ -378,6 +390,7 @@ fn within_reach(doc: &Document, before: &Document) -> bool {
         }
         let b = s.bbox();
         s.transform.as_coeffs().iter().chain(&[b.x0, b.y0, b.x1, b.y1]).all(|c| c.is_finite() && c.abs() <= MAX_COORD)
+            && (s.group_depth() <= MAX_GROUP_DEPTH || s.group_depth() <= before.iter().map(Shape::group_depth).max().unwrap_or(0))
     })
 }
 
@@ -679,5 +692,38 @@ mod tests {
         assert!(e.is_modified(), "the empty document was never saved");
         assert!(e.redo());
         assert!(e.is_modified());
+    }
+
+    /// A shape wrapped in `levels` groups.
+    fn nested(levels: usize) -> Shape {
+        let mut s = square(0.0);
+        for _ in 0..levels {
+            s = Shape::new(crate::shape::ShapeKind::Group { children: vec![s] }, kurbo::Affine::IDENTITY, 0);
+        }
+        s
+    }
+
+    #[test]
+    fn grouping_past_the_depth_cap_is_refused() {
+        let mut e = Editor::new();
+        let mut id = None;
+        assert!(e.edit("Add", |d, _| {
+            id = Some(d.add(nested(MAX_GROUP_DEPTH - 1)));
+            true
+        }));
+        let id = id.unwrap();
+        assert!(can_group(&e.doc, &[id]));
+        assert!(e.edit("Group", |d, _| crate::arrange::group(d, &[id]).is_some()), "up to the cap is fine");
+        let top = e.doc.iter().next().unwrap().id;
+        assert_eq!(e.doc.get(top).unwrap().group_depth(), MAX_GROUP_DEPTH);
+        assert!(!can_group(&e.doc, &[top]));
+        let before = e.doc.clone();
+        assert!(!e.edit("Group", |d, _| crate::arrange::group(d, &[top]).is_some()), "one more level is refused");
+        assert_eq!(e.doc, before, "nothing changed");
+        assert!(!e.edit("Paste", |d, _| {
+            d.add(nested(MAX_GROUP_DEPTH + 1));
+            true
+        }));
+        assert_eq!(e.doc, before, "a pasted shape nested too deep is refused too");
     }
 }

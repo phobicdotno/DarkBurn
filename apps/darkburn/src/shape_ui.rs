@@ -1652,8 +1652,10 @@ mod tests {
         assert!(!job.sources_unchanged(&app.editor.doc));
         let moved = app.editor.doc.get(ids[0]).cloned();
         let steps = app.editor.history.len();
-        app.shape_ui.join_job = Some(job);
+        // Opening the dialog cancels a job left from before, so open it first.
         app.shape_ui.open_dialog("edit.auto_join");
+        frame(&ctx, &mut app);
+        app.shape_ui.join_job = Some(job);
         frame(&ctx, &mut app);
         assert!(app.shape_ui.join_job.is_none(), "the finished job was taken");
         assert_eq!(app.editor.doc.len(), 2, "nothing was joined");

@@ -190,6 +190,7 @@ mod tests {
         ("net_test_ui.rs", include_str!("net_test_ui.rs")),
         ("api.rs", include_str!("api.rs")),
         ("machine_ui.rs", include_str!("machine_ui.rs")),
+        ("shape_ui.rs", include_str!("shape_ui.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

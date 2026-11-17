@@ -1,0 +1,1 @@
+- The galvo panel only says framing is done when the frame matches the job you are about to start

@@ -228,6 +228,9 @@ pub struct ExtUi {
     pub galvo_estimate: Option<String>,
     /// The galvo Device Settings dialog's last EZCad import message.
     pub galvo_message: Option<String>,
+    /// The frame key of the current job, recompiled at most twice a second while the Laser
+    /// panel shows a finished frame: (when, the frame key it was checked against, the job's key).
+    pub galvo_job_key: Option<(std::time::Instant, u64, Option<u64>)>,
     /// The Gweike card simulator the `mcc.*` commands work on.
     pub mcc: crate::gweike_card::CardState,
     /// The Gweike network test window and its measurements.
@@ -454,6 +457,34 @@ pub fn galvo_start(app: &mut DarkBurn, send_only: bool) -> Result<Value, String>
         crate::machine_ui::StartOutcome::Started => Ok(json!({ "ok": true, "warnings": warnings })),
         crate::machine_ui::StartOutcome::AskChecklist => Ok(json!({ "ok": true, "waiting_for_checklist": true })),
     }
+}
+
+/// The frame key of the job Start would send now (the key the driver checks), or `None` when
+/// there is no galvo job to make.
+pub fn galvo_current_frame_key(app: &DarkBurn) -> Option<u64> {
+    let dev = galvo_device(app).ok()?;
+    let b = galvo_job::build_job(&galvo_job::job_document(app).ok()?, &dev).ok()?;
+    galvo_job::compile(&b.job, &dev).ok().map(|c| c.frame_key)
+}
+
+/// Whether the finished frame belongs to the current job. Throttled: the job is recompiled at
+/// most twice a second, and again at once when a new frame finishes.
+pub fn galvo_frame_matches(app: &mut DarkBurn, framed_key: Option<u64>) -> bool {
+    let Some(framed) = framed_key else {
+        app.machine.ext.galvo_job_key = None;
+        return false;
+    };
+    let now = std::time::Instant::now();
+    let fresh = app.machine.ext.galvo_job_key.filter(|(at, k, _)| *k == framed && now.duration_since(*at).as_millis() < 500);
+    let current = match fresh {
+        Some((_, _, cur)) => cur,
+        None => {
+            let cur = galvo_current_frame_key(app);
+            app.machine.ext.galvo_job_key = Some((now, framed, cur));
+            cur
+        }
+    };
+    current == Some(framed)
 }
 
 fn galvo_frame(app: &mut DarkBurn, a: &Value) -> Result<Value, String> {

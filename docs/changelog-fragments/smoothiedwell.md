@@ -1,0 +1,1 @@
+- Smoothieware boards now pause for the right time in dot mode and at the start and end of a cut

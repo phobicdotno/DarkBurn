@@ -1557,6 +1557,19 @@ impl Worker {
     }
 
     fn lost(&mut self, reason: String) {
+        // Whether anything may still be going on at the controller: a job, an unconfirmed pause
+        // or stop, a fire, or motion it last showed or had queued (a stop whose first write
+        // failed ends up here too). Only then the last-try reset below: GRBL runs its `$N`
+        // startup blocks after a reset of an idle controller, which could move the head.
+        let state = &self.snap.status.state;
+        let active = self.job.is_some()
+            || self.pause_unconfirmed.is_some()
+            || self.stop.is_some()
+            || self.fire_until.is_some()
+            || state.is_moving()
+            || matches!(state, MachineState::Hold(_) | MachineState::Home)
+            || self.motion_pending
+            || !self.in_flight.is_empty();
         self.pause_unconfirmed = None;
         if let Some(mut j) = self.job.take() {
             self.emit(Event::JobAborted { progress: j.progress(), reason: "Connection lost".into() });
@@ -1576,8 +1589,8 @@ impl Worker {
         // a bridge that dropped its reader). Whatever was going on (a job, an unconfirmed pause
         // or stop, a fire, a stop whose first write failed) must not run on unseen: hold, then
         // reset, as a last try, after the disconnect is shown. Each byte on its own, so a failed
-        // hold still tries the reset. A reset on an idle controller does no harm.
-        if !was_connecting {
+        // hold still tries the reset. An idle controller is left alone (see `active`).
+        if !was_connecting && active {
             let _ = self.t.write_all(&[rt::FEED_HOLD]);
             let _ = self.t.write_all(&[rt::SOFT_RESET]);
         }

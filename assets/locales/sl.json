@@ -447,6 +447,7 @@
   "library.no_description": "(brez opisa)",
   "library.no_entry": "Tak vnos ne obstaja",
   "library.no_file": "Knjižnica še nima datoteke: uporabite Shrani kot",
+  "library.undo_not_saved": "Knjižnice po Razveljavi ali Uveljavi ni bilo mogoče shraniti, poskus se bo ponovil",
   "library.no_material": "(brez materiala)",
   "library.no_thickness": "katera koli debelina",
   "library.passes": "Prehodi",

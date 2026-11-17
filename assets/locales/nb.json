@@ -447,6 +447,7 @@
   "library.no_description": "(ingen beskrivelse)",
   "library.no_entry": "Oppføringen finnes ikke",
   "library.no_file": "Biblioteket har ingen fil ennå: bruk Lagre som",
+  "library.undo_not_saved": "Biblioteket kunne ikke lagres etter Angre eller Gjør om, det blir prøvd på nytt",
   "library.no_material": "(intet materiale)",
   "library.no_thickness": "enhver tykkelse",
   "library.passes": "Pass",

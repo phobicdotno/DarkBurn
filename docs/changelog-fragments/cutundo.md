@@ -1,0 +1,1 @@
+- Deleting a cut library entry can be undone now, and its layers follow it again

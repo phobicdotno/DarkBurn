@@ -447,6 +447,7 @@
   "library.no_description": "（無描述）",
   "library.no_entry": "沒有此項目",
   "library.no_file": "切割庫尚無檔案：請使用「另存新檔」",
+  "library.undo_not_saved": "復原或重做後無法儲存切割庫，將重試",
   "library.no_material": "（無材質）",
   "library.no_thickness": "任何厚度",
   "library.passes": "次數",

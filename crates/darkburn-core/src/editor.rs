@@ -92,6 +92,9 @@ struct Snapshot {
     label: String,
     /// The editor's revision when this state was current.
     revision: u64,
+    /// A number the app gave the step (0: none), to find what it keeps outside the document
+    /// for it (see [`Editor::checkpoint_tagged`]).
+    tag: u64,
 }
 
 /// Redo steps taken out of the history with [`History::take_redo`], to be put back with
@@ -132,6 +135,16 @@ impl History {
 
     pub fn redo_label(&self) -> Option<&str> {
         self.redo.last().map(|s| s.label.as_str())
+    }
+
+    /// The tag of the step Undo would undo (0: none).
+    pub fn undo_tag(&self) -> u64 {
+        self.undo.last().map_or(0, |s| s.tag)
+    }
+
+    /// The tag of the step Redo would redo (0: none).
+    pub fn redo_tag(&self) -> u64 {
+        self.redo.last().map_or(0, |s| s.tag)
     }
 
     pub fn len(&self) -> usize {
@@ -238,11 +251,19 @@ impl Editor {
 
     /// Record the state before a change called `label`. Call it, then change `doc`.
     pub fn checkpoint(&mut self, label: &str) {
+        self.checkpoint_tagged(label, 0);
+    }
+
+    /// [`Editor::checkpoint`] with a `tag` the app can read back with [`History::undo_tag`] and
+    /// [`History::redo_tag`] before it undoes or redoes the step, for a change it keeps outside
+    /// the document (a cut library entry). The step is recorded even if the document stays the same.
+    pub fn checkpoint_tagged(&mut self, label: &str, tag: u64) {
         self.history.undo.push(Snapshot {
             doc: self.doc.clone(),
             selection: self.selection.clone(),
             label: label.to_string(),
             revision: self.revision,
+            tag,
         });
         self.history.redo.clear();
         self.revision += 1;
@@ -254,7 +275,7 @@ impl Editor {
     /// when it returns false, nor when it says it changed something and the document is the one
     /// it was (the selection `f` made is kept then, and what could be redone still can).
     pub fn edit(&mut self, label: &str, f: impl FnOnce(&mut Document, &mut Selection) -> bool) -> bool {
-        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision };
+        let before = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision, tag: 0 };
         let changed = f(&mut self.doc, &mut self.selection) && within_reach(&self.doc, &before.doc);
         if changed && self.doc == before.doc {
             // Nothing to undo: no step, and the document is no more "changed" than it was.
@@ -314,6 +335,7 @@ impl Editor {
             selection: std::mem::replace(&mut self.selection, s.selection),
             label: s.label,
             revision: self.revision,
+            tag: s.tag,
         };
         self.history.redo.push(now);
         self.step_to(saved);
@@ -328,6 +350,7 @@ impl Editor {
             selection: std::mem::replace(&mut self.selection, s.selection),
             label: s.label,
             revision: self.revision,
+            tag: s.tag,
         };
         self.history.undo.push(now);
         self.step_to(saved);

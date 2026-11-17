@@ -447,6 +447,7 @@
   "library.no_description": "(nessuna descrizione)",
   "library.no_entry": "Voce non trovata",
   "library.no_file": "La libreria non ha ancora un file: usa Salva con nome",
+  "library.undo_not_saved": "Impossibile salvare la libreria dopo Annulla o Ripeti, verrà ritentato",
   "library.no_material": "(nessun materiale)",
   "library.no_thickness": "qualsiasi spessore",
   "library.passes": "Passate",

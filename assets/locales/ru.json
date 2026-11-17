@@ -447,6 +447,7 @@
   "library.no_description": "(без описания)",
   "library.no_entry": "Такой записи нет",
   "library.no_file": "У библиотеки еще нет файла: используйте «Сохранить как»",
+  "library.undo_not_saved": "Не удалось сохранить библиотеку после отмены или повтора, попытка будет повторена",
   "library.no_material": "(без материала)",
   "library.no_thickness": "любая толщина",
   "library.passes": "Проходы",

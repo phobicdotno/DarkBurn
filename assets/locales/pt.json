@@ -447,6 +447,7 @@
   "library.no_description": "(sem descrição)",
   "library.no_entry": "Entrada não encontrada",
   "library.no_file": "A biblioteca ainda não tem arquivo: use Salvar como",
+  "library.undo_not_saved": "Não foi possível salvar a biblioteca após Desfazer ou Refazer, será tentado novamente",
   "library.no_material": "(sem material)",
   "library.no_thickness": "qualquer espessura",
   "library.passes": "Passadas",

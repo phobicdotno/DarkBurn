@@ -25,10 +25,16 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         "tools.polygon" => app.set_tool(Tool::Polygon),
         // Edit
         "edit.undo" => {
-            e.undo();
+            let tag = e.history.undo_tag();
+            if e.undo() && tag != 0 {
+                crate::library::after_undo(app, tag);
+            }
         }
         "edit.redo" => {
-            e.redo();
+            let tag = e.history.redo_tag();
+            if e.redo() && tag != 0 {
+                crate::library::after_redo(app, tag);
+            }
         }
         "edit.select_all" => {
             let all = select::all(&e.doc);

@@ -447,6 +447,7 @@
   "library.no_description": "(ingen beskrivelse)",
   "library.no_entry": "Posten findes ikke",
   "library.no_file": "Biblioteket har ingen fil endnu: brug Gem som",
+  "library.undo_not_saved": "Biblioteket kunne ikke gemmes efter Fortryd eller Annuller fortryd, det prøves igen",
   "library.no_material": "(intet materiale)",
   "library.no_thickness": "enhver tykkelse",
   "library.passes": "Gennemløb",

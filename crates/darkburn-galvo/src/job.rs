@@ -918,6 +918,9 @@ fn validate(job: &Job) -> Result<(), CompileError> {
         if l.params.timings.is_some_and(|t| !t.jump_speed_mm_s.is_finite()) {
             return Err(CompileError::Invalid(format!("Layer '{}' has a jump speed that is not a number.", l.name)));
         }
+        if let Some(t) = &l.params.timings {
+            t.validate_ranges().map_err(|e| CompileError::Invalid(format!("Layer '{}': {e}", l.name)))?;
+        }
         match &l.mode {
             LayerMode::Drill(d) if !(d.dwell_ms > 0.0 && d.dwell_ms <= 60_000.0 && d.spacing_mm >= 0.0) => {
                 return Err(CompileError::Invalid(format!(
@@ -1724,6 +1727,7 @@ mod tests {
             |d| d.timings.max_jump_delay = 70_000,
             |d| d.timings.laser_on_tc = i32::MIN,
             |d| d.timings.end_tc = i32::MAX,
+            |d| d.timings.end_tc = 655_351,
             |d| d.timings.polygon_tc = -5,
             |d| d.axis_steps_per_mm[1] = f64::NAN,
             |d| d.axis_steps_per_mm[0] = 0.0,
@@ -1734,6 +1738,14 @@ mod tests {
             f(&mut d);
             assert!(matches!(compile(&job, &d, &opt), Err(CompileError::Invalid(_))), "setting {i}");
         }
+        // The end delay is sent in tens of microseconds, so 100 000 still fits the word.
+        let mut d = dev();
+        d.timings.end_tc = 100_000;
+        assert!(compile(&job, &d, &opt).is_ok());
+        // A layer's own timings are held to the same ranges as the device's.
+        let mut j = job.clone();
+        j.layers[0].params.timings = Some(Timings { laser_on_tc: i32::MAX, laser_off_tc: i32::MAX, ..Timings::default() });
+        assert!(matches!(compile(&j, &dev(), &opt), Err(CompileError::Invalid(_))));
         for step in [(0, f64::NAN), (0, 1e300), (2, 5.0)] {
             let mut j = job.clone();
             j.repeat = RepeatMarking { count: 2, axis_step: Some(step), wait_foot_each: false };

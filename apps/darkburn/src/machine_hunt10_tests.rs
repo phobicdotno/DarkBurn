@@ -110,6 +110,7 @@ fn an_agent_that_picks_another_device_gets_that_devices_g_code_settings() {
     b.execute("device.select", json!({ "id": id })).unwrap();
     let dir = temp("mcp-device");
     let file = dir.join("job.gc");
+    shared.borrow_mut().project_path = Some(dir.join("p.dbrn"));
     b.execute("job.save_gcode", json!({ "path": file.to_str().unwrap() })).unwrap();
     let text = std::fs::read_to_string(&file).unwrap();
     let _ = std::fs::remove_dir_all(&dir);

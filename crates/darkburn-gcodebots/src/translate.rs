@@ -559,9 +559,7 @@ pub fn cluster<S: AsRef<str>>(lines: &[S]) -> Vec<String> {
             out.push(l.to_owned());
             // A dwell's `S` is seconds (Smoothieware `G4 S`), not laser power: it must not
             // become the power of the moves after it.
-            let dwell = words.as_ref().is_some_and(|w| {
-                w.iter().any(|(c, v)| *c == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9))
-            });
+            let dwell = words.as_ref().is_some_and(|w| w.iter().any(|(c, v)| *c == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9)));
             if dwell {
                 continue;
             }

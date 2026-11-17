@@ -19,6 +19,9 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
     }
+    if let Some(e) = lock_refusal(app, id) {
+        return Err(e);
+    }
     if let Some(result) = crate::laser_position::api(app, id, args) {
         return result;
     }
@@ -72,6 +75,23 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     let before = app.editor.revision();
     app.run(ctx, id);
     Ok(json!({ "changed": app.editor.revision() != before }))
+}
+
+/// The status-bar lock (0 move, 1 size, 2 rotate) a command that changes the selection is held
+/// by. The locks stop everything that moves, sizes or turns shapes, not only the mouse (owner, Q082).
+pub fn lock_of(id: &str) -> Option<usize> {
+    match id {
+        "shape.place" | "shape.translate" | "arrange.move_selection" | "arrange.move_h_together" | "arrange.move_v_together" => Some(0),
+        "shape.resize" | "arrange.same_width" | "arrange.same_height" => Some(1),
+        "shape.rotate" | "arrange.rotate_by" | "arrange.rotate_cw" | "arrange.rotate_ccw" | "arrange.flip_h" | "arrange.flip_v" => Some(2),
+        _ => None,
+    }
+}
+
+/// Why `id` is refused under a status-bar lock, or `None` when it may run.
+pub fn lock_refusal(app: &DarkBurn, id: &str) -> Option<String> {
+    let k = lock_of(id).filter(|k| app.locks[*k])?;
+    Some(format!("{id} was refused: the {} lock is on (status bar). Turn it off first.", ["move", "size", "rotate"][k]))
 }
 
 /// [`execute`] with no window: viewport commands (exit) have no effect.

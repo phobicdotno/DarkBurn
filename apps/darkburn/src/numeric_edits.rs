@@ -94,6 +94,15 @@ pub fn apply(doc: &mut Document, ids: &[ShapeId], frame: Frame, anchor: Anchor, 
     }
 }
 
+/// The status-bar lock (0 move, 1 size, 2 rotate) that holds `edit`.
+pub fn lock_of(edit: NumEdit) -> Option<usize> {
+    match edit {
+        NumEdit::X(_) | NumEdit::Y(_) => Some(0),
+        NumEdit::W(_) | NumEdit::H(_) | NumEdit::ScaleX(_) | NumEdit::ScaleY(_) => Some(1),
+        NumEdit::RotateBy(_) => Some(2),
+    }
+}
+
 /// The rotation the field shows: the shape's own for one shape, else 0.
 pub fn shown_rotation(doc: &Document, ids: &[ShapeId]) -> f64 {
     match ids {
@@ -150,8 +159,11 @@ pub fn show(ui: &mut Ui, at: Pos2, height: f32, app: &mut DarkBurn) -> f32 {
     x = grid.right() + 8.0;
 
     // A column of two labelled fields.
+    let locks = app.locks;
     let mut column = |ui: &mut Ui, x: f32, label_w: f32, field_w: f32, rows: Vec<(&'static str, f64, Num, &dyn Fn(f64) -> NumEdit)>| -> f32 {
         for (k, (label, value, num, make)) in rows.into_iter().enumerate() {
+            // Read-only (greyed) under the status-bar lock that covers it (owner, Q082).
+            let enabled = enabled && !lock_of(make(value)).is_some_and(|l| locks[l]);
             let y = at.y + k as f32 * (row_h + gap);
             let lr = Rect::from_min_size(pos2(x, y), vec2(label_w, row_h));
             ui.painter().text(lr.left_center(), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(t.font_small), t.text_dim);

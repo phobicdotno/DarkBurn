@@ -907,3 +907,34 @@ fn the_device_cannot_change_while_a_job_runs() {
     run(&mut a, "device.select", json!({ "id": other })).unwrap();
     assert_eq!(a.machine.devices.active, Some(other));
 }
+
+/// Owner, Q082: the status-bar locks stop the commands too, not only the mouse.
+#[test]
+fn the_status_bar_locks_stop_the_commands() {
+    let mut a = app();
+    draw_square(&mut a);
+    run(&mut a, "edit.select_all", json!({})).unwrap();
+    let cases = [
+        (0, "shape.translate", json!({ "dx": 5, "dy": 0 })),
+        (1, "shape.resize", json!({ "width": 30, "height": 30 })),
+        (2, "shape.rotate", json!({ "degrees": 30 })),
+        (2, "arrange.flip_h", json!({})),
+        (2, "arrange.rotate_cw", json!({})),
+    ];
+    for (k, id, args) in cases.clone() {
+        a.locks = [false; 4];
+        a.locks[k] = true;
+        let rev = a.editor.revision();
+        let e = run(&mut a, id, args).unwrap_err();
+        assert!(e.contains("lock is on"), "{id}: {e}");
+        assert_eq!(a.editor.revision(), rev, "{id} changed nothing");
+    }
+    a.locks = [false; 4];
+    for (_, id, args) in cases {
+        run(&mut a, id, args).unwrap_or_else(|e| panic!("{id} with no lock: {e}"));
+    }
+    use crate::numeric_edits::{NumEdit, lock_of};
+    assert_eq!(lock_of(NumEdit::X(1.0)), Some(0));
+    assert_eq!(lock_of(NumEdit::H(1.0)), Some(1));
+    assert_eq!(lock_of(NumEdit::RotateBy(1.0)), Some(2));
+}

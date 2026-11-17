@@ -718,8 +718,7 @@ fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
 }
 
 /// Why a device switch is refused while the machine works. `{id}` is the command.
-pub const BUSY_SWITCH: &str =
-    "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.";
+pub const BUSY_SWITCH: &str = "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.";
 
 /// Whether the machine is running, framing or holding a paused job: the device in use must not
 /// change then, since that would end the connection under the job (owner, Q083).

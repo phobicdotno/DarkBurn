@@ -402,10 +402,23 @@ pub fn duplicate(doc: &mut Document, ids: &[ShapeId], offset: Vec2) -> Vec<Shape
         .collect()
 }
 
-/// Rotation in degrees of a shape's transform (counter-clockwise).
+/// Rotation in degrees of a shape's transform (counter-clockwise), as it looks. A mirrored shape
+/// (left-right or top-bottom) is its flip turned by this angle: a flip alone shows 0, and the
+/// angle of a mirrored shape is kept within -90..90, since a mirror turned half round is the other
+/// mirror. Rotating by the difference to a typed angle keeps the flip (owner, Q081).
 pub fn rotation_of(a: Affine) -> f64 {
     let c = a.as_coeffs();
-    c[1].atan2(c[0]).to_degrees()
+    let deg = c[1].atan2(c[0]).to_degrees();
+    if c[0] * c[3] - c[1] * c[2] >= 0.0 {
+        return deg;
+    }
+    if deg > 90.0 + 1e-9 {
+        deg - 180.0
+    } else if deg <= -90.0 + 1e-9 {
+        deg + 180.0
+    } else {
+        deg
+    }
 }
 
 #[cfg(test)]
@@ -414,6 +427,30 @@ mod tests {
 
     fn near(a: f64, b: f64) -> bool {
         (a - b).abs() < 1e-6
+    }
+
+    /// Owner, Q081: a flipped shape that is not turned shows 0, and typing an angle keeps the flip.
+    #[test]
+    fn a_flipped_shape_shows_the_angle_it_is_turned_by() {
+        for flip in [flip_h as fn(&mut Document, &[ShapeId]) -> bool, flip_v] {
+            let (mut d, ids) = three();
+            let a = &ids[1..2];
+            let before = bb(&d, ids[1]);
+            assert!(flip(&mut d, a));
+            let t = |d: &Document| d.get(ids[1]).unwrap().transform;
+            assert!(near(rotation_of(t(&d)), 0.0), "a flip alone: {}", rotation_of(t(&d)));
+            assert!(rotate(&mut d, a, 30.0));
+            assert!(near(rotation_of(t(&d)), 30.0));
+            assert!(t(&d).determinant() < 0.0, "still mirrored");
+            // Typing 0: rotate by the difference, as the ribbon field does.
+            let r = rotation_of(t(&d));
+            assert!(rotate(&mut d, a, -r));
+            assert!(near(rotation_of(t(&d)), 0.0) && t(&d).determinant() < 0.0, "back to the flip, not upside down");
+            let after = bb(&d, ids[1]);
+            assert!(near(before.width(), after.width()) && near(before.height(), after.height()));
+            let c = t(&d).as_coeffs();
+            assert!(near(c[1], 0.0) && near(c[2], 0.0), "axis-aligned again: {c:?}");
+        }
     }
 
     fn three() -> (Document, Vec<ShapeId>) {

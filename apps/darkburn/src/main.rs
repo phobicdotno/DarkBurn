@@ -83,6 +83,8 @@ mod job_field_tests;
 #[cfg(test)]
 mod job_hunt5_tests;
 #[cfg(test)]
+mod job_map_tests;
+#[cfg(test)]
 mod job_plan_tests;
 mod job_ui;
 #[cfg(test)]

@@ -1,0 +1,117 @@
+//! Jobs moved by print and cut or a rotary set-up, and the kerf direction with "Cut selected
+//! graphics": pictures follow the same mapping as the outlines of the job, and a selected hole
+//! is still a hole when the outline around it is not selected.
+
+use darkburn_core::Document;
+use darkburn_core::kurbo::{Affine, Rect};
+use darkburn_core::layer::Mode;
+use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
+
+use crate::job_build::*;
+use crate::job_field_tests::{image_doc, input, sq};
+use crate::vision_state::VisionState;
+
+fn with_vision(d: &mut Document, f: impl Fn(&mut VisionState)) {
+    let mut s = VisionState::default();
+    f(&mut s);
+    d.vision_settings = Some(s.to_value());
+}
+
+fn fit(affine: Affine) -> PnCFit {
+    PnCFit {
+        mode: PnCMode::Scaled,
+        affine,
+        scale: 1.0,
+        rotation_deg: 0.0,
+        translation: (0.0, 0.0),
+        residuals: ResidualReport { per_target: Vec::new(), rms_mm: 0.0, max_mm: 0.0 },
+    }
+}
+
+/// A black picture at (5, 5) to (15, 15) and, on layer 0, a square drawn over the same place.
+fn picture_and_outline() -> (Document, Document) {
+    let pic = image_doc(|_| {}, vec![0; 16]);
+    let mut outline = Document::new();
+    let s = outline.layer_mut(0).main_mut();
+    s.mode = Mode::Line;
+    s.speed = 20.0;
+    s.max_power = 50.0;
+    sq(&mut outline, 0, 5.0, 5.0, 10.0);
+    (pic, outline)
+}
+
+#[track_caller]
+fn near(a: Rect, b: Rect, tol: f64) {
+    let d = [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1];
+    assert!(d.iter().all(|v| v.abs() < tol), "{a:?} is not {b:?}");
+}
+
+#[test]
+fn print_and_cut_moves_pictures_with_the_outlines() {
+    let (mut pic, mut outline) = picture_and_outline();
+    let m = Affine::translate((40.0, 25.0)) * Affine::rotate(0.3);
+    with_vision(&mut pic, |s| s.pnc.fit = Some(fit(m)));
+    with_vision(&mut outline, |s| s.pnc.fit = Some(fit(m)));
+    let p = build_job_simple(&input(pic)).unwrap();
+    let o = build_job_simple(&input(outline)).unwrap();
+    // The outline lands where the alignment says; the picture burns inside the same place.
+    near(p.bounds, o.bounds, 1.0);
+    assert!(p.bounds.x0 > 30.0, "the picture stayed where it was drawn: {:?}", p.bounds);
+}
+
+#[test]
+fn rotary_stretches_pictures_like_the_outlines() {
+    let (mut pic, mut outline) = picture_and_outline();
+    with_vision(&mut pic, |s| s.rotary.enabled = true);
+    with_vision(&mut outline, |s| s.rotary.enabled = true);
+    let p = build_job_simple(&input(pic)).unwrap();
+    let o = build_job_simple(&input(outline)).unwrap();
+    assert!(o.bounds.height() > 50.0, "the rotary maps Y to axis units: {:?}", o.bounds);
+    near(p.bounds, o.bounds, 1.0);
+}
+
+#[test]
+fn cylinder_correction_refuses_pictures_it_cannot_bend() {
+    let (mut pic, mut outline) = picture_and_outline();
+    with_vision(&mut pic, |s| s.cylinder.enabled = true);
+    with_vision(&mut outline, |s| s.cylinder.enabled = true);
+    assert_eq!(build_job_simple(&input(pic)).unwrap_err(), BuildError::PictureNotMapped);
+    assert!(build_job_simple(&input(outline)).is_ok(), "outlines are still bent");
+}
+
+/// A 40 mm outline with a 10 mm hole in the middle, cut with a 0.5 mm kerf; returns the hole.
+fn hole_doc() -> (Document, darkburn_core::ShapeId) {
+    let mut d = Document::new();
+    let s = d.layer_mut(0).main_mut();
+    s.mode = Mode::Line;
+    s.speed = 20.0;
+    s.max_power = 50.0;
+    s.kerf = 0.5;
+    sq(&mut d, 0, 10.0, 10.0, 40.0);
+    let hole = d.add(darkburn_core::Shape::rect(Rect::new(25.0, 25.0, 35.0, 35.0), 0.0, 0));
+    (d, hole)
+}
+
+#[test]
+fn a_selected_hole_is_still_a_hole_when_its_outline_is_not_selected() {
+    let (d, hole) = hole_doc();
+    let mut i = input(d);
+    i.settings.cut_selected = true;
+    i.selection = vec![hole];
+    let b = build_job_simple(&i).unwrap();
+    // A hole shrinks by the kerf; an outside would grow to (24.5, 24.5) to (35.5, 35.5).
+    near(b.bounds, Rect::new(25.5, 25.5, 34.5, 34.5), 0.05);
+}
+
+#[test]
+fn a_selected_outline_is_offset_alone() {
+    // The unselected hole is not cut, and the selected outline still grows as an outside.
+    let (d, hole) = hole_doc();
+    let outer = d.iter().map(|s| s.id).find(|id| *id != hole).unwrap();
+    let mut i = input(d);
+    i.settings.cut_selected = true;
+    i.selection = vec![outer];
+    let b = build_job_simple(&i).unwrap();
+    near(b.bounds, Rect::new(9.5, 9.5, 50.5, 50.5), 0.05);
+    assert!(b.toolpath.ops.iter().any(|o| matches!(o, darkburn_job::Op::Cut { .. })));
+}

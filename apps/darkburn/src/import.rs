@@ -440,7 +440,10 @@ impl SvgReader<'_> {
 /// Read an SVG document. Coordinates are mm with the SVG's top-left at the work area's
 /// top-left (not yet placed).
 pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
-    let dpi = if opts.svg_dpi.is_finite() && opts.svg_dpi > 0.0 { opts.svg_dpi } else { 96.0 };
+    let mut dpi = if opts.svg_dpi.is_finite() && opts.svg_dpi > 0.0 { opts.svg_dpi } else { 96.0 };
+    if old_inkscape_px(data) {
+        dpi = 90.0;
+    }
     let mut o = usvg::Options { dpi, ..Default::default() };
     if memchr_text(data) {
         o.fontdb = fonts();
@@ -451,6 +454,86 @@ pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
     let mut reader = SvgReader { opts, out: Imported::default() };
     reader.group(tree.root(), to_mm * affine(tree.root().transform()), None);
     Ok(reader.out)
+}
+
+/// Inkscape before 0.92 used 90 user units per inch. True when the root `<svg>` says it was saved
+/// by such a version and its width and height are bare numbers or px (no physical units), so
+/// its pixels are read at 90 per inch.
+fn old_inkscape_px(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(64 * 1024)];
+    let Ok(text) = std::str::from_utf8(head).or_else(|e| std::str::from_utf8(&head[..e.valid_up_to()])) else {
+        return false;
+    };
+    let Some(tag) = root_svg_tag(text) else { return false };
+    let Some(version) = attr(tag, "inkscape:version") else { return false };
+    if !inkscape_before_092(version) {
+        return false;
+    }
+    let px = |v: Option<&str>| match v {
+        None => true,
+        Some(v) => {
+            let v = v.trim();
+            let n = v.strip_suffix("px").unwrap_or(v).trim();
+            !n.is_empty() && n.parse::<f64>().is_ok_and(f64::is_finite)
+        }
+    };
+    px(attr(tag, "width")) && px(attr(tag, "height"))
+}
+
+/// The start tag of the root `<svg` element (without the `<svg` and the closing `>`).
+fn root_svg_tag(text: &str) -> Option<&str> {
+    let mut rest = text;
+    loop {
+        let at = rest.find('<')?;
+        rest = &rest[at..];
+        if let Some(r) = rest.strip_prefix("<!--") {
+            rest = &r[r.find("-->")? + 3..];
+        } else if rest.starts_with("<?") || rest.starts_with("<!") {
+            rest = &rest[rest.find('>')? + 1..];
+        } else {
+            let name_end = rest[1..].find(|c: char| c.is_whitespace() || c == '>' || c == '/')? + 1;
+            let name = &rest[1..name_end];
+            if name != "svg" && !name.ends_with(":svg") {
+                return None;
+            }
+            let body = &rest[name_end..];
+            return Some(&body[..body.find('>')?]);
+        }
+    }
+}
+
+/// The value of attribute `name` in a start tag.
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let mut from = 0;
+    while let Some(i) = tag[from..].find(name) {
+        let start = from + i;
+        from = start + name.len();
+        let before_ok = tag[..start].ends_with(|c: char| c.is_whitespace());
+        let after = tag[from..].trim_start();
+        if !before_ok || !after.starts_with('=') {
+            continue;
+        }
+        let after = after[1..].trim_start();
+        let q = after.chars().next()?;
+        if q != '"' && q != '\'' {
+            continue;
+        }
+        let v = &after[1..];
+        return Some(&v[..v.find(q)?]);
+    }
+    None
+}
+
+/// An `inkscape:version` such as "0.91 r13725" or "0.48.4 r9939" is older than 0.92.
+fn inkscape_before_092(version: &str) -> bool {
+    let token = version.trim().split(|c: char| !(c.is_ascii_digit() || c == '.')).next().unwrap_or("");
+    let mut parts = token.split('.');
+    let (Some(Ok(major)), Some(Ok(minor))) =
+        (parts.next().map(str::parse::<u32>), parts.next().map(str::parse::<u32>))
+    else {
+        return false;
+    };
+    major == 0 && minor < 92
 }
 
 /// The document has a `<text` element (fonts are loaded only then).
@@ -688,6 +771,34 @@ mod tests {
             let w = svg(mm, &Options { svg_dpi: dpi, ..opts() }).unwrap().bbox().unwrap().width();
             assert!((w - 50.0).abs() < 1e-4, "{dpi}: {w}");
         }
+    }
+
+    #[test]
+    fn old_inkscape_pixels_are_90_per_inch() {
+        let old = br#"<?xml version="1.0"?>
+<!-- Created with Inkscape -->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   width="90" height="90" inkscape:version="0.91 r13725"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(old, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // px suffix and an older 0.48 version count too.
+        let px = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="90px" height="90px" inkscape:version="0.48.4 r9939"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(px, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // The same file without inkscape:version stays at the 96 per inch setting.
+        let plain = br#"<svg xmlns="http://www.w3.org/2000/svg" width="90" height="90"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(plain, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
+        // A newer Inkscape is unchanged.
+        let new = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="90" height="90" inkscape:version="0.92.4 (5da689c313, 2019-01-14)"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(new, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
+        // Physical units in an old file are unchanged.
+        let mm = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100" inkscape:version="0.91 r13725"><path d="M0 0 L100 0" stroke="black"/></svg>"#;
+        let w = svg(mm, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 100.0).abs() < 1e-4, "{w}");
+        assert!(inkscape_before_092("0.91 r13725") && inkscape_before_092("0.48.4 r9939"));
+        assert!(!inkscape_before_092("0.92.3") && !inkscape_before_092("1.3.2 (091e20e, 2023-11-25)") && !inkscape_before_092(""));
     }
 
     #[test]

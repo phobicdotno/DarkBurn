@@ -1,0 +1,1 @@
+- Old Inkscape drawings now come in at the right size

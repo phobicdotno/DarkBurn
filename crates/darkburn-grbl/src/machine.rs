@@ -37,7 +37,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -646,6 +646,9 @@ pub struct GrblMachine {
     /// Set when `disconnect` stops waiting: the worker then resets the controller and lets the
     /// link go at once.
     give_up: Arc<AtomicBool>,
+    /// Starts and stops sent that the worker has not taken and published yet: until it has, the
+    /// snapshot is older than them and shows the machine busy, never ready.
+    pending: Arc<AtomicUsize>,
 }
 
 impl GrblMachine {
@@ -666,8 +669,10 @@ impl GrblMachine {
         let give_up = Arc::new(AtomicBool::new(false));
         let mut worker = Worker::new(transport, cmd_rx, ev_tx, shared.clone(), opts.clone(), snap);
         worker.give_up = give_up.clone();
+        let pending = Arc::new(AtomicUsize::new(0));
+        worker.pending = pending.clone();
         let handle = std::thread::Builder::new().name("darkburn-grbl".into()).spawn(move || worker.run()).expect("spawn GRBL worker thread");
-        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle), give_up }
+        Self { cmds: cmd_tx, events: ev_rx, shared, opts, worker: Some(handle), give_up, pending }
     }
 
     /// Everything that happened since the last call. Never blocks.
@@ -681,7 +686,11 @@ impl GrblMachine {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        self.shared.lock().unwrap_or_else(|p| p.into_inner()).clone()
+        let mut s = self.shared.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if self.pending.load(Ordering::SeqCst) > 0 && s.activity == Activity::Idle {
+            s.activity = Activity::Stopping;
+        }
+        s
     }
 
     pub fn status(&self) -> MachineStatus {
@@ -737,7 +746,16 @@ impl GrblMachine {
     }
 
     fn send(&self, cmd: Cmd) -> Result<(), GrblError> {
-        self.cmds.send(cmd).map_err(|_| GrblError::NotConnected)
+        let counted = matches!(cmd, Cmd::StartJob(..) | Cmd::Stop);
+        if counted {
+            self.pending.fetch_add(1, Ordering::SeqCst);
+        }
+        self.cmds.send(cmd).map_err(|_| {
+            if counted {
+                self.pending.fetch_sub(1, Ordering::SeqCst);
+            }
+            GrblError::NotConnected
+        })
     }
 
     fn ready(&self) -> Result<Snapshot, GrblError> {
@@ -1351,6 +1369,8 @@ struct Worker {
     outbox: RefCell<Vec<Event>>,
     detector: crate::detect::LaserDetector,
     give_up: Arc<AtomicBool>,
+    /// See [`GrblMachine::pending`].
+    pending: Arc<AtomicUsize>,
 }
 
 impl Worker {
@@ -1391,6 +1411,7 @@ impl Worker {
             outbox: RefCell::new(Vec::new()),
             detector: crate::detect::LaserDetector::default(),
             give_up: Arc::new(AtomicBool::new(false)),
+            pending: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -1440,6 +1461,7 @@ impl Worker {
         }
         loop {
             let mut exit = false;
+            let mut taken = 0;
             loop {
                 match self.cmds.try_recv() {
                     Ok(Cmd::Disconnect) | Err(TryRecvError::Disconnected) => {
@@ -1447,7 +1469,16 @@ impl Worker {
                         break;
                     }
                     Ok(cmd) => {
-                        if let Err(e) = self.command(cmd) {
+                        if matches!(cmd, Cmd::StartJob(..) | Cmd::Stop) {
+                            taken += 1;
+                        }
+                        let r = self.command(cmd);
+                        if taken > 0 {
+                            self.publish();
+                            self.pending.fetch_sub(taken, Ordering::SeqCst);
+                            taken = 0;
+                        }
+                        if let Err(e) = r {
                             self.lost(e);
                             return;
                         }
@@ -2352,6 +2383,11 @@ impl Worker {
                     }
                     if after_hold && !r.state.is_moving() && still {
                         self.stop_reset()?;
+                    } else if after_hold && matches!(r.state, MachineState::Run(_) | MachineState::Jog) {
+                        // The feed hold reached a controller that was idle with the job's first
+                        // lines still unparsed in its buffer: GRBL ignores a hold in Idle, and
+                        // those lines then run. Hold again; the reset follows once it stands.
+                        self.write(&[rt::FEED_HOLD])?;
                     }
                 }
                 StopPhase::AwaitStatus => {

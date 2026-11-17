@@ -1815,6 +1815,84 @@ mod tests {
     }
 
     #[test]
+    fn far_too_many_pieces_counts_zero_passes_every_setting_every_pass_and_the_kerf() {
+        // The estimate follows what the generator makes: a setting at 0 passes still cuts once,
+        // each splitting setting and each pass make their own pieces, and a kerf cuts a longer
+        // outline. Each layer below is left out, with a small square on layer 0 kept.
+        let left_out = |d: Document, why: &str| {
+            let mut d = d;
+            d.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+            let b = build_job_simple(&input(d)).unwrap();
+            assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation")), "{why}: {:?}", b.warnings);
+            assert!(b.toolpath.ops.len() < 100, "{why}: only the small square is cut ({} operations)", b.toolpath.ops.len());
+        };
+        let perforated = |d: &mut Document, passes: u32| {
+            let s = d.layer_mut(2).main_mut();
+            s.mode = Mode::Line;
+            s.perforation = true;
+            s.perf_cut = 0.5;
+            s.perf_skip = 0.5;
+            s.passes = passes;
+        };
+        // Dots at 0 passes on a huge outline.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.1;
+        s.passes = 0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+        left_out(d, "zero passes");
+        // 120 000 mm of outline at a 1 mm step is 120 000 pieces a pass: 50 passes are 6 million.
+        let big = || Shape::rect(Rect::new(0.0, 0.0, 30_000.0, 30_000.0), 0.0, 2);
+        let mut d = Document::new();
+        perforated(&mut d, 50);
+        d.add(big());
+        left_out(d, "many passes");
+        // Two settings of 25 passes each: 3 million pieces apiece, 6 million together.
+        let mut d = Document::new();
+        perforated(&mut d, 25);
+        let second = d.layer(2).main().clone();
+        d.layer_mut(2).settings.push(second);
+        d.add(big());
+        left_out(d, "two settings");
+        // A 20 mm square with a 10 m kerf: 8000 dots as drawn, about 6.3 million cut.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 10_000.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 20.0, 20.0), 0.0, 2));
+        left_out(d, "big kerf");
+    }
+
+    #[test]
+    fn far_too_big_alone_gives_the_reason_not_just_nothing_to_burn() {
+        // A document whose only shapes are left out for their size says why.
+        let mut dots = Document::new();
+        let s = dots.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.1;
+        dots.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+        let mut fill = Document::new();
+        fill.layer_mut(2).main_mut().mode = Mode::Fill;
+        fill.layer_mut(2).main_mut().interval = 0.1;
+        fill.add(Shape::rect(Rect::new(0.0, 0.0, 6e7, 6e7), 0.0, 2));
+        for (d, what) in [(dots, "dots or perforation"), (fill, "scan lines")] {
+            let job = build_job_simple(&input(d.clone())).unwrap_err();
+            let BuildError::TooBig(reasons) = &job else { panic!("{what}: {job:?}") };
+            assert!(reasons.len() == 1 && reasons[0].contains(what), "{reasons:?}");
+            assert!(job.to_string().contains(what) && job.to_string().contains("nothing left to burn"), "{job}");
+            let frame = build_frame(&input(d), FrameKind::Rectangle, 10.0, None).unwrap_err();
+            assert_eq!(frame, job, "the frame says the same");
+        }
+        // An ordinarily empty document stays a plain "nothing to burn".
+        assert_eq!(build_job_simple(&input(Document::new())).unwrap_err(), BuildError::NothingToBurn);
+    }
+
+    #[test]
     fn kerf_grows_closed_shapes() {
         let mut d = square_doc();
         d.layer_mut(0).main_mut().kerf = 1.0;

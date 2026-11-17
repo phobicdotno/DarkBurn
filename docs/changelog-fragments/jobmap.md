@@ -1,0 +1,3 @@
+- Pictures now follow print and cut and the rotary set-up, just like the outlines in the same job
+- A job with pictures is stopped with a clear message when cylinder correction is on, instead of burning them in the wrong place
+- With "Cut selected graphics", a selected hole inside an unselected shape is now cut as a hole

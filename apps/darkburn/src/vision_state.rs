@@ -3,7 +3,7 @@
 //! (`Document::vision_settings`), so it is saved, undone and loaded with the project.
 
 use darkburn_core::Document;
-use darkburn_core::kurbo::{BezPath, Point};
+use darkburn_core::kurbo::{Affine, BezPath, Point};
 use darkburn_vision::camera::CaptureSettings;
 use darkburn_vision::cylinder::{CylinderAxis, CylinderCorrection, CylinderKind};
 use darkburn_vision::printcut::{PnCFit, PnCMode, PnCWizard};
@@ -240,6 +240,24 @@ impl JobMap {
             p = f.apply_point(p);
         }
         p
+    }
+
+    /// The mapping as one affine transform, for pictures (which can only be moved, turned,
+    /// scaled and skewed). None when cylinder correction is on: it bends, which no affine does.
+    pub fn affine(&self) -> Option<Affine> {
+        if self.cylinder.is_some() {
+            return None;
+        }
+        let mut m = Affine::IDENTITY;
+        if let Some(r) = &self.rotary
+            && let Ok(a) = r.axis_affine()
+        {
+            m = a * m;
+        }
+        if let Some(f) = &self.fit {
+            m = f.affine * m;
+        }
+        Some(m)
     }
 
     fn warn(&self, w: String) {

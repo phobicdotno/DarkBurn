@@ -192,6 +192,7 @@ mod tests {
         ("machine_ui.rs", include_str!("machine_ui.rs")),
         ("shape_ui.rs", include_str!("shape_ui.rs")),
         ("shape_ops.rs", include_str!("shape_ops.rs")),
+        ("job_build.rs", include_str!("job_build.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,
@@ -275,6 +276,22 @@ mod tests {
         }
         let nb = lookup(tables().get("nb"), "shapes.deform_one_line", "the grid points lie on one line: nothing was deformed");
         assert_eq!(nb, "Figuren ligger på én linje: ingenting ble deformert.");
+    }
+
+    /// The job build errors are found in job_build.rs and shown in the user's language; the
+    /// tests keep English.
+    #[test]
+    fn job_build_errors_are_translated() {
+        use crate::job_build::BuildError;
+        let en = english();
+        for k in ["cancelled", "nothing_to_burn", "nothing_selected", "no_user_origin", "not_a_number", "picture"] {
+            assert!(en.contains_key(&format!("job.error_{k}")), "job.error_{k}");
+        }
+        assert_eq!(BuildError::NothingToBurn.to_string(), "there is nothing to burn: no shapes on layers that output");
+        set_language("nb");
+        let want = "sylinderkorrigering kan ikke bøye bilder: slå den av, eller brenn bildene i en egen jobb";
+        assert_eq!(BuildError::PictureNotMapped.to_string(), want);
+        set_language("en");
     }
 
     #[test]

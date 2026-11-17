@@ -375,12 +375,7 @@ pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Po
     let outlines: Vec<BezPath> = leaves.iter().map(|(_, l)| l.outline()).collect();
     let mut placed: Vec<Vec<Point>> = leaves.iter().map(|(_, l)| l.tabs.iter().map(|t| l.transform * Point::new(t[0], t[1])).collect()).collect();
     for p in extra {
-        let near = outlines
-            .iter()
-            .enumerate()
-            .filter_map(|(k, o)| query::nearest_point(o, *p).map(|h| (k, h.distance)))
-            .min_by(|a, b| a.1.total_cmp(&b.1));
-        if let Some((k, _)) = near {
+        if let Some(k) = nearest_path(&outlines, *p) {
             placed[k].push(*p);
         }
     }
@@ -392,12 +387,7 @@ pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Po
         let subs = gpath::subpaths(outline);
         let mut per_sub: Vec<Vec<Point>> = vec![Vec::new(); subs.len()];
         for t in tabs {
-            let near = subs
-                .iter()
-                .enumerate()
-                .filter_map(|(k, sp)| query::nearest_point(sp, *t).map(|h| (k, h.distance)))
-                .min_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((k, _)) = near {
+            if let Some(k) = nearest_path(&subs, *t) {
                 per_sub[k].push(*t);
             }
         }
@@ -415,6 +405,16 @@ pub fn manual_tab_marks(doc: &Document, id: ShapeId, extra: &[Point]) -> Vec<(Po
         }
     }
     out
+}
+
+/// Which of `paths` passes nearest to `p`.
+fn nearest_path(paths: &[BezPath], p: Point) -> Option<usize> {
+    paths
+        .iter()
+        .enumerate()
+        .filter_map(|(k, o)| query::nearest_point(o, p).map(|h| (k, h.distance)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(k, _)| k)
 }
 
 /// The closed outlines that make a shape of `layer` an inner shape when it lies inside one: the

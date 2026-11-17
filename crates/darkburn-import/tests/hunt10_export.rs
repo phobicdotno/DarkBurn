@@ -44,6 +44,19 @@ fn ai_export_of_huge_or_infinite_coordinates_writes_no_inf() {
     }
 }
 
+#[test]
+fn ai_export_clamps_huge_coordinates_and_says_so() {
+    // fmt_num printed 1e300 in full: a 300-digit number in the file.
+    let items = vec![Item::path(line(0.0, 0.0, 1e300, 1e300), Some(Rgb(255, 0, 0)), None)];
+    let ai = ai_export::export(&items, &ai_export::AiExportOptions::default());
+    assert!(ai.warnings.iter().any(|w| w.contains("clamped")), "{:?}", ai.warnings);
+    let longest = ai.bytes.split(|b| !b.is_ascii_digit()).map(<[u8]>::len).max().unwrap_or(0);
+    assert!(longest <= 15, "a {longest}-digit number was written");
+    let svg = svg_export::export(&items, &Default::default());
+    let longest = svg.split(|c: char| !c.is_ascii_digit()).map(str::len).max().unwrap_or(0);
+    assert!(longest <= 15, "the SVG has a {longest}-digit number");
+}
+
 fn text_item(text: &str) -> Item {
     Item::new(ItemKind::Text(TextItem {
         text: text.into(),

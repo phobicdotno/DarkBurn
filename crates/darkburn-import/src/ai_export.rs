@@ -76,9 +76,11 @@ fn path_ops(path: &BezPath, s: &mut String) {
     }
 }
 
-/// A PDF real; PDF has no spelling for NaN or the infinities.
+/// A PDF real; PDF has no spelling for NaN or the infinities, and huge values are clamped like
+/// every other exported number.
 fn real(v: f64) -> Object {
-    Object::Real(if v.is_nan() { 0.0 } else { v.clamp(f64::from(f32::MIN), f64::from(f32::MAX)) as f32 })
+    let m = crate::geom::MAX_EXPORT_NUM;
+    Object::Real(if v.is_nan() { 0.0 } else { v.clamp(-m, m) as f32 })
 }
 
 fn rgb_op(c: Rgb, op: &str) -> String {
@@ -125,6 +127,9 @@ pub fn export(items: &[Item], opts: &AiExportOptions) -> PdfExport {
     let visible: Vec<&Item> = items.iter().filter(|i| !i.hidden).collect();
     let b = bounds_of(visible.iter().copied()).unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0)).inflate(opts.margin, opts.margin);
     let b = if b.width() <= 0.0 || b.height() <= 0.0 { Rect::new(b.x0, b.y0, b.x0 + 1.0, b.y0 + 1.0) } else { b };
+    if [b.x0, b.y0, b.x1, b.y1].iter().any(|v| v.abs() * MM_TO_PT > crate::geom::MAX_EXPORT_NUM) {
+        warnings.push("Some shapes are too far away or too large to write; their coordinates were clamped".into());
+    }
     let to_pt = Affine::scale(MM_TO_PT) * Affine::translate((-b.x0, -b.y0));
     let (w, h) = (b.width() * MM_TO_PT, b.height() * MM_TO_PT);
 

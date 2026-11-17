@@ -302,6 +302,9 @@ fn qr_content(a: &Value, current: Option<&QrContent>) -> Result<Option<QrContent
 
 /// The largest module (one square or the narrowest bar) of a QR code or barcode, in mm.
 const MAX_CODE_MODULE_MM: f64 = 1_000.0;
+/// The most characters a barcode's data may have: the biggest QR code holds 4296, and no 1D code
+/// or Data Matrix holds more, so anything longer is refused before the generator sees it.
+const MAX_BARCODE_CHARS: usize = 4296;
 /// The largest QR code side or barcode height, in mm.
 const MAX_CODE_SIZE_MM: f64 = 100_000.0;
 
@@ -354,6 +357,10 @@ fn apply_barcode_args(c: &mut CodeShape, a: &Value) -> Result<(), String> {
         b.kind = barcode_kind(k)?;
     }
     if let Some(d) = word(a, "data") {
+        let n = d.chars().count();
+        if n > MAX_BARCODE_CHARS {
+            return Err(format!("barcode data is {n} characters; at most {MAX_BARCODE_CHARS} fit in any barcode"));
+        }
         b.data = d.to_string();
     }
     if let Some(m) = num(a, "module") {

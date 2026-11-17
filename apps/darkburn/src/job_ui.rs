@@ -513,7 +513,8 @@ fn draw_preview(ui: &mut Ui, app: &mut DarkBurn, rect: Rect, response: &egui::Re
     let n = data.started(p.t);
     let mut shapes: Vec<EShape> = Vec::with_capacity(n.min(200_000));
     let width = (0.18 * zoom).clamp(1.0, 4.0);
-    for (i, s) in data.segs[..n].iter().enumerate() {
+    // Travel first so burns end up on top, as in the saved picture (`preview::render_png`).
+    for (i, s) in crate::preview::paint_order(&data.segs[..n]) {
         let Some(c) = view.colour_of(s) else { continue };
         let (a, mut b) = (to_screen(s.a), to_screen(s.b));
         if i + 1 == n && s.dur > 0.0 {

@@ -1,2 +1,0 @@
-- Hidden layers no longer burn
-- Projects on an unplugged drive stay in Recent

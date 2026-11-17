@@ -1,1 +1,0 @@
-- Big crafted LightBurn and PDF files no longer eat all the memory

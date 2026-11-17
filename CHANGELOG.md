@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.0.785 (build 12)
+- New: Gweike network test with a live ping graph
+- New: the head goes back to its starting height after a job with Z steps
+- Fix: head calibration won't start while the FTC reports an error
+- Fix: hidden layers no longer burn
+- Fix: projects on an unplugged drive stay in Recent
+- Fix: power scale works the same on images as on lines
+- Fix: big crafted LightBurn and PDF files no longer eat all the memory
+
 ## v0.0.778 (build 11)
 - Fix: the Gweike window and the update link now speak every language, not just English and Norwegian
 - Fix: Gweike job data now uses the same layout as the laser's own software (not used for real jobs yet)

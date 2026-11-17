@@ -831,7 +831,11 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     } else {
         tops.iter()
             .flat_map(|t| t.leaves())
-            .filter(|l| doc.layer(l.layer.min(layer::LAYER_COUNT - 1)).outputs())
+            .filter(|l| {
+                // A fill layer left out for its size is not part of the job and does not move it.
+                let li = l.layer.min(layer::LAYER_COUNT - 1);
+                doc.layer(li).outputs() && !(fill_too_big[li] && !l.is_image())
+            })
             .map(|l| placed(&l))
             .reduce(|a, b| a.union(b))
             .map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b))

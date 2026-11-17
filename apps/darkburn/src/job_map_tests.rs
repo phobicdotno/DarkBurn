@@ -223,3 +223,28 @@ fn shapes_outside_the_work_area_are_measured_where_the_start_mode_puts_them() {
     i.settings.start_from = StartMode::Absolute;
     assert_eq!(build_job_simple(&i).unwrap_err(), BuildError::NothingToBurn);
 }
+
+#[test]
+fn a_fill_left_out_for_its_size_does_not_move_the_placement() {
+    // A fill 10 metres wide at 0.001 mm a line is left out. Counted in the placement it moved
+    // the job 10 m right of the user origin, and the square that does burn was dropped.
+    let mut d = line_doc();
+    {
+        let s = d.layer_mut(1).main_mut();
+        s.mode = Mode::Fill;
+        s.interval = 0.001;
+        s.speed = 100.0;
+        s.max_power = 20.0;
+    }
+    d.add(darkburn_core::Shape::rect(Rect::new(-10000.0, 0.0, 0.0, 10.0), 0.0, 1));
+    d.add(darkburn_core::Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+    let mut i = input(d);
+    i.settings.discard_out_of_bounds = true;
+    i.settings.start_from = StartMode::UserOrigin;
+    i.user_origin = Some(Point::new(0.0, 0.0));
+    let b = build_job_simple(&i).unwrap();
+    assert_eq!(b.dropped_shapes, 0);
+    assert!(b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
+    let min = machine_min(&b);
+    assert!(min.x.abs() < 1e-6 && min.y.abs() < 1e-6, "the job starts at {min:?}, not at the user origin");
+}

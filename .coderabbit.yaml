@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit review settings for DarkBurn.
+language: en-GB
+tone_instructions: "Plain, short and matter-of-fact. Point at the line and say what breaks; skip praise and filler."
+reviews:
+  profile: chill
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!**/*.lock"
+    - "!docs/changelog-fragments/**"
+    - "!docs/img/**"
+    - "!**/*.png"
+    - "!**/*.svg"
+  path_instructions:
+    - path: "crates/darkburn-{grbl,mcc,galvo,ruida,gcodebots,lihuiyu,pendant}/**"
+      instructions: |
+        Machine drivers for real lasers (GRBL, the Gweike MCC card, BJJCZ galvo boards, Ruida, the K40 Lihuiyu board, Marlin-style
+        line machines). Safety comes first:
+        - Stop, emergency stop and pause must always win: nothing from a job may reach the controller after
+          a stop's reset, and a start still on its way must be dropped.
+        - The laser must be off (M5 / fire off) after every stop, error, disconnect and job end.
+        - No motion or firing may be sent while the machine is busy, alarmed or the door is open, unless it
+          is a stop.
+        - Watch for races between the worker thread and the shared snapshot, lost or reordered answers,
+          and timeouts that silently give up.
+        Flag any change that could fire the laser or move the head where the old code would not.
+    - path: "crates/darkburn-mcp/**"
+      instructions: |
+        MCP / control server that AI agents use to drive the app. Check that every command goes through
+        the gate (hardware commands refused unless machine control is allowed, only stop/pause allowed on
+        a real machine), that requests are validated (id, jsonrpc, sizes) and that nothing writes files
+        outside what the agent limits allow.
+    - path: "crates/darkburn-import/**"
+      instructions: |
+        Importers read untrusted files (SVG, DXF, PDF, LightBurn, HPGL, AI). Look for unbounded memory or
+        time (point counts, image sizes, recursion depth), panics on bad input, and numbers that are not
+        finite.
+    - path: "apps/darkburn/**"
+      instructions: |
+        The egui app. Every user-facing string needs a key in every assets/locales/*.json file with real
+        Norwegian text in nb. Commands must behave the same from the UI, keyboard and MCP.
+    - path: "**/*.rs"
+      instructions: |
+        The workspace builds with `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt`;
+        don't repeat what those catch. Prefer refusing bad input with an error over panicking.
+    - path: "CHANGELOG.md"
+      instructions: |
+        User-facing, short and casual lines starting with "New:" or "Fix:". No technical details and no
+        hype words (massive, huge, major, big).
+  tools:
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: false
+chat:
+  auto_reply: true

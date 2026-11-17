@@ -20,7 +20,7 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
     }
-    if let Some(e) = lock_refusal(app, id) {
+    if let Some(e) = lock_refusal(app, id).or_else(|| turn_refusal(app, id, args)) {
         return Err(e);
     }
     if let Some(result) = crate::laser_position::api(app, id, args) {
@@ -96,12 +96,26 @@ pub fn lock_of(id: &str) -> Option<usize> {
 /// Why `id` is refused under a status-bar lock, or `None` when it may run.
 pub fn lock_refusal(app: &DarkBurn, id: &str) -> Option<String> {
     let k = lock_of(id).filter(|k| app.locks[*k])?;
+    Some(refusal(id, k))
+}
+
+/// Nesting may turn the parts (and `arrange.nest` may mirror them), so under the rotate lock it
+/// is refused unless its arguments ask for neither (owner, Q082).
+fn turn_refusal(app: &DarkBurn, id: &str, args: &Value) -> Option<String> {
+    let nests = matches!(id, "arrange.nest" | "arrange.quick_nest" | "arrange.true_nest");
+    let step = args.get("rotation_step").and_then(Value::as_f64).unwrap_or(90.0);
+    let turns = !(0.0..1e-6).contains(&step) && step < 360.0;
+    let mirrors = args.get("allow_mirror").and_then(Value::as_bool).unwrap_or(false);
+    (nests && app.locks[2] && (turns || mirrors)).then(|| refusal(id, 2))
+}
+
+fn refusal(id: &str, k: usize) -> String {
     let lock = match k {
         0 => tr("lock.move", "move"),
         1 => tr("lock.size", "size"),
         _ => tr("lock.rotate", "rotate"),
     };
-    Some(tr("lock.refused", "{id} was refused: the {lock} lock is on (status bar). Turn it off first.").replace("{id}", id).replace("{lock}", &lock))
+    tr("lock.refused", "{id} was refused: the {lock} lock is on (status bar). Turn it off first.").replace("{id}", id).replace("{lock}", &lock)
 }
 
 /// [`execute`] with no window: viewport commands (exit) have no effect.

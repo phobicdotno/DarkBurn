@@ -936,6 +936,16 @@ fn the_status_bar_locks_stop_the_commands() {
     for (_, id, args) in cases {
         run(&mut a, id, args).unwrap_or_else(|e| panic!("{id} with no lock: {e}"));
     }
+    // Nesting turns the parts unless told not to, so the rotate lock stops it too.
+    a.locks[2] = true;
+    let e = run(&mut a, "arrange.quick_nest", json!({ "rotation_step": 90 })).unwrap_err();
+    assert!(e.contains("lock is on"), "{e}");
+    let e = run(&mut a, "arrange.quick_nest", json!({})).unwrap_err();
+    assert!(e.contains("lock is on"), "{e}");
+    if let Err(e) = run(&mut a, "arrange.quick_nest", json!({ "rotation_step": 0 })) {
+        assert!(!e.contains("lock is on"), "{e}");
+    }
+    a.locks = [false; 4];
     use crate::numeric_edits::{NumEdit, lock_of};
     assert_eq!(lock_of(NumEdit::X(1.0)), Some(0));
     assert_eq!(lock_of(NumEdit::H(1.0)), Some(1));

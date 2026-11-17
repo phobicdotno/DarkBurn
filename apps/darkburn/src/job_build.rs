@@ -445,10 +445,9 @@ fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64)> {
         .collect()
 }
 
-/// The (English) reason a layer's shapes were left out for their size, in the active language.
-fn too_big_warning(key: &str, english: &str, li: usize, amount: f64, limit: f64) -> String {
-    tr(key, english)
-        .replace("{layer}", &layer::layer_label(li))
+/// The reason a layer's shapes were left out for their size, from its translated `text`.
+fn too_big_warning(text: String, li: usize, amount: f64, limit: f64) -> String {
+    text.replace("{layer}", &layer::layer_label(li))
         .replace("{amount}", &format!("{:.0}", amount / 1e6))
         .replace("{limit}", &format!("{:.0}", limit / 1e6))
 }
@@ -915,10 +914,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             let drawn = darkburn_geom::path::length(&outline);
             let subpaths = outline.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count() as f64;
             let estimate = |len: f64, stretch: f64| -> f64 {
-                splits
-                    .iter()
-                    .map(|(step, passes, kerf)| (len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths) / step * passes)
-                    .sum()
+                splits.iter().map(|(step, passes, kerf)| (len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths) / step * passes).sum()
             };
             let mut here = estimate(drawn, 1.0);
             // A mapped outline is only measured while the drawn one is within the limit (an
@@ -940,8 +936,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         if pieces[li].is_nan() || pieces[li] > MAX_LINE_PIECES {
             too_big[li] = true;
             size_warnings.push(too_big_warning(
-                "job.warn_too_many_pieces",
-                "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
+                tr(
+                    "job.warn_too_many_pieces",
+                    "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
+                ),
                 li,
                 pieces[li],
                 MAX_LINE_PIECES,
@@ -958,8 +956,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         if rows.is_nan() || rows > MAX_FILL_ROWS {
             too_big[li] = true;
             size_warnings.push(too_big_warning(
-                "job.warn_too_many_rows",
-                "The shapes on layer {layer} were left out: the fill would be {amount} million scan lines (the limit is {limit} million). Check their size.",
+                tr(
+                    "job.warn_too_many_rows",
+                    "The shapes on layer {layer} were left out: the fill would be {amount} million scan lines (the limit is {limit} million). Check their size.",
+                ),
                 li,
                 rows,
                 MAX_FILL_ROWS,

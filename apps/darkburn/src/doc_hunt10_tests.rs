@@ -1166,3 +1166,28 @@ fn deform_far_from_the_origin_is_not_refused_as_a_line() {
     let res = run(&mut a, "tools.deform", json!({ "grid": grid }));
     assert!(res.is_ok(), "{res:?}");
 }
+
+/// The Save, Undo and Redo icons beside the menus are buttons: Undo and Redo step through the
+/// history when clicked and are dim (and do nothing) only when there is nothing to step to.
+#[test]
+fn the_undo_and_redo_icons_of_the_application_bar_work() {
+    let mut g = Gui::standard();
+    g.settle();
+    assert!(g.app().can_run("file.save"), "Save is always there");
+    assert!(g.rect_of("appbar:save").is_some(), "the Save icon is a button");
+    assert!(!g.app().can_run("edit.undo"));
+    let n = g.app().editor.doc.len();
+    // Nothing to undo: a click does nothing.
+    g.click_id("appbar:undo").frames(2);
+    assert_eq!(g.app().editor.doc.len(), n);
+    g.exec("shape.add_rect", json!({ "x": 20, "y": 20, "width": 30, "height": 20, "layer": 1 }));
+    g.frames(2);
+    assert_eq!(g.app().editor.doc.len(), n + 1);
+    assert!(g.app().can_run("edit.undo"));
+    g.click_id("appbar:undo").frames(2);
+    assert_eq!(g.app().editor.doc.len(), n, "Undo takes the rectangle away");
+    assert!(g.app().can_run("edit.redo"));
+    g.click_id("appbar:redo").frames(2);
+    assert_eq!(g.app().editor.doc.len(), n + 1, "Redo puts it back");
+    assert!(!g.app().can_run("edit.redo"));
+}

@@ -1361,6 +1361,10 @@ struct Worker {
     jog_sent: Option<Instant>,
     /// The spindle stop byte was sent in this pause (it is a toggle: once per hold).
     hold_laser_stopped: bool,
+    /// When Pause sent its feed hold, until the controller is seen in Hold (or Door): a hold
+    /// that reaches an idle controller with the job's lines unread is ignored, and those
+    /// lines then run.
+    pause_unconfirmed: Option<Instant>,
     poll_sent: Option<Instant>,
     last_poll: Instant,
     echo_status: bool,
@@ -1403,6 +1407,7 @@ impl Worker {
             motion_pending: false,
             jog_sent: None,
             hold_laser_stopped: false,
+            pause_unconfirmed: None,
             poll_sent: None,
             last_poll: now,
             echo_status: false,
@@ -1664,9 +1669,11 @@ impl Worker {
                     self.write(&bytes)?;
                     if bytes == [rt::FEED_HOLD] && self.job.is_some() {
                         self.snap.paused = true;
+                        self.pause_unconfirmed = Some(Instant::now());
                     }
                     if bytes == [rt::CYCLE_START] {
                         self.snap.paused = false;
+                        self.pause_unconfirmed = None;
                         self.hold_laser_stopped = false;
                     }
                 }
@@ -2371,6 +2378,19 @@ impl Worker {
         {
             self.write(&[rt::SPINDLE_STOP])?;
             self.hold_laser_stopped = true;
+        }
+        // Pause: a status taken after the hold that still shows the job running means the hold
+        // reached an idle controller and was ignored. Hold again, once per status, until the
+        // controller reports Hold. A Run after that is a resume (Resume here clears the pause,
+        // a resume from the machine's own button must not be fought).
+        if matches!(r.state, MachineState::Hold(_) | MachineState::Door(_)) || !self.snap.paused || self.job.is_none() {
+            self.pause_unconfirmed = None;
+        } else if let Some(since) = self.pause_unconfirmed
+            && self.stop.is_none()
+            && poll_time.is_some_and(|t| t > since)
+            && matches!(r.state, MachineState::Run(_))
+        {
+            self.write(&[rt::FEED_HOLD])?;
         }
         let v11 = self.snap.is_v11();
         let mpos = self.snap.status.mpos;

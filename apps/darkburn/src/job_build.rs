@@ -1061,7 +1061,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     let bounds = job::generate::job_bounds(&job, input.device.tolerance);
     // The engine anchors on what is left. Once shapes are dropped, it anchors on the bounds the
     // test used instead, so the shapes that are kept burn where they passed it.
-    let anchor_bounds = if dropped > 0 && !st.use_selection_origin { place_bounds } else { None };
+    let anchor_bounds = if dropped > 0 && (!st.use_selection_origin || selection_bounds.is_none()) { place_bounds } else { None };
     Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped })
 }
 

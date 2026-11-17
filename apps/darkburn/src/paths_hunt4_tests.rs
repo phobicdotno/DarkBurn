@@ -225,7 +225,7 @@ fn shape_start_point_on_an_overflowing_outline_keeps_the_shape() {
     use crate::shape_ops::tests::{run, select};
     use serde_json::json;
     let mut a = app();
-    let v = run(&mut a, "shape.add_path", json!({ "svg_path": "M-1e308 -1e308 L1e308 1e308 L1e308 -1e308 Z" })).unwrap();
+    let v = run(&mut a, "shape.add_path", json!({ "svg_path": "M0 0 C1e308 1e308 -1e308 1e308 0 5 Z" })).unwrap();
     let id = ShapeId(v["id"].as_u64().unwrap());
     select(&mut a, &[id]);
     for (x, y) in [(1e308, 0.0), (-1e308, -1e308), (0.0, 0.0)] {

@@ -20,7 +20,7 @@ pub fn execute(app: &mut DarkBurn, ctx: &egui::Context, id: &str, args: &Value) 
     if commands::lookup(id).is_none() {
         return Err(format!("unknown command {id}"));
     }
-    if let Some(e) = lock_refusal(app, id).or_else(|| turn_refusal(app, id, args)) {
+    if let Some(e) = refusal_for(app, id, args) {
         return Err(e);
     }
     if let Some(result) = crate::laser_position::api(app, id, args) {
@@ -99,17 +99,29 @@ pub fn lock_refusal(app: &DarkBurn, id: &str) -> Option<String> {
     Some(refusal(id, k))
 }
 
-/// Nesting may turn the parts (and `arrange.nest` may mirror them), so under the rotate lock it
-/// is refused unless its arguments ask for neither (owner, Q082).
-fn turn_refusal(app: &DarkBurn, id: &str, args: &Value) -> Option<String> {
-    let nests = matches!(id, "arrange.nest" | "arrange.quick_nest" | "arrange.true_nest");
-    let step = args.get("rotation_step").and_then(Value::as_f64).unwrap_or(90.0);
-    let turns = !(0.0..1e-6).contains(&step) && step < 360.0;
-    let mirrors = args.get("allow_mirror").and_then(Value::as_bool).unwrap_or(false);
-    (nests && app.locks[2] && (turns || mirrors)).then(|| refusal(id, 2))
+/// Why `id` with `args` is refused under the status-bar locks, or `None` when it may run. The
+/// same check for the API and the dialogs, so both refuse the same commands.
+pub fn refusal_for(app: &DarkBurn, id: &str, args: &Value) -> Option<String> {
+    lock_refusal(app, id).or_else(|| turn_refusal(app, id, args))
 }
 
-fn refusal(id: &str, k: usize) -> String {
+/// Nesting may turn the parts (and `arrange.nest` may mirror them), so under the rotate lock it
+/// is refused unless its arguments ask for neither (owner, Q082). Whether it turns comes from
+/// the rotation list each nester really uses: their thresholds for "no rotation" differ.
+fn turn_refusal(app: &DarkBurn, id: &str, args: &Value) -> Option<String> {
+    let step = args.get("rotation_step").and_then(Value::as_f64).unwrap_or(90.0);
+    let turns = match id {
+        "arrange.nest" => darkburn_geom::nest::rotation_steps(step).len() > 1,
+        // A step the nester refuses turns nothing; its own error says why.
+        "arrange.quick_nest" | "arrange.true_nest" => crate::nest_cmds::rotations(step).is_ok_and(|r| r.len() > 1),
+        _ => return None,
+    };
+    let mirrors = args.get("allow_mirror").and_then(Value::as_bool).unwrap_or(false);
+    (app.locks[2] && (turns || mirrors)).then(|| refusal(id, 2))
+}
+
+/// The refusal text for `id` under lock `k` (0 move, 1 size, 2 rotate).
+pub fn refusal(id: &str, k: usize) -> String {
     let lock = match k {
         0 => tr("lock.move", "move"),
         1 => tr("lock.size", "size"),

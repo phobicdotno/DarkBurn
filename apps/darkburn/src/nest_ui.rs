@@ -167,7 +167,12 @@ fn form_ui(ui: &mut Ui, f: &mut NestForm, quick: bool, page: (f64, f64)) {
 
 /// Starts the run on a worker thread; the selection is sorted out there too.
 fn start(app: &mut DarkBurn, id: &str) -> Result<(), String> {
-    let s = nest_cmds::settings(id, &app.nest_ui.form.args(id), nest_cmds::page(app))?;
+    let args = app.nest_ui.form.args(id);
+    // The status-bar locks hold here as for the API (owner, Q082).
+    if let Some(e) = crate::api::refusal_for(app, id, &args) {
+        return Err(e);
+    }
+    let s = nest_cmds::settings(id, &args, nest_cmds::page(app))?;
     app.nest_ui.job = Some(NestJob::start(app.editor.doc.clone(), app.editor.selected(), s, app.editor.revision()));
     Ok(())
 }
@@ -192,7 +197,18 @@ fn finish(app: &mut DarkBurn) {
         return;
     }
     let Some(worker) = app.nest_ui.job.take() else { return };
-    match worker.take().and_then(|(job, r)| nest_cmds::apply(&mut app.editor, &job, &r)) {
+    let locks = app.locks;
+    let id = app.nest_ui.open.unwrap_or(QUICK);
+    // A lock turned on while the run went on: its layout is not used.
+    let locked = move |job: &nest_cmds::Job| match (locks[0], locks[2] && job.settings.opts.rotations.len() > 1) {
+        (true, _) => Err(crate::api::refusal(id, 0)),
+        (_, true) => Err(crate::api::refusal(id, 2)),
+        _ => Ok(()),
+    };
+    match worker.take().and_then(|(job, r)| {
+        locked(&job)?;
+        nest_cmds::apply(&mut app.editor, &job, &r)
+    }) {
         Ok(v) => {
             let text = summary(&v);
             app.nest_ui.error = None;
@@ -437,6 +453,29 @@ mod tests {
         let a = NestForm { rotation: 2, step: 30.0, custom: true, ..NestForm::default() }.args(TRUE);
         assert_eq!(a["rotation_step"], 30.0);
         assert_eq!(a["width"], 300.0);
+        g.close_dialogs();
+    }
+
+    #[test]
+    fn the_rotate_lock_stops_a_turning_nest_from_the_dialog_too() {
+        let mut g = Gui::standard();
+        add(&mut g, 0.0, 0.0, 20.0, 5.0);
+        g.exec("edit.select_all", json!({}));
+        g.app().locks[2] = true;
+        g.app().nest_ui.form.rotation = 1;
+        let e = start(&mut g.app(), QUICK).unwrap_err();
+        assert!(e.contains("lock is on"), "{e}");
+        assert!(g.app().nest_ui.job.is_none(), "no run started");
+        // With no rotation the dialog may still nest.
+        g.app().nest_ui.form.rotation = 0;
+        start(&mut g.app(), QUICK).unwrap();
+        // A lock turned on while it runs: the layout is not used.
+        g.app().locks[0] = true;
+        g.app().nest_ui.open = Some(QUICK);
+        let rev = g.app().editor.revision();
+        wait(&mut g);
+        assert_eq!(g.app().editor.revision(), rev, "nothing moved");
+        g.app().locks = [false; 4];
         g.close_dialogs();
     }
 }

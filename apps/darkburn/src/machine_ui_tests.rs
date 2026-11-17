@@ -452,6 +452,9 @@ fn every_panel_and_dialog_draws_in_every_state() {
     run(&mut a, "job.start", Value::Null).unwrap();
     wait(&mut a, "busy", |a| a.machine.handle.snapshot().job.is_some() || a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     draw(&ctx, &mut a, vec![]);
+    // The device can't change while the job runs (owner, Q083): stop it first.
+    run(&mut a, "job.stop", json!({})).unwrap();
+    wait(&mut a, "the stop", |a| !a.machine.handle.job_running());
     // Connected Ruida with its file list, settings, dual tube and U axis dialogs.
     let id = a.machine.devices.devices.iter().find(|d| d.kind == DeviceType::SimulatorRuida).unwrap().id;
     a.machine.devices.get_mut(id).unwrap().settings.dsp.dual_tube = true;

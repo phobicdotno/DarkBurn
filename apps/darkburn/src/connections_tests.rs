@@ -155,24 +155,44 @@ fn grbl_behind_tcp(emu: grbl::EmulatorHandle) -> u16 {
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         let Ok((mut s, _)) = listener.accept() else { return };
-        s.set_read_timeout(Some(Duration::from_millis(2))).unwrap();
+        // Non-blocking, not a receive timeout: on Windows a timed-out receive can leave the
+        // socket unusable, and the link then drops under a slow runner (seen on CI).
+        s.set_nonblocking(true).unwrap();
+        s.set_nodelay(true).unwrap();
         let mut t = emu.transport();
         let mut buf = [0u8; 512];
+        let end = |why: String| eprintln!("grbl_behind_tcp: link ends: {why}");
         loop {
+            let mut idle = true;
             match s.read(&mut buf) {
-                Ok(0) => return,
-                Ok(n) => t.write_all(&buf[..n]).unwrap(),
-                Err(e) if timed_out(&e) => {}
-                Err(_) => return,
-            }
-            match t.read(&mut buf, Duration::from_millis(1)) {
-                Ok(0) => {}
+                Ok(0) => return end("the app closed it".into()),
                 Ok(n) => {
-                    if s.write_all(&buf[..n]).is_err() {
-                        return;
+                    idle = false;
+                    if let Err(e) = t.write_all(&buf[..n]) {
+                        return end(format!("emulator write: {e}"));
                     }
                 }
-                Err(_) => return,
+                Err(e) if timed_out(&e) || e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return end(format!("socket read: {e}")),
+            }
+            match t.read(&mut buf, Duration::ZERO) {
+                Ok(0) => {}
+                Ok(n) => {
+                    idle = false;
+                    let mut out = &buf[..n];
+                    while !out.is_empty() {
+                        match s.write(out) {
+                            Ok(0) => return end("socket write: closed".into()),
+                            Ok(k) => out = &out[k..],
+                            Err(e) if timed_out(&e) || e.kind() == std::io::ErrorKind::Interrupted => std::thread::sleep(Duration::from_millis(1)),
+                            Err(e) => return end(format!("socket write: {e}")),
+                        }
+                    }
+                }
+                Err(e) => return end(format!("emulator read: {e}")),
+            }
+            if idle {
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     });

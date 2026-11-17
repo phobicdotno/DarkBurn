@@ -1559,4 +1559,3 @@ mod tests {
         assert!(m.accel >= 1.0 && m.rapid_speed >= 1.0);
     }
 }
-

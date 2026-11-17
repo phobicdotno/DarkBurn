@@ -1,0 +1,1 @@
+- Booleans, weld and offset now always follow the letters of a text, even one that just came in from a file

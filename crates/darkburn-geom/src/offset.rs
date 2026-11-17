@@ -37,8 +37,11 @@ pub enum Join {
     Round,
     /// Straight cut across the corner.
     Bevel,
-    /// Sharp corner. Corners whose miter would be longer than `limit` times the offset
-    /// distance are bevelled (same meaning as the SVG `stroke-miterlimit`).
+    /// Sharp corner. A corner whose miter would be longer than `limit` times the offset
+    /// distance is not bevelled: its point is clipped at the limit (so it reaches further than a
+    /// bevel would). A corner sharper than
+    /// about 5 degrees stops well short of a true miter, as the overlay engine caps how long a
+    /// miter may get; the result is still a valid outline, only that corner is shorter.
     Miter { limit: f64 },
 }
 
@@ -115,7 +118,9 @@ fn line_join(j: Join, r: f64, tol: f64) -> LineJoin<f64> {
         Join::Round => LineJoin::Round(round_step(r, tol)),
         Join::Bevel => LineJoin::Bevel,
         Join::Miter { limit } => {
-            // Miter length / distance = 1 / sin(theta / 2), theta the interior angle.
+            // Miter length / distance = 1 / sin(theta / 2), theta the interior angle. Past the
+            // limit i_overlay clips the tip at the limit (it does not bevel), and it caps very
+            // sharp corners (below about 5 degrees) on its own.
             let limit = limit.max(1.0001);
             LineJoin::Miter(2.0 * (1.0 / limit).asin())
         }
@@ -417,7 +422,7 @@ mod tests {
         assert!((area(&b.outward) - (144.0 - 2.0)).abs() < 1e-3, "{}", area(&b.outward));
         let rd = offset(&r, &opts(1.0, OffsetSide::Outward, Join::Round));
         assert!((area(&rd.outward) - (140.0 + PI)).abs() < 0.01, "{}", area(&rd.outward));
-        // A low miter limit bevels square corners (miter ratio sqrt(2) > 1.2).
+        // A low miter limit clips square corners (miter ratio sqrt(2) > 1.2).
         let low = offset(&r, &opts(1.0, OffsetSide::Outward, Join::Miter { limit: 1.2 }));
         assert!(area(&low.outward) < 143.9);
     }

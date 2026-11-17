@@ -397,6 +397,8 @@ mod undo_sweep {
             d.notes = "notes".into();
             true
         });
+        // The app draws every text once a frame before any command runs; do the same here.
+        crate::text_render::refresh(&mut app.editor.doc);
         app.editor.clipboard.copy(&app.editor.doc, &ids[..2]);
         app.editor.mark_saved();
         (app, ids)

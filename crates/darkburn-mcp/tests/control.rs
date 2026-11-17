@@ -174,6 +174,12 @@ fn a_reply_with_a_null_or_wrong_id_is_not_taken_as_the_answer() {
         drop(c);
         join.join().unwrap();
     }
+    // An error the server could not tie to a request still comes through as that error.
+    let (addr, join) = fake_app_replying(json!({"id": null, "ok": false, "error": {"code": "invalid_params", "message": "too big"}}));
+    let mut c = ControlClient::connect(addr, TOKEN).unwrap();
+    assert_eq!(c.call("doc.get", json!({})).unwrap_err().code, ErrorCode::InvalidParams);
+    drop(c);
+    join.join().unwrap();
     let (addr, join) = fake_app_replying(json!({"id": 1, "ok": true, "result": 7}));
     let mut c = ControlClient::connect(addr, TOKEN).unwrap();
     assert_eq!(c.call("doc.get", json!({})).unwrap(), json!(7));

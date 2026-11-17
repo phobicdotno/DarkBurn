@@ -83,7 +83,11 @@ pub fn path_pieces(perimeter: f64, closed: bool, ls: &LineSettings) -> f64 {
     }
     match ls.perforation {
         Some(pf) if pf.cut > 0.0 && pf.skip > 0.0 && total > EPS => {
-            if total < pf.cut + pf.skip { 1.0 } else { ((total - pf.cut) / (pf.cut + pf.skip)).floor() + 1.0 }
+            if total < pf.cut + pf.skip {
+                1.0
+            } else {
+                ((total - pf.cut) / (pf.cut + pf.skip)).floor() + 1.0
+            }
         }
         _ => 0.0,
     }

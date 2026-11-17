@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Sluiten",
   "net.title": "Lasernetwerktest",
-  "net.note": "Alleen lezen: elke seconde een ping van 1000 bytes en één statusuitlezing van de kaart. Er wordt niets naar de machine geschreven."
+  "net.note": "Alleen lezen: elke seconde een ping van 1000 bytes en één statusuitlezing van de kaart. Er wordt niets naar de machine geschreven.",
+  "lock.move": "verplaatsen",
+  "lock.size": "grootte",
+  "lock.rotate": "draaien",
+  "lock.refused": "{id} is geweigerd: de vergrendeling {lock} staat aan (statusbalk). Zet deze eerst uit.",
+  "machine.busy_switch": "{id} is geweigerd: de laser is bezig met een taak of kader (of een gepauzeerde taak). Stop deze eerst en wissel daarna van apparaat.",
+  "machine.bridge_setup": "De bridge-instelling"
 }

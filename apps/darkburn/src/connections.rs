@@ -1187,7 +1187,7 @@ fn bridge_dialog(ctx: &Context, app: &mut DarkBurn) {
     }
     match action {
         Action::Ok if last && crate::machine_ui::device_locked(app) => {
-            app.machine.dlg.message = Some(crate::machine_ui::BUSY_SWITCH.replace("{id}", "The bridge setup"));
+            app.machine.dlg.message = Some(crate::machine_ui::busy_bridge_setup());
             app.machine.conn.bridge = Some(w);
         }
         Action::Ok if last => {

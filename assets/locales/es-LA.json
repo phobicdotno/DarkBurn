@@ -812,5 +812,11 @@
   "net.start": "Iniciar",
   "net.close": "Cerrar",
   "net.title": "Prueba de la red del láser",
-  "net.note": "Solo lectura: pings de 1000 bytes cada segundo y una lectura de estado de la tarjeta. No se escribe nada en la máquina."
+  "net.note": "Solo lectura: pings de 1000 bytes cada segundo y una lectura de estado de la tarjeta. No se escribe nada en la máquina.",
+  "lock.move": "mover",
+  "lock.size": "tamaño",
+  "lock.rotate": "rotar",
+  "lock.refused": "{id} fue rechazado: el bloqueo de {lock} está activado (barra de estado). Desactívalo primero.",
+  "machine.busy_switch": "{id} fue rechazado: el láser está ocupado con un trabajo o un encuadre (o un trabajo en pausa). Detenlo primero y luego cambia de dispositivo.",
+  "machine.bridge_setup": "La configuración del puente"
 }

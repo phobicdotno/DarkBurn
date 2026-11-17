@@ -812,5 +812,11 @@
   "net.start": "开始",
   "net.close": "关闭",
   "net.title": "激光网络测试",
-  "net.note": "只读：每秒一次 1000 字节 ping，并读取一次控制卡状态。不会向机器写入任何内容。"
+  "net.note": "只读：每秒一次 1000 字节 ping，并读取一次控制卡状态。不会向机器写入任何内容。",
+  "lock.move": "移动",
+  "lock.size": "尺寸",
+  "lock.rotate": "旋转",
+  "lock.refused": "{id} 已被拒绝：{lock}锁已开启（状态栏）。请先将其关闭。",
+  "machine.busy_switch": "{id} 已被拒绝：激光器正忙于作业或走边框（或有暂停的作业）。请先停止，再更换设备。",
+  "machine.bridge_setup": "桥接设置"
 }

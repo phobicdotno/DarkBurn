@@ -11,6 +11,7 @@ use darkburn_core::{Mode, Shape, ShapeId};
 use serde_json::{Value, json};
 
 use crate::commands;
+use crate::i18n::tr;
 use crate::shell::DarkBurn;
 
 /// Run command `id` with `args` (a JSON object, or null when it takes none). Returns what the
@@ -93,7 +94,12 @@ pub fn lock_of(id: &str) -> Option<usize> {
 /// Why `id` is refused under a status-bar lock, or `None` when it may run.
 pub fn lock_refusal(app: &DarkBurn, id: &str) -> Option<String> {
     let k = lock_of(id).filter(|k| app.locks[*k])?;
-    Some(format!("{id} was refused: the {} lock is on (status bar). Turn it off first.", ["move", "size", "rotate"][k]))
+    let lock = match k {
+        0 => tr("lock.move", "move"),
+        1 => tr("lock.size", "size"),
+        _ => tr("lock.rotate", "rotate"),
+    };
+    Some(tr("lock.refused", "{id} was refused: the {lock} lock is on (status bar). Turn it off first.").replace("{id}", id).replace("{lock}", &lock))
 }
 
 /// [`execute`] with no window: viewport commands (exit) have no effect.

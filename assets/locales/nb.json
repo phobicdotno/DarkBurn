@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Lukk",
   "net.title": "Lasernettverkstest",
-  "net.note": "Kun lesing: 1000-byte ping hvert sekund og én statuslesing av kortet. Ingenting skrives til maskinen."
+  "net.note": "Kun lesing: 1000-byte ping hvert sekund og én statuslesing av kortet. Ingenting skrives til maskinen.",
+  "lock.move": "flytte",
+  "lock.size": "størrelse",
+  "lock.rotate": "rotere",
+  "lock.refused": "{id} ble avvist: {lock}-låsen er på (statuslinjen). Slå den av først.",
+  "machine.busy_switch": "{id} ble avvist: laseren er opptatt med en jobb eller ramme (eller en pauset jobb). Stopp den først, og bytt deretter enhet.",
+  "machine.bridge_setup": "Broinnstillingen"
 }

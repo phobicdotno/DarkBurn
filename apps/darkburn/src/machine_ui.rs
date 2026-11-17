@@ -653,7 +653,7 @@ pub fn dispatch(app: &mut DarkBurn, id: &str, a: &Value, src: Source) -> Option<
         }
     }
     if switch_while_busy(app, id, a) {
-        return Some(Err(BUSY_SWITCH.replace("{id}", id)));
+        return Some(Err(busy_switch(id)));
     }
     if src == Source::Api && app.machine.handle.is_real_machine() {
         if AGENT_STOPS.contains(&id) {
@@ -717,8 +717,19 @@ fn drops_the_link(app: &DarkBurn, id: &str, a: &Value) -> bool {
     }
 }
 
-/// Why a device switch is refused while the machine works. `{id}` is the command.
-pub const BUSY_SWITCH: &str = "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.";
+/// Why the device switch `id` (a command, or what the user did) is refused while the machine works.
+pub fn busy_switch(id: &str) -> String {
+    crate::i18n::tr(
+        "machine.busy_switch",
+        "{id} was refused: the laser is busy with a job or frame (or a paused job). Stop it first, then change the device.",
+    )
+    .replace("{id}", id)
+}
+
+/// [`busy_switch`] for the last step of the bridge setup, which makes its device the active one.
+pub fn busy_bridge_setup() -> String {
+    busy_switch(&crate::i18n::tr("machine.bridge_setup", "The bridge setup"))
+}
 
 /// Whether the machine is running, framing or holding a paused job: the device in use must not
 /// change then, since that would end the connection under the job (owner, Q083). A job or frame

@@ -188,6 +188,8 @@ mod tests {
         ("gweike_ui.rs", include_str!("gweike_ui.rs")),
         ("net_test.rs", include_str!("net_test.rs")),
         ("net_test_ui.rs", include_str!("net_test_ui.rs")),
+        ("api.rs", include_str!("api.rs")),
+        ("machine_ui.rs", include_str!("machine_ui.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

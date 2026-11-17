@@ -812,5 +812,11 @@
   "net.start": "Start",
   "net.close": "Stäng",
   "net.title": "Test av lasernätverk",
-  "net.note": "Endast läsning: 1000-byte ping varje sekund och en statusläsning av kortet. Inget skrivs till maskinen."
+  "net.note": "Endast läsning: 1000-byte ping varje sekund och en statusläsning av kortet. Inget skrivs till maskinen.",
+  "lock.move": "flytta",
+  "lock.size": "storlek",
+  "lock.rotate": "rotera",
+  "lock.refused": "{id} avvisades: {lock}-låset är på (statusfältet). Stäng av det först.",
+  "machine.busy_switch": "{id} avvisades: lasern är upptagen med ett jobb eller en ram (eller ett pausat jobb). Stoppa det först och byt sedan enhet.",
+  "machine.bridge_setup": "Bryggkonfigurationen"
 }

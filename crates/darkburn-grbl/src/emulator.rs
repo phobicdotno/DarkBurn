@@ -598,7 +598,8 @@ impl GrblEmulator {
                 self.now += max;
                 return max;
             }
-            self.now = t;
+            // A dwell that ran out while a hold was slowing down ends now, not back at its deadline.
+            self.now = self.now.max(t);
             self.dwell_until = None;
             self.reply_ok();
             return d;

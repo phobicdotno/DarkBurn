@@ -440,15 +440,27 @@ impl SvgReader<'_> {
 /// Read an SVG document. Coordinates are mm with the SVG's top-left at the work area's
 /// top-left (not yet placed).
 pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
+    let bad = |e: usvg::Error| format!("the SVG could not be read ({e})");
+    // Decompress an .svgz once; the same text is checked for old Inkscape and then read.
+    let unzipped;
+    let data = if data.starts_with(&[0x1f, 0x8b]) {
+        unzipped = usvg::decompress_svgz(data).map_err(bad)?;
+        &unzipped[..]
+    } else {
+        data
+    };
+    let text = std::str::from_utf8(data).map_err(|_| bad(usvg::Error::NotAnUtf8Str))?;
+    let xml_opt = usvg::roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    let doc = usvg::roxmltree::Document::parse_with_options(text, xml_opt).map_err(|e| bad(usvg::Error::ParsingFailed(e)))?;
     let mut dpi = if opts.svg_dpi.is_finite() && opts.svg_dpi > 0.0 { opts.svg_dpi } else { 96.0 };
-    if old_inkscape_px(data) {
+    if old_inkscape_px(doc.root_element()) {
         dpi = 90.0;
     }
     let mut o = usvg::Options { dpi, ..Default::default() };
     if memchr_text(data) {
         o.fontdb = fonts();
     }
-    let tree = usvg::Tree::from_data(data, &o).map_err(|e| format!("the SVG could not be read ({e})"))?;
+    let tree = usvg::Tree::from_xmltree(&doc, &o).map_err(bad)?;
     let k = 25.4 / dpi as f64;
     let to_mm = Affine::new([k, 0.0, 0.0, -k, 0.0, opts.page.height]);
     let mut reader = SvgReader { opts, out: Imported::default() };
@@ -456,16 +468,16 @@ pub fn svg(data: &[u8], opts: &Options) -> Result<Imported, String> {
     Ok(reader.out)
 }
 
+const INKSCAPE_NS: &str = "http://www.inkscape.org/namespaces/inkscape";
+
 /// Inkscape before 0.92 used 90 user units per inch. True when the root `<svg>` says it was saved
 /// by such a version and its width and height are bare numbers or px (no physical units), so
 /// its pixels are read at 90 per inch.
-fn old_inkscape_px(data: &[u8]) -> bool {
-    let head = &data[..data.len().min(64 * 1024)];
-    let Ok(text) = std::str::from_utf8(head).or_else(|e| std::str::from_utf8(&head[..e.valid_up_to()])) else {
+fn old_inkscape_px(root: usvg::roxmltree::Node) -> bool {
+    if root.tag_name().name() != "svg" {
         return false;
-    };
-    let Some(tag) = root_svg_tag(text) else { return false };
-    let Some(version) = attr(tag, "inkscape:version") else { return false };
+    }
+    let Some(version) = root.attribute((INKSCAPE_NS, "version")) else { return false };
     if !inkscape_before_092(version) {
         return false;
     }
@@ -477,51 +489,7 @@ fn old_inkscape_px(data: &[u8]) -> bool {
             !n.is_empty() && n.parse::<f64>().is_ok_and(f64::is_finite)
         }
     };
-    px(attr(tag, "width")) && px(attr(tag, "height"))
-}
-
-/// The start tag of the root `<svg` element (without the `<svg` and the closing `>`).
-fn root_svg_tag(text: &str) -> Option<&str> {
-    let mut rest = text;
-    loop {
-        let at = rest.find('<')?;
-        rest = &rest[at..];
-        if let Some(r) = rest.strip_prefix("<!--") {
-            rest = &r[r.find("-->")? + 3..];
-        } else if rest.starts_with("<?") || rest.starts_with("<!") {
-            rest = &rest[rest.find('>')? + 1..];
-        } else {
-            let name_end = rest[1..].find(|c: char| c.is_whitespace() || c == '>' || c == '/')? + 1;
-            let name = &rest[1..name_end];
-            if name != "svg" && !name.ends_with(":svg") {
-                return None;
-            }
-            let body = &rest[name_end..];
-            return Some(&body[..body.find('>')?]);
-        }
-    }
-}
-
-/// The value of attribute `name` in a start tag.
-fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let mut from = 0;
-    while let Some(i) = tag[from..].find(name) {
-        let start = from + i;
-        from = start + name.len();
-        let before_ok = tag[..start].ends_with(|c: char| c.is_whitespace());
-        let after = tag[from..].trim_start();
-        if !before_ok || !after.starts_with('=') {
-            continue;
-        }
-        let after = after[1..].trim_start();
-        let q = after.chars().next()?;
-        if q != '"' && q != '\'' {
-            continue;
-        }
-        let v = &after[1..];
-        return Some(&v[..v.find(q)?]);
-    }
-    None
+    px(root.attribute("width")) && px(root.attribute("height"))
 }
 
 /// An `inkscape:version` such as "0.91 r13725" or "0.48.4 r9939" is older than 0.92.
@@ -771,6 +739,25 @@ mod tests {
         }
     }
 
+    /// `data` wrapped as gzip with one uncompressed (stored) deflate block.
+    fn gzip_stored(data: &[u8]) -> Vec<u8> {
+        let mut crc = 0xffff_ffffu32;
+        for &b in data {
+            crc ^= b as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            }
+        }
+        let n = data.len() as u16;
+        let mut out = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 255, 1];
+        out.extend_from_slice(&n.to_le_bytes());
+        out.extend_from_slice(&(!n).to_le_bytes());
+        out.extend_from_slice(data);
+        out.extend_from_slice(&(!crc).to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out
+    }
+
     #[test]
     fn old_inkscape_pixels_are_90_per_inch() {
         let old = br#"<?xml version="1.0"?>
@@ -795,6 +782,17 @@ mod tests {
         let mm = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="100mm" viewBox="0 0 100 100" inkscape:version="0.91 r13725"><path d="M0 0 L100 0" stroke="black"/></svg>"#;
         let w = svg(mm, &opts()).unwrap().bbox().unwrap().width();
         assert!((w - 100.0).abs() < 1e-4, "{w}");
+        // A gzip-compressed old file (.svgz) is detected too.
+        let w = svg(&gzip_stored(old), &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 25.4).abs() < 1e-6, "{w}");
+        // A '>' inside an attribute value does not cut the root tag short.
+        let gt = br#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" data-note="a > b" width="100mm" height="100mm" viewBox="0 0 100 100" inkscape:version="0.91 r13725"><path d="M0 0 L100 0" stroke="black"/></svg>"#;
+        let w = svg(gt, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 100.0).abs() < 1e-4, "{w}");
+        // Version text inside another attribute's value is not an inkscape:version.
+        let inside = br#"<svg xmlns="http://www.w3.org/2000/svg" data-note=" inkscape:version='0.91'" width="90" height="90"><path d="M0 0 L90 0" stroke="black"/></svg>"#;
+        let w = svg(inside, &opts()).unwrap().bbox().unwrap().width();
+        assert!((w - 23.8125).abs() < 1e-6, "{w}");
         assert!(inkscape_before_092("0.91 r13725") && inkscape_before_092("0.48.4 r9939"));
         assert!(!inkscape_before_092("0.92.3") && !inkscape_before_092("1.3.2 (091e20e, 2023-11-25)") && !inkscape_before_092(""));
     }

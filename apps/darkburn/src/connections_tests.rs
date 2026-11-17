@@ -1108,6 +1108,42 @@ fn a_stop_right_after_a_start_always_wins_on_a_real_link() {
     }
 }
 
+/// Pause must hold too: a Pause sent the moment after Start, while the controller is still idle
+/// with the job's first lines unread (where GRBL ignores a feed hold), a little later, or once
+/// it runs, always leaves the controller in Hold and not running the job on.
+#[test]
+fn a_pause_right_after_a_start_always_holds_on_a_real_link() {
+    let emu = grbl::EmulatorHandle::new(grbl::GrblEmulator::new(grbl::EmulatorConfig::atomstack().with_time_scale(1.0)));
+    let port = grbl_behind_tcp(emu.clone());
+    let mut a = app();
+    a.machine.handle = loopback(Link::Tcp { host: "127.0.0.1".into(), port });
+    wait(&mut a, "ready on the real link", |a| state(a) == LaserState::Ready);
+    for i in 0..24u64 {
+        if state(&a) == LaserState::Alarm {
+            a.machine.handle.command(MachineCommand::Unlock).unwrap();
+        }
+        wait(&mut a, &format!("ready before round {i}"), |a| state(a) == LaserState::Ready);
+        a.machine.begin_start(zigzag(200, 30.0, 300)).unwrap();
+        std::thread::sleep(Duration::from_millis((i % 4) * 6));
+        let id = ["job.pause", "machine.pause"][(i % 2) as usize];
+        run(&mut a, id, json!({})).unwrap_or_else(|e| panic!("{id} was refused: {e}"));
+        let end = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < end {
+            a.machine.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let st = emu.with(|e| e.state_name());
+        if !st.starts_with("Hold") {
+            let journal = emu.with(|e| e.stats().journal.iter().rev().take(40).rev().cloned().collect::<Vec<_>>().join("\n  "));
+            let console: Vec<String> = a.machine.handle.console().iter().rev().take(40).rev().map(|c| format!("{:?} {}", c.kind, c.text)).collect();
+            panic!("round {i} ({id}): controller {st}, app {:?}\ncontroller took:\n  {journal}\nconsole:\n  {}", state(&a), console.join("\n  "));
+        }
+        assert_eq!(state(&a), LaserState::Paused, "round {i} ({id})");
+        run(&mut a, "machine.stop", json!({})).expect("stop");
+        wait(&mut a, &format!("stopped in round {i}"), |a| matches!(state(a), LaserState::Ready | LaserState::Alarm));
+    }
+}
+
 /// A job from the window (the user's own Start) that runs for minutes unless it is stopped.
 fn start_slow_job(a: &mut DarkBurn) {
     if state(a) == LaserState::Alarm {

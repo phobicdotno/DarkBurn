@@ -10,7 +10,9 @@ use crate::tools::Tool;
 
 /// The refusal of an edit that would nest shapes deeper than the editor allows.
 pub(crate) fn too_deep(what: &str) -> String {
-    format!("{what}: shapes may sit at most {} groups deep.", darkburn_core::editor::MAX_GROUP_DEPTH)
+    crate::i18n::tr("edit.too_deep", "{what}: shapes may sit at most {max} groups deep.")
+        .replace("{what}", what)
+        .replace("{max}", &darkburn_core::editor::MAX_GROUP_DEPTH.to_string())
 }
 
 /// Run command `id` if it is one of these; returns whether it was.
@@ -80,7 +82,7 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
             };
             let e = &mut app.editor;
             if e.clipboard.shapes.iter().any(|s| s.group_depth() > darkburn_core::editor::MAX_GROUP_DEPTH) {
-                app.shape_ui.status = Some(too_deep("Not pasted"));
+                app.shape_ui.status = Some(too_deep(&crate::i18n::tr("edit.not_pasted", "Not pasted")));
                 return true;
             }
             let mut clip = std::mem::take(&mut e.clipboard);
@@ -114,7 +116,7 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         // Arrange
         "arrange.group" => {
             if !darkburn_core::editor::can_group(&e.doc, &ids) {
-                app.shape_ui.status = Some(too_deep("Not grouped"));
+                app.shape_ui.status = Some(too_deep(&crate::i18n::tr("edit.not_grouped", "Not grouped")));
                 return true;
             }
             e.edit("Group", |d, sel| match arrange::group(d, &ids) {

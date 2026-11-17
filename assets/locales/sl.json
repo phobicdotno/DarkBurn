@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "mreža mora imeti 16 točk",
   "shapes.deform_point_format": "točke mreže se zapišejo kot [x, y]",
   "shapes.deform_bad_point": "neveljavna točka",
-  "shapes.deform_one_line": "točke mreže ležijo na eni premici: nič ni bilo deformirano"
+  "shapes.deform_one_line": "točke mreže ležijo na eni premici: nič ni bilo deformirano",
+  "edit.too_deep": "{what}: oblike so lahko ugnezdene največ {max} skupin globoko.",
+  "edit.not_grouped": "Ni združeno",
+  "edit.not_pasted": "Ni prilepljeno",
+  "files.left_out_title": "Shranjeno z izpuščenimi oblikami",
+  "files.left_out_note": "{path}: {n} oblik ni bilo mogoče zapisati, zato so bile izpuščene iz datoteke (pregloboko ugnezdene, ali položaj, ki ni število). Še vedno so v odprtem projektu."
 }

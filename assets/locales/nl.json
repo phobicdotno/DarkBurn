@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "het raster moet 16 punten bevatten",
   "shapes.deform_point_format": "rasterpunten worden geschreven als [x, y]",
   "shapes.deform_bad_point": "ongeldig punt",
-  "shapes.deform_one_line": "de rasterpunten liggen op één lijn: er is niets vervormd"
+  "shapes.deform_one_line": "de rasterpunten liggen op één lijn: er is niets vervormd",
+  "edit.too_deep": "{what}: vormen mogen hoogstens {max} groepen diep liggen.",
+  "edit.not_grouped": "Niet gegroepeerd",
+  "edit.not_pasted": "Niet geplakt",
+  "files.left_out_title": "Opgeslagen met weggelaten vormen",
+  "files.left_out_note": "{path}: {n} vorm(en) konden niet worden geschreven en zijn weggelaten uit het bestand (te diep genest, of een positie die geen getal is). Ze staan nog in het geopende project."
 }

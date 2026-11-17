@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "a rácsnak 16 pontot kell tartalmaznia",
   "shapes.deform_point_format": "a rácspontok alakja [x, y]",
   "shapes.deform_bad_point": "érvénytelen pont",
-  "shapes.deform_one_line": "a rácspontok egy egyenesre esnek: semmi sem torzult"
+  "shapes.deform_one_line": "a rácspontok egy egyenesre esnek: semmi sem torzult",
+  "edit.too_deep": "{what}: az alakzatok legfeljebb {max} csoport mélységben lehetnek.",
+  "edit.not_grouped": "Nincs csoportosítva",
+  "edit.not_pasted": "Nincs beillesztve",
+  "files.left_out_title": "Mentve, néhány alakzat kimaradt",
+  "files.left_out_note": "{path}: {n} alakzatot nem sikerült kiírni, ezért kimaradtak a fájlból (túl mélyen egymásba ágyazva, vagy a pozíciójuk nem szám). A megnyitott projektben továbbra is megvannak."
 }

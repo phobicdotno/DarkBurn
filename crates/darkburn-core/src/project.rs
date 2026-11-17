@@ -177,12 +177,13 @@ pub fn save_reporting(doc: &Document, app_version: &str, thumbnail: Option<&[u8]
     Ok((zip.finish().map_err(zerr)?.into_inner(), left_out))
 }
 
-/// How many shapes `shapes` holds, counting every group and what it holds at every depth.
+/// How many shapes `shapes` holds, counting every group and what it holds at every depth (the
+/// original items of a virtual array included).
 fn count(shapes: &[Shape]) -> usize {
     shapes
         .iter()
         .map(|s| match &s.kind {
-            crate::shape::ShapeKind::Group { children } => 1 + count(children),
+            crate::shape::ShapeKind::Group { children } => 1 + count(children) + s.array.as_ref().map_or(0, |a| count(&a.source)),
             _ => 1,
         })
         .sum()
@@ -616,5 +617,22 @@ mod tests {
         assert_eq!(left_out, 251, "the leaf and its 250 groups");
         assert_eq!(load(&bytes).unwrap().doc.len(), shapes_before, "the rest is saved");
         assert_eq!(save_reporting(&sample(), "t", None).unwrap().1, 0, "nothing left out of an ordinary project");
+    }
+
+    /// A virtual array dropped for a value that is not a number takes its original items with
+    /// it, and they are counted as left out too.
+    #[test]
+    fn a_dropped_virtual_array_counts_its_originals_as_left_out() {
+        use crate::varray::{ArrayDef, ArrayKind, GridDef};
+        let mut d = sample();
+        let shapes_before = d.len();
+        let copy = Shape::rect(Rect::new(0.0, 0.0, 5.0, 5.0), 0.0, 0);
+        let mut array = Shape::new(ShapeKind::Group { children: vec![copy] }, Affine::IDENTITY, 0);
+        let source = vec![Shape::rect(Rect::new(0.0, 0.0, 5.0, 5.0), 0.0, 0), Shape::rect(Rect::new(6.0, 0.0, 9.0, 5.0), 0.0, 0)];
+        array.array = Some(Box::new(ArrayDef { source, kind: ArrayKind::Grid(GridDef { dx: f64::NAN, ..GridDef::default() }) }));
+        d.add(array);
+        let (bytes, left_out) = save_reporting(&d, "t", None).unwrap();
+        assert_eq!(left_out, 4, "the group, its copy and its two originals");
+        assert_eq!(load(&bytes).unwrap().doc.len(), shapes_before, "the rest is saved");
     }
 }

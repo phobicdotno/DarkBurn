@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "rutenettet må ha 16 punkter",
   "shapes.deform_point_format": "rutenettpunkter skrives som [x, y]",
   "shapes.deform_bad_point": "ugyldig punkt",
-  "shapes.deform_one_line": "Figuren ligger på én linje: ingenting ble deformert."
+  "shapes.deform_one_line": "Figuren ligger på én linje: ingenting ble deformert.",
+  "edit.too_deep": "{what}: figurer kan ligge høyst {max} grupper dypt.",
+  "edit.not_grouped": "Ikke gruppert",
+  "edit.not_pasted": "Ikke limt inn",
+  "files.left_out_title": "Lagret, men noen figurer ble utelatt",
+  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og ble utelatt fra filen (nøstet for dypt, eller en posisjon som ikke er et tall). De er fortsatt i det åpne prosjektet."
 }

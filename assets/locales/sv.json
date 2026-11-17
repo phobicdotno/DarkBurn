@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "rutnätet måste ha 16 punkter",
   "shapes.deform_point_format": "rutnätspunkter skrivs som [x, y]",
   "shapes.deform_bad_point": "ogiltig punkt",
-  "shapes.deform_one_line": "rutnätspunkterna ligger på en linje: inget deformerades"
+  "shapes.deform_one_line": "rutnätspunkterna ligger på en linje: inget deformerades",
+  "edit.too_deep": "{what}: former får ligga högst {max} grupper djupt.",
+  "edit.not_grouped": "Inte grupperad",
+  "edit.not_pasted": "Inte inklistrad",
+  "files.left_out_title": "Sparad, men vissa former utelämnades",
+  "files.left_out_note": "{path}: {n} form(er) kunde inte skrivas och utelämnades från filen (för djupt kapslade, eller en position som inte är ett tal). De finns kvar i det öppna projektet."
 }

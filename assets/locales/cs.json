@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "mřížka musí obsahovat 16 bodů",
   "shapes.deform_point_format": "body mřížky se zapisují jako [x, y]",
   "shapes.deform_bad_point": "neplatný bod",
-  "shapes.deform_one_line": "body mřížky leží na jedné přímce: nic nebylo deformováno"
+  "shapes.deform_one_line": "body mřížky leží na jedné přímce: nic nebylo deformováno",
+  "edit.too_deep": "{what}: tvary mohou být vnořeny nejvýše do {max} skupin.",
+  "edit.not_grouped": "Neseskupeno",
+  "edit.not_pasted": "Nevloženo",
+  "files.left_out_title": "Uloženo s vynechanými tvary",
+  "files.left_out_note": "{path}: {n} tvar(ů) nebylo možné zapsat a byly ze souboru vynechány (vnořeny příliš hluboko, nebo pozice, která není číslo). Stále jsou v otevřeném projektu."
 }

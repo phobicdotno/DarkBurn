@@ -280,7 +280,7 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let (bytes, left_out) = project::save_reporting(&app.editor.doc, APP_VERSION, thumb.as_deref()).map_err(|e| e.to_string())?;
     write_atomic(path, &bytes).map_err(|e| e.to_string())?;
     if left_out > 0 {
-        app.files.message = Some(("Saved with shapes left out".into(), left_out_note(path, left_out)));
+        app.files.message = Some((crate::i18n::tr("files.left_out_title", "Saved with shapes left out"), left_out_note(path, left_out)));
     }
     app.editor.mark_saved();
     app.project_path = Some(path.to_path_buf());
@@ -291,10 +291,12 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
 
 /// The warning for a save that had to leave `n` shapes out of the file.
 pub(crate) fn left_out_note(path: &Path, n: usize) -> String {
-    format!(
-        "{}: {n} shape(s) could not be written and were left out of the file (nested too deep, or a position that is not a number). They are still in the open project.",
-        path.display()
+    crate::i18n::tr(
+        "files.left_out_note",
+        "{path}: {n} shape(s) could not be written and were left out of the file (nested too deep, or a position that is not a number). They are still in the open project.",
     )
+    .replace("{path}", &path.display().to_string())
+    .replace("{n}", &n.to_string())
 }
 
 /// Write through a temporary file so a failed write never leaves half a project.

@@ -832,5 +832,10 @@
   "shapes.deform_grid_count": "ruudukossa on oltava 16 pistettä",
   "shapes.deform_point_format": "ruudukon pisteet annetaan muodossa [x, y]",
   "shapes.deform_bad_point": "virheellinen piste",
-  "shapes.deform_one_line": "ruudukon pisteet ovat samalla suoralla: mitään ei vääristetty"
+  "shapes.deform_one_line": "ruudukon pisteet ovat samalla suoralla: mitään ei vääristetty",
+  "edit.too_deep": "{what}: muodot voivat olla enintään {max} ryhmän syvyydessä.",
+  "edit.not_grouped": "Ei ryhmitetty",
+  "edit.not_pasted": "Ei liitetty",
+  "files.left_out_title": "Tallennettu, mutta osa muodoista jätettiin pois",
+  "files.left_out_note": "{path}: {n} muotoa ei voitu kirjoittaa, ja ne jätettiin pois tiedostosta (liian syvällä sisäkkäin tai sijainti, joka ei ole luku). Ne ovat yhä avoimessa projektissa."
 }

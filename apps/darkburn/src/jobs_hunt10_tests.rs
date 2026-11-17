@@ -356,6 +356,7 @@ fn jobs_hunt10_hidden_and_switched_off_layers() {
     d.layer_mut(1).show = false;
     let r = run_doc(d.clone(), |_| {});
     compare(&r, "hidden layer");
+    assert!(burns(&r.lines).iter().all(|b| b.a.x < 45.0 && b.b.x < 45.0), "the hidden layer was burned (Q076)");
     d.layer_mut(1).show = true;
     d.layer_mut(1).output = false;
     let r = run_doc(d, |_| {});

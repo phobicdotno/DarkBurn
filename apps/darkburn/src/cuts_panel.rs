@@ -371,7 +371,7 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
             p.text(pos2(c[3].left() + 4.0, r.center().y), Align2::LEFT_CENTER, sp, FontId::monospace(t.font_small), ink);
         }
         for (col, which, on, tip) in
-            [(4, Switch::Output, layer.outputs(), "Output"), (5, Switch::Show, layer.show, "Show"), (6, Switch::Air, layer.air, "Air assist")]
+            [(4, Switch::Output, layer.output, "Output"), (5, Switch::Show, layer.show, "Show"), (6, Switch::Air, layer.air, "Air assist")]
         {
             if which == Switch::Output && layer.is_tool() {
                 continue;

@@ -632,6 +632,7 @@ impl DarkBurn {
                 }
                 Entry::Dynamic("recent") => {
                     let recent = self.prefs.recent.clone();
+                    let missing_recent = self.files.missing_recent.clone();
                     let recent_text = crate::i18n::tr("menu.recent", "Recent Projects");
                     let mut row = MenuItem::new("file.recent", &recent_text, "");
                     row.submenu = true;
@@ -646,7 +647,18 @@ impl DarkBurn {
                                 ui.set_min_width(ui_kit::LIST_W * 1.6);
                                 for (i, path) in recent.iter().enumerate() {
                                     let id = format!("file.recent.{i}");
-                                    if MenuItem::new(&id, path, "").show(ui).clicked() {
+                                    // A project whose file was not there at start-up is drawn
+                                    // greyed out but can still be picked (Q079).
+                                    let missing = missing_recent.contains(path);
+                                    let hit = ui
+                                        .scope(|ui| {
+                                            if missing {
+                                                ui.multiply_opacity(0.45);
+                                            }
+                                            MenuItem::new(&id, path, "").show(ui).clicked()
+                                        })
+                                        .inner;
+                                    if hit {
                                         *clicked = Some(id);
                                     }
                                 }

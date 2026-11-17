@@ -2461,7 +2461,6 @@ fn is_sync_origin(origin: &Origin, text: &str) -> bool {
         || (text.starts_with('$') && !text.to_ascii_uppercase().starts_with("$J="))
 }
 
-
 /// Whether an upper-case G-code line switches the laser on (`M3`/`M4`): with laser mode off it
 /// fires without moving, so a lost link must still try the last reset.
 fn may_fire(up: &str) -> bool {

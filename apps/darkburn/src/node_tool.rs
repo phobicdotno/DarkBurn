@@ -1523,6 +1523,7 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
             {
                 ids.push(h);
             }
+            let tab_tol = crate::settings_wiring::output_tolerance_mm(&app.prefs.opts);
             for id in &ids {
                 let Some(path) = crate::shape_nodes::cut_outline(&app.editor.doc, *id) else { continue };
                 for g in crate::shape_nodes::auto_gaps(&app.editor.doc, *id, false) {
@@ -1530,7 +1531,7 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
                 }
                 // The manual tabs as long as the job leaves them: none with Tab size 0, shorter
                 // on a small shape.
-                for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[], crate::settings_wiring::output_tolerance_mm(&app.prefs.opts)) {
+                for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[], tab_tol) {
                     if let Some((a, b)) = tab_marker(&path, t, size) {
                         painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(5.0, accent));
                     }
@@ -1542,7 +1543,7 @@ pub fn paint(ui: &Ui, app: &DarkBurn, xf: &Xf, painter: &Painter, accent: Color3
                     && let Some(h) = query::nearest_point(&path, p).filter(|h| h.distance <= tol * 2.0)
                 {
                     // The tab a click would add, with the length it would get next to the others.
-                    for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[h.point], crate::settings_wiring::output_tolerance_mm(&app.prefs.opts)) {
+                    for (t, size) in crate::shape_nodes::manual_tab_marks(&app.editor.doc, *id, &[h.point], tab_tol) {
                         if t.distance(h.point) < 1e-9
                             && let Some((a, b)) = tab_marker(&path, t, size)
                         {

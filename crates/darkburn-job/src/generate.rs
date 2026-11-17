@@ -674,15 +674,21 @@ fn shift_by_direction(ordered: &mut [(ScanRow, bool)], offset: f64) {
 fn input_is_finite(input: &JobInput) -> bool {
     let pt = |p: Point| p.x.is_finite() && p.y.is_finite();
     let affine = |a: Affine| a.as_coeffs().iter().all(|c| c.is_finite());
+    let path = |p: &kurbo::BezPath| {
+        p.elements().iter().all(|e| match *e {
+            kurbo::PathEl::MoveTo(a) | kurbo::PathEl::LineTo(a) => pt(a),
+            kurbo::PathEl::QuadTo(a, b) => pt(a) && pt(b),
+            kurbo::PathEl::CurveTo(a, b, c) => pt(a) && pt(b) && pt(c),
+            kurbo::PathEl::ClosePath => true,
+        })
+    };
     input.layers.iter().filter(|l| l.output).all(|l| {
         l.shapes.iter().all(|s| {
-            s.path.elements().iter().all(|e| match *e {
-                kurbo::PathEl::MoveTo(a) | kurbo::PathEl::LineTo(a) => pt(a),
-                kurbo::PathEl::QuadTo(a, b) => pt(a) && pt(b),
-                kurbo::PathEl::CurveTo(a, b, c) => pt(a) && pt(b) && pt(c),
-                kurbo::PathEl::ClosePath => true,
-            }) && s.start_point.is_none_or(pt)
+            path(&s.path)
+                && s.line_paths.iter().all(|(_, p)| path(p))
+                && s.start_point.is_none_or(pt)
                 && s.extra_start_points.iter().all(|&p| pt(p))
+                && s.tabs.iter().all(|&p| pt(p))
         }) && l.images.iter().all(|img| {
             affine(img.transform)
                 && img.outline.iter().all(|&p| pt(p))
@@ -1359,6 +1365,17 @@ mod tests {
             crate::input::Scanline { y: 1.0, runs: vec![(0.0, 6.0, 1.0)] },
             crate::input::Scanline { y: f64::NAN, runs: vec![(f64::INFINITY, 6.0, 1.0)] },
         ]));
+        let r = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none());
+        assert!(matches!(r, Err(JobError::NotANumber)), "{r:?}");
+        // A finite drawn path with a kerf outline or a manual tab that is not a number.
+        let mut sh = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+        sh.line_paths.push((0, nan()));
+        let l = LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(sh);
+        let r = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none());
+        assert!(matches!(r, Err(JobError::NotANumber)), "{r:?}");
+        let mut sh = ShapeInput::new(rect_path(0.0, 0.0, 10.0, 10.0));
+        sh.tabs.push(Point::new(f64::NAN, 0.0));
+        let l = LayerInput::new(0, "A", CutSettings::line(10.0, 50.0)).with_shape(sh);
         let r = generate(&JobInput { layers: vec![l] }, &JobOptions::default(), &mut Progress::none());
         assert!(matches!(r, Err(JobError::NotANumber)), "{r:?}");
         // The sort itself no longer panics on such rows.

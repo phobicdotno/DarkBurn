@@ -891,11 +891,6 @@ impl MachineHandle {
     pub fn resume_pending(&self) -> bool {
         self.snapshot.state == LaserState::Paused && self.resume_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
     }
-    /// A job or frame was accepted less than [`RESUME_SETTLE`] ago and the machine has not shown
-    /// it working since: the snapshot may still say ready, but the machine is about to be busy.
-    pub fn start_pending(&self) -> bool {
-        self.start_sent.is_some_and(|t| t.elapsed() < RESUME_SETTLE)
-    }
     /// Always sent while connected.
     pub fn stop(&mut self) -> Result<(), MachineError> {
         self.resume_sent = None;

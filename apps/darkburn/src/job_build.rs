@@ -390,6 +390,9 @@ pub enum BuildError {
     NotANumber,
     /// Cylinder correction is on and the job has pictures, which it cannot bend.
     PictureNotMapped,
+    /// Nothing is left to burn because layers were left out for their size; the reasons, one
+    /// per layer, already in the active language.
+    TooBig(Vec<String>),
 }
 
 impl std::fmt::Display for BuildError {
@@ -402,6 +405,9 @@ impl std::fmt::Display for BuildError {
             BuildError::NotANumber => tr("job.error_not_a_number", "a shape or picture has a coordinate that is not a number"),
             BuildError::PictureNotMapped => {
                 tr("job.error_picture", "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own")
+            }
+            BuildError::TooBig(reasons) => {
+                tr("job.error_too_big", "there is nothing left to burn: {reasons}").replace("{reasons}", &reasons.join(" "))
             }
         })
     }
@@ -418,23 +424,33 @@ pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
 /// job with a warning, as for [`MAX_FILL_ROWS`].
 pub const MAX_LINE_PIECES: f64 = 5_000_000.0;
 
-/// The shortest step along an outline of the layer's dot mode or perforation (dot spacing, or
-/// one cut and skip), or None when no line setting of the layer splits its outlines. The
-/// floors are those of [`cut_settings`].
-fn piece_step(l: &Layer) -> Option<f64> {
+/// The line settings of the layer that split its outlines into pieces (dot mode, or
+/// perforation), each as (step along the outline, passes, kerf offset). The step is the dot
+/// spacing or one cut and skip, with the floors of [`cut_settings`]; passes are at least 1, as
+/// [`map_settings_with`] gives the generator.
+fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64)> {
     l.settings
         .iter()
-        .filter(|s| s.enabled && s.passes > 0 && matches!(s.mode, Mode::Line | Mode::FillLine))
+        .filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine))
         .filter_map(|s| {
-            if s.dot_mode {
-                Some(s.dot_spacing.max(0.01))
+            let step = if s.dot_mode {
+                s.dot_spacing.max(0.01)
             } else if s.perforation && s.perf_skip > 0.0 {
-                Some(s.perf_cut.max(0.01) + s.perf_skip)
+                s.perf_cut.max(0.01) + s.perf_skip
             } else {
-                None
-            }
+                return None;
+            };
+            Some((step, s.passes.max(1) as f64, s.kerf))
         })
-        .min_by(f64::total_cmp)
+        .collect()
+}
+
+/// The (English) reason a layer's shapes were left out for their size, in the active language.
+fn too_big_warning(key: &str, english: &str, li: usize, amount: f64, limit: f64) -> String {
+    tr(key, english)
+        .replace("{layer}", &layer::layer_label(li))
+        .replace("{amount}", &format!("{:.0}", amount / 1e6))
+        .replace("{limit}", &format!("{:.0}", limit / 1e6))
 }
 
 /// The finest line interval of the layer's fill settings, or None when it does not fill.
@@ -496,9 +512,18 @@ struct Collected {
     tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
+    /// Why layers were left out for their size (also among `warnings`): when nothing else is
+    /// left, the job is refused with these instead of a plain "nothing to burn".
+    size_warnings: Vec<String>,
 }
 
 impl Collected {
+    /// The error for a job with nothing left to burn: the size reasons when layers were left
+    /// out for their size, else the plain [`BuildError::NothingToBurn`].
+    fn nothing_to_burn(&self) -> BuildError {
+        if self.size_warnings.is_empty() { BuildError::NothingToBurn } else { BuildError::TooBig(self.size_warnings.clone()) }
+    }
+
     /// The origin settings of the build: anchored where "Remove what is outside the work area"
     /// placed the job when it dropped shapes.
     fn origin(&self, input: &BuildInput) -> Result<OriginSettings, BuildError> {
@@ -869,27 +894,57 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // Dot mode and perforation split every outline into pieces as long as their step, so an
     // outline of kilometres (or one scaled up by accident) would be more pieces than there is
     // memory for: such a layer is left out the same way.
-    let mut outline_len = [0.0_f64; layer::LAYER_COUNT];
+    // The estimate is taken on what the generator splits: each setting with a kerf cuts the
+    // kerf-offset outline, at most 2π·|kerf| longer for each closed subpath (offsets have round
+    // corners), and a vision mapping (cylinder, rotary, print and cut) is measured on the
+    // mapped outline, its stretch applied to the kerf allowance too. Every such setting and
+    // every pass make their own pieces.
+    let mut pieces = [0.0_f64; layer::LAYER_COUNT];
     for top in &tops {
         for leaf in top.leaves() {
             let li = leaf.layer.min(layer::LAYER_COUNT - 1);
             let l = doc.layer(li);
-            if l.outputs() && !leaf.is_image() && piece_step(l).is_some() {
-                outline_len[li] += darkburn_geom::path::length(&leaf.outline());
+            if !l.outputs() || leaf.is_image() {
+                continue;
             }
+            let splits = piece_settings(l);
+            if splits.is_empty() {
+                continue;
+            }
+            let outline = leaf.outline();
+            let drawn = darkburn_geom::path::length(&outline);
+            let subpaths = outline.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count() as f64;
+            let estimate = |len: f64, stretch: f64| -> f64 {
+                splits
+                    .iter()
+                    .map(|(step, passes, kerf)| (len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths) / step * passes)
+                    .sum()
+            };
+            let mut here = estimate(drawn, 1.0);
+            // A mapped outline is only measured while the drawn one is within the limit (an
+            // outline of kilometres is left out anyway, and mapping it would take as long).
+            if let Some(m) = &vision_map
+                && here <= MAX_LINE_PIECES
+                && drawn > 0.0
+            {
+                let mapped = darkburn_geom::path::length(&m.apply(outline));
+                let stretch = (mapped / drawn).max(1.0);
+                here = estimate(mapped.max(drawn), stretch);
+            }
+            pieces[li] += here;
         }
     }
     let mut too_big = [false; layer::LAYER_COUNT];
+    let mut size_warnings = Vec::new();
     for li in 0..layer::LAYER_COUNT {
-        let Some(step) = piece_step(doc.layer(li)) else { continue };
-        let pieces = outline_len[li] / step;
-        if pieces.is_nan() || pieces > MAX_LINE_PIECES {
+        if pieces[li].is_nan() || pieces[li] > MAX_LINE_PIECES {
             too_big[li] = true;
-            warnings.push(format!(
-                "The shapes on layer {} were left out: their dots or perforation would be {:.0} million pieces (the limit is {:.0} million). Check their size.",
-                layer::layer_label(li),
-                pieces / 1e6,
-                MAX_LINE_PIECES / 1e6
+            size_warnings.push(too_big_warning(
+                "job.warn_too_many_pieces",
+                "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
+                li,
+                pieces[li],
+                MAX_LINE_PIECES,
             ));
         }
     }
@@ -902,14 +957,16 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         // (A size that is not a number is not let through either.)
         if rows.is_nan() || rows > MAX_FILL_ROWS {
             too_big[li] = true;
-            warnings.push(format!(
-                "The shapes on layer {} were left out: the fill would be {:.0} million scan lines (the limit is {:.0} million). Check their size.",
-                layer::layer_label(li),
-                rows / 1e6,
-                MAX_FILL_ROWS / 1e6
+            size_warnings.push(too_big_warning(
+                "job.warn_too_many_rows",
+                "The shapes on layer {layer} were left out: the fill would be {amount} million scan lines (the limit is {limit} million). Check their size.",
+                li,
+                rows,
+                MAX_FILL_ROWS,
             ));
         }
     }
+    warnings.extend(size_warnings.iter().cloned());
     // "Remove what is outside the work area" tests each shape where the start mode puts it on
     // the bed: from the user origin or the head, the anchor of the whole job (all the shapes
     // that could burn) goes there. Absolute jobs, and jobs from the current position while the
@@ -1125,7 +1182,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // The engine anchors on what is left. Once shapes are dropped, it anchors on the bounds the
     // test used instead, so the shapes that are kept burn where they passed it.
     let anchor_bounds = if dropped > 0 && (!st.use_selection_origin || selection_bounds.is_none()) { place_bounds } else { None };
-    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped })
+    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped, size_warnings })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -1197,7 +1254,7 @@ fn fires_anywhere(tp: &Toolpath) -> bool {
 /// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
-    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let bounds = c.bounds.ok_or_else(|| c.nothing_to_burn())?;
     let origin = c.origin(input)?;
     let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: input.device.tolerance, comments: true };
     let mut scaled = |f: f32| report(0.3 + 0.7 * f);
@@ -1205,13 +1262,13 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     let toolpath = match job::generate(&c.job, &opts, &mut progress) {
         Ok(tp) => tp,
         Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
-        Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
+        Err(JobError::Empty) => return Err(c.nothing_to_burn()),
         Err(JobError::NotANumber) => return Err(BuildError::NotANumber),
     };
     // A job that fires the laser nowhere (every layer at power 0) is refused like an image at
     // power 0, before anything reaches the machine or a file.
     if !fires_anywhere(&toolpath) {
-        return Err(BuildError::NothingToBurn);
+        return Err(c.nothing_to_burn());
     }
     let design = inverse_ops(&toolpath, origin.transform(bounds));
     let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
@@ -1439,7 +1496,7 @@ pub fn frame_toolpath(points: &[Point], origin: &OriginSettings, job_bounds: Rec
 /// Frame toolpath for the current document and settings.
 pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Option<f64>) -> Result<Toolpath, BuildError> {
     let c = collect(input, None, &mut |_| {})?;
-    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let bounds = c.bounds.ok_or_else(|| c.nothing_to_burn())?;
     let origin = c.origin(input)?;
     let points = match kind {
         FrameKind::Rectangle => {

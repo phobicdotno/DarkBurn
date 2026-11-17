@@ -962,8 +962,15 @@ impl ConvertDialog {
         if let Some(b) = app.editor.doc.bbox_of(&self.ids) {
             (w, h) = (b.width(), b.height());
         }
-        let k = self.args.dpi.max(1.0) / 25.4;
-        self.pixels = Some(((w * k).ceil() as u64, (h * k).ceil() as u64));
+        // Outlines are drawn with the pen centred on the line, so half the pen width sticks out
+        // on every side and the bitmap is one pen width wider and taller than the shapes.
+        if self.outline {
+            let pen = if self.args.stroke_mm.is_finite() { self.args.stroke_mm.clamp(0.01, 10.0) } else { 0.0 };
+            (w, h) = (w + pen, h + pen);
+        }
+        // The same sum as the rasteriser that makes the bitmap.
+        let px_mm = 25.4 / self.args.dpi.max(1.0);
+        self.pixels = Some(((w / px_mm).ceil() as u64, (h / px_mm).ceil() as u64));
     }
 
     /// Why the result would be refused, if so.
@@ -986,9 +993,10 @@ fn convert_body(ui: &mut Ui, d: &mut ConvertDialog) -> bool {
     ui_kit::choice_row(ui, "Draw", "convert_draw", &mut i, &["Filled shapes", "Outlines"]);
     if (i == 1) != d.outline {
         d.outline = i == 1;
+        changed = true;
     }
     if d.outline {
-        numeric::row(ui, "Pen width", &mut d.args.stroke_mm, &Num::new(0.01..=10.0, 2, " mm").speed(0.01));
+        changed |= numeric::row(ui, "Pen width", &mut d.args.stroke_mm, &Num::new(0.01..=10.0, 2, " mm").speed(0.01)).changed;
     }
     ui_kit::checkbox(ui, "Keep the original shapes", &mut d.args.keep_original);
     if let Some((w, h)) = d.pixels {
@@ -1485,6 +1493,24 @@ mod tests {
         d.update(&app);
         assert!(d.problem().is_none(), "a small shape is fine even at 4800");
         assert!(ConvertDialog::new(&app, vec![]).is_err());
+    }
+
+    /// With Outlines the pen sticks out half its width round the shapes; the size the window
+    /// shows is the size of the bitmap that is made.
+    #[test]
+    fn convert_window_size_counts_the_outline_pen() {
+        let mut app = DarkBurn::new(Prefs::default());
+        let r = app.editor.doc.add(Shape::rect(KRect::new(0.0, 0.0, 25.4, 12.7), 0.0, 0));
+        let mut d = ConvertDialog::new(&app, vec![r]).unwrap();
+        d.args.dpi = 100.0;
+        d.outline = true;
+        d.args.stroke_mm = 1.0;
+        d.update(&app);
+        assert_eq!(d.pixels, Some((104, 54)), "25.4 + 1 mm and 12.7 + 1 mm at 100 DPI");
+        let new = image_ops::convert_to_bitmap(&mut app.editor, &d.ids, &d.effective()).unwrap();
+        let ShapeKind::Image(img) = &app.editor.doc.get(new).unwrap().kind else { panic!("not an image") };
+        let data = &app.editor.doc.images[&img.image];
+        assert_eq!(d.pixels, Some((u64::from(data.px_width), u64::from(data.px_height))), "shown size = bitmap made");
     }
 
     #[test]

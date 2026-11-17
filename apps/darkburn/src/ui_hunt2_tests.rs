@@ -620,7 +620,7 @@ fn planning_a_rotary_test_does_not_keep_the_settings() {
 fn device_settings_ok_keeps_changes_made_to_the_device_meanwhile() {
     let mut g = Gui::standard();
     let id = g.app().machine.devices.active.unwrap();
-    crate::machine_ui::run_with(g.app(), "edit.device_settings", &serde_json::json!({}));
+    crate::machine_ui::run_with(&mut g.app(), "edit.device_settings", &serde_json::json!({}));
     g.settle();
     // Edited in the window.
     g.app().machine.dlg.settings.as_mut().unwrap().0.settings.red_dot_y = 4.5;

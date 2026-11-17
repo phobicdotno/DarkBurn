@@ -418,6 +418,8 @@ fn the_agent_forms_of_the_dialog_commands_work_without_a_window() {
     let dir = std::env::temp_dir().join(format!("darkburn-mcp-files-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut b = backend();
+    // Agents write only inside the project's folder (Q080).
+    b.app_for_test().borrow_mut().project_path = Some(dir.join("start.dbrn"));
     exec(&mut b, "shape.add_polygon", json!({"cx": 50, "cy": 50, "sides": 5, "radius": 10})).unwrap();
     let svg = dir.join("out.svg");
     exec(&mut b, "file.export", json!({"path": svg.to_string_lossy()})).unwrap();
@@ -429,9 +431,11 @@ fn the_agent_forms_of_the_dialog_commands_work_without_a_window() {
     let e = exec(&mut b, "file.new", json!({})).unwrap_err();
     assert!(e.message.contains("unsaved changes"), "{}", e.message);
     assert_eq!(b.inspect("design", 0).unwrap()["shape_count"], 1);
+    b.app_for_test().borrow_mut().project_path = None;
     let e = exec(&mut b, "file.save", json!({})).unwrap_err();
     assert!(e.message.contains("file.save_as"), "{}", e.message);
     let proj = dir.join("a.dbrn");
+    b.app_for_test().borrow_mut().project_path = Some(dir.join("start.dbrn"));
     exec(&mut b, "file.save_as", json!({"path": proj.to_string_lossy()})).unwrap();
     exec(&mut b, "file.save", json!({})).unwrap();
     exec(&mut b, "file.new", json!({})).unwrap();
@@ -1026,6 +1030,7 @@ fn huge_numbers_from_an_agent_never_leave_a_design_that_cannot_be_saved() {
     let dir = std::env::temp_dir().join(format!("darkburn-hunt3-huge-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("huge.dbrn");
+    app.borrow_mut().project_path = Some(dir.join("start.dbrn"));
     b.execute("file.save_as", json!({"path": file.to_string_lossy()})).unwrap();
     let saved = app.borrow().editor.doc.clone();
     b.execute("file.open", json!({"path": file.to_string_lossy()})).unwrap_or_else(|e| panic!("the saved design does not open: {}", e.message));

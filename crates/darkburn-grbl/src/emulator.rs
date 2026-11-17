@@ -260,6 +260,8 @@ pub struct GrblEmulator {
     /// starts and ends inside one step is seen nowhere else.
     step_power: f64,
     stats: EmulatorStats,
+    /// Test faults on coming `ok` replies: (number of the `ok`, noise in front, or `None` to lose it).
+    ok_faults: Vec<(usize, Option<Vec<u8>>)>,
 }
 
 fn default_settings(flavor: EmulatorFlavor) -> BTreeMap<u16, f64> {
@@ -366,6 +368,7 @@ impl GrblEmulator {
             laser_was_on: false,
             step_power: 0.0,
             stats: EmulatorStats::default(),
+            ok_faults: Vec::new(),
         };
         e.power_on_reset();
         e
@@ -420,6 +423,12 @@ impl GrblEmulator {
         self.unplugged
     }
     /// Pull the cable: the transport fails until [`replug`](Self::replug).
+    /// Test hook: the `ok` that is `after` replies from now (0 is the next one) is lost on the
+    /// way (`noise` is `None`), or arrives with `noise` in front of it.
+    pub fn fault_ok(&mut self, after: usize, noise: Option<&[u8]>) {
+        self.ok_faults.push((self.stats.oks + after, noise.map(<[u8]>::to_vec)));
+    }
+
     pub fn unplug(&mut self) {
         self.unplugged = true;
     }
@@ -764,7 +773,15 @@ impl GrblEmulator {
     }
 
     fn reply_ok(&mut self) {
+        let n = self.stats.oks;
         self.stats.oks += 1;
+        if let Some(i) = self.ok_faults.iter().position(|(k, _)| *k == n) {
+            let (_, noise) = self.ok_faults.swap_remove(i);
+            match noise {
+                Some(noise) => self.out.extend_from_slice(&noise),
+                None => return,
+            }
+        }
         self.print("ok");
     }
 

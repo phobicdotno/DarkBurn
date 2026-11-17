@@ -23,7 +23,7 @@ pub use emulator::{EmulatorConfig, EmulatorFlavor, EmulatorStats, GrblEmulator};
 pub use machine::{
     Activity, BoundsCheck, ConnectOptions, ConnectionState, ConsoleKind, ConsoleLine, Coords, EtaHook, Event, FinishPosition, FrameOptions,
     GrblError, GrblMachine, Job, JobKind, JobProgress, JogDirection, JogStep, LaserStatus, MachineStatus, MoveTarget, OriginStrategy, Overrides,
-    SettingValue, SettingsBackup, Snapshot, StreamMode, TravelLimits,
+    STALL_TIMEOUT, SettingValue, SettingsBackup, Snapshot, StreamMode, TravelLimits,
 };
 pub use protocol::{FirmwareInfo, FirmwareKind, MachineState, RapidOverride, Response, StatusReport};
 #[cfg(feature = "rawusb")]

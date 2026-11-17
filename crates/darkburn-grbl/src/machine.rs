@@ -102,6 +102,9 @@ pub struct ConnectOptions {
     pub origin_strategy: OriginStrategy,
     /// Echo every streamed line and its `ok` to the console.
     pub show_all: bool,
+    /// How long lines may wait for their answer while the controller reports itself idle with
+    /// empty buffers before the answer counts as lost (plus any dwell still in flight).
+    pub stall_timeout: Duration,
 }
 
 impl Default for ConnectOptions {
@@ -119,6 +122,7 @@ impl Default for ConnectOptions {
             max_fire_duration: Duration::from_secs(10),
             origin_strategy: OriginStrategy::G10L20,
             show_all: false,
+            stall_timeout: STALL_TIMEOUT,
         }
     }
 }
@@ -131,6 +135,10 @@ const DISCONNECT_WAIT: Duration = Duration::from_secs(1);
 /// How long it then waits for the worker to let the link go once it was told to give up.
 const GIVE_UP_WAIT: Duration = Duration::from_millis(500);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(6);
+/// Default [`ConnectOptions::stall_timeout`].
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Said when an answer was lost: the job or command ends, nothing more is streamed.
+const STALL_MESSAGE: &str = "The controller stopped answering; a reply was lost.";
 
 /// Errors returned straight from [`GrblMachine`] methods.
 #[derive(Clone, Debug, PartialEq)]
@@ -1371,6 +1379,8 @@ struct Worker {
     pause_unconfirmed: Option<Instant>,
     poll_sent: Option<Instant>,
     last_poll: Instant,
+    /// When a line last went out or an answer last came in (see `check_stall`).
+    last_traffic: Instant,
     echo_status: bool,
     settings_collect: Vec<SettingValue>,
     stop: Option<StopSeq>,
@@ -1415,6 +1425,7 @@ impl Worker {
             pause_unconfirmed: None,
             poll_sent: None,
             last_poll: now,
+            last_traffic: now,
             echo_status: false,
             settings_collect: Vec::new(),
             stop: None,
@@ -1917,6 +1928,7 @@ impl Worker {
         if self.fire_until.is_some_and(|t| now >= t) {
             self.fire_off(true);
         }
+        self.check_stall(now);
         if self.job.is_some() && now - self.last_progress >= Duration::from_millis(100) {
             self.last_progress = now;
             let p = self.job.as_mut().map(ActiveJob::progress);
@@ -1925,6 +1937,50 @@ impl Worker {
             }
         }
         Ok(true)
+    }
+
+    /// A lost answer (a garbled `ok`, a dropped byte) leaves its line in flight for good and the
+    /// job running until Stop. Only a controller that has plainly finished everything counts:
+    /// a fresh report of Idle with the planner empty and the RX buffer free, long after the
+    /// last answer. Without `Bf:` (or the planner size from `[OPT:]`) nothing is guessed. The
+    /// job ends as failed, the laser-off line goes out, and nothing is reset: an idle
+    /// controller's start-up blocks could move the head.
+    fn check_stall(&mut self, now: Instant) {
+        if self.phase != Phase::Ready || self.stop.is_some() || self.in_flight.is_empty() {
+            return;
+        }
+        let dwell: f64 = self.in_flight.iter().map(|p| dwell_seconds(&p.text)).sum();
+        let limit = self.opts.stall_timeout + Duration::from_secs_f64(dwell.clamp(0.0, 86_400.0));
+        if now.saturating_duration_since(self.last_traffic) < limit {
+            return;
+        }
+        if self.in_flight.iter().any(|p| p.origin == Origin::Internal(Tag::Home) || p.text.trim().eq_ignore_ascii_case("$H")) {
+            return;
+        }
+        let st = &self.snap.status;
+        let fresh = st.updated.is_some_and(|t| t > self.last_traffic && now.saturating_duration_since(t) < POLL_STALE);
+        if st.state != MachineState::Idle || !fresh {
+            return;
+        }
+        let Some(fw) = self.snap.firmware.as_ref() else { return };
+        let (Some(blocks), Some(planner_free), Some(rx_free)) = (fw.planner_blocks, st.planner_free, st.rx_free) else { return };
+        if planner_free < u32::from(blocks) || (rx_free as usize) < fw.rx_buffer_size.saturating_sub(1) {
+            return;
+        }
+        let first = self.in_flight.front().map(|p| p.text.clone()).unwrap_or_default();
+        self.in_flight.clear();
+        self.in_flight_bytes = 0;
+        self.motion_pending = false;
+        self.fire_until = None;
+        self.queue.clear();
+        self.note(STALL_MESSAGE);
+        if self.job.is_some() {
+            self.abort_job(STALL_MESSAGE);
+        } else {
+            self.emit(Event::Error { code: 0, message: STALL_MESSAGE.into(), line: first });
+        }
+        self.queue.push_back(Outgoing { text: "M5 S0".into(), origin: Origin::Internal(Tag::Plain), sync: false, needs_idle: false });
+        self.last_traffic = now;
     }
 
     /// Sends `?`, respecting the 5 Hz limit unless `now` is set for a one-off request that has
@@ -2057,6 +2113,7 @@ impl Worker {
         }
         self.in_flight.push_back(Pending { len, origin: o.origin, text: o.text });
         self.in_flight_bytes += len;
+        self.last_traffic = Instant::now();
         self.snap.rx_in_flight_peak = self.snap.rx_in_flight_peak.max(self.in_flight_bytes);
         Ok(())
     }
@@ -2154,6 +2211,7 @@ impl Worker {
             return Ok(());
         };
         self.in_flight_bytes -= p.len;
+        self.last_traffic = Instant::now();
         let user = matches!(p.origin, Origin::Console | Origin::Macro);
         if error.is_some() && is_jog_line(&p.text) && !self.in_flight.iter().any(|q| is_jog_line(&q.text)) {
             // The controller refused the jog: nothing moves.
@@ -2475,6 +2533,15 @@ impl Worker {
         }
         Ok(())
     }
+}
+
+/// Seconds a `G4 P<seconds>` line waits; 0 for any other line.
+fn dwell_seconds(text: &str) -> f64 {
+    let w = words(text);
+    if !w.iter().any(|(l, v)| *l == 'G' && v.parse::<f64>().is_ok_and(|g| (g - 4.0).abs() < 1e-9)) {
+        return 0.0;
+    }
+    w.iter().find(|(l, _)| *l == 'P').and_then(|(_, v)| v.parse::<f64>().ok()).filter(|p| p.is_finite() && *p > 0.0).unwrap_or(0.0)
 }
 
 fn is_sync_origin(origin: &Origin, text: &str) -> bool {

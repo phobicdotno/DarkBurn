@@ -8,6 +8,13 @@ use crate::canvas::ViewCmd;
 use crate::shell::DarkBurn;
 use crate::tools::Tool;
 
+/// The refusal of an edit that would nest shapes deeper than the editor allows.
+pub(crate) fn too_deep(what: &str) -> String {
+    crate::i18n::tr("edit.too_deep", "{what}: shapes may sit at most {max} groups deep.")
+        .replace("{what}", what)
+        .replace("{max}", &darkburn_core::editor::MAX_GROUP_DEPTH.to_string())
+}
+
 /// Run command `id` if it is one of these; returns whether it was.
 pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
     let ids = app.editor.selected();
@@ -74,6 +81,10 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
                 _ => PasteAt::Offset,
             };
             let e = &mut app.editor;
+            if e.clipboard.shapes.iter().any(|s| s.group_depth() > darkburn_core::editor::MAX_GROUP_DEPTH) {
+                app.shape_ui.status = Some(too_deep(&crate::i18n::tr("edit.not_pasted", "Not pasted")));
+                return true;
+            }
             let mut clip = std::mem::take(&mut e.clipboard);
             e.edit("Paste", |d, sel| {
                 let new = clip.paste(d, at);
@@ -104,6 +115,10 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         }
         // Arrange
         "arrange.group" => {
+            if !darkburn_core::editor::can_group(&e.doc, &ids) {
+                app.shape_ui.status = Some(too_deep(&crate::i18n::tr("edit.not_grouped", "Not grouped")));
+                return true;
+            }
             e.edit("Group", |d, sel| match arrange::group(d, &ids) {
                 Some(g) => {
                     sel.set([g]);
@@ -272,6 +287,34 @@ mod tests {
         assert_eq!(app.editor.doc.len(), 2);
         app.run(&ctx, "edit.invert_selection");
         assert!(app.editor.selected().is_empty());
+    }
+
+    #[test]
+    fn group_and_paste_past_the_depth_cap_are_refused_with_a_message() {
+        use darkburn_core::editor::MAX_GROUP_DEPTH;
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(Prefs::default());
+        app.prefs.opts.system_clipboard = false;
+        let mut s = Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0);
+        for _ in 0..MAX_GROUP_DEPTH {
+            s = Shape::new(darkburn_core::ShapeKind::Group { children: vec![s] }, darkburn_core::kurbo::Affine::IDENTITY, 0);
+        }
+        app.editor.edit("Add", |d, sel| {
+            let a = d.add(s.clone());
+            let b = d.add(Shape::rect(Rect::new(50.0, 0.0, 60.0, 10.0), 0.0, 0));
+            sel.set([a, b]);
+            true
+        });
+        let before = app.editor.doc.clone();
+        app.run(&ctx, "arrange.group");
+        assert_eq!(app.editor.doc, before, "not grouped");
+        let note = app.shape_ui.status.take().expect("the refusal is reported");
+        assert!(note.contains("Not grouped") && note.contains(&MAX_GROUP_DEPTH.to_string()), "{note}");
+        app.editor.clipboard.shapes =
+            vec![Shape::new(darkburn_core::ShapeKind::Group { children: vec![s] }, darkburn_core::kurbo::Affine::IDENTITY, 0)];
+        app.run(&ctx, "edit.paste_in_place");
+        assert_eq!(app.editor.doc, before, "not pasted");
+        assert!(app.shape_ui.status.take().is_some_and(|n| n.contains("Not pasted")));
     }
 
     #[test]

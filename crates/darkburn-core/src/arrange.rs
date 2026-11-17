@@ -234,8 +234,13 @@ pub fn distribute(doc: &mut Document, ids: &[ShapeId], how: Distribute) -> bool 
             if n < 3 {
                 return false;
             }
-            let gap = (last_end - first - total) / (n - 1) as f64;
-            running(&items, first, gap)
+            // The shapes with the outermost centres stay; the gap is what lies between the end of
+            // the first and the start of the last, less the inner shapes (negative when they overlap).
+            let inner: f64 = items[1..n - 1].iter().map(|i| i.2).sum();
+            let gap = (items[n - 1].1 - (items[0].1 + items[0].2) - inner) / (n - 1) as f64;
+            let mut s = running(&items, items[0].1, gap);
+            s[n - 1] = items[n - 1].1;
+            s
         }
         Distribute::HCentres | Distribute::VCentres => {
             if n < 3 {
@@ -243,7 +248,11 @@ pub fn distribute(doc: &mut Document, ids: &[ShapeId], how: Distribute) -> bool 
             }
             let c0 = items[0].1 + items[0].2 / 2.0;
             let c1 = items[n - 1].1 + items[n - 1].2 / 2.0;
-            items.iter().enumerate().map(|(i, it)| c0 + (c1 - c0) * i as f64 / (n - 1) as f64 - it.2 / 2.0).collect()
+            let mut s: Vec<f64> = items.iter().enumerate().map(|(i, it)| c0 + (c1 - c0) * i as f64 / (n - 1) as f64 - it.2 / 2.0).collect();
+            // The outer two stay exactly where they are.
+            s[0] = items[0].1;
+            s[n - 1] = items[n - 1].1;
+            s
         }
         Distribute::HSpacing(p) | Distribute::VSpacing(p) => running(&items, first, p),
         Distribute::HTogether | Distribute::VTogether => {
@@ -645,6 +654,35 @@ mod tests {
         assert!(distribute(&mut d, &ids, Distribute::HTogether));
         assert_eq!(span(&d, ids[0]), (-5.0, 95.0));
         assert_eq!(span(&d, ids[1]), (95.0, 105.0));
+    }
+
+    #[test]
+    /// Shapes overlapping so much that the gap is negative, with one swallowing another: the two
+    /// with the outermost centres never move, and the inner ones get equal (negative) gaps.
+    #[test]
+    fn distributing_with_a_negative_gap_never_moves_the_ends() {
+        for spans in [
+            vec![(0.0, 100.0), (10.0, 20.0), (30.0, 40.0)],
+            vec![(0.0, 50.0), (5.0, 60.0), (10.0, 70.0), (1.0, 2.0)],
+            vec![(0.0, 30.0), (2.0, 28.0), (4.0, 26.0), (25.0, 31.0)],
+            vec![(0.3, 0.7), (0.1, 99.9), (0.2, 50.0)],
+        ] {
+            for how in [Distribute::Horizontally, Distribute::HCentres] {
+                let (mut d, ids) = row(&spans);
+                let centre = |d: &Document, id: ShapeId| bb(d, id).center().x;
+                let mut by_centre = ids.clone();
+                by_centre.sort_by(|a, b| centre(&d, *a).total_cmp(&centre(&d, *b)));
+                let (lo, hi) = (by_centre[0], by_centre[by_centre.len() - 1]);
+                let (lo0, hi0) = (bb(&d, lo), bb(&d, hi));
+                distribute(&mut d, &ids, how);
+                assert_eq!(bb(&d, lo), lo0, "{how:?} {spans:?}: first end moved");
+                assert_eq!(bb(&d, hi), hi0, "{how:?} {spans:?}: last end moved");
+                if how == Distribute::Horizontally {
+                    let gaps: Vec<f64> = by_centre.windows(2).map(|w| bb(&d, w[1]).x0 - bb(&d, w[0]).x1).collect();
+                    assert!(gaps.windows(2).all(|g| near(g[0], g[1])), "{spans:?}: {gaps:?}");
+                }
+            }
+        }
     }
 
     #[test]

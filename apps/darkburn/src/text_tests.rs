@@ -237,6 +237,16 @@ fn every_barcode_kind_is_made() {
 }
 
 #[test]
+fn barcode_data_length_is_capped() {
+    let mut a = app();
+    let long = "A".repeat(1_000_000);
+    let e = run(&mut a, "barcode.add", json!({ "barcode": "code128", "data": long })).unwrap_err();
+    assert!(e.contains("4296"), "{e}");
+    let long = "7".repeat(4297);
+    assert!(run(&mut a, "barcode.add", json!({ "barcode": "datamatrix", "data": long })).is_err());
+}
+
+#[test]
 fn serial_numbers_and_navigation() {
     let mut a = app();
     let id = add(&mut a, "SN{serial:3}", json!({ "variable": "serial" }));

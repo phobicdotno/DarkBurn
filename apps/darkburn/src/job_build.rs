@@ -646,7 +646,7 @@ fn image_inputs(
                     .iter()
                     .map(|l| {
                         let mut runs: Vec<(f64, f64, f64)> =
-                            l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0 * scale)).collect();
+                            l.spans.iter().flat_map(|sp| sp.runs.iter()).map(|r| (r.x0, r.x1, f64::from(r.power) / 100.0)).collect();
                         runs.sort_by(|a, b| a.0.total_cmp(&b.0));
                         job::Scanline { y: l.y, runs }
                     })
@@ -657,6 +657,7 @@ fn image_inputs(
                 input.priority = priority;
                 input.direction_offset = direction_offset;
                 input.outline = outline.to_vec();
+                input.power_scale = scale;
                 out.push(input);
             }
         };

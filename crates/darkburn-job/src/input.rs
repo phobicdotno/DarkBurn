@@ -174,11 +174,13 @@ pub struct ImageInput {
     /// bounds take the picture from here, white parts included, so where the job lands does
     /// not depend on where the first dot is. Empty: the scan lines bound it.
     pub outline: Vec<Point>,
+    /// Share of the power every dot burns with, 0..1 (the shape's power scale). 1 = as set.
+    pub power_scale: f64,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new() }
+        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new(), power_scale: 1.0 }
     }
 }
 

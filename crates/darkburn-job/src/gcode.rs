@@ -166,6 +166,7 @@ impl Iterator for GcodeLines<'_> {
                 }
                 1 => {
                     if let Some(op) = self.e.tp.ops.get(self.next_op) {
+                        self.e.at = self.next_op;
                         self.e.op(op, &mut v);
                         self.next_op += 1;
                     } else {
@@ -204,6 +205,19 @@ struct Emitter<'a> {
     layer: Option<&'a IrLayer>,
     dec: usize,
     air: bool,
+    /// Index of the op being written.
+    at: usize,
+    /// Index of the job's closing Z move back to the start height, if it has one.
+    z_return: Option<usize>,
+}
+
+/// The last Z move when it goes back to the start height and nothing is burned after it: the
+/// job's closing Z return.
+fn closing_z_return(tp: &Toolpath) -> Option<usize> {
+    let i = tp.ops.iter().rposition(|o| matches!(o, Op::ZMove { .. }))?;
+    let back = matches!(tp.ops[i], Op::ZMove { z } if z == 0.0);
+    let burns = |o: &Op| matches!(o, Op::Cut { .. } | Op::Arc { .. } | Op::Overscan { .. } | Op::Dwell { .. });
+    (back && !tp.ops[i + 1..].iter().any(burns)).then_some(i)
 }
 
 fn fmt(v: f64, dec: usize) -> String {
@@ -233,6 +247,8 @@ impl<'a> Emitter<'a> {
             layer: None,
             dec: s.decimals,
             air: false,
+            at: 0,
+            z_return: closing_z_return(tp),
         }
     }
 
@@ -589,6 +605,21 @@ impl<'a> Emitter<'a> {
                     }
                 }
             },
+            Op::ZMove { .. } if self.z_return == Some(self.at) => {
+                // The job ends where it started in Z: undo its own Z travel with a relative
+                // move, never an absolute `G0 Z` (Q077).
+                let dz = round(-self.z.unwrap_or(0.0), self.s.decimals);
+                if dz != 0.0 {
+                    if self.relative {
+                        out.push(format!("G0 Z{}", fmt(dz, self.s.decimals)));
+                    } else {
+                        out.push("G91".into());
+                        out.push(format!("G0 Z{}", fmt(dz, self.s.decimals)));
+                        out.push("G90".into());
+                    }
+                }
+                self.z = Some(0.0);
+            }
             Op::ZMove { z } => {
                 let zr = round(*z, self.s.decimals);
                 let word = if self.relative || self.s.z_relative_only {
@@ -661,6 +692,31 @@ mod tests {
         let g = emit(&tp(sq(), true), &GcodeSettings { comments: false, s_every_g1: true, ..GcodeSettings::grbl() });
         assert!(g.contains("M3 S0\n"));
         assert!(g.contains("G1 Y11 S500\n"));
+    }
+
+    /// A job that moved Z ends back at its start height with a relative move, in absolute
+    /// and in relative-only Z mode (Q077).
+    #[test]
+    fn a_job_with_z_steps_ends_with_net_z_zero() {
+        let mut ops = vec![Op::ZMove { z: 1.0 }];
+        ops.extend(sq());
+        ops.push(Op::ZMove { z: 0.5 });
+        ops.extend(sq());
+        ops.push(Op::ZMove { z: 0.0 });
+        let t = tp(ops, false);
+        let g = emit(&t, &GcodeSettings { comments: false, ..GcodeSettings::grbl() });
+        assert!(g.contains("G91\nG0 Z-0.5\nG90\n"), "{g}");
+        assert!(!g.contains("G0 Z0\n"), "never an absolute G0 Z0: {g}");
+        let g = emit(&t, &GcodeSettings { comments: false, z_relative_only: true, ..GcodeSettings::grbl() });
+        let net: f64 = g.lines().filter_map(|l| l.strip_prefix("G0 Z")).map(|v| v.parse::<f64>().unwrap()).sum();
+        assert!(net.abs() < 1e-9, "net Z travel {net}: {g}");
+        // A Z move back to the start between layers stays as it was.
+        let mut ops = vec![Op::ZMove { z: 1.0 }];
+        ops.extend(sq());
+        ops.push(Op::ZMove { z: 0.0 });
+        ops.extend(sq());
+        let g = emit(&tp(ops, false), &GcodeSettings { comments: false, ..GcodeSettings::grbl() });
+        assert!(g.contains("G0 Z0\n") && !g.contains("G91"), "{g}");
     }
 
     /// The dots of a picture keep their length in the G-code at 300 and 600 DPI.

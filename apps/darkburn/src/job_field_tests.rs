@@ -173,7 +173,7 @@ fn z_offset_and_step_per_pass() {
     i.device.z_enabled = true;
     let b = build_job_simple(&i).unwrap();
     let zs: Vec<f64> = b.toolpath.ops.iter().filter_map(|o| if let Op::ZMove { z } = o { Some(*z) } else { None }).collect();
-    assert_eq!(zs, vec![2.0, 1.5, 1.0]);
+    assert_eq!(zs, vec![2.0, 1.5, 1.0, 0.0], "the job ends back at the start height");
     assert!(gcode_text(&b, None, &DeviceGcodeSettings::default()).contains("Z1.5"));
     // A machine without a Z axis writes no Z moves.
     let b = build(d);
@@ -902,6 +902,18 @@ fn image_grayscale_min_and_max_power() {
     let p: Vec<f64> = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.power).collect();
     let (lo, hi) = (p.iter().cloned().fold(f64::MAX, f64::min), p.iter().cloned().fold(0.0, f64::max));
     assert!(lo >= 20.0 - 1e-6 && hi <= 60.0 + 1e-6 && hi - lo > 10.0, "grays map between min 20 and max 60: {lo} {hi}");
+}
+
+/// Power scale on a picture is a share of max power, as on lines (Q078): black at 50 % of a
+/// 20..60 % layer burns at 30 %, not halfway from min to max.
+#[test]
+fn image_power_scale_is_a_share_of_max_power() {
+    let mut d = image_doc(|s| s.image_mode = layer::ImageMode::Threshold, vec![0u8; 16]);
+    let id = d.iter().next().unwrap().id;
+    d.get_mut(id).unwrap().power_scale = 50.0;
+    let b = build(d);
+    let p: Vec<f64> = segs(&b.toolpath).iter().filter(|s| s.power > 0.0).map(|s| s.power).collect();
+    assert!(!p.is_empty() && p.iter().all(|p| (p - 30.0).abs() < 1e-6), "{p:?}");
 }
 
 #[test]

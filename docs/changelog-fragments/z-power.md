@@ -1,0 +1,2 @@
+- The head goes back to its starting height after a job with Z steps
+- Power scale works the same on images as on lines

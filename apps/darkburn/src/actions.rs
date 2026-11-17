@@ -307,7 +307,8 @@ mod tests {
         assert_eq!(app.editor.doc, before, "not grouped");
         let note = app.shape_ui.status.take().expect("the refusal is reported");
         assert!(note.contains("Not grouped") && note.contains(&MAX_GROUP_DEPTH.to_string()), "{note}");
-        app.editor.clipboard.shapes = vec![Shape::new(darkburn_core::ShapeKind::Group { children: vec![s] }, darkburn_core::kurbo::Affine::IDENTITY, 0)];
+        app.editor.clipboard.shapes =
+            vec![Shape::new(darkburn_core::ShapeKind::Group { children: vec![s] }, darkburn_core::kurbo::Affine::IDENTITY, 0)];
         app.run(&ctx, "edit.paste_in_place");
         assert_eq!(app.editor.doc, before, "not pasted");
         assert!(app.shape_ui.status.take().is_some_and(|n| n.contains("Not pasted")));

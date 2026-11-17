@@ -652,10 +652,7 @@ fn plan_windows(job: &Job, rc: &RotaryConfig, field_size: f64, opt: &CompileOpti
     let ymax = shapes.iter().map(|s| s.1.y1).fold(f64::MIN, f64::max);
     let mut windows = Vec::new();
     let too_many = |n: usize| {
-        CompileError::Invalid(format!(
-            "The rotary job needs {} positions, which is more than the limit of {}.",
-            n, opt.max_rotary_windows
-        ))
+        CompileError::Invalid(format!("The rotary job needs {} positions, which is more than the limit of {}.", n, opt.max_rotary_windows))
     };
     let bands = |a: f64, b: f64, shapes: Option<Vec<(usize, usize)>>, out: &mut Vec<Window>| -> Result<(), CompileError> {
         // Check the count before pushing anything: a tiny band size would otherwise allocate

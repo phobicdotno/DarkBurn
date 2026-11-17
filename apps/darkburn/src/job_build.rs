@@ -30,6 +30,8 @@ use darkburn_job::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::tr;
+
 /// Curve flattening tolerance for jobs, mm.
 pub const TOLERANCE: f64 = 0.01;
 /// The version of the job settings saved in projects.
@@ -392,13 +394,15 @@ pub enum BuildError {
 
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            BuildError::Cancelled => "job generation was cancelled",
-            BuildError::NothingToBurn => "there is nothing to burn: no shapes on layers that output",
-            BuildError::NothingSelected => "Cut selected graphics is on and nothing is selected",
-            BuildError::NoUserOrigin => "Start from is User origin, but no user origin is set",
-            BuildError::NotANumber => "a shape or picture has a coordinate that is not a number",
-            BuildError::PictureNotMapped => "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own",
+        f.write_str(&match self {
+            BuildError::Cancelled => tr("job.error_cancelled", "job generation was cancelled"),
+            BuildError::NothingToBurn => tr("job.error_nothing_to_burn", "there is nothing to burn: no shapes on layers that output"),
+            BuildError::NothingSelected => tr("job.error_nothing_selected", "Cut selected graphics is on and nothing is selected"),
+            BuildError::NoUserOrigin => tr("job.error_no_user_origin", "Start from is User origin, but no user origin is set"),
+            BuildError::NotANumber => tr("job.error_not_a_number", "a shape or picture has a coordinate that is not a number"),
+            BuildError::PictureNotMapped => {
+                tr("job.error_picture", "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own")
+            }
         })
     }
 }

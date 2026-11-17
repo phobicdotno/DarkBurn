@@ -10,6 +10,13 @@ use kurbo::{Affine, Point, Vec2};
 
 use crate::gray::{GrayF, fast_to_linear, fast_to_srgb, snap_endpoints};
 
+/// The finest line interval a scan grid is made with, mm (254 000 DPI).
+pub const MIN_LINE_INTERVAL_MM: f64 = 1e-4;
+
+/// The most cells a scan grid may have (about 2 GB of grey values); a picture that would need
+/// more is scanned coarser.
+pub const MAX_GRID_PIXELS: f64 = 536_870_912.0;
+
 /// A rectangular window of the global scan lattice. Grid pixel `(x, y)` (rows top to bottom)
 /// is lattice cell `(col0 + x, row_top - y)`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,8 +61,29 @@ impl ScanGrid {
     }
 
     /// The smallest grid covering an image of `width × height` pixels placed by `image_to_mm`.
+    ///
+    /// The interval is held to at least [`MIN_LINE_INTERVAL_MM`] (also for a negative interval
+    /// or one that is not a number), and a grid of more than [`MAX_GRID_PIXELS`] cells is made
+    /// coarser until it fits, so a hand-edited interval cannot ask for terabytes.
     pub fn for_image(width: u32, height: u32, image_to_mm: Affine, interval_mm: f64, angle_deg: f64) -> Self {
-        let i = interval_mm.max(1e-6);
+        let i = if interval_mm.is_finite() { interval_mm.max(MIN_LINE_INTERVAL_MM) } else { MIN_LINE_INTERVAL_MM };
+        let g = Self::for_image_at(width, height, image_to_mm, i, angle_deg);
+        let cells = f64::from(g.width) * f64::from(g.height);
+        if cells <= MAX_GRID_PIXELS {
+            return g;
+        }
+        // Coarser by the square root of the excess, plus a little for the rounding of edges.
+        let mut i = i * (cells / MAX_GRID_PIXELS).sqrt() * 1.01;
+        loop {
+            let g = Self::for_image_at(width, height, image_to_mm, i, angle_deg);
+            if f64::from(g.width) * f64::from(g.height) <= MAX_GRID_PIXELS || !i.is_finite() {
+                return g;
+            }
+            i *= 2.0;
+        }
+    }
+
+    fn for_image_at(width: u32, height: u32, image_to_mm: Affine, i: f64, angle_deg: f64) -> Self {
         let to_scan = Affine::rotate(-angle_deg.to_radians()) * image_to_mm;
         let corners = [(0.0, 0.0), (f64::from(width), 0.0), (0.0, f64::from(height)), (f64::from(width), f64::from(height))]
             .map(|(x, y)| to_scan * Point::new(x, y));
@@ -264,5 +292,17 @@ mod tests {
         assert_eq!(g.data[0], 0.0);
         assert_eq!(g.data[1], 1.0);
         assert!((g.data[2] - 0.7354).abs() < 0.01);
+    }
+
+    #[test]
+    fn tiny_or_negative_interval_stays_within_the_pixel_budget() {
+        let t = crate::placement(100, 100, Point::ZERO, kurbo::Size::new(100.0, 100.0));
+        for interval in [1e-7, 0.0, -0.1, f64::NAN, 1e-4] {
+            let g = ScanGrid::for_image(100, 100, t, interval, 30.0);
+            assert!(g.interval_mm >= MIN_LINE_INTERVAL_MM, "{interval}: {g:?}");
+            assert!(f64::from(g.width) * f64::from(g.height) <= MAX_GRID_PIXELS, "{interval}: {g:?}");
+        }
+        // A normal interval is kept as it is.
+        assert_eq!(ScanGrid::for_image(100, 100, t, 0.1, 0.0).interval_mm, 0.1);
     }
 }

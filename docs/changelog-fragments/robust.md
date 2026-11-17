@@ -1,0 +1,5 @@
+- A job with a broken shape or picture is refused instead of crashing
+- Setting a start point on a shape far off the map no longer loses the shape
+- Very fine image line intervals and huge blur values no longer eat all the memory
+- Camera pictures at an absurd zoom are refused instead of eating all the memory
+- Galvo settings with impossible delays or steps are refused before the job is sent

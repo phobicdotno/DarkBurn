@@ -46,6 +46,27 @@ pub struct Timings {
     pub polygon_tc: i32,
 }
 
+impl Timings {
+    /// Checks the whole-number delays against what the board's 16-bit delay words hold (the
+    /// end and polygon delays are sent in tens of microseconds).
+    pub fn validate_ranges(&self) -> Result<(), String> {
+        let delays = [
+            ("short jump delay", self.min_jump_delay, 0, 65_535),
+            ("long jump delay", self.max_jump_delay, 0, 65_535),
+            ("laser on delay", self.laser_on_tc, -65_535, 65_535),
+            ("laser off delay", self.laser_off_tc, -65_535, 65_535),
+            ("end delay", self.end_tc, 0, 655_350),
+            ("polygon delay", self.polygon_tc, 0, 655_350),
+        ];
+        for (name, v, lo, hi) in delays {
+            if !(lo..=hi).contains(&v) {
+                return Err(format!("The {name} is {v}; it must be from {lo} to {hi}."));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for Timings {
     fn default() -> Self {
         Self {
@@ -239,6 +260,24 @@ impl Default for DeviceSettings {
             axis_steps_per_mm: [100.0, 100.0],
             z_steps_per_mm: 100.0,
         }
+    }
+}
+
+impl DeviceSettings {
+    /// Checks the whole-number timings against what the board's 16-bit delay words hold, and
+    /// that the external axis and Z steps per mm are numbers above zero (at most 1 000 000).
+    pub fn validate_ranges(&self) -> Result<(), String> {
+        self.timings.validate_ranges()?;
+        let steps = |v: f64| v.is_finite() && v > 0.0 && v <= 1_000_000.0;
+        for (axis, v) in self.axis_steps_per_mm.iter().enumerate() {
+            if !steps(*v) {
+                return Err(format!("Axis {axis} has {v} steps per mm; it must be above 0 and at most 1000000."));
+            }
+        }
+        if !steps(self.z_steps_per_mm) {
+            return Err(format!("Z has {} steps per mm; it must be above 0 and at most 1000000.", self.z_steps_per_mm));
+        }
+        Ok(())
     }
 }
 

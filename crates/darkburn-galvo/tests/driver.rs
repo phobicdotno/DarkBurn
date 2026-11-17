@@ -434,12 +434,11 @@ fn a_job_with_an_axis_move_the_board_cannot_make_is_refused_before_it_marks() {
     assert!(!r.emu(|e| e.ever_emitted()));
     assert_eq!(r.m.snapshot().connection, ConnectionState::Connected, "{:?}", r.events);
     assert_eq!(r.m.snapshot().activity, Activity::Idle);
-    // A repeat step on an axis the board does not have is refused the same way.
+    // A repeat step on an axis the board does not have is refused already when the job is compiled.
     let mut job = Job::new();
     job.layers.push(Layer::new("L", LayerMode::Line, MarkParams::default(), vec![rect(-10.0, -10.0, 20.0, 20.0)]));
     job.repeat = RepeatMarking { count: 2, axis_step: Some((4, 1.0)), wait_foot_each: false };
-    let c = compile(&job, &dev(), &CompileOptions::default()).unwrap();
-    assert!(matches!(r.m.start_job(c, StartOptions::default()), Err(GalvoError::Invalid(_))));
+    assert!(compile(&job, &dev(), &CompileOptions::default()).is_err());
     assert!(!r.emu(|e| e.ever_emitted()));
 }
 

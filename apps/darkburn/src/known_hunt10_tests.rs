@@ -119,15 +119,21 @@ impl Rig {
 
 #[test]
 fn joining_two_touching_ends_on_release_marks_the_document_changed() {
+    use darkburn_core::kurbo::PathEl;
+    // Two open lines in one shape; the join on release makes them one.
+    let starts = |rig: &Rig, id: ShapeId| -> Vec<Point> {
+        rig.app.editor.doc.get(id).unwrap().outline().elements().iter().filter_map(|e| if let PathEl::MoveTo(p) = e { Some(*p) } else { None }).collect()
+    };
     let mut rig = Rig::new();
-    let out = run(&mut rig.app, "shape.add_path", json!({ "svg_path": "M100 100 L160 100 L130 140" })).unwrap();
+    let out = run(&mut rig.app, "shape.add_path", json!({ "svg_path": "M100 100 L160 100 M130 140 L190 140" })).unwrap();
     let id = ShapeId(out["id"].as_u64().unwrap());
     rig.app.editor.selection.set([id]);
     rig.app.set_tool(crate::tools::Tool::Nodes);
     rig.frame(vec![], Modifiers::NONE);
-    // Drag the last node onto the first: it lands on it exactly (own nodes are caught first),
-    // but the ends are only joined when the button comes up.
-    let (a, b) = (rig.screen(Point::new(130.0, 140.0)), rig.screen(Point::new(100.0, 100.0)));
+    assert_eq!(starts(&rig, id).len(), 2);
+    // Drag the start of the second line onto the end of the first: it lands on it exactly
+    // (own nodes are caught first), but the ends are only joined when the button comes up.
+    let (a, b) = (rig.screen(Point::new(130.0, 140.0)), rig.screen(Point::new(160.0, 100.0)));
     rig.mv(a);
     rig.button(a, true);
     for k in 1..=6 {
@@ -138,16 +144,12 @@ fn joining_two_touching_ends_on_release_marks_the_document_changed() {
     // not touch the document by moving the node again: only the join can mark it changed.
     let off = Pos2::new(2.0, 2.0);
     rig.mv(off);
-    let shape = rig.app.editor.doc.get(id).unwrap();
-    assert!(!shape.is_closed(), "the ends touch but are not joined before the release");
-    let end = shape.outline().elements().iter().rev().find_map(|e| match e {
-        darkburn_core::kurbo::PathEl::LineTo(p) => Some(*p),
-        _ => None,
-    });
-    assert!(end.is_some_and(|p| p.distance(Point::new(100.0, 100.0)) < 1e-6), "the end lies on the start: {end:?}");
+    let s = starts(&rig, id);
+    assert_eq!(s.len(), 2, "the ends touch but are not joined before the release");
+    assert!(s[1].distance(Point::new(160.0, 100.0)) < 1e-6, "the dragged end lies on the other end: {s:?}");
     let before = rig.app.editor.revision();
     rig.button(off, false);
-    assert!(rig.app.editor.doc.get(id).unwrap().is_closed(), "the release joined the touching ends");
+    assert_eq!(starts(&rig, id).len(), 1, "the release joined the touching ends");
     assert!(rig.app.editor.revision() > before, "the join marks the document changed");
 }
 

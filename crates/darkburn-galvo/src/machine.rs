@@ -33,8 +33,8 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};

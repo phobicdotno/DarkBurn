@@ -193,6 +193,17 @@ pub enum GestureEnd {
     Refused,
 }
 
+/// The gesture opened by the last [`Editor::checkpoint`], kept until it ends.
+#[derive(Clone, Debug)]
+struct Gesture {
+    /// The state when it began (the checkpoint's own copy may be followed by other steps).
+    start: Snapshot,
+    /// How many undo steps there were before its checkpoint.
+    depth: usize,
+    /// The document as saved during the gesture, if it was.
+    saved_doc: Option<Document>,
+}
+
 /// The editing session for one open project.
 #[derive(Clone, Debug)]
 pub struct Editor {
@@ -207,6 +218,8 @@ pub struct Editor {
     saved_revision: u64,
     /// Which project this is: see [`Editor::project`].
     project: u64,
+    /// The gesture that is open, see [`Editor::end_checkpoint`].
+    gesture: Option<Gesture>,
 }
 
 impl Default for Editor {
@@ -221,6 +234,7 @@ impl Default for Editor {
             revision: 0,
             saved_revision: 0,
             project: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            gesture: None,
         }
     }
 }
@@ -253,6 +267,9 @@ impl Editor {
 
     pub fn mark_saved(&mut self) {
         self.saved_revision = self.revision;
+        if let Some(g) = &mut self.gesture {
+            g.saved_doc = Some(self.doc.clone());
+        }
     }
 
     /// Note a change that is not an undo step (selection, view).
@@ -269,13 +286,15 @@ impl Editor {
     /// [`History::redo_tag`] before it undoes or redoes the step, for a change it keeps outside
     /// the document (a cut library entry). The step is recorded even if the document stays the same.
     pub fn checkpoint_tagged(&mut self, label: &str, tag: u64) {
-        self.history.undo.push(Snapshot {
+        let start = Snapshot {
             doc: self.doc.clone(),
             selection: self.selection.clone(),
             label: label.to_string(),
             revision: self.revision,
             tag,
-        });
+        };
+        self.gesture = Some(Gesture { start: start.clone(), depth: self.history.undo.len(), saved_doc: None });
+        self.history.undo.push(start);
         self.history.redo.clear();
         self.revision += 1;
     }
@@ -305,16 +324,31 @@ impl Editor {
     /// End a gesture that began with [`Editor::checkpoint`] (a drag on the canvas) with the
     /// guards of [`Editor::edit`]: a gesture that left the document as it was leaves no undo
     /// step (the selection stays as it is now), and one that put a shape out of reach (see
-    /// [`MAX_COORD`] and [`MAX_GROUP_DEPTH`]) is taken back whole.
+    /// [`MAX_COORD`] and [`MAX_GROUP_DEPTH`]) is taken back whole. The reach is checked against
+    /// the document as it was when the gesture began, so a change made by another command
+    /// during the gesture (a shortcut, the API) cannot slip a shape out of reach past it.
     pub fn end_checkpoint(&mut self) -> GestureEnd {
+        let gesture = self.gesture.take();
         let Some(s) = self.history.undo.last() else { return GestureEnd::Kept };
+        let start = gesture.as_ref().map_or(&s.doc, |g| &g.start.doc);
         if s.doc == self.doc {
             let s = self.history.undo.pop().expect("checked above");
-            let was_saved = self.is_saved_state(&s);
+            let was_saved = self.is_saved_state(&s) || self.saved_during(gesture.as_ref());
             self.step_to(was_saved);
             GestureEnd::Unchanged
-        } else if !within_reach(&self.doc, &s.doc) {
-            self.drop_checkpoint();
+        } else if !within_reach(&self.doc, start) {
+            match gesture {
+                Some(g) if g.depth < self.history.undo.len() => {
+                    // Take back the gesture and every step made during it.
+                    self.history.undo.truncate(g.depth);
+                    let was_saved = self.is_saved_state(&g.start);
+                    self.restore_doc(g.start.doc.clone());
+                    self.selection = g.start.selection.clone();
+                    let was_saved = was_saved || self.saved_during(Some(&g));
+                    self.step_to(was_saved);
+                }
+                _ => self.drop_checkpoint(),
+            }
             self.selection.retain_existing(&self.doc);
             GestureEnd::Refused
         } else {
@@ -324,13 +358,21 @@ impl Editor {
 
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
     pub fn drop_checkpoint(&mut self) {
+        let gesture = self.gesture.take();
         if let Some(s) = self.history.undo.pop() {
             // Back at the state of the checkpoint: still saved if it was saved then.
             let was_saved = self.is_saved_state(&s);
             self.restore_doc(s.doc);
             self.selection = s.selection;
+            let was_saved = was_saved || self.saved_during(gesture.as_ref());
             self.step_to(was_saved);
         }
+    }
+
+    /// Whether the open document is the one saved while `gesture` was open (a save during a
+    /// drag moves the saved revision past the checkpoint's, so the revision alone cannot tell).
+    fn saved_during(&self, gesture: Option<&Gesture>) -> bool {
+        gesture.and_then(|g| g.saved_doc.as_ref()).is_some_and(|d| *d == self.doc)
     }
 
     /// Whether `s` holds the document as it was last saved or opened. The notes are not part of
@@ -517,6 +559,56 @@ mod tests {
         e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0));
         assert_eq!(e.end_checkpoint(), GestureEnd::Kept);
         assert_eq!(e.history.len(), 1);
+        assert!(e.is_modified());
+    }
+
+    /// A change made by another command during a drag (a shortcut, the API) is checked against
+    /// the document from before the drag when the drag ends, so it cannot slip a shape out of reach.
+    #[test]
+    fn a_change_during_a_gesture_cannot_slip_a_shape_out_of_reach() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.selection.set([id]);
+        e.mark_saved();
+        let before = e.doc.clone();
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((1e13, 0.0));
+        e.touch();
+        // A duplicate during the drag records a step that already holds the far shape.
+        assert!(e.edit("Duplicate", |d, s| {
+            let copy = d.add(square(10.0));
+            s.set([copy]);
+            true
+        }));
+        assert_eq!(e.end_checkpoint(), GestureEnd::Refused);
+        assert_eq!(e.doc, before);
+        assert_eq!(e.history.len(), 0);
+        assert_eq!(e.selected(), vec![id]);
+        assert!(!e.is_modified(), "back at the saved document");
+    }
+
+    /// A save during a drag that then ends where it began leaves the project saved.
+    #[test]
+    fn a_save_during_a_gesture_that_ends_unchanged_stays_saved() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        let t = e.doc.get(id).unwrap().transform;
+        e.checkpoint("Move");
+        e.mark_saved();
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((30.0, 0.0)) * t;
+        e.touch();
+        e.doc.get_mut(id).unwrap().transform = t;
+        e.touch();
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);
+        assert!(!e.is_modified(), "the document is the one that was saved");
+        // Saved while moved away, then back: not the saved document.
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((30.0, 0.0)) * t;
+        e.touch();
+        e.mark_saved();
+        e.doc.get_mut(id).unwrap().transform = t;
+        e.touch();
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);
         assert!(e.is_modified());
     }
 

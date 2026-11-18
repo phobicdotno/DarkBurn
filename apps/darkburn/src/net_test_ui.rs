@@ -1,6 +1,7 @@
 //! The Gweike network test window: one row per device with a coloured state pill, a latency
 //! sparkline over the last 60 samples and the numbers. Opened from the Gweike machine page;
-//! closing it stops the test.
+//! closing it stops the test. The FTC row shows the follower on the card: its alarm bits, signal
+//! and height from a read of the follower status block.
 
 use darkburn_ui::ui_kit::{self, Action};
 use egui::{Color32, Context, CornerRadius, Id, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -19,7 +20,7 @@ fn device_name(t: Target) -> String {
     match t {
         Target::Card => tr("net.dev_card", "Controller card (ping)"),
         Target::CardProtocol => tr("net.dev_protocol", "Controller card (status read)"),
-        Target::Follower => tr("net.dev_follower", "External Z follower"),
+        Target::Ftc => tr("net.dev_ftc", "FTC (on card)"),
         Target::Fiber => tr("net.dev_fiber", "Fiber source"),
     }
 }
@@ -27,23 +28,43 @@ fn device_name(t: Target) -> String {
 fn health_colour(h: Health) -> Color32 {
     let t = Tokens::get();
     match h {
-        Health::Waiting | Health::NotFitted => t.text_dim,
+        Health::Waiting | Health::NoAnswer => t.text_dim,
         Health::Ok => t.agent_ok,
         Health::Slow => t.warning,
-        Health::Lost => t.error,
+        Health::Lost | Health::Alarm => t.error,
     }
 }
 
-fn pill(ui: &mut Ui, h: Health, id: &str) {
+/// Longest pill text before it is cut short (the whole text is in the tooltip).
+const PILL_CHARS: usize = 22;
+
+fn pill(ui: &mut Ui, h: Health, text: &str, id: &str) -> egui::Response {
     let t = Tokens::get();
     let colour = health_colour(h);
-    let galley = ui.painter().layout_no_wrap(h.text(), egui::FontId::proportional(t.font_small), colour);
+    let short =
+        if text.chars().count() > PILL_CHARS { format!("{}…", text.chars().take(PILL_CHARS - 1).collect::<String>()) } else { text.to_owned() };
+    let galley = ui.painter().layout_no_wrap(short, egui::FontId::proportional(t.font_small), colour);
     let size = Vec2::new(galley.size().x + 14.0, galley.size().y + 4.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(size.x.max(70.0), size.y), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(size.x.max(70.0), size.y), Sense::hover());
     let r = Rect::from_min_size(rect.min, size);
     ui.painter().rect(r, CornerRadius::same(t.radius_lg), colour.gamma_multiply(0.15), Stroke::new(1.0, colour), egui::StrokeKind::Inside);
     ui.painter().galley(r.center() - galley.size() / 2.0, galley, colour);
     solidcraft_ui_registry::publish_rect(&format!("net_test:pill:{id}"), r);
+    resp
+}
+
+/// The FTC's details for its tooltip: alarm, signal, height and Z.
+fn ftc_tip(n: &NetTest) -> String {
+    let Some(f) = n.ftc else {
+        return tr("net.ftc_tip_none", "The follower status block on the card did not answer");
+    };
+    let alarm = if f.alarm == 0 { tr("net.ftc_no_alarm", "no alarm") } else { f.alarm_text() };
+    tr("net.ftc_tip", "Alarm: {alarm} · signal {signal}, live {live} · height {height}, Z {z} mm")
+        .replace("{alarm}", &alarm)
+        .replace("{signal}", &f.signal.to_string())
+        .replace("{live}", &f.live_signal.to_string())
+        .replace("{height}", &f.height_text())
+        .replace("{z}", &format!("{:.2}", f64::from(f.z_um) / 1000.0))
 }
 
 /// Latency over the last samples, scaled to the slowest one (at least the "slow" limit); a
@@ -101,17 +122,36 @@ fn rows(ui: &mut Ui, n: &NetTest) {
         for target in Target::ALL {
             let track = n.track(target);
             let s = track.stats();
-            let h = Health::of(target, &s);
+            let h = n.health(target);
+            let ftc = target == Target::Ftc;
             ui.label(RichText::new(device_name(target)).color(t.text));
-            ui.label(RichText::new(target.ip().to_string()).monospace().color(t.text_dim));
-            pill(ui, h, target.id());
-            let line = if h == Health::Waiting || h == Health::NotFitted { t.text_dim } else { t.accent };
+            if ftc {
+                ui.label(RichText::new(tr("net.on_card", "on card")).color(t.text_dim));
+            } else {
+                ui.label(RichText::new(target.ip().to_string()).monospace().color(t.text_dim));
+            }
+            let text = match n.ftc_alarm_text() {
+                Some(a) if ftc && h == Health::Alarm => a,
+                _ => h.text(),
+            };
+            let p = pill(ui, h, &text, target.id());
+            if ftc && h != Health::Waiting {
+                p.on_hover_text(ftc_tip(n));
+            }
+            let line = if h == Health::Waiting || h == Health::NoAnswer { t.text_dim } else { t.accent };
             sparkline(ui, track, line, target.id());
             ui.label(RichText::new(format!("{} / {} / {}", ms(s.min_ms), ms(s.avg_ms), ms(s.max_ms))).monospace());
             ui.label(RichText::new(ms(s.jitter_ms)).monospace());
-            let loss = if s.sent == 0 { "-".to_owned() } else { format!("{:.0} %", s.loss_pct()) };
-            ui.label(RichText::new(loss).monospace());
-            if target == Target::CardProtocol {
+            if ftc {
+                // In place of the loss: how far the follower sees the sheet.
+                let height = n.ftc.map_or_else(|| "-".to_owned(), |f| f.height_text());
+                ui.label(RichText::new(height).monospace())
+                    .on_hover_text(tr("net.ftc_height_tip", "Signal height: far = out of range, touching = on the sheet"));
+            } else {
+                let loss = if s.sent == 0 { "-".to_owned() } else { format!("{:.0} %", s.loss_pct()) };
+                ui.label(RichText::new(loss).monospace());
+            }
+            if target == Target::CardProtocol || ftc {
                 let colour = if track.bad_frames > 0 { t.error } else { t.text };
                 ui.label(RichText::new(track.bad_frames.to_string()).monospace().color(colour));
             } else {
@@ -147,7 +187,10 @@ pub fn window(ctx: &Context, app: &mut DarkBurn) {
             ui.add_space(t.space_4);
             ui_kit::status_line(
                 ui,
-                &tr("net.note", "Read only: 1000-byte pings once a second and one status read of the card. Nothing is written to the machine."),
+                &tr(
+                    "net.note_ftc",
+                    "Read only: 1000-byte pings once a second and status reads of the card and its FTC follower. Nothing is written to the machine.",
+                ),
                 ui_kit::StatusTone::Dim,
             );
         });

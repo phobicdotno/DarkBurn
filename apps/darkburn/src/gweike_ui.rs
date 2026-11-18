@@ -265,7 +265,7 @@ fn calibration_windows(ctx: &Context, app: &mut DarkBurn) {
 }
 
 /// The follower alarm bits of a failed head calibration, in words.
-fn follower_alarm_text(alarm: u32) -> String {
+pub(crate) fn follower_alarm_text(alarm: u32) -> String {
     use darkburn_mcc::registers::zf_alarm;
     let known = [
         (zf_alarm::SIGNAL_SMALL, tr("gweike.zf_alarm_signal_small", "signal too small")),
@@ -303,7 +303,7 @@ fn card_buttons(ui: &mut Ui, connected: bool, calib: CalibButton, frame: &mut St
         if small(
             ui,
             &tr("net.open", "Network test"),
-            &tr("net.open_tip", "Ping the card, follower and fiber source and time the card's answers"),
+            &tr("net.open_tip_ftc", "Ping the card and fiber source, time the card's answers and read the FTC on the card"),
             true,
         ) {
             ui.ctx().data_mut(|d| d.insert_temp(Id::unique(crate::net_test_ui::OPEN), true));

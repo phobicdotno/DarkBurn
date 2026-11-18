@@ -118,7 +118,7 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
     for &li in &order {
         let layer = &input.layers[li];
         for (si, s) in layer.settings.iter().enumerate() {
-            if !s.enabled || s.passes == 0 {
+            if !s.burns() {
                 continue;
             }
             let ir_layer = tp.layers.len();
@@ -187,7 +187,8 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
             }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
-                for (ii, img) in layer.images.iter().enumerate() {
+                // Each image sub-layer burns the scan lines made with its own settings.
+                for (ii, img) in layer.images.iter().enumerate().filter(|(_, img)| img.setting.is_none_or(|s| s == b.setting)) {
                     let ops = image_ops(img, &b.settings, false);
                     let Some((entry, exit, bounds)) = ends(&ops) else { continue };
                     units.push(Unit { block: bi, kind: UnitKind::Image { image: ii } });
@@ -331,7 +332,7 @@ pub fn job_bounds(input: &JobInput, tolerance: f64) -> Option<Rect> {
                 }
             }
         }
-        for img in &layer.images {
+        for img in layer.images.iter().filter(|img| img.burns(&layer.settings)) {
             if !img.outline.is_empty() {
                 img.outline.iter().for_each(|p| add(*p));
                 continue;
@@ -1093,6 +1094,28 @@ mod tests {
         // A shape with nothing left to burn alone is no job.
         let l = LayerInput::new(0, "A", CutSettings::fill(100.0, 20.0, 1.0)).with_shape(ShapeInput::new(open(80.0)));
         assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), None);
+    }
+
+    #[test]
+    fn images_on_a_sub_layer_that_never_burns_are_not_in_the_job_bounds() {
+        let img = |x: f64, setting: usize| {
+            let mut i = ImageInput::new(vec![crate::input::Scanline { y: 5.0, runs: vec![(x, x + 10.0, 1.0)] }]);
+            i.setting = Some(setting);
+            i
+        };
+        let mut l = LayerInput::new(0, "A", CutSettings { enabled: false, ..CutSettings::image(100.0, 50.0, 0.0) });
+        l.settings.push(CutSettings::image(100.0, 50.0, 0.0));
+        l.images.push(img(0.0, 0));
+        l.images.push(img(100.0, 1));
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(100.0, 5.0, 110.0, 5.0)), "disabled");
+        l.settings[0] = CutSettings { passes: 0, ..CutSettings::image(100.0, 50.0, 0.0) };
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(100.0, 5.0, 110.0, 5.0)), "0 passes");
+        l.settings[0] = CutSettings::fill(100.0, 20.0, 1.0);
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(100.0, 5.0, 110.0, 5.0)), "not Image");
+        l.images[0].setting = Some(7);
+        assert_eq!(job_bounds(&JobInput { layers: vec![l.clone()] }, 0.01), Some(Rect::new(100.0, 5.0, 110.0, 5.0)), "missing");
+        l.images[0].setting = None;
+        assert_eq!(job_bounds(&JobInput { layers: vec![l] }, 0.01), Some(Rect::new(0.0, 5.0, 110.0, 5.0)), "no sub-layer: unchanged");
     }
 
     #[test]

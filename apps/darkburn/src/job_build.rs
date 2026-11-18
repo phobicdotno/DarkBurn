@@ -1218,36 +1218,55 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         report(0.25 + 0.05 * li as f32 / layer::LAYER_COUNT as f32);
         let l = doc.layer(li);
         let Some(entry) = layers[li].as_mut() else { continue };
-        let image_setting = l.settings.iter().find(|s| s.enabled && s.mode == Mode::Image);
-        match image_setting {
-            Some(s) => {
-                // Pictures go through the same print-and-cut and rotary mapping as the outlines.
-                // Cylinder correction bends paths, which a picture cannot follow: refused rather
-                // than burned in the wrong place.
-                let Some(map) = vision_map.as_ref().map_or(Some(Affine::IDENTITY), |m| m.affine()) else {
-                    return Err(BuildError::PictureNotMapped);
-                };
-                let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
-                entry.images = image_inputs(doc, &refs, map, s, &tuning, &mut warnings);
-                // Only the pictures that burn are framed (one left out is not part of the job).
-                for img in &entry.images {
-                    let mut p = BezPath::new();
-                    for (i, pt) in img.outline.iter().enumerate() {
-                        if i == 0 {
-                            p.move_to(*pt);
-                        } else {
-                            p.line_to(*pt);
-                        }
-                    }
-                    if !p.elements().is_empty() {
-                        frame_paths.push(p);
-                    }
-                }
-            }
-            None => warnings.push(
+        // Every image sub-layer that is on scans the pictures with its own settings
+        // (interval, angle, mode), in sub-layer order, as two fill or line sub-layers do.
+        let image_settings: Vec<(usize, &CutSetting)> = l.settings.iter().enumerate().filter(|(_, s)| s.enabled && s.mode == Mode::Image).collect();
+        if image_settings.is_empty() {
+            warnings.push(
                 tr("job.warn_not_image_mode", "Layer {layer} holds images but is not in Image mode; they were left out.")
                     .replace("{layer}", &layer::layer_label(li)),
-            ),
+            );
+            continue;
+        }
+        // Pictures go through the same print-and-cut and rotary mapping as the outlines.
+        // Cylinder correction bends paths, which a picture cannot follow: refused rather
+        // than burned in the wrong place.
+        let Some(map) = vision_map.as_ref().map_or(Some(Affine::IDENTITY), |m| m.affine()) else {
+            return Err(BuildError::PictureNotMapped);
+        };
+        let refs: Vec<(&Shape, Option<u32>)> = leaves_by_layer[li].iter().map(|(s, g)| (s, *g)).collect();
+        let mut images = Vec::new();
+        // A picture left out for the same reason is said once, not once per sub-layer.
+        let mut said: Vec<String> = Vec::new();
+        for (si, s) in image_settings {
+            let mut notes = Vec::new();
+            for mut img in image_inputs(doc, &refs, map, s, &tuning, &mut notes) {
+                img.setting = Some(si);
+                images.push(img);
+            }
+            let fresh: Vec<String> = notes.into_iter().filter(|n| !said.contains(n)).collect();
+            said.extend(fresh.iter().cloned());
+            warnings.extend(fresh);
+        }
+        entry.images = images;
+        // Only the pictures that burn are framed (one left out is not part of the job).
+        let mut framed: Vec<&[Point]> = Vec::new();
+        for img in &entry.images {
+            if framed.contains(&img.outline.as_slice()) {
+                continue;
+            }
+            framed.push(&img.outline);
+            let mut p = BezPath::new();
+            for (i, pt) in img.outline.iter().enumerate() {
+                if i == 0 {
+                    p.move_to(*pt);
+                } else {
+                    p.line_to(*pt);
+                }
+            }
+            if !p.elements().is_empty() {
+                frame_paths.push(p);
+            }
         }
     }
 
@@ -2193,6 +2212,87 @@ mod tests {
         assert!((b.bounds.x0 - 5.0).abs() < 0.6 && (b.bounds.x1 - 15.0).abs() < 0.6, "{:?}", b.bounds);
         let burns = b.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)).count();
         assert!(burns >= 15, "20 scan lines of 10 mm: {burns}");
+    }
+
+    /// A 10 x 10 mm black picture on layer 3, whose main setting is Image at 0.5 mm, 200 mm/s,
+    /// 60 %, with a second Image sub-layer at 1 mm, 100 mm/s, 30 %.
+    fn two_image_sub_layers() -> Document {
+        let mut d = Document::new();
+        {
+            let l = d.layer_mut(3);
+            let s = l.main_mut();
+            s.mode = Mode::Image;
+            s.interval = 0.5;
+            s.image_mode = darkburn_core::layer::ImageMode::Threshold;
+            s.speed = 200.0;
+            s.max_power = 60.0;
+            let mut sub = s.clone();
+            sub.interval = 1.0;
+            sub.speed = 100.0;
+            sub.max_power = 30.0;
+            l.settings.push(sub);
+        }
+        let img = image::RgbImage::from_pixel(4, 4, image::Rgb([0, 0, 0]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let key = d.add_image(darkburn_core::ImageData { format: "png".into(), bytes: Arc::from(png), px_width: 4, px_height: 4 });
+        d.add(Shape::new(
+            ShapeKind::Image(ImageShape { image: key, width: 10.0, height: 10.0, ..Default::default() }),
+            Affine::translate((10.0, 10.0)),
+            3,
+        ));
+        d
+    }
+
+    /// Per sub-layer that burns, in job order: (sub-layer, burning scan lines, their speeds,
+    /// highest power).
+    fn image_passes(b: &BuiltJob) -> Vec<(usize, usize, Vec<f64>, f64)> {
+        let mut out: Vec<(usize, usize, Vec<f64>, f64)> = Vec::new();
+        for op in &b.toolpath.ops {
+            match op {
+                Op::LayerStart { layer } => out.push((b.toolpath.layers[*layer].sublayer, 0, Vec::new(), 0.0)),
+                Op::Cut { speed, power, .. } if *power > 0.0 => {
+                    let last = out.last_mut().expect("a cut inside a layer");
+                    last.1 += 1;
+                    if !last.2.contains(speed) {
+                        last.2.push(*speed);
+                    }
+                    last.3 = last.3.max(*power);
+                }
+                _ => {}
+            }
+        }
+        out.retain(|p| p.1 > 0);
+        out
+    }
+
+    #[test]
+    fn two_image_sub_layers_each_scan_with_their_own_settings() {
+        let b = build_job_simple(&input(two_image_sub_layers())).unwrap();
+        let passes = image_passes(&b);
+        assert_eq!(passes.iter().map(|p| p.0).collect::<Vec<_>>(), vec![0, 1], "one image pass per sub-layer, in order: {passes:?}");
+        let (fine, coarse) = (&passes[0], &passes[1]);
+        // 10 mm at 0.5 mm is 20 lines, at 1 mm 10 lines: the second sub-layer has its own interval.
+        assert!(fine.1 >= 15 && fine.1 <= 22, "0.5 mm sub-layer: {fine:?}");
+        assert!(coarse.1 >= 7 && coarse.1 <= 12, "1 mm sub-layer: {coarse:?}");
+        assert_eq!(fine.2, vec![200.0], "{fine:?}");
+        assert_eq!(coarse.2, vec![100.0], "{coarse:?}");
+        assert!((fine.3 / coarse.3 - 2.0).abs() < 1e-6, "60 % against 30 %: {passes:?}");
+        // The picture is framed once.
+        let c = collect(&input(two_image_sub_layers()), None, &mut |_| {}).unwrap();
+        assert_eq!(c.frame_paths.len(), 1);
+    }
+
+    #[test]
+    fn a_disabled_image_sub_layer_does_not_burn() {
+        let mut d = two_image_sub_layers();
+        d.layer_mut(3).settings[0].enabled = false;
+        let b = build_job_simple(&input(d)).unwrap();
+        let passes = image_passes(&b);
+        assert_eq!(passes.len(), 1, "{passes:?}");
+        assert_eq!(passes[0].0, 1);
+        assert!(passes[0].1 >= 7 && passes[0].1 <= 12, "only the 1 mm sub-layer: {passes:?}");
+        assert_eq!(passes[0].2, vec![100.0]);
     }
 
     #[test]

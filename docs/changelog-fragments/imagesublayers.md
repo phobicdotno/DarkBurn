@@ -1,0 +1,1 @@
+- A layer with two Image sub-layers now burns each with its own settings

@@ -51,6 +51,9 @@ pub struct FileState {
     message: Option<(String, String)>,
     /// Closing is confirmed: let the window close.
     close_ok: bool,
+    /// The open project came from a file saved by a newer DarkBurn: the first save here says
+    /// what it left out, then this is cleared.
+    from_newer: bool,
     started: bool,
     title: String,
     /// The text last put on or taken from the system clipboard.
@@ -193,6 +196,7 @@ fn last_dir(prefs: &Prefs) -> Option<PathBuf> {
 /// close, and what they remember of it is not written into the new one.
 pub(crate) fn leave_project(app: &mut DarkBurn) {
     app.files.project_serial += 1;
+    app.files.from_newer = false;
     app.images.adjust = None;
     app.images.trace = None;
     app.images.convert = None;
@@ -226,6 +230,7 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     remember_recent(&mut app.prefs, path);
     discard_autosave(app);
     if loaded.newer_version {
+        app.files.from_newer = true;
         let by = if loaded.app_version.is_empty() { "a newer DarkBurn".to_string() } else { format!("DarkBurn {}", loaded.app_version) };
         app.files.message = Some((
             "Saved by a newer version".into(),
@@ -292,6 +297,14 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     write_atomic(path, &bytes).map_err(|e| e.to_string())?;
     if left_out > 0 {
         app.files.message = Some((crate::i18n::tr("files.left_out_title", "Saved with shapes left out"), left_out_note(path, left_out)));
+    }
+    // A project from a newer DarkBurn: what this version did not know is gone from the file now.
+    if std::mem::take(&mut app.files.from_newer) {
+        let note = crate::i18n::tr("files.newer_saved_note", "Saved; parts made by a newer version of DarkBurn were left out.");
+        app.files.message = Some(match app.files.message.take() {
+            Some((title, text)) if left_out > 0 => (title, format!("{text}\n\n{note}")),
+            _ => (crate::i18n::tr("files.newer_saved_title", "Saved without the newer parts"), note),
+        });
     }
     app.editor.mark_saved();
     app.project_path = Some(path.to_path_buf());
@@ -1040,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn newer_project_opens_with_a_warning() {
+    fn newer_project_opens_with_a_warning_and_its_first_save_says_what_was_dropped() {
         let dir = TempDir::new("newer");
         let mut a = app(&dir);
         add_rect(&mut a);
@@ -1053,6 +1066,12 @@ mod tests {
         assert_eq!(b.editor.doc.len(), 1);
         let (title, text) = b.files.message.clone().unwrap();
         assert!(title.contains("newer") && text.contains("99.0.0"), "{title}: {text}");
+        b.files.message = None;
+        save_to(&mut b, &path).unwrap();
+        let (title, text) = b.files.message.take().expect("the first save says what was left out");
+        assert!(title.contains("newer") && text.contains("left out"), "{title}: {text}");
+        save_to(&mut b, &path).unwrap();
+        assert!(b.files.message.is_none(), "the file is this version's now: no word on the next save");
         assert!(open_path(&mut b, &dir.0.join("nothing.dbrn")).is_err());
         std::fs::write(dir.0.join("junk.dbrn"), b"junk").unwrap();
         assert!(open_path(&mut b, &dir.0.join("junk.dbrn")).is_err());

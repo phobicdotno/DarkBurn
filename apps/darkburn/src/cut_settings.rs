@@ -40,6 +40,9 @@ struct Session {
     edited: bool,
     /// The project the editor was opened in ([`darkburn_core::Editor::project`]).
     project: u64,
+    /// A mode the layer had that is not offered for it was replaced: the layer, the sub-layer
+    /// and the notice saying so.
+    mode_note: Option<(usize, usize, String)>,
 }
 
 fn session_id() -> Id {
@@ -203,6 +206,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         saved_since: false,
         edited: false,
         project,
+        mode_note: None,
     });
     if s.edited && !app.editor.is_modified() {
         s.saved_since = true;
@@ -443,6 +447,17 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let mut c = before.clone();
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
+    // The Common tab's mode list holds only the offered modes and takes the first for any other.
+    if !s.advanced
+        && let Some(to) = replaced_mode(c.mode, &modes)
+    {
+        s.mode_note = Some((l, s.sub, mode_replaced_note(c.mode, to)));
+    }
+    if let Some((nl, ns, note)) = &s.mode_note
+        && (*nl, *ns) == (l, s.sub)
+    {
+        ui_kit::status_line(ui, note, ui_kit::StatusTone::Warning);
+    }
     // The fields go down to the bottom of the columns, less the row of the button under them.
     let under = if c.mode == Mode::Image && s.advanced { t.control_height + t.form_gap_y } else { 0.0 };
     let room = (ui.available_height() - under).max(FIELDS_MIN_HEIGHT);
@@ -516,6 +531,18 @@ fn count(ui: &mut Ui, label: &str, v: &mut u32, lo: u32, hi: u32) {
     if num(ui, label, &mut f, Num::new(lo as f64..=hi as f64, 0, "")) {
         *v = numeric::whole(f).clamp(lo as i64, hi as i64) as u32;
     }
+}
+
+/// The mode the editor puts in place of `mode` when it is not one of the `offered` ones.
+fn replaced_mode(mode: Mode, offered: &[Mode]) -> Option<Mode> {
+    (!offered.contains(&mode)).then(|| offered.first().copied()).flatten()
+}
+
+/// The notice that `from` was replaced by `to`.
+fn mode_replaced_note(from: Mode, to: Mode) -> String {
+    crate::i18n::tr("cut_settings.mode_replaced", "The mode {from} is not offered for this layer; it is now {to}.")
+        .replace("{from}", from.label())
+        .replace("{to}", to.label())
 }
 
 fn pick<T: PartialEq + Copy>(ui: &mut Ui, label: &str, v: &mut T, options: &[(T, &str)]) {
@@ -1055,6 +1082,16 @@ mod tests {
         apply_change(&before, &after, &mut target);
         assert_eq!(target.speed, 40.0);
         assert_eq!(target.gweike, Some(g));
+    }
+
+    #[test]
+    fn cut_settings_name_a_mode_that_is_not_offered_and_its_replacement() {
+        let vectors = [Mode::Line, Mode::Fill];
+        assert_eq!(replaced_mode(Mode::Image, &vectors), Some(Mode::Line));
+        assert_eq!(replaced_mode(Mode::Fill, &vectors), None, "an offered mode stays");
+        assert_eq!(replaced_mode(Mode::Image, &[]), None, "nothing offered: nothing put in its place");
+        let note = mode_replaced_note(Mode::Image, Mode::Line);
+        assert!(note.contains(Mode::Image.label()) && note.contains(Mode::Line.label()), "{note}");
     }
 
     #[test]

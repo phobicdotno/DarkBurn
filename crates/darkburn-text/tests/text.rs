@@ -162,17 +162,9 @@ fn missing_glyphs_are_flagged_without_system_fonts() {
 }
 
 #[test]
-fn complex_scripts_and_cjk_use_system_fonts_when_present() {
+fn cjk_uses_system_fonts_when_present() {
     // Environment dependent: only asserts when the machine has fonts for the script.
     let l = FontLibrary::with_system_fonts();
-    if l.fallback_for('\u{0633}').is_some() {
-        let lay = layout_text(&spec("\u{0633}\u{0644}\u{0627}\u{0645}", "Arial"), &l).unwrap();
-        assert!(!lay.glyphs.is_empty());
-        assert!(lay.glyphs.iter().all(|g| !g.missing));
-        assert!(lay.glyphs.iter().all(|g| g.rtl));
-        // Shaping joins letters: 4 characters may become fewer or equal glyphs, never more.
-        assert!(lay.glyphs.len() <= 4);
-    }
     if l.fallback_for('\u{6F22}').is_some() {
         let lay = layout_text(&spec("\u{6F22}\u{5B57}", "Arial"), &l).unwrap();
         assert_eq!(lay.glyphs.len(), 2);

@@ -1277,8 +1277,7 @@ mod tests {
         let mut doc = darkburn_core::Document::new();
         doc.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1));
         doc.show_notes_on_load = true;
-        crate::job_build::JobProjectSettings { cut_selected: true, anchor: darkburn_job::JobAnchor::Center, ..Default::default() }
-            .store(&mut doc);
+        crate::job_build::JobProjectSettings { cut_selected: true, anchor: darkburn_job::JobAnchor::Center, ..Default::default() }.store(&mut doc);
         let mine = dir.0.join("mine.dbrn");
         write_autosave(&settings, &doc, Some(&mine)).unwrap();
         let mut a = app(&dir);

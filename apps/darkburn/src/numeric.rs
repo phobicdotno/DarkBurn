@@ -182,7 +182,7 @@ pub fn commit_command(
     if merged && editor.history.len() == steps + 1 {
         // What the command made stays, its undo step goes: the drag has one already.
         let (doc, selection) = (editor.doc.clone(), editor.selection.clone());
-        editor.drop_checkpoint();
+        editor.drop_last_step();
         editor.doc = doc;
         editor.selection = selection;
         editor.touch();

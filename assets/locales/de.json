@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "die Rasterpunkte liegen auf einer Linie: nichts wurde verformt",
   "edit.too_deep": "{what}: Formen dürfen höchstens {max} Gruppen tief verschachtelt sein.",
   "edit.not_grouped": "Nicht gruppiert",
+  "edit.drag_too_far": "Rückgängig gemacht: eine Form läge zu weit draußen.",
   "edit.not_pasted": "Nicht eingefügt",
   "files.left_out_title": "Gespeichert, aber einige Formen wurden ausgelassen",
   "files.left_out_note": "{path}: {n} Form(en) konnten nicht geschrieben werden und wurden in der Datei ausgelassen (zu tief verschachtelt oder eine Position, die keine Zahl ist). Sie sind weiterhin im geöffneten Projekt.",

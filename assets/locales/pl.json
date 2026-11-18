@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "punkty siatki leżą na jednej linii: nic nie zostało zdeformowane",
   "edit.too_deep": "{what}: kształty mogą być zagnieżdżone najwyżej w {max} grupach.",
   "edit.not_grouped": "Nie zgrupowano",
+  "edit.drag_too_far": "Cofnięto: kształt znalazłby się za daleko.",
   "edit.not_pasted": "Nie wklejono",
   "files.left_out_title": "Zapisano z pominięciem niektórych kształtów",
   "files.left_out_note": "{path}: nie udało się zapisać {n} kształtów, więc pominięto je w pliku (zbyt głębokie zagnieżdżenie lub pozycja, która nie jest liczbą). Nadal są w otwartym projekcie.",

@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "les points de la grille sont alignés : rien n’a été déformé",
   "edit.too_deep": "{what} : les formes peuvent être imbriquées sur au plus {max} niveaux de groupe.",
   "edit.not_grouped": "Non groupé",
+  "edit.drag_too_far": "Annulé : une forme irait trop loin.",
   "edit.not_pasted": "Non collé",
   "files.left_out_title": "Enregistré avec des formes omises",
   "files.left_out_note": "{path} : {n} forme(s) n'ont pas pu être écrites et ont été omises du fichier (imbriquées trop profondément, ou une position qui n'est pas un nombre). Elles sont toujours dans le projet ouvert.",

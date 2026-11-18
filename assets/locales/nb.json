@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "Figuren ligger på én linje: ingenting ble deformert.",
   "edit.too_deep": "{what}: figurer kan ligge høyst {max} grupper dypt.",
   "edit.not_grouped": "Ikke gruppert",
+  "edit.drag_too_far": "Angret: en figur ville havnet for langt ute.",
   "edit.not_pasted": "Ikke limt inn",
   "files.left_out_title": "Lagret, men noen figurer ble utelatt",
   "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og ble utelatt fra filen (nøstet for dypt, eller en posisjon som ikke er et tall). De er fortsatt i det åpne prosjektet.",

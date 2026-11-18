@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "los puntos de la cuadrícula están en una línea: no se deformó nada",
   "edit.too_deep": "{what}: las formas pueden estar como máximo a {max} niveles de grupo.",
   "edit.not_grouped": "No agrupado",
+  "edit.drag_too_far": "Deshecho: una forma quedaría demasiado lejos.",
   "edit.not_pasted": "No pegado",
   "files.left_out_title": "Guardado con formas omitidas",
   "files.left_out_note": "{path}: no se pudieron escribir {n} forma(s) y se omitieron del archivo (anidadas demasiado profundo, o una posición que no es un número). Siguen en el proyecto abierto.",

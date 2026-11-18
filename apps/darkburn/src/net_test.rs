@@ -1,9 +1,10 @@
-//! Network test for the Gweike M3 Ultra: pings the card, the Z follower and the fiber source, and
-//! times one status read of the card, the poll DarkBurn already does.
+//! Network test for the Gweike M3 Ultra: pings the card and the fiber source, times one status
+//! read of the card, the poll DarkBurn already does, and reads the FTC follower on the card.
 //!
 //! Everything here only reads. The ping is a 1000-byte ICMP echo, like the vendor's test button.
-//! The card probe sends one read of the status block (1000, 36 words) and checks the answer's
-//! CRC and sequence number; no register is ever written. Nothing runs until the user presses
+//! The card probe sends one read of the status block (1000, 36 words) and one of the follower
+//! status block (10000, 18 words), and checks each answer's CRC and sequence number; no register
+//! is ever written. The FTC follower sits on the MCC100 card itself, so it has no address of its own. Nothing runs until the user presses
 //! Start, and tests only use the card simulator and fake pingers.
 //!
 //! The ping uses the system `ping` program on every platform: `IcmpSendEcho` and raw ICMP sockets
@@ -12,6 +13,7 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
+use darkburn_mcc::registers::{ZfStatus, ZfWord};
 use darkburn_mcc::{Reply, Request};
 use serde_json::{Value, json};
 
@@ -54,34 +56,77 @@ pub enum Target {
     Card,
     /// MCC100 card, one status read over UDP 502.
     CardProtocol,
-    /// External Z follower (FTC). Optional: the owner's follower is on the card.
-    Follower,
+    /// FTC follower on the card: one read of its status block (10000) over UDP 502.
+    Ftc,
     /// Fiber source.
     Fiber,
 }
 
 impl Target {
-    pub const ALL: [Target; 4] = [Target::Card, Target::CardProtocol, Target::Follower, Target::Fiber];
+    pub const ALL: [Target; 4] = [Target::Card, Target::CardProtocol, Target::Ftc, Target::Fiber];
 
+    /// The address the device answers on. The FTC is read through the card.
     pub fn ip(self) -> Ipv4Addr {
         match self {
-            Target::Card | Target::CardProtocol => Ipv4Addr::new(10, 1, 1, 168),
-            Target::Follower => Ipv4Addr::new(10, 1, 1, 169),
+            Target::Card | Target::CardProtocol | Target::Ftc => Ipv4Addr::new(10, 1, 1, 168),
             Target::Fiber => Ipv4Addr::new(10, 1, 1, 170),
         }
-    }
-
-    /// The device may be missing without anything being wrong.
-    pub fn optional(self) -> bool {
-        self == Target::Follower
     }
 
     pub fn id(self) -> &'static str {
         match self {
             Target::Card => "card",
             Target::CardProtocol => "card_protocol",
-            Target::Follower => "follower",
+            Target::Ftc => "ftc",
             Target::Fiber => "fiber",
+        }
+    }
+}
+
+/// Signal height when the follower sees nothing (out of range, far from the sheet).
+pub const FTC_FAR_UM: u32 = 25000;
+
+/// What one read of the follower status block said.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FtcReading {
+    /// Alarm bits (`word 1 & 0xFFFF`); any set is an error.
+    pub alarm: u32,
+    /// Running status (word 2).
+    pub running: u32,
+    /// Signal strength (word 4).
+    pub signal: u32,
+    /// Signal height in µm (word 5): 25000 = out of range, 0 = touching.
+    pub height_um: u32,
+    /// Z position in µm (word 6, signed).
+    pub z_um: i32,
+    /// Live signal (word 11).
+    pub live_signal: u32,
+}
+
+impl FtcReading {
+    pub fn of(z: &ZfStatus) -> FtcReading {
+        FtcReading {
+            alarm: z.alarm(),
+            running: z.word(ZfWord::RunStatus),
+            signal: z.word(ZfWord::SignalStrength),
+            height_um: z.word(ZfWord::SignalHeight),
+            z_um: z.z_um(),
+            live_signal: z.word(ZfWord::LiveSignalStrength),
+        }
+    }
+
+    /// The alarm bits in words, empty when there is none.
+    pub fn alarm_text(&self) -> String {
+        if self.alarm == 0 { String::new() } else { crate::gweike_ui::follower_alarm_text(self.alarm) }
+    }
+
+    /// The signal height in a few words: "far", "touching" or millimetres.
+    pub fn height_text(&self) -> String {
+        use crate::i18n::tr;
+        match self.height_um {
+            h if h >= FTC_FAR_UM => tr("net.ftc_far", "far"),
+            0 => tr("net.ftc_touching", "touching"),
+            h => format!("{:.2} mm", f64::from(h) / 1000.0),
         }
     }
 }
@@ -128,16 +173,17 @@ pub enum Health {
     Ok,
     Slow,
     Lost,
-    /// An optional device that never answered.
-    NotFitted,
+    /// The FTC's last status read got no (valid) answer.
+    NoAnswer,
+    /// The FTC reports alarm bits.
+    Alarm,
 }
 
 impl Health {
-    pub fn of(target: Target, s: &Stats) -> Health {
+    /// Health of a pinged or read device from its numbers.
+    pub fn of(s: &Stats) -> Health {
         if s.sent == 0 {
             Health::Waiting
-        } else if s.received == 0 && target.optional() {
-            Health::NotFitted
         } else if s.received == 0 || s.loss_pct() > LOST_PCT {
             Health::Lost
         } else if s.loss_pct() > 0.0 || s.avg_ms.is_some_and(|a| a > SLOW_MS) {
@@ -153,7 +199,8 @@ impl Health {
             Health::Ok => "ok",
             Health::Slow => "slow",
             Health::Lost => "lost",
-            Health::NotFitted => "not_fitted",
+            Health::NoAnswer => "no_answer",
+            Health::Alarm => "alarm",
         }
     }
 
@@ -164,7 +211,8 @@ impl Health {
             Health::Ok => tr("net.health_ok", "OK"),
             Health::Slow => tr("net.health_slow", "Slow"),
             Health::Lost => tr("net.health_lost", "Lost"),
-            Health::NotFitted => tr("net.health_not_fitted", "Not fitted (optional)"),
+            Health::NoAnswer => tr("net.health_no_answer", "No answer"),
+            Health::Alarm => tr("net.health_alarm", "Alarm"),
         }
     }
 }
@@ -191,8 +239,9 @@ impl Track {
     }
 }
 
-/// The plain-language line at the top of the panel.
-pub fn verdict(nic_ok: Option<bool>, card: &Stats, protocol: &Stats) -> String {
+/// The plain-language line at the top of the panel. `ftc_alarm` is the standing FTC alarm in
+/// words, if any.
+pub fn verdict(nic_ok: Option<bool>, card: &Stats, protocol: &Stats, ftc_alarm: Option<&str>) -> String {
     use crate::i18n::tr;
     if nic_ok == Some(false) {
         return tr("net.verdict_no_nic", "No network adapter is on 10.1.1.x: set the PC adapter to 10.1.1.10 / 255.255.255.0");
@@ -209,7 +258,11 @@ pub fn verdict(nic_ok: Option<bool>, card: &Stats, protocol: &Stats) -> String {
     if protocol.sent > 0 && protocol.received == 0 {
         return tr("net.verdict_ping_only", "Card answers ping but not the controller protocol: is Mlaser still connected?");
     }
-    tr("net.verdict_card_ok", "Card OK, {loss}% loss, {ms} ms").replace("{loss}", &loss).replace("{ms}", &ms)
+    let ok = tr("net.verdict_card_ok", "Card OK, {loss}% loss, {ms} ms").replace("{loss}", &loss).replace("{ms}", &ms);
+    match ftc_alarm {
+        Some(a) if !a.is_empty() => tr("net.verdict_ftc_alarm", "{verdict} — FTC alarm: {alarm}").replace("{verdict}", &ok).replace("{alarm}", a),
+        _ => ok,
+    }
 }
 
 /// Whether any local adapter has an address in 10.1.1.0/24. `None` when it cannot be told.
@@ -290,6 +343,26 @@ impl CardWire for UdpCard {
     }
 }
 
+/// Read the follower status block (10000, 18 words) once. Returns the round trip and, when the
+/// answer checked out, what it said.
+pub fn probe_ftc(wire: &mut dyn CardWire, seq: u16, timeout: Duration) -> (ProbeResult, Option<FtcReading>) {
+    let Ok(frame) = Request::read(10000, 18).map_err(|_| ()).and_then(|r| r.encode(seq).map_err(|_| ())) else {
+        return (ProbeResult::BadFrame, None);
+    };
+    let t = Instant::now();
+    let Some(bytes) = wire.exchange(&frame, timeout) else {
+        return (ProbeResult::NoAnswer, None);
+    };
+    let ms = t.elapsed().as_secs_f64() * 1000.0;
+    match Reply::decode(&bytes, Some(seq)) {
+        Ok(Reply::Read { addr: 10000, words }) => match ZfStatus::from_words(&words) {
+            Some(z) => (ProbeResult::Ok(ms), Some(FtcReading::of(&z))),
+            None => (ProbeResult::BadFrame, None),
+        },
+        _ => (ProbeResult::BadFrame, None),
+    }
+}
+
 /// The simulated card, for tests and the simulator device.
 impl CardWire for darkburn_mcc::CardSimulator {
     fn exchange(&mut self, datagram: &[u8], _timeout: Duration) -> Option<Vec<u8>> {
@@ -357,6 +430,8 @@ pub fn parse_ping_ms(text: &str) -> Option<f64> {
 pub struct Sample {
     pub target: Target,
     pub result: ProbeResult,
+    /// FTC only: what the follower said.
+    pub ftc: Option<FtcReading>,
 }
 
 /// A running test: a thread that probes every device once per round until stopped.
@@ -380,19 +455,24 @@ impl Runner {
                 let mut seq: u16 = 0;
                 while !flag.load(Ordering::Relaxed) {
                     let round = Instant::now();
-                    for t in [Target::Card, Target::Follower, Target::Fiber] {
+                    for t in [Target::Card, Target::Fiber] {
                         let r = match pinger.ping(t.ip(), timeout) {
                             Some(ms) => ProbeResult::Ok(ms),
                             None => ProbeResult::NoAnswer,
                         };
-                        if tx.send(Sample { target: t, result: r }).is_err() || flag.load(Ordering::Relaxed) {
+                        if tx.send(Sample { target: t, result: r, ftc: None }).is_err() || flag.load(Ordering::Relaxed) {
                             return;
                         }
                     }
                     if let Some(w) = wire.as_mut() {
                         let r = probe_card(w.as_mut(), seq, timeout);
                         seq = seq.wrapping_add(1);
-                        if tx.send(Sample { target: Target::CardProtocol, result: r }).is_err() {
+                        if tx.send(Sample { target: Target::CardProtocol, result: r, ftc: None }).is_err() {
+                            return;
+                        }
+                        let (r, ftc) = probe_ftc(w.as_mut(), seq, timeout);
+                        seq = seq.wrapping_add(1);
+                        if tx.send(Sample { target: Target::Ftc, result: r, ftc }).is_err() {
                             return;
                         }
                     }
@@ -431,6 +511,8 @@ pub struct NetTest {
     pub runner: Option<Runner>,
     pub tracks: [Track; 4],
     pub nic_ok: Option<bool>,
+    /// The FTC's last answer; `None` before the first one and after a read that failed.
+    pub ftc: Option<FtcReading>,
 }
 
 impl NetTest {
@@ -446,7 +528,32 @@ impl NetTest {
         self.runner.is_some()
     }
 
+    /// The pill for a device. The FTC is judged by its alarm bits and its last read.
+    pub fn health(&self, t: Target) -> Health {
+        let track = self.track(t);
+        let h = Health::of(&track.stats());
+        if t != Target::Ftc || h == Health::Waiting {
+            return h;
+        }
+        match (track.samples.back().copied().flatten(), self.ftc) {
+            (Some(_), Some(f)) if f.alarm != 0 => Health::Alarm,
+            (Some(_), Some(_)) => Health::Ok,
+            _ => Health::NoAnswer,
+        }
+    }
+
+    /// The standing FTC alarm in words, if there is one.
+    pub fn ftc_alarm_text(&self) -> Option<String> {
+        self.ftc.filter(|f| f.alarm != 0).map(|f| f.alarm_text())
+    }
+
     pub fn record(&mut self, s: Sample) {
+        if s.target == Target::Ftc {
+            self.ftc = match s.result {
+                ProbeResult::Ok(_) => s.ftc,
+                _ => None,
+            };
+        }
         let tr = &mut self.tracks[Self::index(s.target)];
         match s.result {
             ProbeResult::Ok(ms) => tr.push(Some(ms)),
@@ -469,6 +576,7 @@ impl NetTest {
     pub fn start_with(&mut self, pinger: Box<dyn Pinger>, wire: Option<Box<dyn CardWire>>, nic_ok: Option<bool>) {
         self.stop();
         self.tracks = Default::default();
+        self.ftc = None;
         self.nic_ok = nic_ok;
         self.runner = Some(Runner::start(pinger, wire, Duration::from_millis(1000)));
     }
@@ -495,7 +603,8 @@ impl NetTest {
     }
 
     pub fn verdict(&self) -> String {
-        verdict(self.nic_ok, &self.track(Target::Card).stats(), &self.track(Target::CardProtocol).stats())
+        let alarm = self.ftc_alarm_text();
+        verdict(self.nic_ok, &self.track(Target::Card).stats(), &self.track(Target::CardProtocol).stats(), alarm.as_deref())
     }
 
     /// The results as JSON, for `net.test`.
@@ -505,11 +614,11 @@ impl NetTest {
             .map(|t| {
                 let tr = self.track(*t);
                 let s = tr.stats();
+                let ip = if *t == Target::Ftc { "on card".to_owned() } else { t.ip().to_string() };
                 json!({
                     "device": t.id(),
-                    "ip": t.ip().to_string(),
-                    "optional": t.optional(),
-                    "health": Health::of(*t, &s).id(),
+                    "ip": ip,
+                    "health": self.health(*t).id(),
                     "sent": s.sent,
                     "received": s.received,
                     "loss_pct": s.loss_pct(),
@@ -521,18 +630,36 @@ impl NetTest {
                 })
             })
             .collect();
-        json!({ "running": self.running(), "nic_on_laser_net": self.nic_ok, "verdict": self.verdict(), "devices": devices })
+        let s = self.track(Target::Ftc).stats();
+        let ftc = json!({
+            "health": self.health(Target::Ftc).id(),
+            "alarm": self.ftc.map(|f| f.alarm),
+            "alarm_text": self.ftc.map(|f| f.alarm_text()),
+            "running": self.ftc.map(|f| f.running),
+            "signal": self.ftc.map(|f| f.signal),
+            "live_signal": self.ftc.map(|f| f.live_signal),
+            "height_um": self.ftc.map(|f| f.height_um),
+            "z_um": self.ftc.map(|f| f.z_um),
+            "sent": s.sent,
+            "received": s.received,
+            "min_ms": s.min_ms,
+            "avg_ms": s.avg_ms,
+            "max_ms": s.max_ms,
+            "jitter_ms": s.jitter_ms,
+            "bad_frames": self.track(Target::Ftc).bad_frames,
+        });
+        json!({ "running": self.running(), "nic_on_laser_net": self.nic_ok, "verdict": self.verdict(), "devices": devices, "ftc": ftc })
     }
 }
 
-/// Answers like a healthy direct cable without an external follower (tests only).
+/// Answers like a healthy direct cable (tests only).
 #[cfg(test)]
 struct SimPing;
 
 #[cfg(test)]
 impl Pinger for SimPing {
-    fn ping(&mut self, ip: Ipv4Addr, _timeout: Duration) -> Option<f64> {
-        (ip != Target::Follower.ip()).then_some(0.4)
+    fn ping(&mut self, _ip: Ipv4Addr, _timeout: Duration) -> Option<f64> {
+        Some(0.4)
     }
 }
 
@@ -574,35 +701,44 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_follower_is_not_fitted_but_a_silent_card_is_lost() {
-        let silent = Stats::of(&[None; 5]);
-        assert_eq!(Health::of(Target::Follower, &silent), Health::NotFitted);
-        assert_eq!(Health::of(Target::Card, &silent), Health::Lost);
-        assert_eq!(Health::of(Target::Fiber, &silent), Health::Lost);
-        // A follower that answers is judged like anything else.
-        assert_eq!(Health::of(Target::Follower, &Stats::of(&[Some(0.5); 5])), Health::Ok);
-        assert_eq!(Health::of(Target::Follower, &Stats::of(&[Some(0.5), None])), Health::Slow);
+    fn the_ftc_pill_follows_its_alarm_bits_and_last_read() {
+        use darkburn_mcc::registers::zf_alarm;
+        let mut n = NetTest::default();
+        assert_eq!(n.health(Target::Ftc), Health::Waiting);
+        let clean = FtcReading { height_um: FTC_FAR_UM, ..FtcReading::default() };
+        n.record(Sample { target: Target::Ftc, result: ProbeResult::Ok(0.3), ftc: Some(clean) });
+        assert_eq!(n.health(Target::Ftc), Health::Ok);
+        assert_eq!(clean.height_text(), "far");
+        let alarm = FtcReading { alarm: zf_alarm::SIGNAL_SMALL, ..clean };
+        n.record(Sample { target: Target::Ftc, result: ProbeResult::Ok(0.3), ftc: Some(alarm) });
+        assert_eq!(n.health(Target::Ftc), Health::Alarm);
+        assert_eq!(n.ftc_alarm_text().as_deref(), Some("signal too small"));
+        n.record(Sample { target: Target::Ftc, result: ProbeResult::NoAnswer, ftc: None });
+        assert_eq!(n.health(Target::Ftc), Health::NoAnswer);
+        assert_eq!(n.ftc_alarm_text(), None);
     }
 
     #[test]
     fn health_pills() {
-        assert_eq!(Health::of(Target::Card, &Stats::default()), Health::Waiting);
-        assert_eq!(Health::of(Target::Card, &Stats::of(&[Some(0.4); 10])), Health::Ok);
-        assert_eq!(Health::of(Target::Card, &Stats::of(&[Some(45.0); 10])), Health::Slow);
-        assert_eq!(Health::of(Target::Card, &Stats::of(&[Some(1.0), None, None])), Health::Lost);
+        assert_eq!(Health::of(&Stats::default()), Health::Waiting);
+        assert_eq!(Health::of(&Stats::of(&[Some(0.4); 10])), Health::Ok);
+        assert_eq!(Health::of(&Stats::of(&[Some(45.0); 10])), Health::Slow);
+        assert_eq!(Health::of(&Stats::of(&[Some(1.0), None, None])), Health::Lost);
+        assert_eq!(Health::of(&Stats::of(&[None; 5])), Health::Lost);
     }
 
     #[test]
     fn verdict_texts() {
         let ok = Stats::of(&[Some(0.4); 10]);
         let down = Stats::of(&[None; 10]);
-        assert_eq!(verdict(Some(true), &ok, &ok), "Card OK, 0% loss, 0.4 ms");
-        assert_eq!(verdict(Some(true), &down, &down), "Card not answering: check the cable and the PC IP address");
-        assert!(verdict(Some(false), &ok, &ok).contains("10.1.1.10 / 255.255.255.0"));
-        assert_eq!(verdict(None, &Stats::default(), &Stats::default()), "Press Start to test the laser network");
-        assert!(verdict(Some(true), &ok, &down).contains("not the controller protocol"));
+        assert_eq!(verdict(Some(true), &ok, &ok, None), "Card OK, 0% loss, 0.4 ms");
+        assert_eq!(verdict(Some(true), &down, &down, None), "Card not answering: check the cable and the PC IP address");
+        assert!(verdict(Some(false), &ok, &ok, None).contains("10.1.1.10 / 255.255.255.0"));
+        assert_eq!(verdict(None, &Stats::default(), &Stats::default(), None), "Press Start to test the laser network");
+        assert!(verdict(Some(true), &ok, &down, None).contains("not the controller protocol"));
         // Without a protocol probe the ping decides.
-        assert_eq!(verdict(Some(true), &ok, &Stats::default()), "Card OK, 0% loss, 0.4 ms");
+        assert_eq!(verdict(Some(true), &ok, &Stats::default(), None), "Card OK, 0% loss, 0.4 ms");
+        assert_eq!(verdict(Some(true), &ok, &ok, Some("signal zero")), "Card OK, 0% loss, 0.4 ms — FTC alarm: signal zero");
     }
 
     #[test]
@@ -626,6 +762,9 @@ mod tests {
         let mut sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
         let r = probe_card(&mut sim, 7, Duration::from_millis(10));
         assert!(matches!(r, ProbeResult::Ok(_)), "{r:?}");
+        let (r, ftc) = probe_ftc(&mut sim, 8, Duration::from_millis(10));
+        assert!(matches!(r, ProbeResult::Ok(_)), "{r:?}");
+        assert_eq!(ftc.map(|f| f.alarm), Some(0));
         // Read only: the card saw no command.
         assert!(sim.commands().is_empty());
         assert!(sim.forbidden_attempts().is_empty());
@@ -652,27 +791,67 @@ mod tests {
     struct FakePing;
     impl Pinger for FakePing {
         fn ping(&mut self, ip: Ipv4Addr, _: Duration) -> Option<f64> {
-            (ip != Target::Follower.ip()).then_some(0.4)
+            // Nothing lives at .169: the FTC is on the card.
+            assert_ne!(ip, Ipv4Addr::new(10, 1, 1, 169));
+            Some(0.4)
         }
     }
 
-    #[test]
-    fn the_runner_fills_every_row_and_stops() {
+    /// Run one round against `sim` and return the results.
+    fn one_round(sim: darkburn_mcc::CardSimulator) -> (NetTest, Value) {
         let mut n = NetTest::default();
-        let sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
         n.start_with(Box::new(FakePing), Some(Box::new(sim)), Some(true));
         let t = Instant::now();
-        while n.track(Target::CardProtocol).samples.is_empty() && t.elapsed() < Duration::from_secs(5) {
+        while n.track(Target::Ftc).samples.is_empty() && t.elapsed() < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(5));
             n.pump();
         }
         n.stop();
         assert!(!n.running());
         let j = n.to_json();
-        let health: Vec<&str> = j["devices"].as_array().unwrap().iter().map(|d| d["health"].as_str().unwrap()).collect();
-        assert_eq!(health, ["ok", "ok", "not_fitted", "ok"]);
+        (n, j)
+    }
+
+    fn healths(j: &Value) -> Vec<String> {
+        j["devices"].as_array().unwrap().iter().map(|d| d["health"].as_str().unwrap().to_owned()).collect()
+    }
+
+    #[test]
+    fn the_runner_fills_every_row_and_stops() {
+        let sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
+        let (n, j) = one_round(sim);
+        assert_eq!(healths(&j), ["ok", "ok", "ok", "ok"]);
+        assert_eq!(j["devices"][2]["device"], "ftc");
+        assert_eq!(j["devices"][2]["ip"], "on card");
         // The protocol probe wins over ping; the simulator answers at once.
         assert!(n.verdict().starts_with("Card OK, 0% loss"), "{}", n.verdict());
+    }
+
+    #[test]
+    fn a_clean_ftc_reads_ok_without_an_alarm() {
+        let mut sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
+        assert!(sim.set_card_word(10005, FTC_FAR_UM));
+        assert!(sim.set_card_word(10004, 1234));
+        let (n, j) = one_round(sim);
+        assert_eq!(j["ftc"]["health"], "ok");
+        assert_eq!(j["ftc"]["alarm"], 0);
+        assert_eq!(j["ftc"]["alarm_text"], "");
+        assert_eq!(j["ftc"]["signal"], 1234);
+        assert_eq!(j["ftc"]["height_um"], FTC_FAR_UM);
+        assert_eq!(j["ftc"]["received"], 1);
+        assert!(!n.verdict().contains("FTC alarm"), "{}", n.verdict());
+    }
+
+    #[test]
+    fn an_ftc_alarm_turns_the_row_red_and_reaches_the_verdict() {
+        use darkburn_mcc::registers::zf_alarm;
+        let mut sim = darkburn_mcc::CardSimulator::new(darkburn_mcc::SimConfig::default());
+        assert!(sim.set_card_word(10001, zf_alarm::SIGNAL_ZERO | zf_alarm::FTC_ALARM));
+        let (n, j) = one_round(sim);
+        assert_eq!(healths(&j), ["ok", "ok", "alarm", "ok"]);
+        assert_eq!(j["ftc"]["alarm"], zf_alarm::SIGNAL_ZERO | zf_alarm::FTC_ALARM);
+        assert_eq!(j["ftc"]["alarm_text"], "signal zero, follower alarm");
+        assert!(n.verdict().ends_with("— FTC alarm: signal zero, follower alarm"), "{}", n.verdict());
     }
 
     #[test]

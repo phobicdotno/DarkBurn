@@ -1,0 +1,1 @@
+- Network test shows the FTC on the card instead of a missing follower box

@@ -1251,7 +1251,8 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         entry.images = images;
         // Only the pictures that burn are framed (one left out is not part of the job).
         let mut framed: Vec<&[Point]> = Vec::new();
-        for img in &entry.images {
+        // A picture whose sub-layer has no passes never burns, so it is not framed either.
+        for img in entry.images.iter().filter(|img| img.setting.is_none_or(|si| l.settings.get(si).is_some_and(|s| s.passes > 0))) {
             if framed.contains(&img.outline.as_slice()) {
                 continue;
             }
@@ -2293,6 +2294,17 @@ mod tests {
         assert_eq!(passes[0].0, 1);
         assert!(passes[0].1 >= 7 && passes[0].1 <= 12, "only the 1 mm sub-layer: {passes:?}");
         assert_eq!(passes[0].2, vec![100.0]);
+    }
+
+    #[test]
+    fn a_picture_whose_image_sub_layers_have_no_passes_is_not_framed() {
+        let mut d = two_image_sub_layers();
+        d.layer_mut(3).settings[0].passes = 0;
+        let c = collect(&input(d.clone()), None, &mut |_| {}).unwrap();
+        assert_eq!(c.frame_paths.len(), 1, "the second sub-layer still burns the picture");
+        d.layer_mut(3).settings[1].passes = 0;
+        let c = collect(&input(d), None, &mut |_| {}).unwrap();
+        assert!(c.frame_paths.is_empty(), "no sub-layer burns the picture, so it is not framed");
     }
 
     #[test]

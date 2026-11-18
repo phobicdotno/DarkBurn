@@ -1,0 +1,1 @@
+- Saving a project from a newer DarkBurn now tells you what got left out, and the cut settings editor says when it had to change a layer's mode

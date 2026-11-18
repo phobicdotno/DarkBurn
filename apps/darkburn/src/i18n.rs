@@ -197,6 +197,7 @@ mod tests {
         ("vision_state.rs", include_str!("vision_state.rs")),
         ("actions.rs", include_str!("actions.rs")),
         ("files.rs", include_str!("files.rs")),
+        ("cut_settings.rs", include_str!("cut_settings.rs")),
     ];
 
     /// The complete English table: literal calls plus the tables of commands, menus, panels,

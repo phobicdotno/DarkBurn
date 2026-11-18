@@ -190,7 +190,6 @@ mod tests {
         ("net_test_ui.rs", include_str!("net_test_ui.rs")),
         ("api.rs", include_str!("api.rs")),
         ("machine_ui.rs", include_str!("machine_ui.rs")),
-        ("devices_ui.rs", include_str!("devices_ui.rs")),
         ("laser_panel.rs", include_str!("laser_panel.rs")),
         ("shape_ui.rs", include_str!("shape_ui.rs")),
         ("shape_ops.rs", include_str!("shape_ops.rs")),

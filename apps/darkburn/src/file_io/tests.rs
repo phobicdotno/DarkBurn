@@ -837,7 +837,7 @@ fn an_imported_project_survives_a_crash_through_the_auto_save() {
     run(&mut a, "project.open", json!({ "path": path_arg(&lb) })).unwrap();
     run(&mut a, "project.import", json!({ "paths": [path_arg(&pic)] })).unwrap();
     assert_eq!(crate::files::begin_session(&settings), None);
-    crate::files::write_autosave(&settings, &a.editor.doc, None).unwrap();
+    crate::files::write_autosave(&settings, &a.editor.doc, None, false).unwrap();
     // The copy is killed; the next start finds the marker and the auto-save.
     let found = crate::files::begin_session(&settings).expect("the crash is noticed");
     let mut b = app();

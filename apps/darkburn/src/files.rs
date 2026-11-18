@@ -25,6 +25,9 @@ pub const RECENT_MAX: usize = 24;
 pub const AUTOSAVE_FILE: &str = "autosave.dbrn";
 /// Beside the auto-save: the path of the project it was a copy of.
 const AUTOSAVE_PATH_FILE: &str = "autosave.path";
+/// Beside the auto-save: "1" when the copied project came from a newer DarkBurn and was not
+/// saved here since (its first save leaves the newer parts out), "0" otherwise.
+const AUTOSAVE_NEWER_FILE: &str = "autosave.newer";
 pub const SESSION_MARKER: &str = "session.running";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -232,10 +235,11 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     if loaded.newer_version {
         app.files.from_newer = true;
         let by = if loaded.app_version.is_empty() { "a newer DarkBurn".to_string() } else { format!("DarkBurn {}", loaded.app_version) };
-        app.files.message = Some((
+        add_message(
+            app,
             "Saved by a newer version".into(),
             format!("This project was saved by {by}. Things this version does not know about may be missing, and saving it here drops them."),
-        ));
+        );
     }
     Ok(())
 }
@@ -300,11 +304,12 @@ pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     }
     // A project from a newer DarkBurn: what this version did not know is gone from the file now.
     if std::mem::take(&mut app.files.from_newer) {
+        if left_out == 0 {
+            // What showed before this save (the warning from opening it) is done with.
+            app.files.message = None;
+        }
         let note = crate::i18n::tr("files.newer_saved_note", "Saved; parts made by a newer version of DarkBurn were left out.");
-        app.files.message = Some(match app.files.message.take() {
-            Some((title, text)) if left_out > 0 => (title, format!("{text}\n\n{note}")),
-            _ => (crate::i18n::tr("files.newer_saved_title", "Saved without the newer parts"), note),
-        });
+        add_message(app, crate::i18n::tr("files.newer_saved_title", "Saved without the newer parts"), note);
     }
     app.editor.mark_saved();
     app.project_path = Some(path.to_path_buf());
@@ -418,6 +423,19 @@ pub fn show_message(app: &mut DarkBurn, title: &str, text: String) {
     app.files.message = Some((title.to_string(), text));
 }
 
+/// Show a message, below the one already showing when there is one (so neither is lost).
+fn add_message(app: &mut DarkBurn, title: String, text: String) {
+    app.files.message = Some(match app.files.message.take() {
+        Some((first, before)) => (first, format!("{before}\n\n{text}")),
+        None => (title, text),
+    });
+}
+
+/// The message window's title and text, while it shows.
+pub fn message(app: &DarkBurn) -> Option<&(String, String)> {
+    app.files.message.as_ref()
+}
+
 /// Add imported shapes as one undo step: grouped per file and selected, as the preferences say,
 /// and put `layers` (cut settings read from a file) into the document.
 pub fn insert_with_layers(app: &mut DarkBurn, imported: Vec<Imported>, layers: Vec<darkburn_core::layer::Layer>) -> Vec<ShapeId> {
@@ -471,11 +489,13 @@ fn autosave_enabled(app: &DarkBurn) -> bool {
     app.settings_dir.is_some() && !app.safe_mode && !app.fio.secondary && app.prefs.autosave_minutes > 0.0
 }
 
-/// Write an auto-save of `doc` (and the path of the project it copies) into `dir`.
-pub fn write_autosave(dir: &Path, doc: &darkburn_core::Document, project: Option<&Path>) -> Result<(), String> {
+/// Write an auto-save of `doc` (and the path of the project it copies, and whether that came
+/// from a newer DarkBurn) into `dir`.
+pub fn write_autosave(dir: &Path, doc: &darkburn_core::Document, project: Option<&Path>, from_newer: bool) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let bytes = project::save(doc, APP_VERSION, None).map_err(|e| e.to_string())?;
     write_atomic(&dir.join(AUTOSAVE_FILE), &bytes).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(AUTOSAVE_NEWER_FILE), if from_newer { "1" } else { "0" }).map_err(|e| e.to_string())?;
     let path_file = dir.join(AUTOSAVE_PATH_FILE);
     match project {
         Some(p) => std::fs::write(path_file, p.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?,
@@ -498,6 +518,7 @@ fn discard_autosave(app: &mut DarkBurn) {
     {
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_FILE));
         let _ = std::fs::remove_file(dir.join(AUTOSAVE_PATH_FILE));
+        let _ = std::fs::remove_file(dir.join(AUTOSAVE_NEWER_FILE));
     }
     app.files.autosave.due = None;
     app.files.autosave.revision = None;
@@ -522,7 +543,7 @@ pub fn begin_session(dir: &Path) -> Option<PathBuf> {
 
 /// A clean exit: no auto-save, no marker.
 pub fn end_session(dir: &Path) {
-    for f in [AUTOSAVE_FILE, AUTOSAVE_PATH_FILE, SESSION_MARKER] {
+    for f in [AUTOSAVE_FILE, AUTOSAVE_PATH_FILE, AUTOSAVE_NEWER_FILE, SESSION_MARKER] {
         let _ = std::fs::remove_file(dir.join(f));
     }
 }
@@ -535,8 +556,12 @@ pub fn restore_autosave(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     // Set up like File > Open, but it stays modified, keeps the project's own file (not the
     // auto-save's) and is not added to the recent files.
     // A copy of a project from a newer DarkBurn that was never saved here still drops the newer
-    // parts at its first save: its own file is still the newer one, so it says so then too.
-    let from_newer = original.as_deref().and_then(|p| std::fs::read(p).ok()).and_then(|b| project::load(&b).ok()).is_some_and(|l| l.newer_version);
+    // parts at its first save, so it says so then too. The auto-save records it; one written
+    // before that record existed asks the project's own file.
+    let from_newer = match path.parent().and_then(|d| std::fs::read_to_string(d.join(AUTOSAVE_NEWER_FILE)).ok()) {
+        Some(flag) => flag.trim() == "1",
+        None => original.as_deref().and_then(|p| std::fs::read(p).ok()).and_then(|b| project::load(&b).ok()).is_some_and(|l| l.newer_version),
+    };
     take_project(app, loaded.doc, original);
     app.files.from_newer = from_newer;
     app.editor.touch();
@@ -580,9 +605,10 @@ fn autosave_tick(app: &mut DarkBurn, now: Instant) -> Option<Duration> {
     let dir = app.settings_dir.clone()?;
     let doc = app.editor.doc.clone();
     let project = app.project_path.clone();
+    let from_newer = app.files.from_newer;
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(write_autosave(&dir, &doc, project.as_deref()));
+        let _ = tx.send(write_autosave(&dir, &doc, project.as_deref(), from_newer));
     });
     app.files.autosave.writing = Some(rx);
     app.files.autosave.revision = Some(rev);
@@ -1184,7 +1210,7 @@ mod tests {
         let mut doc = darkburn_core::Document::new();
         doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
         assert_eq!(begin_session(settings), None);
-        write_autosave(settings, &doc, Some(project)).unwrap();
+        write_autosave(settings, &doc, Some(project), false).unwrap();
     }
 
     // PLAT-06: the next start finds the crash restore file and offers it.
@@ -1302,7 +1328,7 @@ mod tests {
         doc.show_notes_on_load = true;
         crate::job_build::JobProjectSettings { cut_selected: true, anchor: darkburn_job::JobAnchor::Center, ..Default::default() }.store(&mut doc);
         let mine = dir.0.join("mine.dbrn");
-        write_autosave(&settings, &doc, Some(&mine)).unwrap();
+        write_autosave(&settings, &doc, Some(&mine), false).unwrap();
         let mut a = app(&dir);
         a.prefs.opts.save_job_origin = false;
         a.files.project_serial = 7;
@@ -1322,25 +1348,42 @@ mod tests {
         let settings = dir.0.join("settings");
         let mut a = app(&dir);
         add_rect(&mut a);
+        let restored_save_says = |flag: Option<bool>, original: &Path| {
+            match flag {
+                Some(f) => write_autosave(&settings, &a.editor.doc, Some(original), f).unwrap(),
+                None => {
+                    // An auto-save from before the record existed.
+                    write_autosave(&settings, &a.editor.doc, Some(original), false).unwrap();
+                    std::fs::remove_file(settings.join(AUTOSAVE_NEWER_FILE)).unwrap();
+                }
+            }
+            let mut b = app(&dir);
+            restore_autosave(&mut b, &settings.join(AUTOSAVE_FILE)).unwrap();
+            save_to(&mut b, &dir.0.join("out.dbrn")).unwrap();
+            b.files.message.take().map(|(title, _)| title)
+        };
+        // The project's own file is gone: the auto-save's record still tells.
+        let gone = dir.0.join("gone.dbrn");
+        assert!(restored_save_says(Some(true), &gone).is_some_and(|t| t.contains("newer")));
+        assert_eq!(restored_save_says(Some(false), &gone), None, "a copy of a project this version wrote says nothing");
+        // An old auto-save without the record asks the project's own file.
         let shapes = serde_json::to_string(&a.editor.doc.iter().cloned().collect::<Vec<_>>()).unwrap();
         let json = format!(r#"{{"format": "darkburn-project", "version": 99, "app_version": "99.0.0", "shapes": {shapes}}}"#);
         let newer = dir.0.join("newer.dbrn");
         std::fs::write(&newer, write_zip(&[("project.json", json.as_bytes())])).unwrap();
-        write_autosave(&settings, &a.editor.doc, Some(&newer)).unwrap();
-        let mut b = app(&dir);
-        restore_autosave(&mut b, &settings.join(AUTOSAVE_FILE)).unwrap();
-        save_to(&mut b, &newer).unwrap();
-        let (title, _) = b.files.message.take().expect("the first save of the restored copy warns");
-        assert!(title.contains("newer"), "{title}");
-        // A copy of a project this version wrote says nothing.
-        let mine = dir.0.join("mine.dbrn");
-        save_to(&mut a, &mine).unwrap();
-        a.files.message = None;
-        write_autosave(&settings, &a.editor.doc, Some(&mine)).unwrap();
-        let mut c = app(&dir);
-        restore_autosave(&mut c, &settings.join(AUTOSAVE_FILE)).unwrap();
-        save_to(&mut c, &mine).unwrap();
-        assert!(c.files.message.is_none(), "{:?}", c.files.message);
+        assert!(restored_save_says(None, &newer).is_some_and(|t| t.contains("newer")));
+        assert_eq!(restored_save_says(None, &gone), None);
+    }
+
+    #[test]
+    fn a_save_notice_is_kept_when_an_open_warning_follows() {
+        let dir = TempDir::new("notice-kept");
+        let mut a = app(&dir);
+        show_message(&mut a, "Saved with shapes left out", "first".into());
+        add_message(&mut a, "Saved by a newer version".into(), "second".into());
+        let (title, text) = message(&a).cloned().unwrap();
+        assert_eq!(title, "Saved with shapes left out");
+        assert!(text.contains("first") && text.contains("second"), "{text}");
     }
 
     #[test]
@@ -1542,7 +1585,7 @@ mod tests {
         let settings = dir.0.join("settings");
         let mut doc = darkburn_core::Document::new();
         doc.add(Shape::rect(Rect::new(5.0, 5.0, 25.0, 15.0), 0.0, 1));
-        write_autosave(&settings, &doc, Some(&dir.0.join("mine.dbrn"))).unwrap();
+        write_autosave(&settings, &doc, Some(&dir.0.join("mine.dbrn")), false).unwrap();
         let mut second = app(&dir);
         second.fio.secondary = true;
         add_rect(&mut second);

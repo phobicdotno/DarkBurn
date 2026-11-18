@@ -363,7 +363,15 @@ fn with_args(app: &mut DarkBurn, id: &str, a: &Value) -> Option<Result<Value, St
         })(),
         "project.info" => Ok(info(app)),
         "project.open" => text(a, "path").and_then(|p| crate::files::open_path(app, Path::new(p))).map(|_| info(app)),
-        "project.save_as" => text(a, "path").and_then(|p| crate::files::save_to(app, Path::new(p))).map(|_| info(app)),
+        "project.save_as" => text(a, "path").and_then(|p| crate::files::save_to(app, Path::new(p))).map(|_| {
+            // What the save had to leave out (shapes, or the parts of a newer version) is told
+            // in the window and in the answer.
+            let mut v = info(app);
+            if let Some((title, text)) = crate::files::message(app) {
+                v["notice"] = json!({ "title": title, "text": text });
+            }
+            v
+        }),
         "setting.set" => setting(app, a),
         _ if crate::image_ui::handles(id) => crate::image_ui::execute(app, id, a),
         _ => return crate::file_io::with_args(app, id, a).or_else(|| crate::extras::with_args(app, id, a)),

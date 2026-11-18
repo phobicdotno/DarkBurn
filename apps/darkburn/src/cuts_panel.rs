@@ -351,7 +351,8 @@ pub fn show(ui: &mut Ui, app: &mut DarkBurn) {
         if layer.is_tool() || layer.is_multi() || modes.len() < 2 {
             p.text(pos2(c[2].left() + 4.0, r.center().y), Align2::LEFT_CENTER, layer.mode_label(), font.clone(), ink);
         } else {
-            let labels: Vec<&str> = modes.iter().map(|m| m.label()).collect();
+            let names: Vec<String> = modes.iter().map(|m| crate::cut_settings::mode_name(*m)).collect();
+            let labels: Vec<&str> = names.iter().map(String::as_str).collect();
             let mut idx = modes.iter().position(|m| *m == layer.main().mode).unwrap_or(0);
             let before = idx;
             let cell = c[2].shrink2(vec2(1.0, 1.0));

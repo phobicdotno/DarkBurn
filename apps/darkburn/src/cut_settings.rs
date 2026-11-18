@@ -86,16 +86,27 @@ fn remap_notes(notes: &mut Vec<ModeNote>, layer: usize, op: SubOp, at: usize) {
     });
 }
 
-/// Update `notes` for sub-layer `sub` of `layer`, whose mode is `mode` and whose offered modes
-/// are `offered`: a mode changed by hand ends the notice, a replacement starts one. Returns the
-/// notice to show for it.
-fn note_for(notes: &mut Vec<ModeNote>, layer: usize, sub: usize, mode: Mode, offered: Option<&[Mode]>) -> Option<ModeNote> {
-    notes.retain(|n| !(n.layer == layer && n.sub == sub && n.to != mode));
-    if let Some(to) = offered.and_then(|o| replaced_mode(mode, o)) {
+/// Mode changes `(layer, from, to)` that one edit made to sub-layer `sub` of the selected
+/// layers. A replacement the editor made (`automatic`) gets a notice per changed setting with
+/// its own old and new mode; a mode picked by hand ends the notices of the settings it reached.
+fn record_mode_changes(notes: &mut Vec<ModeNote>, sub: usize, changes: &[(usize, Mode, Mode)], automatic: bool) {
+    for &(layer, from, to) in changes {
         notes.retain(|n| !(n.layer == layer && n.sub == sub));
-        notes.push(ModeNote { layer, sub, from: mode, to });
+        if automatic {
+            notes.push(ModeNote { layer, sub, from, to });
+        }
     }
-    notes.iter().find(|n| n.layer == layer && n.sub == sub).copied()
+}
+
+/// The mode's name in the user's language, as the mode pickers show it.
+pub fn mode_name(mode: Mode) -> String {
+    match mode {
+        Mode::Line => crate::i18n::tr("cut_settings.mode_line", "Line"),
+        Mode::Fill => crate::i18n::tr("cut_settings.mode_fill", "Fill"),
+        Mode::FillLine => crate::i18n::tr("cut_settings.mode_fill_line", "Fill+Line"),
+        Mode::OffsetFill => crate::i18n::tr("cut_settings.mode_offset_fill", "Offset Fill"),
+        Mode::Image => crate::i18n::tr("cut_settings.mode_image", "Image"),
+    }
 }
 
 fn session_id() -> Id {
@@ -502,7 +513,9 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
     // The Common tab's mode list holds only the offered modes and takes the first for any other.
-    if let Some(n) = note_for(&mut s.mode_notes, l, s.sub, c.mode, (!s.advanced).then_some(&modes[..])) {
+    // The mode the Common tab's list puts in place of one it does not offer.
+    let automatic = if s.advanced { None } else { replaced_mode(c.mode, &modes) };
+    if let Some(n) = s.mode_notes.iter().find(|n| (n.layer, n.sub) == (l, s.sub)) {
         ui_kit::status_line(ui, &mode_replaced_note(n.from, n.to), ui_kit::StatusTone::Warning);
     }
     // The fields go down to the bottom of the columns, less the row of the button under them.
@@ -523,7 +536,19 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         }
     });
     if c != before {
+        let sub = s.sub;
+        let mode_of = |app: &DarkBurn, l: usize| app.editor.doc.layer(l).settings.get(sub).map(|x| x.mode);
+        let old: Vec<(usize, Option<Mode>)> = s.selected.iter().map(|&l| (l, mode_of(app, l))).collect();
         apply_all(app, s, &before, &c);
+        if c.mode != before.mode {
+            let changes: Vec<(usize, Mode, Mode)> = old
+                .into_iter()
+                .filter_map(|(l, from)| Some((l, from?, mode_of(app, l)?)))
+                .filter(|(_, from, to)| from != to)
+                .collect();
+            record_mode_changes(&mut s.mode_notes, sub, &changes, automatic == Some(c.mode));
+            ui.ctx().request_repaint();
+        }
     }
     if c.mode == Mode::Image && s.advanced && ui_kit::button(ui, "Scanning offset and fast skip...", ui_kit::Button::Small).clicked() {
         app.images.offsets_open = true;
@@ -588,8 +613,8 @@ fn replaced_mode(mode: Mode, offered: &[Mode]) -> Option<Mode> {
 /// The notice that `from` was replaced by `to`.
 fn mode_replaced_note(from: Mode, to: Mode) -> String {
     crate::i18n::tr("cut_settings.mode_replaced", "The mode {from} is not offered for this layer; it is now {to}.")
-        .replace("{from}", from.label())
-        .replace("{to}", to.label())
+        .replace("{from}", &mode_name(from))
+        .replace("{to}", &mode_name(to))
 }
 
 fn pick<T: PartialEq + Copy>(ui: &mut Ui, label: &str, v: &mut T, options: &[(T, &str)]) {
@@ -669,7 +694,8 @@ fn common(
         });
         ui_kit::checkbox(ui, "Sub-layer on", &mut c.enabled);
     }
-    let mode_opts: Vec<(Mode, &str)> = modes.iter().map(|m| (*m, m.label())).collect();
+    let names: Vec<String> = modes.iter().map(|m| mode_name(*m)).collect();
+    let mode_opts: Vec<(Mode, &str)> = modes.iter().zip(&names).map(|(m, n)| (*m, n.as_str())).collect();
     pick(ui, "Mode", &mut c.mode, &mode_opts);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(!layer.is_tool(), |ui| ui_kit::checkbox(ui, "Output", output));
@@ -1138,45 +1164,53 @@ mod tests {
         assert_eq!(replaced_mode(Mode::Fill, &vectors), None, "an offered mode stays");
         assert_eq!(replaced_mode(Mode::Image, &[]), None, "nothing offered: nothing put in its place");
         let note = mode_replaced_note(Mode::Image, Mode::Line);
-        assert!(note.contains(Mode::Image.label()) && note.contains(Mode::Line.label()), "{note}");
+        assert!(note.contains(&mode_name(Mode::Image)) && note.contains(&mode_name(Mode::Line)), "{note}");
     }
 
     #[test]
-    fn cut_settings_keep_one_mode_notice_per_sub_layer() {
-        let offered = [Mode::Line, Mode::Fill];
+    fn cut_settings_keep_one_mode_notice_per_changed_setting() {
         let mut notes = Vec::new();
-        let first = note_for(&mut notes, 0, 0, Mode::Image, Some(&offered)).expect("sub-layer 0 is told");
-        assert_eq!((first.from, first.to), (Mode::Image, Mode::Line));
-        note_for(&mut notes, 0, 1, Mode::Image, Some(&offered)).expect("sub-layer 1 is told");
-        assert_eq!(notes.len(), 2, "the second notice does not take the first one's place");
-        assert_eq!(note_for(&mut notes, 0, 0, Mode::Line, Some(&offered)), Some(first), "kept while the picked mode stays");
-        assert_eq!(note_for(&mut notes, 0, 0, Mode::Line, None), Some(first), "and on the Advanced tab");
+        // An automatic replacement written to two selected layers: each gets its own old mode.
+        record_mode_changes(&mut notes, 0, &[(0, Mode::Image, Mode::Line), (3, Mode::Fill, Mode::Line)], true);
+        record_mode_changes(&mut notes, 1, &[(0, Mode::Image, Mode::Line)], true);
+        assert_eq!(
+            notes,
+            [
+                ModeNote { layer: 0, sub: 0, from: Mode::Image, to: Mode::Line },
+                ModeNote { layer: 3, sub: 0, from: Mode::Fill, to: Mode::Line },
+                ModeNote { layer: 0, sub: 1, from: Mode::Image, to: Mode::Line },
+            ],
+            "a second sub-layer's notice does not take the first one's place"
+        );
+        record_mode_changes(&mut notes, 0, &[], true);
+        assert_eq!(notes.len(), 3, "nothing changed: no notice added or dropped");
     }
 
     #[test]
     fn cut_settings_drop_a_mode_notice_when_the_mode_is_changed_by_hand() {
-        let offered = [Mode::Line, Mode::Fill];
         let mut notes = Vec::new();
-        note_for(&mut notes, 2, 0, Mode::Image, Some(&offered));
-        assert_eq!(note_for(&mut notes, 2, 0, Mode::Fill, Some(&offered)), None);
-        assert!(notes.is_empty());
+        record_mode_changes(&mut notes, 0, &[(2, Mode::Image, Mode::Line), (5, Mode::Image, Mode::Line)], true);
+        // Layer 2 primary, layer 5 Ctrl-clicked: a hand edit reaching both ends both notices,
+        // and picking the replaced mode again by hand does not bring them back.
+        record_mode_changes(&mut notes, 0, &[(2, Mode::Line, Mode::Fill), (5, Mode::Line, Mode::Fill)], false);
+        record_mode_changes(&mut notes, 0, &[(2, Mode::Fill, Mode::Line), (5, Mode::Fill, Mode::Line)], false);
+        assert!(notes.is_empty(), "{notes:?}");
     }
 
     #[test]
     fn cut_settings_mode_notices_follow_their_sub_layer() {
-        let n = |layer, sub| ModeNote { layer, sub, from: Mode::Image, to: Mode::Line };
-        let subs = |notes: &Vec<ModeNote>| notes.iter().map(|n| (n.layer, n.sub)).collect::<Vec<_>>();
-        let mut notes = vec![n(0, 0), n(0, 1), n(0, 2), n(1, 1)];
+        let n = |layer, sub, from| ModeNote { layer, sub, from, to: Mode::Line };
+        let mut notes = vec![n(0, 0, Mode::Fill), n(0, 1, Mode::Image), n(0, 2, Mode::OffsetFill), n(1, 1, Mode::FillLine)];
         remap_notes(&mut notes, 0, SubOp::Remove, 1);
-        assert_eq!(subs(&notes), [(0, 0), (0, 1), (1, 1)], "the removed one goes, the next takes its place, other layers stay");
+        assert_eq!(notes, [n(0, 0, Mode::Fill), n(0, 1, Mode::OffsetFill), n(1, 1, Mode::FillLine)], "the removed one goes");
         remap_notes(&mut notes, 0, SubOp::Duplicate, 0);
-        assert_eq!(subs(&notes), [(0, 0), (0, 2), (1, 1)], "the copy has no notice");
+        assert_eq!(notes, [n(0, 0, Mode::Fill), n(0, 2, Mode::OffsetFill), n(1, 1, Mode::FillLine)], "the copy has no notice");
         remap_notes(&mut notes, 0, SubOp::Move(1), 0);
-        assert_eq!(subs(&notes), [(0, 1), (0, 2), (1, 1)]);
+        assert_eq!(notes, [n(0, 1, Mode::Fill), n(0, 2, Mode::OffsetFill), n(1, 1, Mode::FillLine)]);
         remap_notes(&mut notes, 0, SubOp::Move(-1), 2);
-        assert_eq!(subs(&notes), [(0, 2), (0, 1), (1, 1)], "moved left, the one it passed moves right");
+        assert_eq!(notes, [n(0, 2, Mode::Fill), n(0, 1, Mode::OffsetFill), n(1, 1, Mode::FillLine)], "moved left, the one it passed moves right");
         remap_notes(&mut notes, 0, SubOp::Add, 0);
-        assert_eq!(subs(&notes), [(0, 2), (0, 1), (1, 1)]);
+        assert_eq!(notes, [n(0, 2, Mode::Fill), n(0, 1, Mode::OffsetFill), n(1, 1, Mode::FillLine)]);
     }
 
     #[test]

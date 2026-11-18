@@ -838,6 +838,7 @@
   "shapes.deform_one_line": "the grid points lie on one line: nothing was deformed",
   "edit.too_deep": "{what}: shapes may sit at most {max} groups deep.",
   "edit.not_grouped": "Not grouped",
+  "edit.drag_too_far": "Undone: that would put a shape too far out.",
   "edit.not_pasted": "Not pasted",
   "files.left_out_title": "Saved with shapes left out",
   "files.left_out_note": "{path}: {n} shape(s) could not be written and were left out of the file (nested too deep, or a position that is not a number). They are still in the open project."

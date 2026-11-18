@@ -838,6 +838,7 @@
   "shapes.deform_one_line": "os pontos da grade estão em uma linha: nada foi deformado",
   "edit.too_deep": "{what}: as formas podem ficar no máximo a {max} níveis de grupo.",
   "edit.not_grouped": "Não agrupado",
+  "edit.drag_too_far": "Desfeito: uma forma ficaria longe demais.",
   "edit.not_pasted": "Não colado",
   "files.left_out_title": "Salvo com formas omitidas",
   "files.left_out_note": "{path}: {n} forma(s) não puderam ser gravadas e foram omitidas do arquivo (aninhadas fundo demais, ou uma posição que não é um número). Elas continuam no projeto aberto."

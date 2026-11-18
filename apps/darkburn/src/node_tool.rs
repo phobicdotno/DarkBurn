@@ -817,6 +817,7 @@ fn nodes_tool(
                             }
                         }
                     }
+                    crate::canvas_input::end_drag(app);
                 } else {
                     app.editor.drop_checkpoint();
                 }
@@ -833,7 +834,9 @@ fn nodes_tool(
                 app.editor.touch();
             }
             if !down {
-                if !*moved {
+                if *moved {
+                    crate::canvas_input::end_drag(app);
+                } else {
                     app.editor.drop_checkpoint();
                 }
                 gesture = Gesture::None;
@@ -848,7 +851,9 @@ fn nodes_tool(
                 app.editor.touch();
             }
             if !down {
-                if !*moved {
+                if *moved {
+                    crate::canvas_input::end_drag(app);
+                } else {
                     app.editor.drop_checkpoint();
                 }
                 gesture = Gesture::None;

@@ -1,0 +1,1 @@
+- Dragging a shape back to where it started no longer adds an empty undo step, and a drag that flings a shape impossibly far is undone

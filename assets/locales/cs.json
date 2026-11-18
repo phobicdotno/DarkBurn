@@ -838,6 +838,7 @@
   "shapes.deform_one_line": "body mřížky leží na jedné přímce: nic nebylo deformováno",
   "edit.too_deep": "{what}: tvary mohou ležet nejvýše v {max} úrovních skupin.",
   "edit.not_grouped": "Neseskupeno",
+  "edit.drag_too_far": "Vráceno: tvar by se dostal příliš daleko.",
   "edit.not_pasted": "Nevloženo",
   "files.left_out_title": "Uloženo s vynechanými tvary",
   "files.left_out_note": "{path}: {n} tvar(ů) nebylo možné zapsat a byly ze souboru vynechány (příliš hluboko ve skupinách, nebo pozice, která není číslo). Stále jsou v otevřeném projektu."

@@ -182,6 +182,17 @@ impl History {
     }
 }
 
+/// How [`Editor::end_checkpoint`] settled a gesture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GestureEnd {
+    /// The change stays, as one undo step.
+    Kept,
+    /// The document is as it was: no undo step.
+    Unchanged,
+    /// A shape went out of reach: the document is back as it was before the gesture.
+    Refused,
+}
+
 /// The editing session for one open project.
 #[derive(Clone, Debug)]
 pub struct Editor {
@@ -289,6 +300,26 @@ impl Editor {
         }
         self.selection.retain_existing(&self.doc);
         changed
+    }
+
+    /// End a gesture that began with [`Editor::checkpoint`] (a drag on the canvas) with the
+    /// guards of [`Editor::edit`]: a gesture that left the document as it was leaves no undo
+    /// step (the selection stays as it is now), and one that put a shape out of reach (see
+    /// [`MAX_COORD`] and [`MAX_GROUP_DEPTH`]) is taken back whole.
+    pub fn end_checkpoint(&mut self) -> GestureEnd {
+        let Some(s) = self.history.undo.last() else { return GestureEnd::Kept };
+        if s.doc == self.doc {
+            let s = self.history.undo.pop().expect("checked above");
+            let was_saved = self.is_saved_state(&s);
+            self.step_to(was_saved);
+            GestureEnd::Unchanged
+        } else if !within_reach(&self.doc, &s.doc) {
+            self.drop_checkpoint();
+            self.selection.retain_existing(&self.doc);
+            GestureEnd::Refused
+        } else {
+            GestureEnd::Kept
+        }
     }
 
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
@@ -462,6 +493,47 @@ mod tests {
         assert_eq!(e.doc.len(), 0);
         assert!(e.redo(), "redo brings the first change back");
         assert_eq!(e.doc.len(), 1);
+    }
+
+    /// A drag (checkpoint, live changes) that ends where it started leaves no undo step and
+    /// the document unmodified; before `end_checkpoint` it left a step that did nothing.
+    #[test]
+    fn a_gesture_that_ends_where_it_started_leaves_no_step() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.mark_saved();
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((30.0, 0.0));
+        e.touch();
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::IDENTITY;
+        e.touch();
+        assert_eq!(e.history.len(), 1, "the checkpoint alone is an undo step that does nothing");
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);
+        assert_eq!(e.history.len(), 0);
+        assert!(!e.is_modified(), "back where it was saved");
+        // A real move stays.
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0));
+        assert_eq!(e.end_checkpoint(), GestureEnd::Kept);
+        assert_eq!(e.history.len(), 1);
+        assert!(e.is_modified());
+    }
+
+    /// A drag that puts a shape out of reach is taken back, like the same change through `edit`.
+    #[test]
+    fn a_gesture_that_puts_a_shape_out_of_reach_is_taken_back() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.selection.set([id]);
+        let before = e.doc.clone();
+        for far in [1e13, f64::NAN, f64::INFINITY] {
+            e.checkpoint("Resize");
+            e.doc.get_mut(id).unwrap().transform = kurbo::Affine::scale(far);
+            assert_eq!(e.end_checkpoint(), GestureEnd::Refused, "{far} was let through");
+            assert_eq!(e.doc, before);
+            assert_eq!(e.history.len(), 0);
+            assert_eq!(e.selected(), vec![id]);
+        }
     }
 
     #[test]

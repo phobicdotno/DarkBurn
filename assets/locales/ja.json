@@ -838,6 +838,7 @@
   "shapes.deform_one_line": "グリッドの点が一直線上にあるため、何も変形されませんでした",
   "edit.too_deep": "{what}: 図形のグループの入れ子は最大 {max} 階層までです。",
   "edit.not_grouped": "グループ化されませんでした",
+  "edit.drag_too_far": "元に戻しました: 図形が遠くに行き過ぎます。",
   "edit.not_pasted": "貼り付けられませんでした",
   "files.left_out_title": "一部の図形を除いて保存しました",
   "files.left_out_note": "{path}: {n} 個の図形を書き込めず、ファイルから除外しました (入れ子が深すぎるか、位置が数値ではありません)。開いているプロジェクトには残っています。"

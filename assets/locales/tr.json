@@ -838,6 +838,7 @@
   "shapes.deform_one_line": "ızgara noktaları tek bir doğru üzerinde: hiçbir şey deforme edilmedi",
   "edit.too_deep": "{what}: şekiller en fazla {max} grup derinliğinde olabilir.",
   "edit.not_grouped": "Gruplanmadı",
+  "edit.drag_too_far": "Geri alındı: bir şekil çok uzağa gidecekti.",
   "edit.not_pasted": "Yapıştırılmadı",
   "files.left_out_title": "Bazı şekiller dışarıda bırakılarak kaydedildi",
   "files.left_out_note": "{path}: {n} şekil yazılamadı ve dosyanın dışında bırakıldı (çok derin iç içe, ya da sayı olmayan bir konum). Açık projede hâlâ duruyorlar."

@@ -193,6 +193,8 @@ mod tests {
         ("shape_ui.rs", include_str!("shape_ui.rs")),
         ("shape_ops.rs", include_str!("shape_ops.rs")),
         ("job_build.rs", include_str!("job_build.rs")),
+        ("machine_job.rs", include_str!("machine_job.rs")),
+        ("vision_state.rs", include_str!("vision_state.rs")),
         ("actions.rs", include_str!("actions.rs")),
         ("files.rs", include_str!("files.rs")),
     ];
@@ -292,12 +294,54 @@ mod tests {
         for k in ["job.warn_too_many_pieces", "job.warn_too_many_rows"] {
             assert!(en.contains_key(k), "{k}");
         }
+        // Every warning a built job carries is said in the user's language too.
+        let warnings = [
+            "image_too_large",
+            "image_unreadable",
+            "text_no_outline",
+            "kerf_lost_one",
+            "kerf_lost",
+            "not_image_mode",
+            "outside_dropped",
+            "leaves_work_area",
+            "ruida_pauses",
+            "cylinder_left_alone",
+            "rotary_left_alone",
+        ];
+        for k in warnings {
+            assert!(en.contains_key(&format!("job.warn_{k}")), "job.warn_{k}");
+            assert!(tables()["nb"].contains_key(&format!("job.warn_{k}")), "nb job.warn_{k}");
+        }
         assert_eq!(BuildError::NothingToBurn.to_string(), "there is nothing to burn: no shapes on layers that output");
         set_language("nb");
         let want = "sylinderkorrigering kan ikke bøye bilder: slå den av, eller brenn bildene i en egen jobb";
         assert_eq!(BuildError::PictureNotMapped.to_string(), want);
         let too_big = BuildError::TooBig(vec!["X.".into()]).to_string();
         assert_eq!(too_big, "det er ingenting igjen å brenne: X.");
+        set_language("en");
+    }
+
+    /// The reason a cylinder or rotary warning gives is said in the user's language too, with
+    /// the distances filled in.
+    #[test]
+    fn cylinder_and_rotary_reasons_are_translated() {
+        use crate::vision_state::{cylinder_reason, rotary_reason};
+        use darkburn_vision::cylinder::CylinderError;
+        use darkburn_vision::rotary::RotaryError;
+        let en = english();
+        for k in ["cylinder_err_radius", "cylinder_err_out_of_range"] {
+            assert!(en.contains_key(&format!("job.{k}")), "job.{k}");
+        }
+        for k in ["disabled", "steps", "object_size", "roller", "slice", "revolutions"] {
+            assert!(en.contains_key(&format!("job.rotary_err_{k}")), "job.rotary_err_{k}");
+        }
+        let far = CylinderError::OutOfRange { distance: 12.5, limit: 10.0 };
+        assert_eq!(cylinder_reason(&far), far.to_string());
+        assert_eq!(rotary_reason(&RotaryError::InvalidRollerDiameter), RotaryError::InvalidRollerDiameter.to_string());
+        set_language("nb");
+        assert_eq!(cylinder_reason(&far), "designet når 12.50 mm rundt overflaten, grensen er 10.00 mm");
+        assert_eq!(cylinder_reason(&CylinderError::InvalidRadius), "radiusen må være over null");
+        assert_eq!(rotary_reason(&RotaryError::InvalidRollerDiameter), "rulldiameteren må være over null");
         set_language("en");
     }
 

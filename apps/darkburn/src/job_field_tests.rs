@@ -1034,3 +1034,21 @@ fn speed_units_convert_between_mm_s_and_mm_min() {
     d.layer_mut(0).main_mut().speed = per_min.speed_to_mm_s(600.0);
     assert!(gcode(&build(d)).contains("F600"));
 }
+
+#[test]
+fn work_area_unchecked_is_said_when_the_head_position_is_unknown() {
+    let mut i = input(line_doc(20.0));
+    i.settings.start_from = StartMode::CurrentPosition;
+    let unknown = build_job_simple(&i).unwrap();
+    i.head = Some(Point::new(100.0, 100.0));
+    let known = build_job_simple(&i).unwrap();
+    assert!(known.bounds_report.is_ok(), "{:?}", known.bounds_report.violations.len());
+    assert_eq!(unknown.warnings.len(), known.warnings.len() + 1, "{:?} / {:?}", unknown.warnings, known.warnings);
+    let note = work_area_unchecked_note();
+    assert!(unknown.warnings.contains(&note), "{:?}", unknown.warnings);
+    assert!(!known.warnings.contains(&note), "{:?}", known.warnings);
+    // From the bed origin the work area is checked without the head.
+    i.head = None;
+    i.settings.start_from = StartMode::Absolute;
+    assert!(!build_job_simple(&i).unwrap().warnings.contains(&note));
+}

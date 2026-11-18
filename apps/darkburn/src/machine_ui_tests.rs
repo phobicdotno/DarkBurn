@@ -956,3 +956,37 @@ fn the_status_bar_locks_stop_the_commands() {
     assert_eq!(lock_of(NumEdit::H(1.0)), Some(1));
     assert_eq!(lock_of(NumEdit::RotateBy(1.0)), Some(2));
 }
+
+/// CodeRabbit on PR #46: a job started from the current position while the head position is
+/// unknown runs, but the start says the work area was not checked: in the command's result and
+/// in the Laser panel's status line, not only in the preview. A job without warnings says none.
+#[test]
+fn work_area_warning_reaches_the_start_result_and_the_status_line() {
+    let note = crate::job_build::work_area_unchecked_note();
+    let mut a = app();
+    connect_sim(&mut a, DeviceType::SimulatorGrbl);
+    draw_square(&mut a);
+
+    // From the bed origin: checked, nothing to say.
+    let r = run(&mut a, "machine.start", json!({})).unwrap();
+    assert!(r.get("warnings").is_none(), "{r}");
+    assert!(a.machine.message.as_ref().is_none_or(|m| !m.text.contains(&note)), "{:?}", a.machine.message);
+    wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
+    wait(&mut a, "ready again", |a| state(a) == LaserState::Ready);
+
+    // From the current position with the head unknown: allowed, and said. Every start path
+    // (keyboard, button, menu, MCP, automation socket) ends in `after_build`; the commands
+    // refresh the head from the simulator, so the unknown head is set up here directly.
+    run(&mut a, "job.set_origin", json!({ "start_from": "current_position" })).unwrap();
+    a.job.head = None;
+    let job = crate::job_cmds::build_now(&a).unwrap();
+    assert!(job.warnings.contains(&note), "{:?}", job.warnings);
+    let finished = a.machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count();
+    let r = crate::machine_job::after_build(&mut a, job, crate::machine_job::Action::Start { from_op: None }).unwrap();
+    assert_eq!(r["ok"], true, "{r}");
+    let warnings: Vec<String> = serde_json::from_value(r["warnings"].clone()).unwrap();
+    assert!(warnings.contains(&note), "{r}");
+    let m = a.machine.message.clone().expect("a status line");
+    assert!(m.text.contains(&note) && !m.error, "{m:?}");
+    wait(&mut a, "the job to run", |a| a.machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count() > finished);
+}

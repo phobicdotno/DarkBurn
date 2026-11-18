@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "El marco sale del área de trabajo ({n} movimientos). Mueve primero el diseño dentro del área de trabajo.",
   "job.warn_ruida_pauses": "Capa {layer}: las pausas de inicio y fin y el corte pasante no se envían a un controlador Ruida; el corte se hace sin ellas.",
   "job.warn_cylinder_left_alone": "La corrección cilíndrica ha dejado una forma sin cambios: {why}.",
-  "job.warn_rotary_left_alone": "El rotativo ha dejado una forma sin cambios: {why}."
+  "job.warn_rotary_left_alone": "El rotativo ha dejado una forma sin cambios: {why}.",
+  "job.cylinder_err_radius": "el radio debe ser mayor que cero",
+  "job.cylinder_err_out_of_range": "el diseño llega a {distance} mm alrededor de la superficie y el límite es {limit} mm",
+  "job.rotary_err_disabled": "el rotativo no está activado",
+  "job.rotary_err_steps": "los pasos por vuelta deben ser mayores que cero",
+  "job.rotary_err_object_size": "el diámetro o la circunferencia del objeto debe ser mayor que cero",
+  "job.rotary_err_roller": "el diámetro del rodillo debe ser mayor que cero",
+  "job.rotary_err_slice": "el tamaño de la franja debe ser mayor que cero",
+  "job.rotary_err_revolutions": "las revoluciones deben ser un número"
 }

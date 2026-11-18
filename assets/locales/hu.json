@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "A keret kilép a munkaterületről ({n} mozgás). Először helyezze a tervet a munkaterületen belülre.",
   "job.warn_ruida_pauses": "{layer} réteg: a kezdő és záró szüneteket és az átvágást a Ruida vezérlő nem kapja meg; a vágás nélkülük fut.",
   "job.warn_cylinder_left_alone": "A hengerkorrekció egy alakzatot változatlanul hagyott: {why}.",
-  "job.warn_rotary_left_alone": "A forgótengely egy alakzatot változatlanul hagyott: {why}."
+  "job.warn_rotary_left_alone": "A forgótengely egy alakzatot változatlanul hagyott: {why}.",
+  "job.cylinder_err_radius": "a sugárnak nullánál nagyobbnak kell lennie",
+  "job.cylinder_err_out_of_range": "a terv {distance} mm-re ér a felület körül, a határ {limit} mm",
+  "job.rotary_err_disabled": "a forgótengely nincs bekapcsolva",
+  "job.rotary_err_steps": "a fordulatonkénti lépésszámnak nullánál nagyobbnak kell lennie",
+  "job.rotary_err_object_size": "a tárgy átmérőjének vagy kerületének nullánál nagyobbnak kell lennie",
+  "job.rotary_err_roller": "a görgő átmérőjének nullánál nagyobbnak kell lennie",
+  "job.rotary_err_slice": "a sáv méretének nullánál nagyobbnak kell lennie",
+  "job.rotary_err_revolutions": "a fordulatszámnak számnak kell lennie"
 }

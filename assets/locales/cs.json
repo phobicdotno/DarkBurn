@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Rám opouští pracovní plochu ({n} pohybů). Nejprve přesuňte návrh do pracovní plochy.",
   "job.warn_ruida_pauses": "Vrstva {layer}: počáteční a koncové pauzy ani prořezání se do řadiče Ruida neposílají; řez proběhne bez nich.",
   "job.warn_cylinder_left_alone": "Korekce válce ponechala tvar beze změny: {why}.",
-  "job.warn_rotary_left_alone": "Rotační osa ponechala tvar beze změny: {why}."
+  "job.warn_rotary_left_alone": "Rotační osa ponechala tvar beze změny: {why}.",
+  "job.cylinder_err_radius": "poloměr musí být větší než nula",
+  "job.cylinder_err_out_of_range": "návrh sahá {distance} mm kolem povrchu, limit je {limit} mm",
+  "job.rotary_err_disabled": "rotační osa není zapnutá",
+  "job.rotary_err_steps": "počet kroků na otáčku musí být větší než nula",
+  "job.rotary_err_object_size": "průměr nebo obvod objektu musí být větší než nula",
+  "job.rotary_err_roller": "průměr válečku musí být větší než nula",
+  "job.rotary_err_slice": "velikost pruhu musí být větší než nula",
+  "job.rotary_err_revolutions": "počet otáček musí být číslo"
 }

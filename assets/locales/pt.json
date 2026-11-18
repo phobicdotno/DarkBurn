@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "A moldura sai da área de trabalho ({n} movimentos). Mova primeiro o desenho para dentro da área de trabalho.",
   "job.warn_ruida_pauses": "Camada {layer}: as pausas de início e fim e o corte passante não são enviados a um controlador Ruida; o corte é feito sem elas.",
   "job.warn_cylinder_left_alone": "A correção cilíndrica deixou uma forma inalterada: {why}.",
-  "job.warn_rotary_left_alone": "O rotativo deixou uma forma inalterada: {why}."
+  "job.warn_rotary_left_alone": "O rotativo deixou uma forma inalterada: {why}.",
+  "job.cylinder_err_radius": "o raio deve ser maior que zero",
+  "job.cylinder_err_out_of_range": "o desenho chega a {distance} mm ao redor da superfície, o limite é {limit} mm",
+  "job.rotary_err_disabled": "o rotativo não está ativado",
+  "job.rotary_err_steps": "os passos por volta devem ser maiores que zero",
+  "job.rotary_err_object_size": "o diâmetro ou a circunferência do objeto deve ser maior que zero",
+  "job.rotary_err_roller": "o diâmetro do rolo deve ser maior que zero",
+  "job.rotary_err_slice": "o tamanho da faixa deve ser maior que zero",
+  "job.rotary_err_revolutions": "as rotações devem ser um número"
 }

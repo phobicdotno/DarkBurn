@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "La cornice esce dall'area di lavoro ({n} movimenti). Sposta prima il disegno dentro l'area di lavoro.",
   "job.warn_ruida_pauses": "Livello {layer}: le pause iniziali e finali e il taglio passante non vengono inviati a un controller Ruida; il taglio procede senza.",
   "job.warn_cylinder_left_alone": "La correzione cilindrica ha lasciato una forma invariata: {why}.",
-  "job.warn_rotary_left_alone": "Il rotativo ha lasciato una forma invariata: {why}."
+  "job.warn_rotary_left_alone": "Il rotativo ha lasciato una forma invariata: {why}.",
+  "job.cylinder_err_radius": "il raggio deve essere maggiore di zero",
+  "job.cylinder_err_out_of_range": "il disegno arriva a {distance} mm attorno alla superficie, il limite è {limit} mm",
+  "job.rotary_err_disabled": "il rotativo non è attivato",
+  "job.rotary_err_steps": "i passi per giro devono essere maggiori di zero",
+  "job.rotary_err_object_size": "il diametro o la circonferenza dell'oggetto deve essere maggiore di zero",
+  "job.rotary_err_roller": "il diametro del rullo deve essere maggiore di zero",
+  "job.rotary_err_slice": "la dimensione della fascia deve essere maggiore di zero",
+  "job.rotary_err_revolutions": "i giri devono essere un numero"
 }

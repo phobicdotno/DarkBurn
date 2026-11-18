@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Çerçeve, çalışma alanının dışına çıkıyor ({n} hareket). Önce tasarımı çalışma alanının içine taşıyın.",
   "job.warn_ruida_pauses": "{layer} katmanı: başlangıç ve bitiş duraklamaları ile tam kesme bir Ruida denetleyicisine gönderilmez; kesim bunlar olmadan yapılır.",
   "job.warn_cylinder_left_alone": "Silindir düzeltmesi bir şekli olduğu gibi bıraktı: {why}.",
-  "job.warn_rotary_left_alone": "Döner eksen bir şekli olduğu gibi bıraktı: {why}."
+  "job.warn_rotary_left_alone": "Döner eksen bir şekli olduğu gibi bıraktı: {why}.",
+  "job.cylinder_err_radius": "yarıçap sıfırdan büyük olmalı",
+  "job.cylinder_err_out_of_range": "tasarım yüzeyin çevresinde {distance} mm'ye uzanıyor, sınır {limit} mm",
+  "job.rotary_err_disabled": "döner eksen açık değil",
+  "job.rotary_err_steps": "tur başına adım sıfırdan büyük olmalı",
+  "job.rotary_err_object_size": "nesnenin çapı veya çevresi sıfırdan büyük olmalı",
+  "job.rotary_err_roller": "makara çapı sıfırdan büyük olmalı",
+  "job.rotary_err_slice": "şerit boyutu sıfırdan büyük olmalı",
+  "job.rotary_err_revolutions": "tur sayısı bir sayı olmalı"
 }

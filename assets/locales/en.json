@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "The frame leaves the work area ({n} moves). Move the design inside the work area first.",
   "job.warn_ruida_pauses": "Layer {layer}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
   "job.warn_cylinder_left_alone": "Cylinder correction left a shape alone: {why}.",
-  "job.warn_rotary_left_alone": "Rotary left a shape alone: {why}."
+  "job.warn_rotary_left_alone": "Rotary left a shape alone: {why}.",
+  "job.cylinder_err_radius": "radius must be above zero",
+  "job.cylinder_err_out_of_range": "design reaches {distance} mm round the surface, the limit is {limit} mm",
+  "job.rotary_err_disabled": "rotary is not enabled",
+  "job.rotary_err_steps": "steps per rotation must be above zero",
+  "job.rotary_err_object_size": "object diameter or circumference must be above zero",
+  "job.rotary_err_roller": "roller diameter must be above zero",
+  "job.rotary_err_slice": "slice size must be above zero",
+  "job.rotary_err_revolutions": "revolutions must be a number"
 }

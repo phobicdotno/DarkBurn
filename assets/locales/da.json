@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Rammen går uden for arbejdsområdet ({n} bevægelser). Flyt designet ind i arbejdsområdet først.",
   "job.warn_ruida_pauses": "Lag {layer}: start- og slutpauser og gennemskæring sendes ikke til en Ruida-controller; snittet kører uden dem.",
   "job.warn_cylinder_left_alone": "Cylinderkorrektionen lod en figur være uændret: {why}.",
-  "job.warn_rotary_left_alone": "Rotationsaksen lod en figur være uændret: {why}."
+  "job.warn_rotary_left_alone": "Rotationsaksen lod en figur være uændret: {why}.",
+  "job.cylinder_err_radius": "radius skal være over nul",
+  "job.cylinder_err_out_of_range": "designet når {distance} mm rundt om overfladen, grænsen er {limit} mm",
+  "job.rotary_err_disabled": "rotationsaksen er ikke slået til",
+  "job.rotary_err_steps": "trin pr. omdrejning skal være over nul",
+  "job.rotary_err_object_size": "objektets diameter eller omkreds skal være over nul",
+  "job.rotary_err_roller": "rullediameteren skal være over nul",
+  "job.rotary_err_slice": "strimmelstørrelsen skal være over nul",
+  "job.rotary_err_revolutions": "omdrejninger skal være et tal"
 }

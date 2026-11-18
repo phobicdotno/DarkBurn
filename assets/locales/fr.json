@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Le cadre sort de la zone de travail ({n} déplacements). Placez d’abord le dessin dans la zone de travail.",
   "job.warn_ruida_pauses": "Calque {layer} : les pauses de début et de fin et la découpe traversante ne sont pas envoyées à un contrôleur Ruida ; la découpe se fait sans elles.",
   "job.warn_cylinder_left_alone": "La correction cylindrique a laissé une forme telle quelle : {why}.",
-  "job.warn_rotary_left_alone": "Le rotatif a laissé une forme telle quelle : {why}."
+  "job.warn_rotary_left_alone": "Le rotatif a laissé une forme telle quelle : {why}.",
+  "job.cylinder_err_radius": "le rayon doit être supérieur à zéro",
+  "job.cylinder_err_out_of_range": "le dessin s'étend sur {distance} mm autour de la surface, la limite est de {limit} mm",
+  "job.rotary_err_disabled": "le rotatif n'est pas activé",
+  "job.rotary_err_steps": "les pas par tour doivent être supérieurs à zéro",
+  "job.rotary_err_object_size": "le diamètre ou la circonférence de l'objet doit être supérieur à zéro",
+  "job.rotary_err_roller": "le diamètre du rouleau doit être supérieur à zéro",
+  "job.rotary_err_slice": "la taille de la bande doit être supérieure à zéro",
+  "job.rotary_err_revolutions": "les révolutions doivent être un nombre"
 }

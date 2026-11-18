@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Ramka wychodzi poza obszar roboczy ({n} ruchów). Najpierw przesuń projekt do obszaru roboczego.",
   "job.warn_ruida_pauses": "Warstwa {layer}: pauzy na początku i końcu oraz przecinanie na wskroś nie są wysyłane do kontrolera Ruida; cięcie odbywa się bez nich.",
   "job.warn_cylinder_left_alone": "Korekcja cylindryczna pozostawiła kształt bez zmian: {why}.",
-  "job.warn_rotary_left_alone": "Oś obrotowa pozostawiła kształt bez zmian: {why}."
+  "job.warn_rotary_left_alone": "Oś obrotowa pozostawiła kształt bez zmian: {why}.",
+  "job.cylinder_err_radius": "promień musi być większy od zera",
+  "job.cylinder_err_out_of_range": "projekt sięga {distance} mm wokół powierzchni, limit wynosi {limit} mm",
+  "job.rotary_err_disabled": "oś obrotowa nie jest włączona",
+  "job.rotary_err_steps": "liczba kroków na obrót musi być większa od zera",
+  "job.rotary_err_object_size": "średnica lub obwód obiektu musi być większy od zera",
+  "job.rotary_err_roller": "średnica rolki musi być większa od zera",
+  "job.rotary_err_slice": "rozmiar pasa musi być większy od zera",
+  "job.rotary_err_revolutions": "liczba obrotów musi być liczbą"
 }

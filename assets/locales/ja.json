@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "フレームが作業領域からはみ出します(移動 {n} 回)。先にデザインを作業領域内に移動してください。",
   "job.warn_ruida_pauses": "レイヤー {layer}: 開始・終了の一時停止と貫通カットは Ruida コントローラーに送信されません。カットはこれらなしで実行されます。",
   "job.warn_cylinder_left_alone": "円筒補正で図形が変更されませんでした: {why}。",
-  "job.warn_rotary_left_alone": "ロータリーで図形が変更されませんでした: {why}。"
+  "job.warn_rotary_left_alone": "ロータリーで図形が変更されませんでした: {why}。",
+  "job.cylinder_err_radius": "半径は0より大きくしてください",
+  "job.cylinder_err_out_of_range": "デザインが表面を{distance} mm回り込んでいます。上限は{limit} mmです",
+  "job.rotary_err_disabled": "ロータリーが有効になっていません",
+  "job.rotary_err_steps": "1回転あたりのステップ数は0より大きくしてください",
+  "job.rotary_err_object_size": "対象物の直径または円周は0より大きくしてください",
+  "job.rotary_err_roller": "ローラーの直径は0より大きくしてください",
+  "job.rotary_err_slice": "スライスのサイズは0より大きくしてください",
+  "job.rotary_err_revolutions": "回転数は数値にしてください"
 }

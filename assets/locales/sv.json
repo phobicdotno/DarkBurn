@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Ramen går utanför arbetsytan ({n} förflyttningar). Flytta designen in i arbetsytan först.",
   "job.warn_ruida_pauses": "Lager {layer}: start- och slutpauser och genomskärning skickas inte till en Ruida-styrenhet; snittet körs utan dem.",
   "job.warn_cylinder_left_alone": "Cylinderkorrigeringen lämnade en form oförändrad: {why}.",
-  "job.warn_rotary_left_alone": "Rotationsaxeln lämnade en form oförändrad: {why}."
+  "job.warn_rotary_left_alone": "Rotationsaxeln lämnade en form oförändrad: {why}.",
+  "job.cylinder_err_radius": "radien måste vara över noll",
+  "job.cylinder_err_out_of_range": "designen når {distance} mm runt ytan, gränsen är {limit} mm",
+  "job.rotary_err_disabled": "rotationsaxeln är inte påslagen",
+  "job.rotary_err_steps": "steg per varv måste vara över noll",
+  "job.rotary_err_object_size": "objektets diameter eller omkrets måste vara över noll",
+  "job.rotary_err_roller": "rullens diameter måste vara över noll",
+  "job.rotary_err_slice": "remsstorleken måste vara över noll",
+  "job.rotary_err_revolutions": "varv måste vara ett tal"
 }

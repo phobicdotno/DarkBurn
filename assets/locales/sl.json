@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Okvir zapusti delovno območje ({n} premikov). Najprej premaknite načrt v delovno območje.",
   "job.warn_ruida_pauses": "Plast {layer}: začetni in končni premori ter prerez se krmilniku Ruida ne pošiljajo; rez poteka brez njih.",
   "job.warn_cylinder_left_alone": "Korekcija valja je obliko pustila nespremenjeno: {why}.",
-  "job.warn_rotary_left_alone": "Rotacijska os je obliko pustila nespremenjeno: {why}."
+  "job.warn_rotary_left_alone": "Rotacijska os je obliko pustila nespremenjeno: {why}.",
+  "job.cylinder_err_radius": "polmer mora biti večji od nič",
+  "job.cylinder_err_out_of_range": "oblikovanje sega {distance} mm okoli površine, meja je {limit} mm",
+  "job.rotary_err_disabled": "rotacijska os ni vklopljena",
+  "job.rotary_err_steps": "koraki na obrat morajo biti večji od nič",
+  "job.rotary_err_object_size": "premer ali obseg predmeta mora biti večji od nič",
+  "job.rotary_err_roller": "premer valja mora biti večji od nič",
+  "job.rotary_err_slice": "velikost pasu mora biti večja od nič",
+  "job.rotary_err_revolutions": "število obratov mora biti število"
 }

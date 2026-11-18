@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Der Rahmen verlässt den Arbeitsbereich ({n} Bewegungen). Verschieben Sie das Design zuerst in den Arbeitsbereich.",
   "job.warn_ruida_pauses": "Ebene {layer}: Start- und Endpausen sowie Durchschneiden werden nicht an einen Ruida-Controller gesendet; der Schnitt läuft ohne sie.",
   "job.warn_cylinder_left_alone": "Die Zylinderkorrektur hat eine Form unverändert gelassen: {why}.",
-  "job.warn_rotary_left_alone": "Die Drehachse hat eine Form unverändert gelassen: {why}."
+  "job.warn_rotary_left_alone": "Die Drehachse hat eine Form unverändert gelassen: {why}.",
+  "job.cylinder_err_radius": "der Radius muss größer als null sein",
+  "job.cylinder_err_out_of_range": "das Design reicht {distance} mm um die Oberfläche, die Grenze ist {limit} mm",
+  "job.rotary_err_disabled": "die Drehachse ist nicht eingeschaltet",
+  "job.rotary_err_steps": "die Schritte pro Umdrehung müssen größer als null sein",
+  "job.rotary_err_object_size": "Durchmesser oder Umfang des Objekts muss größer als null sein",
+  "job.rotary_err_roller": "der Rollendurchmesser muss größer als null sein",
+  "job.rotary_err_slice": "die Streifengröße muss größer als null sein",
+  "job.rotary_err_revolutions": "die Umdrehungen müssen eine Zahl sein"
 }

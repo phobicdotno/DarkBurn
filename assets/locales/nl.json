@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "Het kader gaat buiten het werkgebied ({n} bewegingen). Verplaats het ontwerp eerst binnen het werkgebied.",
   "job.warn_ruida_pauses": "Laag {layer}: start- en eindpauzes en doorsnijden worden niet naar een Ruida-controller gestuurd; de snede loopt zonder.",
   "job.warn_cylinder_left_alone": "Cilindercorrectie heeft een vorm ongewijzigd gelaten: {why}.",
-  "job.warn_rotary_left_alone": "De rotatie-as heeft een vorm ongewijzigd gelaten: {why}."
+  "job.warn_rotary_left_alone": "De rotatie-as heeft een vorm ongewijzigd gelaten: {why}.",
+  "job.cylinder_err_radius": "de straal moet groter dan nul zijn",
+  "job.cylinder_err_out_of_range": "het ontwerp reikt {distance} mm rond het oppervlak, de grens is {limit} mm",
+  "job.rotary_err_disabled": "de rotatie-as is niet ingeschakeld",
+  "job.rotary_err_steps": "de stappen per omwenteling moeten groter dan nul zijn",
+  "job.rotary_err_object_size": "de diameter of omtrek van het object moet groter dan nul zijn",
+  "job.rotary_err_roller": "de rollerdiameter moet groter dan nul zijn",
+  "job.rotary_err_slice": "de stripgrootte moet groter dan nul zijn",
+  "job.rotary_err_revolutions": "de omwentelingen moeten een getal zijn"
 }

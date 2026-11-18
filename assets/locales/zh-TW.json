@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "外框超出工作區域（{n} 次移動）。請先把設計移到工作區域內。",
   "job.warn_ruida_pauses": "圖層 {layer}：開始與結束暫停以及切穿不會傳送到 Ruida 控制器；切割將在沒有它們的情況下進行。",
   "job.warn_cylinder_left_alone": "圓柱校正未改變某個圖形：{why}。",
-  "job.warn_rotary_left_alone": "旋轉軸未改變某個圖形：{why}。"
+  "job.warn_rotary_left_alone": "旋轉軸未改變某個圖形：{why}。",
+  "job.cylinder_err_radius": "半徑必須大於零",
+  "job.cylinder_err_out_of_range": "設計繞表面延伸 {distance} mm，上限為 {limit} mm",
+  "job.rotary_err_disabled": "旋轉軸未啟用",
+  "job.rotary_err_steps": "每轉步數必須大於零",
+  "job.rotary_err_object_size": "物體直徑或周長必須大於零",
+  "job.rotary_err_roller": "滾輪直徑必須大於零",
+  "job.rotary_err_slice": "切片尺寸必須大於零",
+  "job.rotary_err_revolutions": "圈數必須是數字"
 }

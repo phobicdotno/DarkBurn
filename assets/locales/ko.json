@@ -853,5 +853,13 @@
   "job.frame_leaves_work_area": "프레임이 작업 영역을 벗어납니다(이동 {n}회). 먼저 디자인을 작업 영역 안으로 옮기세요.",
   "job.warn_ruida_pauses": "레이어 {layer}: 시작·종료 일시정지와 관통 절단은 Ruida 컨트롤러로 보내지지 않습니다. 절단은 이것들 없이 진행됩니다.",
   "job.warn_cylinder_left_alone": "원통 보정이 도형을 그대로 두었습니다: {why}.",
-  "job.warn_rotary_left_alone": "로터리가 도형을 그대로 두었습니다: {why}."
+  "job.warn_rotary_left_alone": "로터리가 도형을 그대로 두었습니다: {why}.",
+  "job.cylinder_err_radius": "반지름은 0보다 커야 합니다",
+  "job.cylinder_err_out_of_range": "디자인이 표면을 따라 {distance} mm까지 닿습니다. 한계는 {limit} mm입니다",
+  "job.rotary_err_disabled": "로터리가 켜져 있지 않습니다",
+  "job.rotary_err_steps": "회전당 스텝 수는 0보다 커야 합니다",
+  "job.rotary_err_object_size": "물체의 지름 또는 둘레는 0보다 커야 합니다",
+  "job.rotary_err_roller": "롤러 지름은 0보다 커야 합니다",
+  "job.rotary_err_slice": "슬라이스 크기는 0보다 커야 합니다",
+  "job.rotary_err_revolutions": "회전수는 숫자여야 합니다"
 }

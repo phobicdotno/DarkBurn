@@ -321,6 +321,30 @@ mod tests {
         set_language("en");
     }
 
+    /// The reason a cylinder or rotary warning gives is said in the user's language too, with
+    /// the distances filled in.
+    #[test]
+    fn cylinder_and_rotary_reasons_are_translated() {
+        use crate::vision_state::{cylinder_reason, rotary_reason};
+        use darkburn_vision::cylinder::CylinderError;
+        use darkburn_vision::rotary::RotaryError;
+        let en = english();
+        for k in ["cylinder_err_radius", "cylinder_err_out_of_range"] {
+            assert!(en.contains_key(&format!("job.{k}")), "job.{k}");
+        }
+        for k in ["disabled", "steps", "object_size", "roller", "slice", "revolutions"] {
+            assert!(en.contains_key(&format!("job.rotary_err_{k}")), "job.rotary_err_{k}");
+        }
+        let far = CylinderError::OutOfRange { distance: 12.5, limit: 10.0 };
+        assert_eq!(cylinder_reason(&far), far.to_string());
+        assert_eq!(rotary_reason(&RotaryError::InvalidRollerDiameter), RotaryError::InvalidRollerDiameter.to_string());
+        set_language("nb");
+        assert_eq!(cylinder_reason(&far), "designet når 12.50 mm rundt overflaten, grensen er 10.00 mm");
+        assert_eq!(cylinder_reason(&CylinderError::InvalidRadius), "radiusen må være over null");
+        assert_eq!(rotary_reason(&RotaryError::InvalidRollerDiameter), "rulldiameteren må være over null");
+        set_language("en");
+    }
+
     /// The refusal of a too-deep Group or Paste and the warning of a save that left shapes out
     /// are in every language, with the depth, count and file filled in.
     #[test]

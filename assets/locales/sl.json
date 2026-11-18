@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "premer ali obseg predmeta mora biti večji od nič",
   "job.rotary_err_roller": "premer valja mora biti večji od nič",
   "job.rotary_err_slice": "velikost pasu mora biti večja od nič",
-  "job.rotary_err_revolutions": "število obratov mora biti število"
+  "job.rotary_err_revolutions": "število obratov mora biti število",
+  "laser.door_open": "Vrata so odprta",
+  "laser.door_resume": "Vrata so bila odprta: pritisnite Nadaljuj, da nadaljujete",
+  "device.fire_max_secs": "Najdaljši čas žarka"
 }

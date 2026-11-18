@@ -69,6 +69,9 @@ fn laser(ui: &mut Ui, app: &mut DarkBurn) {
         s => (format!("{}{}", s.label(), if snap.firmware.is_empty() { String::new() } else { format!("  ({})", snap.firmware) }), StatusTone::Dim),
     };
     ui_kit::status_line(ui, &text, tone);
+    if let Some(door) = snap.door.filter(|_| snap.state != LaserState::Disconnected) {
+        ui_kit::status_line(ui, &door_notice(door), StatusTone::Dim);
+    }
     if let Some(m) = app.machine.message.clone() {
         ui_kit::status_line(ui, &m.text, if m.error { StatusTone::Error } else { StatusTone::Dim });
     }
@@ -851,4 +854,33 @@ fn file_list(ui: &mut Ui, app: &mut DarkBurn) {
             });
         }
     });
+}
+
+/// What a GRBL door hold (`Door:n`) means, in one short line: `Door:1` is the door open, the
+/// other states mean it was closed again (or is being) and the controller waits for Resume.
+pub(crate) fn door_notice(door: u8) -> String {
+    if door == 1 {
+        crate::i18n::tr("laser.door_open", "The door is open")
+    } else {
+        crate::i18n::tr("laser.door_resume", "The door was opened: press Resume to go on")
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::door_notice;
+
+    #[test]
+    fn door_notice_says_open_or_waiting_for_resume() {
+        assert!(door_notice(1).contains("open"));
+        for n in [0, 2, 3] {
+            assert!(door_notice(n).contains("Resume"), "Door:{n}");
+        }
+    }
+
+    #[test]
+    fn door_state_reaches_the_snapshot_only_in_a_door_hold() {
+        let s = crate::machine_api::Snapshot::default();
+        assert_eq!(s.door, None);
+    }
 }

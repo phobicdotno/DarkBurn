@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "průměr nebo obvod objektu musí být větší než nula",
   "job.rotary_err_roller": "průměr válečku musí být větší než nula",
   "job.rotary_err_slice": "velikost pruhu musí být větší než nula",
-  "job.rotary_err_revolutions": "počet otáček musí být číslo"
+  "job.rotary_err_revolutions": "počet otáček musí být číslo",
+  "laser.door_open": "Dvířka jsou otevřená",
+  "laser.door_resume": "Dvířka byla otevřena: pokračujte tlačítkem Pokračovat",
+  "device.fire_max_secs": "Nejdelší doba výstřelu"
 }

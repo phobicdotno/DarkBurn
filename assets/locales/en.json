@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "object diameter or circumference must be above zero",
   "job.rotary_err_roller": "roller diameter must be above zero",
   "job.rotary_err_slice": "slice size must be above zero",
-  "job.rotary_err_revolutions": "revolutions must be a number"
+  "job.rotary_err_revolutions": "revolutions must be a number",
+  "laser.door_open": "The door is open",
+  "laser.door_resume": "The door was opened: press Resume to go on",
+  "device.fire_max_secs": "Longest fire time"
 }

@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "il diametro o la circonferenza dell'oggetto deve essere maggiore di zero",
   "job.rotary_err_roller": "il diametro del rullo deve essere maggiore di zero",
   "job.rotary_err_slice": "la dimensione della fascia deve essere maggiore di zero",
-  "job.rotary_err_revolutions": "i giri devono essere un numero"
+  "job.rotary_err_revolutions": "i giri devono essere un numero",
+  "laser.door_open": "Lo sportello è aperto",
+  "laser.door_resume": "Lo sportello è stato aperto: premi Riprendi per continuare",
+  "device.fire_max_secs": "Durata massima di emissione"
 }

@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "Durchmesser oder Umfang des Objekts muss größer als null sein",
   "job.rotary_err_roller": "der Rollendurchmesser muss größer als null sein",
   "job.rotary_err_slice": "die Streifengröße muss größer als null sein",
-  "job.rotary_err_revolutions": "die Umdrehungen müssen eine Zahl sein"
+  "job.rotary_err_revolutions": "die Umdrehungen müssen eine Zahl sein",
+  "laser.door_open": "Die Tür ist offen",
+  "laser.door_resume": "Die Tür wurde geöffnet: Auf Fortsetzen drücken, um weiterzumachen",
+  "device.fire_max_secs": "Längste Feuerzeit"
 }

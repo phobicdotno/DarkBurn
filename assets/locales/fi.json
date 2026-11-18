@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "kappaleen halkaisijan tai kehän on oltava yli nolla",
   "job.rotary_err_roller": "rullan halkaisijan on oltava yli nolla",
   "job.rotary_err_slice": "kaistan koon on oltava yli nolla",
-  "job.rotary_err_revolutions": "kierrosten on oltava luku"
+  "job.rotary_err_revolutions": "kierrosten on oltava luku",
+  "laser.door_open": "Luukku on auki",
+  "laser.door_resume": "Luukku avattiin: jatka painamalla Jatka",
+  "device.fire_max_secs": "Pisin laukaisuaika"
 }

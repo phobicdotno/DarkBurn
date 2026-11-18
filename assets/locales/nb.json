@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "diameteren eller omkretsen til objektet må være over null",
   "job.rotary_err_roller": "rulldiameteren må være over null",
   "job.rotary_err_slice": "stripestørrelsen må være over null",
-  "job.rotary_err_revolutions": "omdreininger må være et tall"
+  "job.rotary_err_revolutions": "omdreininger må være et tall",
+  "laser.door_open": "Døra er åpen",
+  "laser.door_resume": "Døra ble åpnet: trykk Fortsett for å gå videre",
+  "device.fire_max_secs": "Lengste fyringstid"
 }

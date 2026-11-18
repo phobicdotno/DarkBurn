@@ -870,5 +870,8 @@
   "job.rotary_err_object_size": "nesnenin çapı veya çevresi sıfırdan büyük olmalı",
   "job.rotary_err_roller": "makara çapı sıfırdan büyük olmalı",
   "job.rotary_err_slice": "şerit boyutu sıfırdan büyük olmalı",
-  "job.rotary_err_revolutions": "tur sayısı bir sayı olmalı"
+  "job.rotary_err_revolutions": "tur sayısı bir sayı olmalı",
+  "laser.door_open": "Kapak açık",
+  "laser.door_resume": "Kapak açıldı: devam etmek için Sürdür düğmesine basın",
+  "device.fire_max_secs": "En uzun ateşleme süresi"
 }

@@ -41,7 +41,8 @@ const PILL_CHARS: usize = 22;
 fn pill(ui: &mut Ui, h: Health, text: &str, id: &str) -> egui::Response {
     let t = Tokens::get();
     let colour = health_colour(h);
-    let short = if text.chars().count() > PILL_CHARS { format!("{}…", text.chars().take(PILL_CHARS - 1).collect::<String>()) } else { text.to_owned() };
+    let short =
+        if text.chars().count() > PILL_CHARS { format!("{}…", text.chars().take(PILL_CHARS - 1).collect::<String>()) } else { text.to_owned() };
     let galley = ui.painter().layout_no_wrap(short, egui::FontId::proportional(t.font_small), colour);
     let size = Vec2::new(galley.size().x + 14.0, galley.size().y + 4.0);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(size.x.max(70.0), size.y), Sense::hover());
@@ -144,7 +145,8 @@ fn rows(ui: &mut Ui, n: &NetTest) {
             if ftc {
                 // In place of the loss: how far the follower sees the sheet.
                 let height = n.ftc.map_or_else(|| "-".to_owned(), |f| f.height_text());
-                ui.label(RichText::new(height).monospace()).on_hover_text(tr("net.ftc_height_tip", "Signal height: far = out of range, touching = on the sheet"));
+                ui.label(RichText::new(height).monospace())
+                    .on_hover_text(tr("net.ftc_height_tip", "Signal height: far = out of range, touching = on the sheet"));
             } else {
                 let loss = if s.sent == 0 { "-".to_owned() } else { format!("{:.0} %", s.loss_pct()) };
                 ui.label(RichText::new(loss).monospace());
@@ -185,7 +187,10 @@ pub fn window(ctx: &Context, app: &mut DarkBurn) {
             ui.add_space(t.space_4);
             ui_kit::status_line(
                 ui,
-                &tr("net.note_ftc", "Read only: 1000-byte pings once a second and status reads of the card and its FTC follower. Nothing is written to the machine."),
+                &tr(
+                    "net.note_ftc",
+                    "Read only: 1000-byte pings once a second and status reads of the card and its FTC follower. Nothing is written to the machine.",
+                ),
                 ui_kit::StatusTone::Dim,
             );
         });

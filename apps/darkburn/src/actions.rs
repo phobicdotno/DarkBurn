@@ -37,12 +37,22 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         "tools.polygon" => app.set_tool(Tool::Polygon),
         // Edit
         "edit.undo" => {
+            // A drag still open is settled first, so the tag read is the step Undo takes.
+            if e.settle() == darkburn_core::editor::GestureEnd::Refused {
+                app.shape_ui.status = Some(drag_too_far());
+            }
+            let e = &mut app.editor;
             let tag = e.history.undo_tag();
             if e.undo() && tag != 0 {
                 crate::library::after_undo(app, tag);
             }
         }
         "edit.redo" => {
+            // A drag still open is settled first, so the tag read is the step Redo takes.
+            if e.settle() == darkburn_core::editor::GestureEnd::Refused {
+                app.shape_ui.status = Some(drag_too_far());
+            }
+            let e = &mut app.editor;
             let tag = e.history.redo_tag();
             if e.redo() && tag != 0 {
                 crate::library::after_redo(app, tag);

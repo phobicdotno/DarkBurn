@@ -286,13 +286,7 @@ impl Editor {
     /// [`History::redo_tag`] before it undoes or redoes the step, for a change it keeps outside
     /// the document (a cut library entry). The step is recorded even if the document stays the same.
     pub fn checkpoint_tagged(&mut self, label: &str, tag: u64) {
-        let start = Snapshot {
-            doc: self.doc.clone(),
-            selection: self.selection.clone(),
-            label: label.to_string(),
-            revision: self.revision,
-            tag,
-        };
+        let start = Snapshot { doc: self.doc.clone(), selection: self.selection.clone(), label: label.to_string(), revision: self.revision, tag };
         self.gesture = Some(Gesture { start: start.clone(), depth: self.history.undo.len(), saved_doc: None });
         self.history.undo.push(start);
         self.history.redo.clear();

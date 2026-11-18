@@ -218,7 +218,7 @@ struct ArmFlag {
     /// Set by a disconnect request and never cleared: from then on nothing arms the laser.
     ended: AtomicBool,
     /// Held by the worker across its look at the arm and the transport write of a laser-on word
-    /// (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
+    /// or a marking list packet (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
     gate: Mutex<()>,
 }
 

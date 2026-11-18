@@ -1,0 +1,1 @@
+- Stopping a fiber laser job now cuts off the rest of the job right away

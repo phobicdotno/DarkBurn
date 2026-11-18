@@ -149,6 +149,10 @@ struct Gate {
     enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Holds the worker at the driver's hold point right before a resume restarts the list.
     restart_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Holds the next list packet write itself, before it reaches the board.
+    packet_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// List packets that have reached the board.
+    packets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     last_was_enable: bool,
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::mpsc::Receiver<()>,
@@ -160,6 +164,8 @@ struct GateCtl {
     write_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
     enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     restart_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    packet_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    packets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     entered: std::sync::mpsc::Receiver<()>,
     release: std::sync::mpsc::Sender<()>,
 }
@@ -175,9 +181,17 @@ impl Transport for Gate {
             let _ = self.entered.send(());
             let _ = self.release.recv();
         }
+        let is_packet = data.len() == darkburn_galvo::codec::PACKET_LEN;
+        if is_packet && self.packet_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
         let r = self.inner.write(data);
         if self.last_was_enable {
             self.enables.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        if is_packet {
+            self.packets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         r
     }
@@ -213,6 +227,8 @@ fn gated_rig_with(settings: DeviceSettings) -> (Rig, GateCtl) {
     let write_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let enables = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let restart_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let packet_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let packets = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let gate = Gate {
         inner: t,
         tripped: tripped.clone(),
@@ -220,6 +236,8 @@ fn gated_rig_with(settings: DeviceSettings) -> (Rig, GateCtl) {
         write_tripped: write_tripped.clone(),
         enables: enables.clone(),
         restart_tripped: restart_tripped.clone(),
+        packet_tripped: packet_tripped.clone(),
+        packets: packets.clone(),
         last_was_enable: false,
         entered: etx,
         release: rrx,
@@ -227,7 +245,7 @@ fn gated_rig_with(settings: DeviceSettings) -> (Rig, GateCtl) {
     let m = GalvoMachine::connect(Box::new(gate), settings, no_routine_poll());
     let mut r = Rig { m, emu, events: Vec::new() };
     assert!(r.wait(|r| r.m.snapshot().connection == ConnectionState::Connected), "did not connect: {:?}", r.m.snapshot());
-    (r, GateCtl { tripped, reply_tripped, write_tripped, enables, restart_tripped, entered: erx, release: rtx })
+    (r, GateCtl { tripped, reply_tripped, write_tripped, enables, restart_tripped, packet_tripped, packets, entered: erx, release: rtx })
 }
 
 /// Arms, starts, and returns once the worker is inside the start's door read: it has already
@@ -583,4 +601,47 @@ fn a_stop_right_before_a_resumed_list_restarts_means_the_list_never_restarts() {
     r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open()));
     let s = r.m.snapshot();
     assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
+}
+
+#[test]
+fn a_stop_while_a_marking_packet_is_written_means_no_more_marking_packets_go_out() {
+    let dev = DeviceSettings::default();
+    let (mut r, g) = gated_rig_with(dev.clone());
+    let mut job = Job::new();
+    job.layers.push(Layer::new(
+        "F",
+        LayerMode::Fill(FillSettings { interval_mm: 0.02, ..Default::default() }),
+        MarkParams::default(),
+        vec![rect(-20.0, -20.0, 40.0, 40.0)],
+    ));
+    let job = compile(&job, &dev, &CompileOptions::default()).unwrap();
+    let total = job.packet_count();
+    assert!(total >= 10, "the job needs many list packets, has {total}");
+    let packets = |g: &GateCtl| g.packets.load(std::sync::atomic::Ordering::SeqCst);
+    r.m.arm().unwrap();
+    r.m.start_job(job, StartOptions::default()).unwrap();
+    // The list is running and marking before the worker is held in its next packet write.
+    assert!(r.wait(|r| packets(&g) >= 4 && r.emu(|e| e.is_executing())), "{:?}", r.events);
+    g.packet_tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the job never wrote another list packet");
+    let held_at = packets(&g);
+    assert!(held_at < total);
+    // The held write has passed its look at the arm. Let it go a little later, from another thread.
+    let release = g.release.clone();
+    let helper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = release.send(());
+    });
+    r.m.stop().unwrap();
+    let at_return = packets(&g);
+    assert_eq!(at_return, held_at + 1, "stop returned while a marking packet that passed its check was still on its way");
+    assert!(!r.m.snapshot().armed);
+    helper.join().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped)) && r.m.snapshot().activity == Activity::Idle), "{:?}", r.events);
+    r.settle();
+    assert_eq!(packets(&g), at_return, "a marking list packet was written after stop returned");
+    r.emu(|e| {
+        assert!(!e.laser_enabled() && !e.mo_open() && !e.laser_signal() && !e.is_executing());
+        assert_eq!(e.port_out(), 0);
+    });
 }

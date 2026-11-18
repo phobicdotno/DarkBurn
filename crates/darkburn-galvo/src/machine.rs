@@ -198,18 +198,27 @@ enum Cmd {
 /// The arm. A plain flag would let the worker see it set, spend a while on the board (reading
 /// the door), and enable the laser after a stop or disconnect had already cleared it.
 ///
-/// Taking the arm back ([`ArmFlag::clear`], [`ArmFlag::end`]) is a plain atomic store: a stop,
-/// disarm or disconnect never waits for the board, and queues its own off command right after.
 /// The worker turns the laser on only through [`ArmFlag::while_armed`], which looks at the arm
-/// and writes the laser-on word in one short step, and waits for the board's answer only after
-/// that. A clear that lands before the look means the word is never written; one that lands after
-/// it finds the word already on its way, and its own off command, queued behind, turns it off.
+/// and hands the laser-on word to the transport while holding `gate`, and waits for the board's
+/// answer only after letting go of it.
+///
+/// Taking the arm back ([`ArmFlag::clear`], [`ArmFlag::end`]) goes in this order:
+/// 1. the flag is cleared first, without the gate, so every look from then on fails;
+/// 2. then the gate is taken and let go at once. This waits only for a laser-on write that had
+///    already passed its look to reach the transport (never for a reply: no reply is waited for
+///    under the gate), and returns at once when none is in flight.
+///
+/// Only then does the caller (stop, disarm, disconnect) return and queue its off command. So once
+/// it has returned, no laser-on word is written any more: a write that passed its look before the
+/// clear has already gone out and the queued off command, behind it, turns it off; any later look
+/// fails.
 #[derive(Default)]
 struct ArmFlag {
     on: AtomicBool,
     /// Set by a disconnect request and never cleared: from then on nothing arms the laser.
     ended: AtomicBool,
-    /// Orders an arm against the worker's look-and-write. Never taken by a clear.
+    /// Held by the worker across its look at the arm and the transport write of a laser-on word
+    /// (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
     gate: Mutex<()>,
 }
 
@@ -221,9 +230,15 @@ impl ArmFlag {
     fn get(&self) -> bool {
         self.on.load(Ordering::SeqCst) && !self.ended.load(Ordering::SeqCst)
     }
-    /// Takes the arm back. Never blocks.
+    /// Takes the arm back. Never waits for the board; it waits at most for a laser-on write that
+    /// is already being handed to the transport (see the type's docs for the order).
     fn clear(&self) {
         self.on.store(false, Ordering::SeqCst);
+        self.flush();
+    }
+    /// Waits for a laser-on write that passed its look before the flag was cleared to finish.
+    fn flush(&self) {
+        drop(self.gate());
     }
     /// Arms, unless a disconnect has been asked for. Returns whether the arm took.
     fn arm(&self) -> bool {
@@ -234,16 +249,17 @@ impl ArmFlag {
         self.on.store(true, Ordering::SeqCst);
         true
     }
-    /// A disconnect was asked for: the arm is gone for good. Never blocks.
+    /// A disconnect was asked for: the arm is gone for good. Waits like [`Self::clear`].
     fn end(&self) {
         self.ended.store(true, Ordering::SeqCst);
         self.on.store(false, Ordering::SeqCst);
+        self.flush();
     }
     fn ended(&self) -> bool {
         self.ended.load(Ordering::SeqCst)
     }
-    /// Runs `f` (writing the laser-on word, not waiting for its answer) only while armed. `None`
-    /// = not armed, nothing written.
+    /// Runs `f` (the transport write of the laser-on word only, not waiting for its answer) only
+    /// while armed, under the gate. `None` = not armed, nothing written.
     fn while_armed<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
         let _g = self.gate();
         if !self.get() {
@@ -436,7 +452,8 @@ impl GalvoMachine {
     /// [`Self::disconnect`] does this and then waits.
     pub fn begin_disconnect(&self) {
         // A start that is still queued in front of the shutdown finds the arm gone, and no arm
-        // after this one takes.
+        // after this one takes. `end` returns only once a laser-on write already past its look
+        // has gone out, so nothing turns the laser on after this returns.
         self.armed.end();
         let _ = self.tx.send(Cmd::Shutdown);
     }

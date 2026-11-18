@@ -142,6 +142,11 @@ struct Gate {
     inner: MemoryTransport,
     tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
     reply_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Holds the next EnableLaser write itself: the worker has looked at the arm and is inside
+    /// the transport write.
+    write_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// EnableLaser writes that have reached the board.
+    enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     last_was_enable: bool,
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::mpsc::Receiver<()>,
@@ -150,6 +155,8 @@ struct Gate {
 struct GateCtl {
     tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
     reply_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    write_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     entered: std::sync::mpsc::Receiver<()>,
     release: std::sync::mpsc::Sender<()>,
 }
@@ -161,7 +168,15 @@ impl Transport for Gate {
             let _ = self.release.recv();
         }
         self.last_was_enable = data == SingleCmd::EnableLaser.to_command().to_bytes();
-        self.inner.write(data)
+        if self.last_was_enable && self.write_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+        let r = self.inner.write(data);
+        if self.last_was_enable {
+            self.enables.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        r
     }
     fn read(&mut self, timeout: Duration) -> std::io::Result<Option<[u8; 8]>> {
         if std::mem::take(&mut self.last_was_enable) && self.reply_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
@@ -182,11 +197,22 @@ fn gated_rig() -> (Rig, GateCtl) {
     let (etx, erx) = std::sync::mpsc::channel();
     let (rtx, rrx) = std::sync::mpsc::channel();
     let reply_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let gate = Gate { inner: t, tripped: tripped.clone(), reply_tripped: reply_tripped.clone(), last_was_enable: false, entered: etx, release: rrx };
+    let write_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let enables = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let gate = Gate {
+        inner: t,
+        tripped: tripped.clone(),
+        reply_tripped: reply_tripped.clone(),
+        write_tripped: write_tripped.clone(),
+        enables: enables.clone(),
+        last_was_enable: false,
+        entered: etx,
+        release: rrx,
+    };
     let m = GalvoMachine::connect(Box::new(gate), with_door(), no_routine_poll());
     let mut r = Rig { m, emu, events: Vec::new() };
     assert!(r.wait(|r| r.m.snapshot().connection == ConnectionState::Connected), "did not connect: {:?}", r.m.snapshot());
-    (r, GateCtl { tripped, reply_tripped, entered: erx, release: rtx })
+    (r, GateCtl { tripped, reply_tripped, write_tripped, enables, entered: erx, release: rtx })
 }
 
 /// Arms, starts, and returns once the worker is inside the start's door read: it has already
@@ -263,6 +289,53 @@ fn a_stop_does_not_wait_for_the_board_to_answer_the_laser_on_word() {
     r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
     let s = r.m.snapshot();
     assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
+}
+
+/// Arms, starts, and returns once the worker has looked at the arm (it was set) and is inside
+/// the transport write of EnableLaser, held there. A helper lets the write go after `after`, so a
+/// cancel that does not wait for the write returns before it has reached the board.
+fn start_and_hold_in_enable_write(r: &mut Rig, g: &GateCtl, after: Duration) -> std::thread::JoinHandle<()> {
+    g.write_tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.m.arm().unwrap();
+    r.m.start_job(small_job(&with_door()), StartOptions::default()).unwrap();
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the start never wrote EnableLaser");
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let release = g.release.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        let _ = release.send(());
+    })
+}
+
+#[test]
+fn a_stop_between_the_arm_check_and_the_laser_on_write_returns_only_after_that_write() {
+    let (mut r, g) = gated_rig();
+    let helper = start_and_hold_in_enable_write(&mut r, &g, Duration::from_millis(300));
+    r.m.stop().unwrap();
+    // The write that had passed its check has gone out before stop returned; none comes later.
+    let at_return = g.enables.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(at_return, 1, "stop returned while a laser-on write that passed its check was still on its way");
+    assert!(!r.m.snapshot().armed);
+    helper.join().unwrap();
+    // The stop queued behind that write turns the laser off again.
+    assert!(r.wait(|r| r.emu(|e| !e.laser_enabled() && !e.mo_open()) && r.m.snapshot().activity == Activity::Idle), "{:?}", r.events);
+    r.settle();
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), at_return, "EnableLaser was written after stop returned");
+    assert_eq!(r.singles(SingleCmd::EnableLaser), at_return);
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+}
+
+#[test]
+fn a_disconnect_between_the_arm_check_and_the_laser_on_write_returns_only_after_that_write() {
+    let (mut r, g) = gated_rig();
+    let helper = start_and_hold_in_enable_write(&mut r, &g, Duration::from_millis(300));
+    r.m.begin_disconnect();
+    let at_return = g.enables.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(at_return, 1, "begin_disconnect returned while a laser-on write that passed its check was still on its way");
+    helper.join().unwrap();
+    r.m.disconnect();
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), at_return, "EnableLaser was written after the disconnect was asked for");
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
 }
 
 #[test]

@@ -176,11 +176,23 @@ pub struct ImageInput {
     pub outline: Vec<Point>,
     /// Share of the power every dot burns with, 0..1 (the shape's power scale). 1 = as set.
     pub power_scale: f64,
+    /// The image sub-layer (index into the layer's settings) these scan lines were made for:
+    /// only that sub-layer burns them. `None`: every image sub-layer of the layer burns them.
+    pub setting: Option<usize>,
 }
 
 impl ImageInput {
     pub fn new(scanlines: Vec<Scanline>) -> Self {
-        Self { scanlines, transform: Affine::IDENTITY, group: None, priority: 0, direction_offset: 0.0, outline: Vec::new(), power_scale: 1.0 }
+        Self {
+            scanlines,
+            transform: Affine::IDENTITY,
+            group: None,
+            priority: 0,
+            direction_offset: 0.0,
+            outline: Vec::new(),
+            power_scale: 1.0,
+            setting: None,
+        }
     }
 }
 

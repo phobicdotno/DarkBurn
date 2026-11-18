@@ -187,7 +187,8 @@ pub fn generate(input: &JobInput, opts: &JobOptions, progress: &mut Progress) ->
             }
             CutMode::Fill | CutMode::FillLine | CutMode::OffsetFill => fill_units(bi, b, layer, polys, start, &mut units, &mut items),
             CutMode::Image => {
-                for (ii, img) in layer.images.iter().enumerate() {
+                // Each image sub-layer burns the scan lines made with its own settings.
+                for (ii, img) in layer.images.iter().enumerate().filter(|(_, img)| img.setting.is_none_or(|s| s == b.setting)) {
                     let ops = image_ops(img, &b.settings, false);
                     let Some((entry, exit, bounds)) = ends(&ops) else { continue };
                     units.push(Unit { block: bi, kind: UnitKind::Image { image: ii } });

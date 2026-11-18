@@ -33,7 +33,6 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -195,12 +194,44 @@ enum Cmd {
     Shutdown,
 }
 
+/// The arm. A plain flag would let the worker see it set, spend a while on the board (reading
+/// the door), and enable the laser after a stop or disconnect had already cleared it. The worker
+/// turns the laser on only inside [`ArmFlag::while_armed`], which holds the flag: a clear that
+/// comes in meanwhile waits until the word is sent (and its own off command, queued behind the
+/// start, turns it off again), and one that came in before means the word is never sent.
+#[derive(Default)]
+struct ArmFlag(Mutex<bool>);
+
+impl ArmFlag {
+    fn lock(&self) -> std::sync::MutexGuard<'_, bool> {
+        // A panic elsewhere must never keep a stop from clearing the arm.
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn get(&self) -> bool {
+        *self.lock()
+    }
+    fn set(&self, on: bool) {
+        *self.lock() = on;
+    }
+    /// Runs `f` (the laser-on word) only while armed, with the arm held. `None` = not armed,
+    /// nothing sent.
+    fn while_armed<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
+        let g = self.lock();
+        if !*g {
+            return None;
+        }
+        let r = f();
+        drop(g);
+        Some(r)
+    }
+}
+
 /// Handle to the driver.
 pub struct GalvoMachine {
     tx: Sender<Cmd>,
     rx: Receiver<Event>,
     snapshot: Arc<Mutex<Snapshot>>,
-    armed: Arc<AtomicBool>,
+    armed: Arc<ArmFlag>,
     settings: DeviceSettings,
     worker: Option<JoinHandle<()>>,
 }
@@ -211,7 +242,7 @@ impl GalvoMachine {
         let (tx, crx) = mpsc::channel();
         let (etx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot { connection: ConnectionState::Connecting, transport: transport.name(), ..Default::default() }));
-        let armed = Arc::new(AtomicBool::new(false));
+        let armed = Arc::new(ArmFlag::default());
         let worker = Worker {
             link: Link { transport, settings: settings.clone(), opts, port_shadow: 0, last_inputs_read: None },
             state: State::Idle,
@@ -225,7 +256,7 @@ impl GalvoMachine {
 
     pub fn snapshot(&self) -> Snapshot {
         let mut s = self.snapshot.lock().expect("snapshot").clone();
-        s.armed = self.armed.load(Ordering::SeqCst);
+        s.armed = self.armed.get();
         s
     }
 
@@ -254,12 +285,12 @@ impl GalvoMachine {
     /// sent. The arm is spent when that job ends or stops.
     pub fn arm(&self) -> Result<(), GalvoError> {
         self.connected()?;
-        self.armed.store(true, Ordering::SeqCst);
+        self.armed.set(true);
         self.send(Cmd::Arm(true))
     }
 
     pub fn disarm(&self) -> Result<(), GalvoError> {
-        self.armed.store(false, Ordering::SeqCst);
+        self.armed.set(false);
         self.send(Cmd::Arm(false))
     }
 
@@ -280,7 +311,7 @@ impl GalvoMachine {
         if !matches!(s.activity, Activity::Idle | Activity::Framing) {
             return Err(GalvoError::Busy);
         }
-        if !self.armed.load(Ordering::SeqCst) {
+        if !self.armed.get() {
             return Err(GalvoError::NotArmed);
         }
         if self.settings.require_framing && !opts.skip_framing_check && s.framed_key != Some(job.frame_key) {
@@ -333,7 +364,7 @@ impl GalvoMachine {
     /// Stops everything and turns the laser off. Always allowed, also when not connected state
     /// is stale.
     pub fn stop(&self) -> Result<(), GalvoError> {
-        self.armed.store(false, Ordering::SeqCst);
+        self.armed.set(false);
         self.send(Cmd::Stop)
     }
 
@@ -370,10 +401,17 @@ impl GalvoMachine {
         self.send(Cmd::Utility(vec![Step::MoveAxis { axis, mm }]))
     }
 
-    pub fn disconnect(&mut self) {
+    /// Asks the worker to turn everything off and let go of the board, without waiting for it.
+    /// From here on the laser is not enabled, also by a start that is already under way.
+    /// [`Self::disconnect`] does this and then waits.
+    pub fn begin_disconnect(&self) {
         // A start that is still queued in front of the shutdown finds the arm gone.
-        self.armed.store(false, Ordering::SeqCst);
+        self.armed.set(false);
         let _ = self.tx.send(Cmd::Shutdown);
+    }
+
+    pub fn disconnect(&mut self) {
+        self.begin_disconnect();
         if let Some(h) = self.worker.take() {
             let _ = h.join();
         }
@@ -412,7 +450,7 @@ pub fn z_word(s: &DeviceSettings, mm: f64) -> Result<u16, String> {
 struct Shared {
     snapshot: Arc<Mutex<Snapshot>>,
     events: Sender<Event>,
-    armed: Arc<AtomicBool>,
+    armed: Arc<ArmFlag>,
 }
 
 impl Shared {
@@ -639,7 +677,7 @@ impl Worker {
     fn shutdown(&mut self) {
         let was = std::mem::replace(&mut self.state, State::Idle);
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.set(false);
         // As a stop does: a red-light frame that ends is not a job that was stopped.
         match was {
             State::Job(_) => self.sh.emit(Event::JobStopped),
@@ -657,7 +695,7 @@ impl Worker {
     fn link_failed(&mut self, e: io::Error) {
         // try to leave the laser off even though the link is bad
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.set(false);
         let msg = format!("The galvo link failed: {e}");
         let was_job = matches!(self.state, State::Job(_));
         self.state = State::Idle;
@@ -725,7 +763,7 @@ impl Worker {
                 // The handle set the flag when it was asked. Setting it again here would give
                 // the arm back after a stop that was asked for in between and is still queued.
                 if !on {
-                    self.sh.armed.store(false, Ordering::SeqCst);
+                    self.sh.armed.set(false);
                 }
                 if !on {
                     match self.state {
@@ -790,7 +828,7 @@ impl Worker {
     fn do_stop(&mut self) {
         let was = std::mem::replace(&mut self.state, State::Idle);
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.set(false);
         self.idle_snapshot();
         match was {
             State::Job(_) => self.sh.emit(Event::JobStopped),
@@ -876,7 +914,11 @@ impl Worker {
     /// stays held meanwhile. Returns false when a stop, pause or shutdown came in during the
     /// wait; the caller then leaves the job paused.
     fn open_source_and_wait(&mut self) -> io::Result<bool> {
-        self.link.mo(true)?;
+        // A stop or disarm during the door read in front of this finds the source still shut.
+        match self.sh.armed.while_armed(|| self.link.mo(true)) {
+            Some(r) => r?,
+            None => return Ok(false),
+        }
         if !self.link.settings.source.is_fiber() {
             return Ok(true);
         }
@@ -927,7 +969,7 @@ impl Worker {
             reject(self, "The galvo is busy.");
             return Ok(());
         }
-        if !self.sh.armed.load(Ordering::SeqCst) {
+        if !self.sh.armed.get() {
             reject(self, "Arm the laser before starting a job.");
             return Ok(());
         }
@@ -944,9 +986,20 @@ impl Worker {
             self.link.single(SingleCmd::StopExecute)?;
             self.link.single(SingleCmd::ResetList)?;
             self.link.write_port(0)?;
+            self.state = State::Idle;
             self.sh.emit(Event::FrameStopped);
         }
-        self.link.single(SingleCmd::EnableLaser)?;
+        // The door read above talks to the board; a stop, disarm or disconnect can come in
+        // meanwhile. The arm is checked again and held while the word goes out.
+        match self.sh.armed.while_armed(|| self.link.single(SingleCmd::EnableLaser)) {
+            Some(r) => {
+                r?;
+            }
+            None => {
+                reject(self, "Arm the laser before starting a job.");
+                return Ok(());
+            }
+        }
         let packets_total = job.packet_count();
         self.state = State::Job(Box::new(JobRun {
             steps: job.steps,
@@ -1096,7 +1149,7 @@ impl Worker {
         self.link.write_port(0)?;
         if j.marking {
             self.link.single(SingleCmd::DisableLaser)?;
-            self.sh.armed.store(false, Ordering::SeqCst);
+            self.sh.armed.set(false);
         }
         Ok(())
     }
@@ -1199,8 +1252,21 @@ impl Worker {
                     return Ok(false);
                 }
                 self.link.single(SingleCmd::ResetList)?;
-                self.link.write_port(1u16 << self.link.settings.ports.mark_bit)?;
-                self.link.mo(true)?;
+                let mark = 1u16 << self.link.settings.ports.mark_bit;
+                let open = |l: &mut Link| -> io::Result<()> {
+                    l.write_port(mark)?;
+                    l.mo(true)
+                };
+                if j.marking {
+                    // As at the start: a stop or disarm during the door read wins. Its own
+                    // command is queued and ends the job.
+                    match self.sh.armed.while_armed(|| open(&mut self.link)) {
+                        Some(r) => r?,
+                        None => return Ok(false),
+                    }
+                } else {
+                    open(&mut self.link)?;
+                }
                 j.phase = Phase::Send(ListRun { idx: 0, executing: false });
             }
             Phase::Send(run) => {

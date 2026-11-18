@@ -1,0 +1,1 @@
+- A restored auto-save now opens just like opening the project yourself, notes and all

@@ -33,6 +33,10 @@ pub trait Transport: Send {
     fn read(&mut self, timeout: Duration) -> io::Result<Option<[u8; REPLY_LEN]>>;
     /// A human name for logs, e.g. `emulator` or `USB 9588:9899`.
     fn name(&self) -> String;
+    /// Test hold point: called by the driver on resume, after its last look for a stop and right
+    /// before the word that restarts a held list. Real links do nothing here.
+    #[doc(hidden)]
+    fn before_restart_list(&mut self) {}
 }
 
 pub(crate) fn check_write_len(data: &[u8]) -> io::Result<()> {

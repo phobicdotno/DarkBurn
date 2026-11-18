@@ -595,29 +595,49 @@ struct ListRun {
 enum ListState {
     Working,
     Done,
+    /// The list marks and the arm was gone: it was not started.
+    Refused,
 }
 
-/// One tick of list sending / waiting.
-fn list_tick(link: &mut Link, packets: &[ListPacket], run: &mut ListRun) -> io::Result<ListState> {
+/// Starts the list. With `arm` (a list that marks) the word goes out only while armed, the
+/// same way as [`Worker::send_armed`]: `false` = not armed, nothing sent.
+fn execute_list(link: &mut Link, arm: Option<&ArmFlag>, run: &mut ListRun) -> io::Result<bool> {
+    match arm {
+        None => {
+            link.single(SingleCmd::ExecuteList)?;
+        }
+        Some(a) => match a.while_armed(|| link.write_single(SingleCmd::ExecuteList)) {
+            None => return Ok(false),
+            Some(r) => {
+                r?;
+                link.reply()?;
+            }
+        },
+    }
+    run.executing = true;
+    Ok(true)
+}
+
+/// One tick of list sending / waiting. `arm` is given for a list that marks; see
+/// [`execute_list`]. A refused start leaves the list unstarted: the stop, disarm or disconnect
+/// that took the arm has its own command queued, and that ends the job.
+fn list_tick(link: &mut Link, arm: Option<&ArmFlag>, packets: &[ListPacket], run: &mut ListRun) -> io::Result<ListState> {
     if run.idx < packets.len() {
         let st = link.single(SingleCmd::GetListStatus)?;
         if st.is_ready() {
             link.transport.write(packets[run.idx].as_bytes())?;
             link.single(SingleCmd::SetEndOfList(0))?;
             run.idx += 1;
-            if !run.executing && (run.idx >= 3 || run.idx == packets.len()) {
-                link.single(SingleCmd::ExecuteList)?;
-                run.executing = true;
+            if !run.executing && (run.idx >= 3 || run.idx == packets.len()) && !execute_list(link, arm, run)? {
+                return Ok(ListState::Refused);
             }
-        } else if !run.executing {
-            link.single(SingleCmd::ExecuteList)?;
-            run.executing = true;
+        } else if !run.executing && !execute_list(link, arm, run)? {
+            return Ok(ListState::Refused);
         }
         Ok(ListState::Working)
     } else {
-        if !run.executing {
-            link.single(SingleCmd::ExecuteList)?;
-            run.executing = true;
+        if !run.executing && !execute_list(link, arm, run)? {
+            return Ok(ListState::Refused);
         }
         let st = link.single(SingleCmd::GetListStatus)?;
         Ok(if st.is_busy() { ListState::Working } else { ListState::Done })
@@ -949,28 +969,28 @@ impl Worker {
             self.reject("The door is open.");
             return Ok(());
         }
+        let marking = match &self.state {
+            State::Job(j) => j.marking && matches!(j.phase, Phase::Send(_)),
+            _ => false,
+        };
         let activity = match &mut self.state {
             State::Idle => return Ok(()),
             State::Job(j) => {
                 if j.pause.is_none() {
                     return Ok(());
                 }
-                let marking = j.marking && matches!(j.phase, Phase::Send(_));
                 if marking && !self.open_source_and_wait()? {
                     // A stop or a pause came in while the source settled: still paused.
                     self.link.mo(false)?;
                     return Ok(());
                 }
-                match &mut self.state {
-                    State::Job(j) => {
-                        j.pause = None;
-                        // A job that was waiting goes on waiting: say so, not that it runs.
-                        match j.phase {
-                            Phase::WaitFootFirst | Phase::WaitFoot => Activity::WaitingFoot,
-                            Phase::WaitDoor => Activity::WaitingDoor,
-                            _ => Activity::Job,
-                        }
-                    }
+                match &self.state {
+                    // A job that was waiting goes on waiting: say so, not that it runs.
+                    State::Job(j) => match j.phase {
+                        Phase::WaitFootFirst | Phase::WaitFoot => Activity::WaitingFoot,
+                        Phase::WaitDoor => Activity::WaitingDoor,
+                        _ => Activity::Job,
+                    },
                     _ => Activity::Job,
                 }
             }
@@ -981,7 +1001,21 @@ impl Worker {
                 Activity::Framing
             }
         };
-        self.link.single(SingleCmd::RestartList)?;
+        self.link.transport.before_restart_list();
+        if marking {
+            // The restarted list marks: it goes out only while armed. A stop, pause, disarm or
+            // disconnect that came in after the wait above leaves the job paused here; its own
+            // queued command ends it.
+            if !self.send_armed(SingleCmd::RestartList)? {
+                self.link.mo(false)?;
+                return Ok(());
+            }
+        } else {
+            self.link.single(SingleCmd::RestartList)?;
+        }
+        if let State::Job(j) = &mut self.state {
+            j.pause = None;
+        }
         self.sh.update(|s| s.activity = activity);
         self.sh.emit(Event::Resumed);
         Ok(())
@@ -1180,7 +1214,7 @@ impl Worker {
             return Ok(false);
         }
         let Some(run) = f.run.as_mut() else { return Ok(false) };
-        if let ListState::Done = list_tick(&mut self.link, &f.frame.packets, run)? {
+        if let ListState::Done = list_tick(&mut self.link, None, &f.frame.packets, run)? {
             let key = f.frame.key;
             self.sh.update(|s| s.framed_key = Some(key));
             self.sh.emit(Event::FrameLap);
@@ -1347,7 +1381,11 @@ impl Worker {
             Phase::Send(run) => {
                 let Step::List(packets) = &j.steps[j.step] else { unreachable!("Send phase only follows a list step") };
                 let sent_before = run.idx;
-                let st = list_tick(&mut self.link, packets, run)?;
+                let arm = if j.marking { Some(&*self.sh.armed) } else { None };
+                let st = list_tick(&mut self.link, arm, packets, run)?;
+                if let ListState::Refused = st {
+                    return Ok(false);
+                }
                 let sent = run.idx;
                 if sent != sent_before {
                     let p = JobProgress {

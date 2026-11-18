@@ -132,28 +132,237 @@ fn a_stop_that_follows_a_start_at_once_means_the_laser_is_never_enabled() {
     assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
 }
 
+/// Sits between the driver and the emulator. Once tripped, the next input read (`ReadPort`)
+/// stops before it reaches the board: it says so on `entered` and goes on when `release` fires.
+/// This holds the worker exactly inside the door read of a job start, after its first look at
+/// the arm, without any timing.
+/// Tripped through `reply_tripped` instead, it holds the answer to the next `EnableLaser` the same
+/// way: the word has reached the board and the worker waits for the reply.
+struct Gate {
+    inner: MemoryTransport,
+    tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reply_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Holds the next EnableLaser write itself: the worker has looked at the arm and is inside
+    /// the transport write.
+    write_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// EnableLaser writes that have reached the board.
+    enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Holds the worker at the driver's hold point right before a resume restarts the list.
+    restart_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    last_was_enable: bool,
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+struct GateCtl {
+    tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reply_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    write_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    enables: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    restart_tripped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    entered: std::sync::mpsc::Receiver<()>,
+    release: std::sync::mpsc::Sender<()>,
+}
+
+impl Transport for Gate {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<()> {
+        if data == SingleCmd::ReadPort.to_command().to_bytes() && self.tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+        self.last_was_enable = data == SingleCmd::EnableLaser.to_command().to_bytes();
+        if self.last_was_enable && self.write_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+        let r = self.inner.write(data);
+        if self.last_was_enable {
+            self.enables.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        r
+    }
+    fn read(&mut self, timeout: Duration) -> std::io::Result<Option<[u8; 8]>> {
+        if std::mem::take(&mut self.last_was_enable) && self.reply_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+        self.inner.read(timeout)
+    }
+    fn name(&self) -> String {
+        self.inner.name()
+    }
+    fn before_restart_list(&mut self) {
+        if self.restart_tripped.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.entered.send(());
+            let _ = self.release.recv();
+        }
+    }
+}
+
+/// A door-checking rig whose input reads can be held (see [`Gate`]).
+fn gated_rig() -> (Rig, GateCtl) {
+    gated_rig_with(with_door())
+}
+
+fn gated_rig_with(settings: DeviceSettings) -> (Rig, GateCtl) {
+    let (t, emu) = MemoryTransport::new(slow_emu());
+    let tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (etx, erx) = std::sync::mpsc::channel();
+    let (rtx, rrx) = std::sync::mpsc::channel();
+    let reply_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let write_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let enables = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let restart_tripped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let gate = Gate {
+        inner: t,
+        tripped: tripped.clone(),
+        reply_tripped: reply_tripped.clone(),
+        write_tripped: write_tripped.clone(),
+        enables: enables.clone(),
+        restart_tripped: restart_tripped.clone(),
+        last_was_enable: false,
+        entered: etx,
+        release: rrx,
+    };
+    let m = GalvoMachine::connect(Box::new(gate), settings, no_routine_poll());
+    let mut r = Rig { m, emu, events: Vec::new() };
+    assert!(r.wait(|r| r.m.snapshot().connection == ConnectionState::Connected), "did not connect: {:?}", r.m.snapshot());
+    (r, GateCtl { tripped, reply_tripped, write_tripped, enables, restart_tripped, entered: erx, release: rtx })
+}
+
+/// Arms, starts, and returns once the worker is inside the start's door read: it has already
+/// seen the arm set.
+fn start_and_hold_in_door_read(r: &mut Rig, g: &GateCtl) {
+    g.tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.m.arm().unwrap();
+    r.m.start_job(small_job(&with_door()), StartOptions::default()).unwrap();
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the start never read the door");
+}
+
 #[test]
 fn a_disconnect_that_follows_a_start_at_once_means_the_laser_is_never_enabled() {
-    let mut r = rig_with(DeviceSettings::default(), slow_emu(), polling());
-    let job = small_job(&DeviceSettings::default());
-    let handle = r.emu.clone();
-    let (held_tx, held_rx) = std::sync::mpsc::channel();
-    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
-    let holder = std::thread::spawn(move || {
-        let _held = handle.lock().unwrap();
-        held_tx.send(()).unwrap();
-        // released a while after the test has queued its requests (a slow runner can pause the
-        // test thread between the go and the disconnect: the margin is for that)
-        go_rx.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(500));
-    });
-    held_rx.recv().unwrap();
-    std::thread::sleep(Duration::from_millis(80));
-    r.m.arm().unwrap();
-    r.m.start_job(job, StartOptions::default()).unwrap();
-    go_tx.send(()).unwrap();
+    let (mut r, g) = gated_rig();
+    start_and_hold_in_door_read(&mut r, &g);
+    // The disconnect is asked for while the worker is still reading the door.
+    r.m.begin_disconnect();
+    g.release.send(()).unwrap();
     r.m.disconnect();
-    holder.join().unwrap();
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after the disconnect had been asked for");
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+}
+
+#[test]
+fn a_stop_during_the_door_read_of_a_start_means_the_laser_is_never_enabled() {
+    let (mut r, g) = gated_rig();
+    start_and_hold_in_door_read(&mut r, &g);
+    r.m.stop().unwrap();
+    g.release.send(()).unwrap();
+    r.settle();
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after Stop had been pressed: {:?}", r.events);
+    assert!(!r.has(|e| matches!(e, Event::JobStarted)), "{:?}", r.events);
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+    let s = r.m.snapshot();
+    assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
+}
+
+#[test]
+fn a_disarm_during_the_door_read_of_a_start_means_the_laser_is_never_enabled() {
+    let (mut r, g) = gated_rig();
+    start_and_hold_in_door_read(&mut r, &g);
+    r.m.disarm().unwrap();
+    g.release.send(()).unwrap();
+    r.settle();
+    assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after the disarm: {:?}", r.events);
+    assert!(!r.has(|e| matches!(e, Event::JobStarted)), "{:?}", r.events);
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+    assert_eq!(r.m.snapshot().activity, Activity::Idle);
+}
+
+#[test]
+fn a_stop_does_not_wait_for_the_board_to_answer_the_laser_on_word() {
+    let (mut r, g) = gated_rig();
+    g.reply_tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.m.arm().unwrap();
+    r.m.start_job(small_job(&with_door()), StartOptions::default()).unwrap();
+    // The worker has written EnableLaser and waits for an answer that does not come yet.
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the start never sent EnableLaser");
+    // If the stop waited on that answer, this lets it go after two seconds; the stop must not need it.
+    let release = g.release.clone();
+    let watchdog = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(2));
+        let _ = release.send(());
+    });
+    let t0 = Instant::now();
+    r.m.stop().unwrap();
+    let took = t0.elapsed();
+    assert!(!r.m.snapshot().armed, "the arm is gone as soon as stop returns");
+    assert!(took < Duration::from_millis(500), "stop waited {took:?} for the board to answer");
+    watchdog.join().unwrap();
+    // The queued stop turns the laser that was just enabled off again.
+    assert!(r.wait(|r| r.emu(|e| !e.laser_enabled() && !e.mo_open()) && r.m.snapshot().activity == Activity::Idle), "{:?}", r.events);
+    r.settle();
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+    let s = r.m.snapshot();
+    assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
+}
+
+/// Arms, starts, and returns once the worker has looked at the arm (it was set) and is inside
+/// the transport write of EnableLaser, held there. A helper lets the write go after `after`, so a
+/// cancel that does not wait for the write returns before it has reached the board.
+fn start_and_hold_in_enable_write(r: &mut Rig, g: &GateCtl, after: Duration) -> std::thread::JoinHandle<()> {
+    g.write_tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.m.arm().unwrap();
+    r.m.start_job(small_job(&with_door()), StartOptions::default()).unwrap();
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the start never wrote EnableLaser");
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), 0);
+    let release = g.release.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        let _ = release.send(());
+    })
+}
+
+#[test]
+fn a_stop_between_the_arm_check_and_the_laser_on_write_returns_only_after_that_write() {
+    let (mut r, g) = gated_rig();
+    let helper = start_and_hold_in_enable_write(&mut r, &g, Duration::from_millis(300));
+    r.m.stop().unwrap();
+    // The write that had passed its check has gone out before stop returned; none comes later.
+    let at_return = g.enables.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(at_return, 1, "stop returned while a laser-on write that passed its check was still on its way");
+    assert!(!r.m.snapshot().armed);
+    helper.join().unwrap();
+    // The stop queued behind that write turns the laser off again.
+    assert!(r.wait(|r| r.emu(|e| !e.laser_enabled() && !e.mo_open()) && r.m.snapshot().activity == Activity::Idle), "{:?}", r.events);
+    r.settle();
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), at_return, "EnableLaser was written after stop returned");
+    assert_eq!(r.singles(SingleCmd::EnableLaser), at_return);
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+}
+
+#[test]
+fn a_disconnect_between_the_arm_check_and_the_laser_on_write_returns_only_after_that_write() {
+    let (mut r, g) = gated_rig();
+    let helper = start_and_hold_in_enable_write(&mut r, &g, Duration::from_millis(300));
+    r.m.begin_disconnect();
+    let at_return = g.enables.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(at_return, 1, "begin_disconnect returned while a laser-on write that passed its check was still on its way");
+    helper.join().unwrap();
+    r.m.disconnect();
+    assert_eq!(g.enables.load(std::sync::atomic::Ordering::SeqCst), at_return, "EnableLaser was written after the disconnect was asked for");
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
+}
+
+#[test]
+fn an_arm_after_a_disconnect_was_asked_for_is_refused_and_the_laser_never_enabled() {
+    let (mut r, g) = gated_rig();
+    start_and_hold_in_door_read(&mut r, &g);
+    r.m.begin_disconnect();
+    // The snapshot still says Connected until the worker is joined; the arm must not take anyway.
+    assert_eq!(r.m.arm(), Err(GalvoError::NotConnected));
+    assert!(!r.m.snapshot().armed);
+    g.release.send(()).unwrap();
+    r.m.disconnect();
     assert_eq!(r.singles(SingleCmd::EnableLaser), 0, "the laser was enabled after the disconnect had been asked for");
     r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open() && !e.ever_emitted()));
 }
@@ -347,4 +556,31 @@ fn a_link_that_drops_during_a_start_leaves_nothing_running_and_the_arm_spent() {
     assert_eq!(r.m.start_job(small_job(&dev), StartOptions::default()), Err(GalvoError::NotConnected));
     assert_eq!(r.m.arm(), Err(GalvoError::NotConnected));
     r.emu(|e| assert!(!e.ever_emitted()));
+}
+
+/// The source of a resume needs no settle time here, so the worker looks for a stop once and goes
+/// straight on to restart the list. A stop that lands right after that look must still win: the
+/// held list is never restarted and the job does not say it resumed.
+#[test]
+fn a_stop_right_before_a_resumed_list_restarts_means_the_list_never_restarts() {
+    let dev = DeviceSettings { open_mo_delay_units: 0, ..with_door() };
+    let (mut r, g) = gated_rig_with(dev.clone());
+    r.m.arm().unwrap();
+    r.m.start_job(long_job(&dev), StartOptions::default()).unwrap();
+    assert!(r.wait(|r| r.emu(|e| e.emitting_marks() > 5)), "{:?}", r.events);
+    r.m.pause().unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::Paused))), "{:?}", r.events);
+    g.restart_tripped.store(true, std::sync::atomic::Ordering::SeqCst);
+    r.m.resume().unwrap();
+    // The worker has made its last look for a stop and is about to restart the list.
+    g.entered.recv_timeout(Duration::from_secs(10)).expect("the resume never reached the list restart");
+    r.m.stop().unwrap();
+    g.release.send(()).unwrap();
+    assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped))), "{:?}", r.events);
+    r.settle();
+    assert_eq!(r.singles(SingleCmd::RestartList), 0, "the list was restarted after Stop had been pressed: {:?}", r.events);
+    assert!(!r.has(|e| matches!(e, Event::Resumed)), "{:?}", r.events);
+    r.emu(|e| assert!(!e.laser_enabled() && !e.mo_open()));
+    let s = r.m.snapshot();
+    assert!(!s.armed && s.activity == Activity::Idle, "{s:?}");
 }

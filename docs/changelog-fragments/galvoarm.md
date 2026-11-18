@@ -1,0 +1,1 @@
+- Stopping, disarming or disconnecting the galvo while a job starts now always keeps the laser off

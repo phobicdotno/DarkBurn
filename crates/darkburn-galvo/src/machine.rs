@@ -195,12 +195,86 @@ enum Cmd {
     Shutdown,
 }
 
+/// The arm. A plain flag would let the worker see it set, spend a while on the board (reading
+/// the door), and enable the laser after a stop or disconnect had already cleared it.
+///
+/// The worker turns the laser on only through [`ArmFlag::while_armed`], which looks at the arm
+/// and hands the laser-on word to the transport while holding `gate`, and waits for the board's
+/// answer only after letting go of it.
+///
+/// Taking the arm back ([`ArmFlag::clear`], [`ArmFlag::end`]) goes in this order:
+/// 1. the flag is cleared first, without the gate, so every look from then on fails;
+/// 2. then the gate is taken and let go at once. This waits only for a laser-on write that had
+///    already passed its look to reach the transport (never for a reply: no reply is waited for
+///    under the gate), and returns at once when none is in flight.
+///
+/// Only then does the caller (stop, disarm, disconnect) return and queue its off command. So once
+/// it has returned, no laser-on word is written any more: a write that passed its look before the
+/// clear has already gone out and the queued off command, behind it, turns it off; any later look
+/// fails.
+#[derive(Default)]
+struct ArmFlag {
+    on: AtomicBool,
+    /// Set by a disconnect request and never cleared: from then on nothing arms the laser.
+    ended: AtomicBool,
+    /// Held by the worker across its look at the arm and the transport write of a laser-on word
+    /// (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
+    gate: Mutex<()>,
+}
+
+impl ArmFlag {
+    fn gate(&self) -> std::sync::MutexGuard<'_, ()> {
+        // A panic elsewhere must never keep the arm stuck.
+        self.gate.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn get(&self) -> bool {
+        self.on.load(Ordering::SeqCst) && !self.ended.load(Ordering::SeqCst)
+    }
+    /// Takes the arm back. Never waits for the board; it waits at most for a laser-on write that
+    /// is already being handed to the transport (see the type's docs for the order).
+    fn clear(&self) {
+        self.on.store(false, Ordering::SeqCst);
+        self.flush();
+    }
+    /// Waits for a laser-on write that passed its look before the flag was cleared to finish.
+    fn flush(&self) {
+        drop(self.gate());
+    }
+    /// Arms, unless a disconnect has been asked for. Returns whether the arm took.
+    fn arm(&self) -> bool {
+        let _g = self.gate();
+        if self.ended.load(Ordering::SeqCst) {
+            return false;
+        }
+        self.on.store(true, Ordering::SeqCst);
+        true
+    }
+    /// A disconnect was asked for: the arm is gone for good. Waits like [`Self::clear`].
+    fn end(&self) {
+        self.ended.store(true, Ordering::SeqCst);
+        self.on.store(false, Ordering::SeqCst);
+        self.flush();
+    }
+    fn ended(&self) -> bool {
+        self.ended.load(Ordering::SeqCst)
+    }
+    /// Runs `f` (the transport write of the laser-on word only, not waiting for its answer) only
+    /// while armed, under the gate. `None` = not armed, nothing written.
+    fn while_armed<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
+        let _g = self.gate();
+        if !self.get() {
+            return None;
+        }
+        Some(f())
+    }
+}
+
 /// Handle to the driver.
 pub struct GalvoMachine {
     tx: Sender<Cmd>,
     rx: Receiver<Event>,
     snapshot: Arc<Mutex<Snapshot>>,
-    armed: Arc<AtomicBool>,
+    armed: Arc<ArmFlag>,
     settings: DeviceSettings,
     worker: Option<JoinHandle<()>>,
 }
@@ -211,7 +285,7 @@ impl GalvoMachine {
         let (tx, crx) = mpsc::channel();
         let (etx, rx) = mpsc::channel();
         let snapshot = Arc::new(Mutex::new(Snapshot { connection: ConnectionState::Connecting, transport: transport.name(), ..Default::default() }));
-        let armed = Arc::new(AtomicBool::new(false));
+        let armed = Arc::new(ArmFlag::default());
         let worker = Worker {
             link: Link { transport, settings: settings.clone(), opts, port_shadow: 0, last_inputs_read: None },
             state: State::Idle,
@@ -225,7 +299,7 @@ impl GalvoMachine {
 
     pub fn snapshot(&self) -> Snapshot {
         let mut s = self.snapshot.lock().expect("snapshot").clone();
-        s.armed = self.armed.load(Ordering::SeqCst);
+        s.armed = self.armed.get();
         s
     }
 
@@ -240,7 +314,7 @@ impl GalvoMachine {
 
     fn connected(&self) -> Result<Snapshot, GalvoError> {
         let s = self.snapshot();
-        if s.connection != ConnectionState::Connected {
+        if s.connection != ConnectionState::Connected || self.armed.ended() {
             return Err(GalvoError::NotConnected);
         }
         Ok(s)
@@ -254,12 +328,15 @@ impl GalvoMachine {
     /// sent. The arm is spent when that job ends or stops.
     pub fn arm(&self) -> Result<(), GalvoError> {
         self.connected()?;
-        self.armed.store(true, Ordering::SeqCst);
+        // A disconnect asked for in between wins: the arm does not take.
+        if !self.armed.arm() {
+            return Err(GalvoError::NotConnected);
+        }
         self.send(Cmd::Arm(true))
     }
 
     pub fn disarm(&self) -> Result<(), GalvoError> {
-        self.armed.store(false, Ordering::SeqCst);
+        self.armed.clear();
         self.send(Cmd::Arm(false))
     }
 
@@ -280,7 +357,7 @@ impl GalvoMachine {
         if !matches!(s.activity, Activity::Idle | Activity::Framing) {
             return Err(GalvoError::Busy);
         }
-        if !self.armed.load(Ordering::SeqCst) {
+        if !self.armed.get() {
             return Err(GalvoError::NotArmed);
         }
         if self.settings.require_framing && !opts.skip_framing_check && s.framed_key != Some(job.frame_key) {
@@ -333,7 +410,7 @@ impl GalvoMachine {
     /// Stops everything and turns the laser off. Always allowed, also when not connected state
     /// is stale.
     pub fn stop(&self) -> Result<(), GalvoError> {
-        self.armed.store(false, Ordering::SeqCst);
+        self.armed.clear();
         self.send(Cmd::Stop)
     }
 
@@ -370,10 +447,19 @@ impl GalvoMachine {
         self.send(Cmd::Utility(vec![Step::MoveAxis { axis, mm }]))
     }
 
-    pub fn disconnect(&mut self) {
-        // A start that is still queued in front of the shutdown finds the arm gone.
-        self.armed.store(false, Ordering::SeqCst);
+    /// Asks the worker to turn everything off and let go of the board, without waiting for it.
+    /// From here on the laser is not enabled, also by a start that is already under way.
+    /// [`Self::disconnect`] does this and then waits.
+    pub fn begin_disconnect(&self) {
+        // A start that is still queued in front of the shutdown finds the arm gone, and no arm
+        // after this one takes. `end` returns only once a laser-on write already past its look
+        // has gone out, so nothing turns the laser on after this returns.
+        self.armed.end();
         let _ = self.tx.send(Cmd::Shutdown);
+    }
+
+    pub fn disconnect(&mut self) {
+        self.begin_disconnect();
         if let Some(h) = self.worker.take() {
             let _ = h.join();
         }
@@ -412,7 +498,7 @@ pub fn z_word(s: &DeviceSettings, mm: f64) -> Result<u16, String> {
 struct Shared {
     snapshot: Arc<Mutex<Snapshot>>,
     events: Sender<Event>,
-    armed: Arc<AtomicBool>,
+    armed: Arc<ArmFlag>,
 }
 
 impl Shared {
@@ -434,7 +520,16 @@ struct Link {
 
 impl Link {
     fn single(&mut self, cmd: SingleCmd) -> io::Result<Reply> {
-        self.transport.write(&cmd.to_command().to_bytes())?;
+        self.write_single(cmd)?;
+        self.reply()
+    }
+
+    /// Writes a command without waiting for its answer; [`Self::reply`] collects it.
+    fn write_single(&mut self, cmd: SingleCmd) -> io::Result<()> {
+        self.transport.write(&cmd.to_command().to_bytes())
+    }
+
+    fn reply(&mut self) -> io::Result<Reply> {
         let deadline = Instant::now() + self.opts.read_timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -500,29 +595,49 @@ struct ListRun {
 enum ListState {
     Working,
     Done,
+    /// The list marks and the arm was gone: it was not started.
+    Refused,
 }
 
-/// One tick of list sending / waiting.
-fn list_tick(link: &mut Link, packets: &[ListPacket], run: &mut ListRun) -> io::Result<ListState> {
+/// Starts the list. With `arm` (a list that marks) the word goes out only while armed, the
+/// same way as [`Worker::send_armed`]: `false` = not armed, nothing sent.
+fn execute_list(link: &mut Link, arm: Option<&ArmFlag>, run: &mut ListRun) -> io::Result<bool> {
+    match arm {
+        None => {
+            link.single(SingleCmd::ExecuteList)?;
+        }
+        Some(a) => match a.while_armed(|| link.write_single(SingleCmd::ExecuteList)) {
+            None => return Ok(false),
+            Some(r) => {
+                r?;
+                link.reply()?;
+            }
+        },
+    }
+    run.executing = true;
+    Ok(true)
+}
+
+/// One tick of list sending / waiting. `arm` is given for a list that marks; see
+/// [`execute_list`]. A refused start leaves the list unstarted: the stop, disarm or disconnect
+/// that took the arm has its own command queued, and that ends the job.
+fn list_tick(link: &mut Link, arm: Option<&ArmFlag>, packets: &[ListPacket], run: &mut ListRun) -> io::Result<ListState> {
     if run.idx < packets.len() {
         let st = link.single(SingleCmd::GetListStatus)?;
         if st.is_ready() {
             link.transport.write(packets[run.idx].as_bytes())?;
             link.single(SingleCmd::SetEndOfList(0))?;
             run.idx += 1;
-            if !run.executing && (run.idx >= 3 || run.idx == packets.len()) {
-                link.single(SingleCmd::ExecuteList)?;
-                run.executing = true;
+            if !run.executing && (run.idx >= 3 || run.idx == packets.len()) && !execute_list(link, arm, run)? {
+                return Ok(ListState::Refused);
             }
-        } else if !run.executing {
-            link.single(SingleCmd::ExecuteList)?;
-            run.executing = true;
+        } else if !run.executing && !execute_list(link, arm, run)? {
+            return Ok(ListState::Refused);
         }
         Ok(ListState::Working)
     } else {
-        if !run.executing {
-            link.single(SingleCmd::ExecuteList)?;
-            run.executing = true;
+        if !run.executing && !execute_list(link, arm, run)? {
+            return Ok(ListState::Refused);
         }
         let st = link.single(SingleCmd::GetListStatus)?;
         Ok(if st.is_busy() { ListState::Working } else { ListState::Done })
@@ -639,7 +754,7 @@ impl Worker {
     fn shutdown(&mut self) {
         let was = std::mem::replace(&mut self.state, State::Idle);
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.clear();
         // As a stop does: a red-light frame that ends is not a job that was stopped.
         match was {
             State::Job(_) => self.sh.emit(Event::JobStopped),
@@ -657,7 +772,7 @@ impl Worker {
     fn link_failed(&mut self, e: io::Error) {
         // try to leave the laser off even though the link is bad
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.clear();
         let msg = format!("The galvo link failed: {e}");
         let was_job = matches!(self.state, State::Job(_));
         self.state = State::Idle;
@@ -725,7 +840,7 @@ impl Worker {
                 // The handle set the flag when it was asked. Setting it again here would give
                 // the arm back after a stop that was asked for in between and is still queued.
                 if !on {
-                    self.sh.armed.store(false, Ordering::SeqCst);
+                    self.sh.armed.clear();
                 }
                 if !on {
                     match self.state {
@@ -768,6 +883,27 @@ impl Worker {
         Ok(())
     }
 
+    /// Sends a laser-on word only while armed: the arm is looked at and the word written in one
+    /// short step, and the answer is waited for after it, so a stop never waits on the board.
+    /// `false` = not armed, nothing sent.
+    fn send_armed(&mut self, cmd: SingleCmd) -> io::Result<bool> {
+        let link = &mut self.link;
+        match self.sh.armed.while_armed(|| link.write_single(cmd)) {
+            None => Ok(false),
+            Some(r) => {
+                r?;
+                self.link.reply()?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Opens the fibre source only while armed (see [`Self::send_armed`]); other sources have
+    /// nothing to open. `false` = not armed.
+    fn open_mo_armed(&mut self) -> io::Result<bool> {
+        if self.link.settings.source.is_fiber() { self.send_armed(SingleCmd::FiberSetMo(true)) } else { Ok(self.sh.armed.get()) }
+    }
+
     /// Reads the door now and puts the reading in the snapshot. The snapshot alone can be as old
     /// as the poll interval, and older after a long transaction (a lens table upload); nothing
     /// that can lead to a mark is decided on that.
@@ -790,7 +926,7 @@ impl Worker {
     fn do_stop(&mut self) {
         let was = std::mem::replace(&mut self.state, State::Idle);
         self.link.safe_off();
-        self.sh.armed.store(false, Ordering::SeqCst);
+        self.sh.armed.clear();
         self.idle_snapshot();
         match was {
             State::Job(_) => self.sh.emit(Event::JobStopped),
@@ -833,28 +969,28 @@ impl Worker {
             self.reject("The door is open.");
             return Ok(());
         }
+        let marking = match &self.state {
+            State::Job(j) => j.marking && matches!(j.phase, Phase::Send(_)),
+            _ => false,
+        };
         let activity = match &mut self.state {
             State::Idle => return Ok(()),
             State::Job(j) => {
                 if j.pause.is_none() {
                     return Ok(());
                 }
-                let marking = j.marking && matches!(j.phase, Phase::Send(_));
                 if marking && !self.open_source_and_wait()? {
                     // A stop or a pause came in while the source settled: still paused.
                     self.link.mo(false)?;
                     return Ok(());
                 }
-                match &mut self.state {
-                    State::Job(j) => {
-                        j.pause = None;
-                        // A job that was waiting goes on waiting: say so, not that it runs.
-                        match j.phase {
-                            Phase::WaitFootFirst | Phase::WaitFoot => Activity::WaitingFoot,
-                            Phase::WaitDoor => Activity::WaitingDoor,
-                            _ => Activity::Job,
-                        }
-                    }
+                match &self.state {
+                    // A job that was waiting goes on waiting: say so, not that it runs.
+                    State::Job(j) => match j.phase {
+                        Phase::WaitFootFirst | Phase::WaitFoot => Activity::WaitingFoot,
+                        Phase::WaitDoor => Activity::WaitingDoor,
+                        _ => Activity::Job,
+                    },
                     _ => Activity::Job,
                 }
             }
@@ -865,7 +1001,21 @@ impl Worker {
                 Activity::Framing
             }
         };
-        self.link.single(SingleCmd::RestartList)?;
+        self.link.transport.before_restart_list();
+        if marking {
+            // The restarted list marks: it goes out only while armed. A stop, pause, disarm or
+            // disconnect that came in after the wait above leaves the job paused here; its own
+            // queued command ends it.
+            if !self.send_armed(SingleCmd::RestartList)? {
+                self.link.mo(false)?;
+                return Ok(());
+            }
+        } else {
+            self.link.single(SingleCmd::RestartList)?;
+        }
+        if let State::Job(j) = &mut self.state {
+            j.pause = None;
+        }
         self.sh.update(|s| s.activity = activity);
         self.sh.emit(Event::Resumed);
         Ok(())
@@ -876,7 +1026,10 @@ impl Worker {
     /// stays held meanwhile. Returns false when a stop, pause or shutdown came in during the
     /// wait; the caller then leaves the job paused.
     fn open_source_and_wait(&mut self) -> io::Result<bool> {
-        self.link.mo(true)?;
+        // A stop or disarm during the door read in front of this finds the source still shut.
+        if !self.open_mo_armed()? {
+            return Ok(false);
+        }
         if !self.link.settings.source.is_fiber() {
             return Ok(true);
         }
@@ -927,7 +1080,7 @@ impl Worker {
             reject(self, "The galvo is busy.");
             return Ok(());
         }
-        if !self.sh.armed.load(Ordering::SeqCst) {
+        if !self.sh.armed.get() {
             reject(self, "Arm the laser before starting a job.");
             return Ok(());
         }
@@ -944,9 +1097,15 @@ impl Worker {
             self.link.single(SingleCmd::StopExecute)?;
             self.link.single(SingleCmd::ResetList)?;
             self.link.write_port(0)?;
+            self.state = State::Idle;
             self.sh.emit(Event::FrameStopped);
         }
-        self.link.single(SingleCmd::EnableLaser)?;
+        // The door read above talks to the board; a stop, disarm or disconnect can come in
+        // meanwhile. The arm is checked again as the word goes out.
+        if !self.send_armed(SingleCmd::EnableLaser)? {
+            reject(self, "Arm the laser before starting a job.");
+            return Ok(());
+        }
         let packets_total = job.packet_count();
         self.state = State::Job(Box::new(JobRun {
             steps: job.steps,
@@ -1055,7 +1214,7 @@ impl Worker {
             return Ok(false);
         }
         let Some(run) = f.run.as_mut() else { return Ok(false) };
-        if let ListState::Done = list_tick(&mut self.link, &f.frame.packets, run)? {
+        if let ListState::Done = list_tick(&mut self.link, None, &f.frame.packets, run)? {
             let key = f.frame.key;
             self.sh.update(|s| s.framed_key = Some(key));
             self.sh.emit(Event::FrameLap);
@@ -1096,7 +1255,7 @@ impl Worker {
         self.link.write_port(0)?;
         if j.marking {
             self.link.single(SingleCmd::DisableLaser)?;
-            self.sh.armed.store(false, Ordering::SeqCst);
+            self.sh.armed.clear();
         }
         Ok(())
     }
@@ -1199,14 +1358,34 @@ impl Worker {
                     return Ok(false);
                 }
                 self.link.single(SingleCmd::ResetList)?;
-                self.link.write_port(1u16 << self.link.settings.ports.mark_bit)?;
-                self.link.mo(true)?;
+                let mark = 1u16 << self.link.settings.ports.mark_bit;
+                let open = |l: &mut Link| -> io::Result<()> {
+                    l.write_port(mark)?;
+                    l.mo(true)
+                };
+                if j.marking {
+                    // As at the start: a stop or disarm during the door read wins. Its own
+                    // command is queued and ends the job. Each word is checked on its own.
+                    if !self.send_armed(SingleCmd::WritePort(mark))? {
+                        return Ok(false);
+                    }
+                    self.link.port_shadow = mark;
+                    if !self.open_mo_armed()? {
+                        return Ok(false);
+                    }
+                } else {
+                    open(&mut self.link)?;
+                }
                 j.phase = Phase::Send(ListRun { idx: 0, executing: false });
             }
             Phase::Send(run) => {
                 let Step::List(packets) = &j.steps[j.step] else { unreachable!("Send phase only follows a list step") };
                 let sent_before = run.idx;
-                let st = list_tick(&mut self.link, packets, run)?;
+                let arm = if j.marking { Some(&*self.sh.armed) } else { None };
+                let st = list_tick(&mut self.link, arm, packets, run)?;
+                if let ListState::Refused = st {
+                    return Ok(false);
+                }
                 let sent = run.idx;
                 if sent != sent_before {
                     let p = JobProgress {

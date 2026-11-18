@@ -8,6 +8,11 @@ use crate::canvas::ViewCmd;
 use crate::shell::DarkBurn;
 use crate::tools::Tool;
 
+/// The note when a drag on the canvas is taken back because it put a shape out of reach.
+pub(crate) fn drag_too_far() -> String {
+    crate::i18n::tr("edit.drag_too_far", "Undone: that would put a shape too far out.")
+}
+
 /// The refusal of an edit that would nest shapes deeper than the editor allows.
 pub(crate) fn too_deep(what: &str) -> String {
     crate::i18n::tr("edit.too_deep", "{what}: shapes may sit at most {max} groups deep.")

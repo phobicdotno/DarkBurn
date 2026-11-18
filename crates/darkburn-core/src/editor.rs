@@ -502,10 +502,11 @@ mod tests {
         let mut e = Editor::new();
         let id = e.doc.add(square(0.0));
         e.mark_saved();
+        let t = e.doc.get(id).unwrap().transform;
         e.checkpoint("Move");
-        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((30.0, 0.0));
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((30.0, 0.0)) * t;
         e.touch();
-        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::IDENTITY;
+        e.doc.get_mut(id).unwrap().transform = t;
         e.touch();
         assert_eq!(e.history.len(), 1, "the checkpoint alone is an undo step that does nothing");
         assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);

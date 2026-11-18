@@ -265,7 +265,7 @@ fn resize_cursor(kind: DragKind) -> CursorIcon {
 /// changed nothing leaves no undo step, one that put a shape out of reach is taken back and says so.
 pub(crate) fn end_drag(app: &mut DarkBurn) {
     if app.editor.end_checkpoint() == darkburn_core::editor::GestureEnd::Refused {
-        app.shape_ui.status = Some(crate::i18n::tr("edit.drag_too_far", "Undone: that would put a shape too far out."));
+        app.shape_ui.status = Some(crate::actions::drag_too_far());
     }
 }
 

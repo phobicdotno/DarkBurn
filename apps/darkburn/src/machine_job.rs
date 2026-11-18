@@ -324,10 +324,13 @@ pub fn rd_dropped_pauses(tp: &Toolpath) -> Vec<String> {
                     continue;
                 }
                 said.push((l.layer_index, l.sublayer));
-                out.push(format!(
-                    "Layer {}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
-                    l.name
-                ));
+                out.push(
+                    crate::i18n::tr(
+                        "job.warn_ruida_pauses",
+                        "Layer {layer}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
+                    )
+                    .replace("{layer}", &l.name),
+                );
             }
             _ => {}
         }

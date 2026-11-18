@@ -841,5 +841,17 @@
   "edit.not_grouped": "Nincs csoportosítva",
   "edit.not_pasted": "Nincs beillesztve",
   "files.left_out_title": "Mentve, néhány alakzat kimaradt",
-  "files.left_out_note": "{path}: {n} alakzatot nem sikerült kiírni, ezért kimaradtak a fájlból (túl mélyen egymásba ágyazva, vagy a pozíciójuk nem szám). A megnyitott projektben továbbra is megvannak."
+  "files.left_out_note": "{path}: {n} alakzatot nem sikerült kiírni, ezért kimaradtak a fájlból (túl mélyen egymásba ágyazva, vagy a pozíciójuk nem szám). A megnyitott projektben továbbra is megvannak.",
+  "job.warn_image_too_large": "A(z) {layer} réteg egyik képe kimaradt: ezen a felbontáson a kép {amount} millió pont lenne (a határ {limit} millió): csökkentse a DPI-t.",
+  "job.warn_image_unreadable": "A(z) {layer} réteg egyik képe kimaradt: a kép nem olvasható: {why}.",
+  "job.warn_text_no_outline": "A(z) „{text}” szövegnek még nincs körvonala, ezért kimaradt.",
+  "job.warn_kerf_lost_one": "{layer} réteg: 1 alakzat vagy lyuk, amely kisebb a vágásirés-kompenzációnál, kimaradt.",
+  "job.warn_kerf_lost": "{layer} réteg: {n} alakzat vagy lyuk, amely kisebb a vágásirés-kompenzációnál, kimaradt.",
+  "job.warn_not_image_mode": "A(z) {layer} réteg képeket tartalmaz, de nem Kép módban van; ezek kimaradtak.",
+  "job.warn_outside_dropped": "{n} alakzat a munkaterületen kívül kimaradt.",
+  "job.warn_leaves_work_area": "A feladat kilép a munkaterületről ({n} mozgás, ebből {burning} bekapcsolt lézerrel).",
+  "job.frame_leaves_work_area": "A keret kilép a munkaterületről ({n} mozgás). Először helyezze a tervet a munkaterületen belülre.",
+  "job.warn_ruida_pauses": "{layer} réteg: a kezdő és záró szüneteket és az átvágást a Ruida vezérlő nem kapja meg; a vágás nélkülük fut.",
+  "job.warn_cylinder_left_alone": "A hengerkorrekció egy alakzatot változatlanul hagyott: {why}.",
+  "job.warn_rotary_left_alone": "A forgótengely egy alakzatot változatlanul hagyott: {why}."
 }

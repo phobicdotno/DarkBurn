@@ -841,5 +841,17 @@
   "edit.not_grouped": "Gruplanmadı",
   "edit.not_pasted": "Yapıştırılmadı",
   "files.left_out_title": "Bazı şekiller dışarıda bırakılarak kaydedildi",
-  "files.left_out_note": "{path}: {n} şekil yazılamadı ve dosyanın dışında bırakıldı (çok derin iç içe, ya da sayı olmayan bir konum). Açık projede hâlâ duruyorlar."
+  "files.left_out_note": "{path}: {n} şekil yazılamadı ve dosyanın dışında bırakıldı (çok derin iç içe, ya da sayı olmayan bir konum). Açık projede hâlâ duruyorlar.",
+  "job.warn_image_too_large": "{layer} katmanındaki bir görüntü dışarıda bırakıldı: görüntü bu çözünürlükte {amount} milyon nokta olurdu (sınır {limit} milyon): DPI değerini düşürün.",
+  "job.warn_image_unreadable": "{layer} katmanındaki bir görüntü dışarıda bırakıldı: görüntü okunamıyor: {why}.",
+  "job.warn_text_no_outline": "“{text}” metninin henüz bir dış hattı yok ve dışarıda bırakıldı.",
+  "job.warn_kerf_lost_one": "{layer} katmanı: kesim payı telafisinden küçük 1 şekil veya delik dışarıda bırakıldı.",
+  "job.warn_kerf_lost": "{layer} katmanı: kesim payı telafisinden küçük {n} şekil veya delik dışarıda bırakıldı.",
+  "job.warn_not_image_mode": "{layer} katmanında görüntüler var ama katman Görüntü modunda değil; görüntüler dışarıda bırakıldı.",
+  "job.warn_outside_dropped": "Çalışma alanının dışındaki {n} şekil dışarıda bırakıldı.",
+  "job.warn_leaves_work_area": "İş, çalışma alanının dışına çıkıyor ({n} hareket, bunların {burning} tanesi lazer açıkken).",
+  "job.frame_leaves_work_area": "Çerçeve, çalışma alanının dışına çıkıyor ({n} hareket). Önce tasarımı çalışma alanının içine taşıyın.",
+  "job.warn_ruida_pauses": "{layer} katmanı: başlangıç ve bitiş duraklamaları ile tam kesme bir Ruida denetleyicisine gönderilmez; kesim bunlar olmadan yapılır.",
+  "job.warn_cylinder_left_alone": "Silindir düzeltmesi bir şekli olduğu gibi bıraktı: {why}.",
+  "job.warn_rotary_left_alone": "Döner eksen bir şekli olduğu gibi bıraktı: {why}."
 }

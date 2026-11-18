@@ -841,5 +841,17 @@
   "edit.not_grouped": "Ni združeno",
   "edit.not_pasted": "Ni prilepljeno",
   "files.left_out_title": "Shranjeno z izpuščenimi oblikami",
-  "files.left_out_note": "{path}: {n} oblik ni bilo mogoče zapisati, zato so bile izpuščene iz datoteke (pregloboko ugnezdene, ali položaj, ki ni število). Še vedno so v odprtem projektu."
+  "files.left_out_note": "{path}: {n} oblik ni bilo mogoče zapisati, zato so bile izpuščene iz datoteke (pregloboko ugnezdene, ali položaj, ki ni število). Še vedno so v odprtem projektu.",
+  "job.warn_image_too_large": "Slika na plasti {layer} je bila izpuščena: pri tej ločljivosti bi imela {amount} milijonov pik (meja je {limit} milijonov): znižajte DPI.",
+  "job.warn_image_unreadable": "Slika na plasti {layer} je bila izpuščena: slike ni mogoče prebrati: {why}.",
+  "job.warn_text_no_outline": "Besedilo »{text}« še nima obrisa in je bilo izpuščeno.",
+  "job.warn_kerf_lost_one": "Plast {layer}: 1 oblika ali luknja, manjša od kompenzacije širine reza, je bila izpuščena.",
+  "job.warn_kerf_lost": "Plast {layer}: izpuščene oblike ali luknje, manjše od kompenzacije širine reza (število: {n}).",
+  "job.warn_not_image_mode": "Plast {layer} vsebuje slike, a ni v načinu Slika; slike so bile izpuščene.",
+  "job.warn_outside_dropped": "Izpuščene oblike zunaj delovnega območja (število: {n}).",
+  "job.warn_leaves_work_area": "Opravilo zapusti delovno območje ({n} premikov, od tega {burning} z vklopljenim laserjem).",
+  "job.frame_leaves_work_area": "Okvir zapusti delovno območje ({n} premikov). Najprej premaknite načrt v delovno območje.",
+  "job.warn_ruida_pauses": "Plast {layer}: začetni in končni premori ter prerez se krmilniku Ruida ne pošiljajo; rez poteka brez njih.",
+  "job.warn_cylinder_left_alone": "Korekcija valja je obliko pustila nespremenjeno: {why}.",
+  "job.warn_rotary_left_alone": "Rotacijska os je obliko pustila nespremenjeno: {why}."
 }

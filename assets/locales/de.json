@@ -841,5 +841,17 @@
   "edit.not_grouped": "Nicht gruppiert",
   "edit.not_pasted": "Nicht eingefügt",
   "files.left_out_title": "Gespeichert, aber einige Formen wurden ausgelassen",
-  "files.left_out_note": "{path}: {n} Form(en) konnten nicht geschrieben werden und wurden in der Datei ausgelassen (zu tief verschachtelt oder eine Position, die keine Zahl ist). Sie sind weiterhin im geöffneten Projekt."
+  "files.left_out_note": "{path}: {n} Form(en) konnten nicht geschrieben werden und wurden in der Datei ausgelassen (zu tief verschachtelt oder eine Position, die keine Zahl ist). Sie sind weiterhin im geöffneten Projekt.",
+  "job.warn_image_too_large": "Ein Bild auf Ebene {layer} wurde ausgelassen: Das Bild ergäbe bei dieser Auflösung {amount} Millionen Punkte (die Grenze liegt bei {limit} Millionen): Senken Sie die DPI.",
+  "job.warn_image_unreadable": "Ein Bild auf Ebene {layer} wurde ausgelassen: Das Bild kann nicht gelesen werden: {why}.",
+  "job.warn_text_no_outline": "Der Text „{text}“ hat noch keine Kontur und wurde ausgelassen.",
+  "job.warn_kerf_lost_one": "Ebene {layer}: 1 Form oder Loch kleiner als der Schnittspaltausgleich wurde ausgelassen.",
+  "job.warn_kerf_lost": "Ebene {layer}: {n} Formen oder Löcher kleiner als der Schnittspaltausgleich wurden ausgelassen.",
+  "job.warn_not_image_mode": "Ebene {layer} enthält Bilder, ist aber nicht im Bildmodus; sie wurden ausgelassen.",
+  "job.warn_outside_dropped": "{n} Form(en) außerhalb des Arbeitsbereichs wurden ausgelassen.",
+  "job.warn_leaves_work_area": "Der Auftrag verlässt den Arbeitsbereich ({n} Bewegungen, {burning} davon mit Laser an).",
+  "job.frame_leaves_work_area": "Der Rahmen verlässt den Arbeitsbereich ({n} Bewegungen). Verschieben Sie das Design zuerst in den Arbeitsbereich.",
+  "job.warn_ruida_pauses": "Ebene {layer}: Start- und Endpausen sowie Durchschneiden werden nicht an einen Ruida-Controller gesendet; der Schnitt läuft ohne sie.",
+  "job.warn_cylinder_left_alone": "Die Zylinderkorrektur hat eine Form unverändert gelassen: {why}.",
+  "job.warn_rotary_left_alone": "Die Drehachse hat eine Form unverändert gelassen: {why}."
 }

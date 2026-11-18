@@ -841,5 +841,17 @@
   "edit.not_grouped": "グループ化されませんでした",
   "edit.not_pasted": "貼り付けられませんでした",
   "files.left_out_title": "一部の図形を除いて保存しました",
-  "files.left_out_note": "{path}: {n} 個の図形を書き込めず、ファイルから除外しました (入れ子が深すぎるか、位置が数値ではありません)。開いているプロジェクトには残っています。"
+  "files.left_out_note": "{path}: {n} 個の図形を書き込めず、ファイルから除外しました (入れ子が深すぎるか、位置が数値ではありません)。開いているプロジェクトには残っています。",
+  "job.warn_image_too_large": "レイヤー {layer} の画像は除外されました: この解像度では画像が {amount} 百万ドットになります(上限は {limit} 百万): DPI を下げてください。",
+  "job.warn_image_unreadable": "レイヤー {layer} の画像は除外されました: 画像を読み込めません: {why}。",
+  "job.warn_text_no_outline": "テキスト「{text}」にはまだアウトラインがないため除外されました。",
+  "job.warn_kerf_lost_one": "レイヤー {layer}: カーフオフセットより小さい図形または穴 1 個が除外されました。",
+  "job.warn_kerf_lost": "レイヤー {layer}: カーフオフセットより小さい図形または穴 {n} 個が除外されました。",
+  "job.warn_not_image_mode": "レイヤー {layer} には画像がありますが、画像モードではないため除外されました。",
+  "job.warn_outside_dropped": "作業領域外の図形 {n} 個が除外されました。",
+  "job.warn_leaves_work_area": "ジョブが作業領域からはみ出します(移動 {n} 回、うち {burning} 回はレーザー照射中)。",
+  "job.frame_leaves_work_area": "フレームが作業領域からはみ出します(移動 {n} 回)。先にデザインを作業領域内に移動してください。",
+  "job.warn_ruida_pauses": "レイヤー {layer}: 開始・終了の一時停止と貫通カットは Ruida コントローラーに送信されません。カットはこれらなしで実行されます。",
+  "job.warn_cylinder_left_alone": "円筒補正で図形が変更されませんでした: {why}。",
+  "job.warn_rotary_left_alone": "ロータリーで図形が変更されませんでした: {why}。"
 }

@@ -841,5 +841,17 @@
   "edit.not_grouped": "Ei ryhmitetty",
   "edit.not_pasted": "Ei liitetty",
   "files.left_out_title": "Tallennettu, mutta osa muodoista jätettiin pois",
-  "files.left_out_note": "{path}: {n} muotoa ei voitu kirjoittaa, ja ne jätettiin pois tiedostosta (liian syvällä sisäkkäin tai sijainti, joka ei ole luku). Ne ovat yhä avoimessa projektissa."
+  "files.left_out_note": "{path}: {n} muotoa ei voitu kirjoittaa, ja ne jätettiin pois tiedostosta (liian syvällä sisäkkäin tai sijainti, joka ei ole luku). Ne ovat yhä avoimessa projektissa.",
+  "job.warn_image_too_large": "Tason {layer} kuva jätettiin pois: kuvasta tulisi tällä tarkkuudella {amount} miljoonaa pistettä (raja on {limit} miljoonaa): pienennä DPI-arvoa.",
+  "job.warn_image_unreadable": "Tason {layer} kuva jätettiin pois: kuvaa ei voi lukea: {why}.",
+  "job.warn_text_no_outline": "Tekstillä ”{text}” ei ole vielä ääriviivaa, ja se jätettiin pois.",
+  "job.warn_kerf_lost_one": "Taso {layer}: 1 leikkausraon kompensaatiota pienempi muoto tai reikä jätettiin pois.",
+  "job.warn_kerf_lost": "Taso {layer}: {n} leikkausraon kompensaatiota pienempää muotoa tai reikää jätettiin pois.",
+  "job.warn_not_image_mode": "Tasolla {layer} on kuvia, mutta se ei ole kuvatilassa; ne jätettiin pois.",
+  "job.warn_outside_dropped": "{n} työalueen ulkopuolista muotoa jätettiin pois.",
+  "job.warn_leaves_work_area": "Työ menee työalueen ulkopuolelle ({n} liikettä, joista {burning} laser päällä).",
+  "job.frame_leaves_work_area": "Kehys menee työalueen ulkopuolelle ({n} liikettä). Siirrä malli ensin työalueen sisään.",
+  "job.warn_ruida_pauses": "Taso {layer}: aloitus- ja lopetustaukoja eikä läpileikkausta lähetetä Ruida-ohjaimelle; leikkaus tehdään ilman niitä.",
+  "job.warn_cylinder_left_alone": "Sylinterikorjaus jätti muodon ennalleen: {why}.",
+  "job.warn_rotary_left_alone": "Pyöröakseli jätti muodon ennalleen: {why}."
 }

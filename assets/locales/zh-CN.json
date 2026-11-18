@@ -841,5 +841,17 @@
   "edit.not_grouped": "未编组",
   "edit.not_pasted": "未粘贴",
   "files.left_out_title": "已保存，但省略了部分图形",
-  "files.left_out_note": "{path}：有 {n} 个图形无法写入，已从文件中省略（嵌套过深，或位置不是数字）。它们仍在打开的项目中。"
+  "files.left_out_note": "{path}：有 {n} 个图形无法写入，已从文件中省略（嵌套过深，或位置不是数字）。它们仍在打开的项目中。",
+  "job.warn_image_too_large": "图层 {layer} 上的一张图像已被略过：在此分辨率下图像将有 {amount} 百万个点（上限为 {limit} 百万）：请降低 DPI。",
+  "job.warn_image_unreadable": "图层 {layer} 上的一张图像已被略过：无法读取图像：{why}。",
+  "job.warn_text_no_outline": "文本“{text}”还没有轮廓，已被略过。",
+  "job.warn_kerf_lost_one": "图层 {layer}：1 个小于切缝补偿的图形或孔已被略过。",
+  "job.warn_kerf_lost": "图层 {layer}：{n} 个小于切缝补偿的图形或孔已被略过。",
+  "job.warn_not_image_mode": "图层 {layer} 含有图像，但不是图像模式；这些图像已被略过。",
+  "job.warn_outside_dropped": "工作区域外的 {n} 个图形已被略过。",
+  "job.warn_leaves_work_area": "作业超出工作区域（{n} 次移动，其中 {burning} 次激光开启）。",
+  "job.frame_leaves_work_area": "边框超出工作区域（{n} 次移动）。请先把设计移到工作区域内。",
+  "job.warn_ruida_pauses": "图层 {layer}：开始和结束暂停以及切穿不会发送到 Ruida 控制器；切割将在没有它们的情况下进行。",
+  "job.warn_cylinder_left_alone": "圆柱校正未改变某个图形：{why}。",
+  "job.warn_rotary_left_alone": "旋转轴未改变某个图形：{why}。"
 }

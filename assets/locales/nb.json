@@ -841,5 +841,17 @@
   "edit.not_grouped": "Ikke gruppert",
   "edit.not_pasted": "Ikke limt inn",
   "files.left_out_title": "Lagret, men noen figurer ble utelatt",
-  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og ble utelatt fra filen (nøstet for dypt, eller en posisjon som ikke er et tall). De er fortsatt i det åpne prosjektet."
+  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og ble utelatt fra filen (nøstet for dypt, eller en posisjon som ikke er et tall). De er fortsatt i det åpne prosjektet.",
+  "job.warn_image_too_large": "Et bilde på lag {layer} ble utelatt: bildet ville blitt {amount} millioner punkter med denne oppløsningen (grensen er {limit} millioner): senk DPI.",
+  "job.warn_image_unreadable": "Et bilde på lag {layer} ble utelatt: bildet kan ikke leses: {why}.",
+  "job.warn_text_no_outline": "Teksten «{text}» har ingen omriss ennå og ble utelatt.",
+  "job.warn_kerf_lost_one": "Lag {layer}: 1 figur eller hull mindre enn snittbreddekompensasjonen ble utelatt.",
+  "job.warn_kerf_lost": "Lag {layer}: {n} figurer eller hull mindre enn snittbreddekompensasjonen ble utelatt.",
+  "job.warn_not_image_mode": "Lag {layer} har bilder, men står ikke i bildemodus; de ble utelatt.",
+  "job.warn_outside_dropped": "{n} figur(er) utenfor arbeidsområdet ble utelatt.",
+  "job.warn_leaves_work_area": "Jobben går utenfor arbeidsområdet ({n} bevegelser, {burning} av dem med laseren på).",
+  "job.frame_leaves_work_area": "Rammen går utenfor arbeidsområdet ({n} bevegelser). Flytt designet inn i arbeidsområdet først.",
+  "job.warn_ruida_pauses": "Lag {layer}: start- og sluttpauser og gjennomskjæring sendes ikke til en Ruida-kontroller; kuttet kjøres uten dem.",
+  "job.warn_cylinder_left_alone": "Sylinderkorrigeringen lot en figur være uendret: {why}.",
+  "job.warn_rotary_left_alone": "Rotasjonsaksen lot en figur være uendret: {why}."
 }

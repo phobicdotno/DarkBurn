@@ -448,6 +448,22 @@ fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64, f64)> {
 
 /// The reason a layer's dots or perforation were left out: `amount` pieces, past
 /// [`MAX_LINE_PIECES`].
+/// The warning for an image left out of the job, in the user's language.
+fn image_left_out(label: &str, e: &crate::images::ImageError) -> String {
+    let text = match e {
+        crate::images::ImageError::TooLarge { dots, .. } => tr(
+            "job.warn_image_too_large",
+            "An image on layer {layer} was left out: image would be {amount} million dots at this resolution (the limit is {limit} million): lower the DPI.",
+        )
+        .replace("{amount}", &format!("{:.0}", *dots as f64 / 1e6))
+        .replace("{limit}", &format!("{:.0}", crate::images::MAX_DOTS as f64 / 1e6)),
+        crate::images::ImageError::Unreadable(why) => {
+            tr("job.warn_image_unreadable", "An image on layer {layer} was left out: image cannot be read: {why}.").replace("{why}", why)
+        }
+    };
+    text.replace("{layer}", label)
+}
+
 fn too_many_pieces_warning(li: usize, amount: f64) -> String {
     too_big_warning(
         tr(
@@ -728,14 +744,14 @@ fn image_inputs(
         let bb = shape.bbox();
         let dots = crate::images::dots_for(bb.width().max(w), bb.height().max(h), settings.line_interval_mm);
         if dots > crate::images::MAX_DOTS {
-            warnings.push(format!("An image on layer {label} was left out: {}.", crate::images::ImageError::TooLarge { dots, shape: shape.id.0 }));
+            warnings.push(image_left_out(&label, &crate::images::ImageError::TooLarge { dots, shape: shape.id.0 }));
             continue;
         }
         // The pixels with the image's crop applied (outside the crop nothing burns).
         let gray = match crate::images::source_gray(doc, img) {
             Ok(g) => g,
             Err(e) => {
-                warnings.push(format!("An image on layer {label} was left out: {e}."));
+                warnings.push(image_left_out(&label, &e));
                 continue;
             }
         };
@@ -1070,13 +1086,11 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     continue;
                 }
                 if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
-                    warnings.push(format!(
-                        "Text \"{}\" has no outline yet and was left out.",
-                        match &leaf.kind {
-                            ShapeKind::Text(t) => t.text.as_str(),
-                            _ => "",
-                        }
-                    ));
+                    let text = match &leaf.kind {
+                        ShapeKind::Text(t) => t.text.as_str(),
+                        _ => "",
+                    };
+                    warnings.push(tr("job.warn_text_no_outline", "Text \"{text}\" has no outline yet and was left out.").replace("{text}", text));
                     continue;
                 }
                 let entry = layers[li].get_or_insert_with(|| {
@@ -1180,12 +1194,12 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     frame_paths.extend(line_frames.into_iter().flatten());
     for (li, lost) in kerf_lost.iter().enumerate() {
         if *lost > 0 {
-            warnings.push(format!(
-                "Layer {}: {lost} shape or hole{} smaller than the kerf offset {} left out.",
-                layer::layer_label(li),
-                if *lost == 1 { "" } else { "s" },
-                if *lost == 1 { "was" } else { "were" }
-            ));
+            let note = if *lost == 1 {
+                tr("job.warn_kerf_lost_one", "Layer {layer}: 1 shape or hole smaller than the kerf offset was left out.")
+            } else {
+                tr("job.warn_kerf_lost", "Layer {layer}: {n} shapes or holes smaller than the kerf offset were left out.")
+            };
+            warnings.push(note.replace("{layer}", &layer::layer_label(li)).replace("{n}", &lost.to_string()));
         }
     }
 
@@ -1230,7 +1244,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
                     }
                 }
             }
-            None => warnings.push(format!("Layer {} holds images but is not in Image mode; they were left out.", layer::layer_label(li))),
+            None => warnings.push(
+                tr("job.warn_not_image_mode", "Layer {layer} holds images but is not in Image mode; they were left out.")
+                    .replace("{layer}", &layer::layer_label(li)),
+            ),
         }
     }
 
@@ -1336,7 +1353,7 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
     let mut warnings = c.warnings;
     if c.dropped > 0 {
-        warnings.push(format!("{} shape(s) outside the work area were left out.", c.dropped));
+        warnings.push(tr("job.warn_outside_dropped", "{n} shape(s) outside the work area were left out.").replace("{n}", &c.dropped.to_string()));
     }
     if input.device.no_pauses {
         warnings.extend(crate::machine_job::rd_dropped_pauses(&toolpath));
@@ -1344,7 +1361,11 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     let bounds_report = check_work_area(input, &toolpath);
     if !bounds_report.is_ok() {
         let burning = bounds_report.violations.iter().filter(|v| v.burning).count();
-        warnings.push(format!("The job leaves the work area ({} moves, {burning} of them burning).", bounds_report.violations.len()));
+        warnings.push(
+            tr("job.warn_leaves_work_area", "The job leaves the work area ({n} moves, {burning} of them burning).")
+                .replace("{n}", &bounds_report.violations.len().to_string())
+                .replace("{burning}", &burning.to_string()),
+        );
     }
     if work_area_unchecked(input, &toolpath) {
         warnings.push(work_area_unchecked_note());
@@ -1391,7 +1412,8 @@ pub fn check_frame_bounds(input: &BuildInput, frame: &Toolpath) -> Result<(), St
     if report.is_ok() {
         Ok(())
     } else {
-        Err(format!("The frame leaves the work area ({} moves). Move the design inside the work area first.", report.violations.len()))
+        Err(tr("job.frame_leaves_work_area", "The frame leaves the work area ({n} moves). Move the design inside the work area first.")
+            .replace("{n}", &report.violations.len().to_string()))
     }
 }
 

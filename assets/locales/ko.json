@@ -841,5 +841,17 @@
   "edit.not_grouped": "그룹화되지 않음",
   "edit.not_pasted": "붙여넣지 않음",
   "files.left_out_title": "일부 도형을 제외하고 저장됨",
-  "files.left_out_note": "{path}: 도형 {n}개를 쓸 수 없어 파일에서 제외했습니다(너무 깊게 중첩되었거나 위치가 숫자가 아님). 열려 있는 프로젝트에는 그대로 있습니다."
+  "files.left_out_note": "{path}: 도형 {n}개를 쓸 수 없어 파일에서 제외했습니다(너무 깊게 중첩되었거나 위치가 숫자가 아님). 열려 있는 프로젝트에는 그대로 있습니다.",
+  "job.warn_image_too_large": "레이어 {layer}의 이미지가 제외되었습니다: 이 해상도에서는 이미지가 {amount}백만 도트가 됩니다(한도는 {limit}백만). DPI를 낮추세요.",
+  "job.warn_image_unreadable": "레이어 {layer}의 이미지가 제외되었습니다: 이미지를 읽을 수 없습니다: {why}.",
+  "job.warn_text_no_outline": "텍스트 '{text}'에 아직 윤곽선이 없어 제외되었습니다.",
+  "job.warn_kerf_lost_one": "레이어 {layer}: 커프 오프셋보다 작은 도형 또는 구멍 1개가 제외되었습니다.",
+  "job.warn_kerf_lost": "레이어 {layer}: 커프 오프셋보다 작은 도형 또는 구멍 {n}개가 제외되었습니다.",
+  "job.warn_not_image_mode": "레이어 {layer}에 이미지가 있지만 이미지 모드가 아니어서 제외되었습니다.",
+  "job.warn_outside_dropped": "작업 영역 밖의 도형 {n}개가 제외되었습니다.",
+  "job.warn_leaves_work_area": "작업이 작업 영역을 벗어납니다(이동 {n}회, 그중 {burning}회는 레이저 켜짐).",
+  "job.frame_leaves_work_area": "프레임이 작업 영역을 벗어납니다(이동 {n}회). 먼저 디자인을 작업 영역 안으로 옮기세요.",
+  "job.warn_ruida_pauses": "레이어 {layer}: 시작·종료 일시정지와 관통 절단은 Ruida 컨트롤러로 보내지지 않습니다. 절단은 이것들 없이 진행됩니다.",
+  "job.warn_cylinder_left_alone": "원통 보정이 도형을 그대로 두었습니다: {why}.",
+  "job.warn_rotary_left_alone": "로터리가 도형을 그대로 두었습니다: {why}."
 }

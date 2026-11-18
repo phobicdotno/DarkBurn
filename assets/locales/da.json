@@ -841,5 +841,17 @@
   "edit.not_grouped": "Ikke grupperet",
   "edit.not_pasted": "Ikke indsat",
   "files.left_out_title": "Gemt, men nogle figurer blev udeladt",
-  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og blev udeladt af filen (indlejret for dybt, eller en position der ikke er et tal). De findes stadig i det åbne projekt."
+  "files.left_out_note": "{path}: {n} figur(er) kunne ikke skrives og blev udeladt af filen (indlejret for dybt, eller en position der ikke er et tal). De findes stadig i det åbne projekt.",
+  "job.warn_image_too_large": "Et billede på lag {layer} blev udeladt: billedet ville blive {amount} millioner prikker ved denne opløsning (grænsen er {limit} millioner): sænk DPI.",
+  "job.warn_image_unreadable": "Et billede på lag {layer} blev udeladt: billedet kan ikke læses: {why}.",
+  "job.warn_text_no_outline": "Teksten »{text}« har endnu ingen kontur og blev udeladt.",
+  "job.warn_kerf_lost_one": "Lag {layer}: 1 figur eller hul mindre end snitbreddekompensationen blev udeladt.",
+  "job.warn_kerf_lost": "Lag {layer}: {n} figurer eller huller mindre end snitbreddekompensationen blev udeladt.",
+  "job.warn_not_image_mode": "Lag {layer} indeholder billeder, men er ikke i billedtilstand; de blev udeladt.",
+  "job.warn_outside_dropped": "{n} figur(er) uden for arbejdsområdet blev udeladt.",
+  "job.warn_leaves_work_area": "Jobbet går uden for arbejdsområdet ({n} bevægelser, {burning} af dem med laseren tændt).",
+  "job.frame_leaves_work_area": "Rammen går uden for arbejdsområdet ({n} bevægelser). Flyt designet ind i arbejdsområdet først.",
+  "job.warn_ruida_pauses": "Lag {layer}: start- og slutpauser og gennemskæring sendes ikke til en Ruida-controller; snittet kører uden dem.",
+  "job.warn_cylinder_left_alone": "Cylinderkorrektionen lod en figur være uændret: {why}.",
+  "job.warn_rotary_left_alone": "Rotationsaksen lod en figur være uændret: {why}."
 }

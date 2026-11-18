@@ -841,5 +841,17 @@
   "edit.not_grouped": "No agrupado",
   "edit.not_pasted": "No pegado",
   "files.left_out_title": "Guardado con formas omitidas",
-  "files.left_out_note": "{path}: no se pudieron escribir {n} forma(s) y se omitieron del archivo (anidadas demasiado profundo, o una posición que no es un número). Siguen en el proyecto abierto."
+  "files.left_out_note": "{path}: no se pudieron escribir {n} forma(s) y se omitieron del archivo (anidadas demasiado profundo, o una posición que no es un número). Siguen en el proyecto abierto.",
+  "job.warn_image_too_large": "Se ha omitido una imagen de la capa {layer}: la imagen tendría {amount} millones de puntos a esta resolución (el límite es de {limit} millones): baja los DPI.",
+  "job.warn_image_unreadable": "Se ha omitido una imagen de la capa {layer}: la imagen no se puede leer: {why}.",
+  "job.warn_text_no_outline": "El texto «{text}» aún no tiene contorno y se ha omitido.",
+  "job.warn_kerf_lost_one": "Capa {layer}: se ha omitido 1 forma o agujero más pequeño que la compensación del corte.",
+  "job.warn_kerf_lost": "Capa {layer}: se han omitido {n} formas o agujeros más pequeños que la compensación del corte.",
+  "job.warn_not_image_mode": "La capa {layer} contiene imágenes, pero no está en modo Imagen; se han omitido.",
+  "job.warn_outside_dropped": "Se han omitido {n} forma(s) fuera del área de trabajo.",
+  "job.warn_leaves_work_area": "El trabajo sale del área de trabajo ({n} movimientos, {burning} de ellos con el láser encendido).",
+  "job.frame_leaves_work_area": "El marco sale del área de trabajo ({n} movimientos). Mueve primero el diseño dentro del área de trabajo.",
+  "job.warn_ruida_pauses": "Capa {layer}: las pausas de inicio y fin y el corte pasante no se envían a un controlador Ruida; el corte se hace sin ellas.",
+  "job.warn_cylinder_left_alone": "La corrección cilíndrica ha dejado una forma sin cambios: {why}.",
+  "job.warn_rotary_left_alone": "El rotativo ha dejado una forma sin cambios: {why}."
 }

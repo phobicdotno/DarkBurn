@@ -208,14 +208,17 @@ impl JobMap {
             match c.map_path(&path, 0.5) {
                 Ok(p) => path = p,
                 Err(e) => self.warn(
-                    crate::i18n::tr("job.warn_cylinder_left_alone", "Cylinder correction left a shape alone: {why}.").replace("{why}", &e.to_string()),
+                    crate::i18n::tr("job.warn_cylinder_left_alone", "Cylinder correction left a shape alone: {why}.")
+                        .replace("{why}", &e.to_string()),
                 ),
             }
         }
         if let Some(r) = &self.rotary {
             match r.map_path(&path) {
                 Ok(p) => path = p,
-                Err(e) => self.warn(crate::i18n::tr("job.warn_rotary_left_alone", "Rotary left a shape alone: {why}.").replace("{why}", &e.to_string())),
+                Err(e) => {
+                    self.warn(crate::i18n::tr("job.warn_rotary_left_alone", "Rotary left a shape alone: {why}.").replace("{why}", &e.to_string()))
+                }
             }
         }
         if let Some(f) = &self.fit {

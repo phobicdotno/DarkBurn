@@ -626,24 +626,21 @@ fn a_stop_while_a_marking_packet_is_written_means_no_more_marking_packets_go_out
     g.entered.recv_timeout(Duration::from_secs(10)).expect("the job never wrote another list packet");
     let held_at = packets(&g);
     assert!(held_at < total);
-    // The held write has passed its look at the arm. Another thread lets it go only once stop()
-    // has cleared the arm (the snapshot reads the arm flag itself), so stop() is then past the
-    // clear and in, or about to enter, its wait on the held write: no timing is assumed.
+    // The held write has passed its look at the arm. Let it go a little later, from another thread.
+    // Timing limit: the 300 ms only makes it likely that stop() has begun its wait on the held
+    // write before the release. `GalvoMachine` is not `Sync`, so no other thread can watch stop()
+    // clear the arm. If this thread stalls past 300 ms the test still passes but proves less: an
+    // ungated packet write would then go unnoticed in that run.
     let release = g.release.clone();
-    let m = &r.m;
-    let at_return = std::thread::scope(|s| {
-        s.spawn(move || {
-            let until = std::time::Instant::now() + Duration::from_secs(10);
-            while m.snapshot().armed && std::time::Instant::now() < until {
-                std::thread::yield_now();
-            }
-            let _ = release.send(());
-        });
-        m.stop().unwrap();
-        packets(&g)
+    let helper = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        let _ = release.send(());
     });
+    r.m.stop().unwrap();
+    let at_return = packets(&g);
     assert_eq!(at_return, held_at + 1, "stop returned while a marking packet that passed its check was still on its way");
     assert!(!r.m.snapshot().armed);
+    helper.join().unwrap();
     assert!(r.wait(|r| r.has(|e| matches!(e, Event::JobStopped)) && r.m.snapshot().activity == Activity::Idle), "{:?}", r.events);
     r.settle();
     assert_eq!(packets(&g), at_return, "a marking list packet was written after stop returned");

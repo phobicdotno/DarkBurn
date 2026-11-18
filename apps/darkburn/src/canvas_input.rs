@@ -264,7 +264,9 @@ fn resize_cursor(kind: DragKind) -> CursorIcon {
 /// Settle a drag that began with a checkpoint, with the guards of `Editor::edit`: one that
 /// changed nothing leaves no undo step, one that put a shape out of reach is taken back and says so.
 pub(crate) fn end_drag(app: &mut DarkBurn) {
-    if app.editor.end_checkpoint() == darkburn_core::editor::GestureEnd::Refused {
+    let end = app.editor.end_checkpoint();
+    // A command run during the drag may have settled it already and taken it back.
+    if app.editor.take_refused() || end == darkburn_core::editor::GestureEnd::Refused {
         app.shape_ui.status = Some(crate::actions::drag_too_far());
     }
 }
@@ -838,6 +840,37 @@ mod tests {
     /// Bug hunt: drags go through `checkpoint`, not `Editor::edit`. A resize of a sliver with
     /// the pointer still on the canvas makes a transform far past `MAX_COORD`; ending the drag
     /// takes it back and says so. A drag that ends where it started leaves no undo step.
+    /// A command run during a far drag settles it (taking it back) and still runs; the user is
+    /// told, even when the drag then ends without moving again (CodeRabbit, editor.rs:314).
+    #[test]
+    fn a_far_drag_settled_by_a_command_is_reported() {
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let mut id = ShapeId(0);
+        app.editor.edit("Add", |d, sel| {
+            id = d.add(Shape::rect(KRect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0));
+            sel.set([id]);
+            true
+        });
+        let t = app.editor.doc.get(id).unwrap().transform;
+        app.editor.checkpoint("Move");
+        app.editor.doc.get_mut(id).unwrap().transform = Affine::translate((1e13, 0.0)) * t;
+        app.editor.touch();
+        app.run(&ctx, "edit.duplicate");
+        assert_eq!(app.editor.doc.len(), 2, "the duplicate is made");
+        assert_eq!(app.editor.doc.get(id).unwrap().transform, t, "the far drag is taken back");
+        assert!(app.shape_ui.status.is_some(), "and the user is told");
+        app.shape_ui.status = None;
+        end_drag(&mut app);
+        assert!(app.shape_ui.status.is_none(), "told once");
+        // Settled by an edit that does not go through a command: the drag's end says it.
+        app.editor.checkpoint("Move");
+        app.editor.doc.get_mut(id).unwrap().transform = Affine::translate((1e13, 0.0)) * t;
+        app.editor.edit("Nudge", |_, _| true);
+        end_drag(&mut app);
+        assert!(app.shape_ui.status.is_some());
+    }
+
     #[test]
     fn drags_get_the_guards_of_an_edit() {
         let mut app = DarkBurn::new(crate::prefs::Prefs::default());

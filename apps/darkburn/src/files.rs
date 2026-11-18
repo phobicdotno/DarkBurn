@@ -276,6 +276,10 @@ fn report_save(app: &mut DarkBurn, path: &Path) -> bool {
 
 /// Write the project to `path` (with a thumbnail) and make it the project's file.
 pub fn save_to(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
+    // A drag still open is settled first, so the file holds the document marked saved.
+    if app.editor.settle() == darkburn_core::editor::GestureEnd::Refused {
+        app.shape_ui.status = Some(crate::actions::drag_too_far());
+    }
     let thumb = crate::thumbnail::render(&app.editor.doc);
     let (bytes, left_out) = project::save_reporting(&app.editor.doc, APP_VERSION, thumb.as_deref()).map_err(|e| e.to_string())?;
     write_atomic(path, &bytes).map_err(|e| e.to_string())?;
@@ -901,6 +905,28 @@ mod tests {
         fn image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
             self.image.clone()
         }
+    }
+
+    /// A save during a far drag settles it first: the file holds the document marked saved,
+    /// and the user is told the drag was taken back (CodeRabbit, editor.rs:272).
+    #[test]
+    fn a_save_during_a_far_drag_writes_the_settled_document() {
+        let dir = TempDir::new("save-drag");
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        let id = a.editor.doc.iter().next().unwrap().id;
+        let t = a.editor.doc.get(id).unwrap().transform;
+        a.editor.checkpoint("Move");
+        a.editor.doc.get_mut(id).unwrap().transform = Affine::translate((1e13, 0.0)) * t;
+        a.editor.touch();
+        let path = dir.0.join("drag.dbrn");
+        save_to(&mut a, &path).unwrap();
+        assert_eq!(a.editor.doc.get(id).unwrap().transform, t, "the far drag was taken back");
+        assert!(!a.editor.is_modified());
+        assert!(a.shape_ui.status.is_some(), "and the user is told");
+        let loaded = project::load(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(loaded.doc.len(), 1);
+        assert_eq!(loaded.doc.iter().next().unwrap().transform, t, "the file holds the saved document");
     }
 
     #[test]

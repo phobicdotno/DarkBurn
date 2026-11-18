@@ -264,6 +264,10 @@ impl DarkBurn {
             || crate::vision_ui::run(self, ctx, id)
             || crate::extras::run(self, ctx, id)
         {
+            // A command run during a drag settles it first: say so if it was taken back.
+            if self.editor.take_refused() {
+                self.shape_ui.status = Some(crate::actions::drag_too_far());
+            }
             return;
         }
         match id {

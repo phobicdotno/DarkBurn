@@ -223,6 +223,9 @@ pub struct Editor {
     project: u64,
     /// The gesture that is open, see [`Editor::end_checkpoint`].
     gesture: Option<Gesture>,
+    /// Another operation settled a gesture and took it back as out of reach: see
+    /// [`Editor::take_refused`].
+    refused: bool,
 }
 
 impl Default for Editor {
@@ -238,6 +241,7 @@ impl Default for Editor {
             saved_revision: 0,
             project: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             gesture: None,
+            refused: false,
         }
     }
 }
@@ -311,8 +315,17 @@ impl Editor {
     /// back its label so it can go on after the operation that settled it.
     fn settle_open(&mut self) -> Option<String> {
         let label = self.gesture.as_ref().map(|g| g.start.label.clone());
-        self.end_checkpoint();
+        if self.end_checkpoint() == GestureEnd::Refused {
+            self.refused = true;
+        }
         label
+    }
+
+    /// Whether an operation (an edit, checkpoint, undo, redo or save) settled the open gesture
+    /// and took it back as out of reach since this was last asked, so the app can say so: the
+    /// operation itself still ran, from the state before the gesture.
+    pub fn take_refused(&mut self) -> bool {
+        std::mem::take(&mut self.refused)
     }
 
     /// Let a gesture settled by [`Editor::settle_open`] go on from the state now: the canvas may
@@ -397,18 +410,36 @@ impl Editor {
     }
 
     /// Forget the last checkpoint when the change it guarded did nothing (a click without a drag).
-    /// A gesture that went on after being settled has no step of its own: what it changed since
-    /// is taken back.
+    /// With a gesture open only what the gesture made is taken back: its own checkpoint, and the
+    /// document as it was when it began (or went on, after being settled by another operation,
+    /// whose undo step stays). With none open, the last undo step is taken back.
     pub fn drop_checkpoint(&mut self) {
-        if let Some(g) = self.gesture.take_if(|g| !g.recorded && self.doc != g.start.doc) {
-            let saved = self.is_saved_state(&g.start);
-            self.restore_doc(g.start.doc);
-            self.selection = g.start.selection;
-            self.selection.retain_existing(&self.doc);
-            self.step_to(saved);
+        if let Some(g) = self.gesture.take() {
+            if g.recorded {
+                self.history.undo.truncate(g.depth);
+            }
+            if g.recorded || self.doc != g.start.doc {
+                let saved = self.is_saved_state(&g.start);
+                self.restore_doc(g.start.doc);
+                self.selection = g.start.selection;
+                self.selection.retain_existing(&self.doc);
+                self.step_to(saved);
+            }
             return;
         }
-        self.gesture = None;
+        self.pop_step();
+    }
+
+    /// Take back the last undo step, made by the caller's own operation (a command whose step
+    /// is merged into another, a picture put in for a trace window that was cancelled). An open
+    /// gesture is settled first and goes on from the state after.
+    pub fn drop_last_step(&mut self) {
+        let open = self.settle_open();
+        self.pop_step();
+        self.go_on(open);
+    }
+
+    fn pop_step(&mut self) {
         if let Some(s) = self.history.undo.pop() {
             // Back at the state of the checkpoint: still saved if it was saved then.
             let was_saved = self.is_saved_state(&s);
@@ -814,6 +845,84 @@ mod tests {
         assert_eq!(e.history.undo_labels(), vec!["Move", "Nudge"]);
         assert!(e.undo() && e.undo());
         assert!(!e.is_modified(), "back at the saved document");
+    }
+
+    /// A click-drag that goes on after a command and is dropped without moving takes back only
+    /// what it made: the command's step stays (CodeRabbit, editor.rs:403).
+    #[test]
+    fn dropping_a_gesture_that_went_on_keeps_the_command_step() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        e.mark_saved();
+        let t = e.doc.get(id).unwrap().transform;
+        let nudged = kurbo::Affine::translate((30.0, 0.0)) * t;
+        e.checkpoint("Move");
+        assert!(e.edit("Nudge", |d, _| {
+            d.get_mut(id).unwrap().transform = nudged;
+            true
+        }));
+        let after_nudge = e.doc.clone();
+        e.drop_checkpoint();
+        assert_eq!(e.doc, after_nudge, "the nudge stays");
+        assert_eq!(e.history.undo_labels(), vec!["Nudge"]);
+        // Moved after the command, then dropped: back to the nudged document, the step stays.
+        e.checkpoint("Move");
+        assert!(e.edit("Nudge", |d, _| {
+            d.get_mut(id).unwrap().transform = kurbo::Affine::translate((10.0, 0.0)) * nudged;
+            true
+        }));
+        let after_second = e.doc.clone();
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((50.0, 0.0)) * t;
+        e.drop_checkpoint();
+        assert_eq!(e.doc, after_second);
+        assert_eq!(e.history.undo_labels(), vec!["Nudge", "Nudge"]);
+        // A recorded gesture dropped: its own checkpoint goes, nothing below it.
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = t;
+        e.drop_checkpoint();
+        assert_eq!(e.doc, after_second);
+        assert_eq!(e.history.undo_labels(), vec!["Nudge", "Nudge"]);
+        // No gesture open: the last step goes, as before.
+        e.drop_checkpoint();
+        assert_eq!(e.doc, after_nudge);
+        // drop_last_step with a gesture going on: the command's step goes, the gesture goes on.
+        e.checkpoint("Move");
+        assert!(e.edit("Nudge", |d, _| {
+            d.get_mut(id).unwrap().transform = t;
+            true
+        }));
+        e.drop_last_step();
+        assert_eq!(e.doc, after_nudge);
+        assert_eq!(e.history.undo_labels(), vec!["Nudge"]);
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);
+        assert_eq!(e.history.undo_labels(), vec!["Nudge"]);
+    }
+
+    /// A command that settles a far drag still runs, and the refusal is kept for the app to show
+    /// (CodeRabbit, editor.rs:314).
+    #[test]
+    fn a_refusal_settled_by_a_command_is_kept_for_the_app() {
+        let mut e = Editor::new();
+        let id = e.doc.add(square(0.0));
+        let before = e.doc.clone();
+        assert!(!e.take_refused());
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((1e13, 0.0));
+        assert!(e.edit("Duplicate", |d, _| {
+            d.add(square(50.0));
+            true
+        }));
+        assert_eq!(e.doc.len(), before.len() + 1, "the command ran after the drag was taken back");
+        assert!(e.doc.get(id) == before.get(id), "the far drag is gone");
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged, "released without moving again");
+        assert!(e.take_refused(), "the refusal is still there to show");
+        assert!(!e.take_refused(), "once");
+        // A drag that settles fine leaves nothing to show.
+        e.checkpoint("Move");
+        e.doc.get_mut(id).unwrap().transform = kurbo::Affine::translate((5.0, 0.0));
+        e.mark_saved();
+        assert!(!e.take_refused());
+        assert_eq!(e.end_checkpoint(), GestureEnd::Unchanged);
     }
 
     /// An undo during a drag settles the drag first (a far drag is refused, so nothing out of

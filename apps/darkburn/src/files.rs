@@ -534,7 +534,11 @@ pub fn restore_autosave(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let original = path.parent().and_then(|d| std::fs::read_to_string(d.join(AUTOSAVE_PATH_FILE)).ok()).map(PathBuf::from);
     // Set up like File > Open, but it stays modified, keeps the project's own file (not the
     // auto-save's) and is not added to the recent files.
+    // A copy of a project from a newer DarkBurn that was never saved here still drops the newer
+    // parts at its first save: its own file is still the newer one, so it says so then too.
+    let from_newer = original.as_deref().and_then(|p| std::fs::read(p).ok()).and_then(|b| project::load(&b).ok()).is_some_and(|l| l.newer_version);
     take_project(app, loaded.doc, original);
+    app.files.from_newer = from_newer;
     app.editor.touch();
     Ok(())
 }
@@ -1310,6 +1314,48 @@ mod tests {
         assert!(a.editor.is_modified(), "a restore is never marked saved");
         assert_eq!(a.project_path.as_deref(), Some(mine.as_path()), "the project's own file, not the auto-save");
         assert!(!a.prefs.recent.iter().any(|r| r.contains(AUTOSAVE_FILE)), "the auto-save is not a recent file");
+    }
+
+    #[test]
+    fn a_restored_copy_of_a_newer_project_still_warns_on_its_first_save() {
+        let dir = TempDir::new("restore-newer");
+        let settings = dir.0.join("settings");
+        let mut a = app(&dir);
+        add_rect(&mut a);
+        let shapes = serde_json::to_string(&a.editor.doc.iter().cloned().collect::<Vec<_>>()).unwrap();
+        let json = format!(r#"{{"format": "darkburn-project", "version": 99, "app_version": "99.0.0", "shapes": {shapes}}}"#);
+        let newer = dir.0.join("newer.dbrn");
+        std::fs::write(&newer, write_zip(&[("project.json", json.as_bytes())])).unwrap();
+        write_autosave(&settings, &a.editor.doc, Some(&newer)).unwrap();
+        let mut b = app(&dir);
+        restore_autosave(&mut b, &settings.join(AUTOSAVE_FILE)).unwrap();
+        save_to(&mut b, &newer).unwrap();
+        let (title, _) = b.files.message.take().expect("the first save of the restored copy warns");
+        assert!(title.contains("newer"), "{title}");
+        // A copy of a project this version wrote says nothing.
+        let mine = dir.0.join("mine.dbrn");
+        save_to(&mut a, &mine).unwrap();
+        a.files.message = None;
+        write_autosave(&settings, &a.editor.doc, Some(&mine)).unwrap();
+        let mut c = app(&dir);
+        restore_autosave(&mut c, &settings.join(AUTOSAVE_FILE)).unwrap();
+        save_to(&mut c, &mine).unwrap();
+        assert!(c.files.message.is_none(), "{:?}", c.files.message);
+    }
+
+    #[test]
+    fn opening_artwork_after_a_newer_project_saves_without_the_newer_warning() {
+        // DarkBurn projects always open through `open_path`; everything `file_io` reads (artwork,
+        // LightBurn) starts a new project, which clears the flag.
+        let dir = TempDir::new("newer-then-svg");
+        let mut a = app(&dir);
+        a.files.from_newer = true;
+        let svg = dir.0.join("a.svg");
+        let text = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm"><rect width="5" height="5"/></svg>"#;
+        std::fs::write(&svg, text).unwrap();
+        crate::file_io::open_sync(&mut a, &svg).unwrap();
+        save_to(&mut a, &dir.0.join("art.dbrn")).unwrap();
+        assert!(a.files.message.is_none(), "{:?}", a.files.message);
     }
 
     #[test]

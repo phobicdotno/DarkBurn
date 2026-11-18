@@ -40,9 +40,62 @@ struct Session {
     edited: bool,
     /// The project the editor was opened in ([`darkburn_core::Editor::project`]).
     project: u64,
-    /// A mode the layer had that is not offered for it was replaced: the layer, the sub-layer
-    /// and the notice saying so.
-    mode_note: Option<(usize, usize, String)>,
+    /// Modes that were not offered and were replaced, one per sub-layer setting.
+    mode_notes: Vec<ModeNote>,
+}
+
+/// The editor put `to` in place of the mode `from`, which is not offered for sub-layer `sub` of
+/// layer `layer`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ModeNote {
+    layer: usize,
+    sub: usize,
+    from: Mode,
+    to: Mode,
+}
+
+/// Keep `notes` on the sub-layers they belong to after `op` on sub-layer `at` of `layer`: a
+/// removed sub-layer's notice goes, the others follow their sub-layer to its new place.
+fn remap_notes(notes: &mut Vec<ModeNote>, layer: usize, op: SubOp, at: usize) {
+    notes.retain_mut(|n| {
+        if n.layer != layer {
+            return true;
+        }
+        let k = n.sub;
+        n.sub = match op {
+            SubOp::Add => k,
+            SubOp::Duplicate if k > at => k + 1,
+            SubOp::Duplicate => k,
+            SubOp::Remove if k == at => return false,
+            SubOp::Remove if k > at => k - 1,
+            SubOp::Remove => k,
+            SubOp::Move(d) => {
+                let to = (at as isize + d).max(0) as usize;
+                if k == at {
+                    to
+                } else if d > 0 && k > at && k <= to {
+                    k - 1
+                } else if d < 0 && k >= to && k < at {
+                    k + 1
+                } else {
+                    k
+                }
+            }
+        };
+        true
+    });
+}
+
+/// Update `notes` for sub-layer `sub` of `layer`, whose mode is `mode` and whose offered modes
+/// are `offered`: a mode changed by hand ends the notice, a replacement starts one. Returns the
+/// notice to show for it.
+fn note_for(notes: &mut Vec<ModeNote>, layer: usize, sub: usize, mode: Mode, offered: Option<&[Mode]>) -> Option<ModeNote> {
+    notes.retain(|n| !(n.layer == layer && n.sub == sub && n.to != mode));
+    if let Some(to) = offered.and_then(|o| replaced_mode(mode, o)) {
+        notes.retain(|n| !(n.layer == layer && n.sub == sub));
+        notes.push(ModeNote { layer, sub, from: mode, to });
+    }
+    notes.iter().find(|n| n.layer == layer && n.sub == sub).copied()
 }
 
 fn session_id() -> Id {
@@ -206,7 +259,7 @@ pub fn dialog(ctx: &egui::Context, app: &mut DarkBurn) {
         saved_since: false,
         edited: false,
         project,
-        mode_note: None,
+        mode_notes: Vec::new(),
     });
     if s.edited && !app.editor.is_modified() {
         s.saved_since = true;
@@ -408,6 +461,7 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
             SubOp::Move(d) => lay.move_sub_layer(s.sub, d),
         };
         if done {
+            remap_notes(&mut s.mode_notes, l, op, s.sub);
             s.sub = match op {
                 SubOp::Add => lay.settings.len() - 1,
                 SubOp::Duplicate => s.sub + 1,
@@ -448,15 +502,8 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
     let (mut output, mut air, mut name) = (layer.output, layer.air, layer.name.clone());
     let modes = crate::cuts_panel::modes_for(&app.editor.doc, l);
     // The Common tab's mode list holds only the offered modes and takes the first for any other.
-    if !s.advanced
-        && let Some(to) = replaced_mode(c.mode, &modes)
-    {
-        s.mode_note = Some((l, s.sub, mode_replaced_note(c.mode, to)));
-    }
-    if let Some((nl, ns, note)) = &s.mode_note
-        && (*nl, *ns) == (l, s.sub)
-    {
-        ui_kit::status_line(ui, note, ui_kit::StatusTone::Warning);
+    if let Some(n) = note_for(&mut s.mode_notes, l, s.sub, c.mode, (!s.advanced).then_some(&modes[..])) {
+        ui_kit::status_line(ui, &mode_replaced_note(n.from, n.to), ui_kit::StatusTone::Warning);
     }
     // The fields go down to the bottom of the columns, less the row of the button under them.
     let under = if c.mode == Mode::Image && s.advanced { t.control_height + t.form_gap_y } else { 0.0 };
@@ -1092,6 +1139,44 @@ mod tests {
         assert_eq!(replaced_mode(Mode::Image, &[]), None, "nothing offered: nothing put in its place");
         let note = mode_replaced_note(Mode::Image, Mode::Line);
         assert!(note.contains(Mode::Image.label()) && note.contains(Mode::Line.label()), "{note}");
+    }
+
+    #[test]
+    fn cut_settings_keep_one_mode_notice_per_sub_layer() {
+        let offered = [Mode::Line, Mode::Fill];
+        let mut notes = Vec::new();
+        let first = note_for(&mut notes, 0, 0, Mode::Image, Some(&offered)).expect("sub-layer 0 is told");
+        assert_eq!((first.from, first.to), (Mode::Image, Mode::Line));
+        note_for(&mut notes, 0, 1, Mode::Image, Some(&offered)).expect("sub-layer 1 is told");
+        assert_eq!(notes.len(), 2, "the second notice does not take the first one's place");
+        assert_eq!(note_for(&mut notes, 0, 0, Mode::Line, Some(&offered)), Some(first), "kept while the picked mode stays");
+        assert_eq!(note_for(&mut notes, 0, 0, Mode::Line, None), Some(first), "and on the Advanced tab");
+    }
+
+    #[test]
+    fn cut_settings_drop_a_mode_notice_when_the_mode_is_changed_by_hand() {
+        let offered = [Mode::Line, Mode::Fill];
+        let mut notes = Vec::new();
+        note_for(&mut notes, 2, 0, Mode::Image, Some(&offered));
+        assert_eq!(note_for(&mut notes, 2, 0, Mode::Fill, Some(&offered)), None);
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn cut_settings_mode_notices_follow_their_sub_layer() {
+        let n = |layer, sub| ModeNote { layer, sub, from: Mode::Image, to: Mode::Line };
+        let subs = |notes: &Vec<ModeNote>| notes.iter().map(|n| (n.layer, n.sub)).collect::<Vec<_>>();
+        let mut notes = vec![n(0, 0), n(0, 1), n(0, 2), n(1, 1)];
+        remap_notes(&mut notes, 0, SubOp::Remove, 1);
+        assert_eq!(subs(&notes), [(0, 0), (0, 1), (1, 1)], "the removed one goes, the next takes its place, other layers stay");
+        remap_notes(&mut notes, 0, SubOp::Duplicate, 0);
+        assert_eq!(subs(&notes), [(0, 0), (0, 2), (1, 1)], "the copy has no notice");
+        remap_notes(&mut notes, 0, SubOp::Move(1), 0);
+        assert_eq!(subs(&notes), [(0, 1), (0, 2), (1, 1)]);
+        remap_notes(&mut notes, 0, SubOp::Move(-1), 2);
+        assert_eq!(subs(&notes), [(0, 2), (0, 1), (1, 1)], "moved left, the one it passed moves right");
+        remap_notes(&mut notes, 0, SubOp::Add, 0);
+        assert_eq!(subs(&notes), [(0, 2), (0, 1), (1, 1)]);
     }
 
     #[test]

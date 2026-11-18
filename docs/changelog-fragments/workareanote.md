@@ -1,0 +1,1 @@
+- Jobs from the current position now tell you when the work area couldn't be checked

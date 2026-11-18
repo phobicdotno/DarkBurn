@@ -5,9 +5,9 @@
 use darkburn_core::Document;
 use darkburn_core::kurbo::{Affine, BezPath, Point};
 use darkburn_vision::camera::CaptureSettings;
-use darkburn_vision::cylinder::{CylinderAxis, CylinderCorrection, CylinderKind};
+use darkburn_vision::cylinder::{CylinderAxis, CylinderCorrection, CylinderError, CylinderKind};
 use darkburn_vision::printcut::{PnCFit, PnCMode, PnCWizard};
-use darkburn_vision::rotary::RotaryParams;
+use darkburn_vision::rotary::{RotaryError, RotaryParams};
 use darkburn_vision::testpatterns::{FocusTestParams, IntervalTestParams};
 use serde::{Deserialize, Serialize};
 
@@ -187,6 +187,32 @@ pub struct JobMap {
     pub warnings: std::cell::RefCell<Vec<String>>,
 }
 
+/// Why cylinder correction left a shape alone, in the user's language.
+pub fn cylinder_reason(e: &CylinderError) -> String {
+    use crate::i18n::tr;
+    match e {
+        CylinderError::InvalidRadius => tr("job.cylinder_err_radius", "radius must be above zero"),
+        CylinderError::OutOfRange { distance, limit } => {
+            tr("job.cylinder_err_out_of_range", "design reaches {distance} mm round the surface, the limit is {limit} mm")
+                .replace("{distance}", &format!("{distance:.2}"))
+                .replace("{limit}", &format!("{limit:.2}"))
+        }
+    }
+}
+
+/// Why the rotary left a shape alone, in the user's language.
+pub fn rotary_reason(e: &RotaryError) -> String {
+    use crate::i18n::tr;
+    match e {
+        RotaryError::Disabled => tr("job.rotary_err_disabled", "rotary is not enabled"),
+        RotaryError::InvalidStepsPerRotation => tr("job.rotary_err_steps", "steps per rotation must be above zero"),
+        RotaryError::InvalidObjectSize => tr("job.rotary_err_object_size", "object diameter or circumference must be above zero"),
+        RotaryError::InvalidRollerDiameter => tr("job.rotary_err_roller", "roller diameter must be above zero"),
+        RotaryError::InvalidSliceSize => tr("job.rotary_err_slice", "slice size must be above zero"),
+        RotaryError::InvalidRevolutions => tr("job.rotary_err_revolutions", "revolutions must be a number"),
+    }
+}
+
 impl JobMap {
     /// None when the document needs no mapping (the usual case).
     pub fn from_doc(doc: &Document) -> Option<JobMap> {
@@ -207,13 +233,18 @@ impl JobMap {
         if let Some(c) = &self.cylinder {
             match c.map_path(&path, 0.5) {
                 Ok(p) => path = p,
-                Err(e) => self.warn(format!("Cylinder correction left a shape alone: {e}.")),
+                Err(e) => self.warn(
+                    crate::i18n::tr("job.warn_cylinder_left_alone", "Cylinder correction left a shape alone: {why}.")
+                        .replace("{why}", &cylinder_reason(&e)),
+                ),
             }
         }
         if let Some(r) = &self.rotary {
             match r.map_path(&path) {
                 Ok(p) => path = p,
-                Err(e) => self.warn(format!("Rotary left a shape alone: {e}.")),
+                Err(e) => {
+                    self.warn(crate::i18n::tr("job.warn_rotary_left_alone", "Rotary left a shape alone: {why}.").replace("{why}", &rotary_reason(&e)))
+                }
             }
         }
         if let Some(f) = &self.fit {

@@ -324,10 +324,13 @@ pub fn rd_dropped_pauses(tp: &Toolpath) -> Vec<String> {
                     continue;
                 }
                 said.push((l.layer_index, l.sublayer));
-                out.push(format!(
-                    "Layer {}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
-                    l.name
-                ));
+                out.push(
+                    crate::i18n::tr(
+                        "job.warn_ruida_pauses",
+                        "Layer {layer}: start and end pauses and cut-through are not sent to a Ruida controller; the cut runs without them.",
+                    )
+                    .replace("{layer}", &l.name),
+                );
             }
             _ => {}
         }
@@ -494,7 +497,7 @@ pub fn after_build(app: &mut DarkBurn, job: Arc<BuiltJob>, action: Action) -> Re
         Action::Send { from_op } => (from_op, true),
     };
     let req = request_for(app, &job, from_op, send)?;
-    let out = if send {
+    let mut out = if send {
         app.machine.handle.start_job(req).map_err(|e| e.to_string())?;
         json!({ "ok": true, "sent": true })
     } else {
@@ -503,6 +506,13 @@ pub fn after_build(app: &mut DarkBurn, job: Arc<BuiltJob>, action: Action) -> Re
             crate::machine_ui::StartOutcome::AskChecklist => json!({ "ok": true, "waiting_for_checklist": true }),
         }
     };
+    // The job is allowed, but what the build warned about (the work area could not be
+    // checked, an image was left out, ...) is said on every start path: in the Laser panel's
+    // status line and in the command's result, not only in the preview.
+    if !job.warnings.is_empty() {
+        out["warnings"] = json!(job.warnings);
+        app.machine.say(job.warnings.join(" "));
+    }
     job_cmds::record_last_job(app, &job);
     app.job.start_op = None;
     app.job_run.from_project = true;

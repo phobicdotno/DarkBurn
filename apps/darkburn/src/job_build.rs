@@ -390,6 +390,9 @@ pub enum BuildError {
     NotANumber,
     /// Cylinder correction is on and the job has pictures, which it cannot bend.
     PictureNotMapped,
+    /// Nothing is left to burn because layers were left out for their size; the reasons, one
+    /// per layer, already in the active language.
+    TooBig(Vec<String>),
 }
 
 impl std::fmt::Display for BuildError {
@@ -403,6 +406,9 @@ impl std::fmt::Display for BuildError {
             BuildError::PictureNotMapped => {
                 tr("job.error_picture", "cylinder correction cannot bend pictures: turn it off, or burn the pictures in a job of their own")
             }
+            BuildError::TooBig(reasons) => {
+                tr("job.error_too_big", "there is nothing left to burn: {reasons}").replace("{reasons}", &reasons.join(" "))
+            }
         })
     }
 }
@@ -412,6 +418,75 @@ impl std::error::Error for BuildError {}
 /// The most scan lines the fill of one layer may have: 500 m of fill at 0.1 mm, far beyond any
 /// machine. Past it the layer's shapes are left out of the job with a warning.
 pub const MAX_FILL_ROWS: f64 = 5_000_000.0;
+
+/// The most dots (dot mode) or perforation gaps the outlines of one layer may have: 500 m of
+/// outline at 0.1 mm, far beyond any machine. Past it the layer's shapes are left out of the
+/// job with a warning, as for [`MAX_FILL_ROWS`].
+pub const MAX_LINE_PIECES: f64 = 5_000_000.0;
+
+/// The line settings of the layer that split its outlines into pieces (dot mode, or
+/// perforation), each as (step along the outline, passes, kerf offset, overcut). The step is
+/// the dot spacing or one cut and skip, with the floors of [`cut_settings`]; passes are at
+/// least 1, as [`map_settings_with`] gives the generator; dots get no overcut, as in the
+/// generator.
+fn piece_settings(l: &Layer) -> Vec<(f64, f64, f64, f64)> {
+    l.settings
+        .iter()
+        .filter(|s| s.enabled && matches!(s.mode, Mode::Line | Mode::FillLine))
+        .filter_map(|s| {
+            let (step, overcut) = if s.dot_mode {
+                (s.dot_spacing.max(0.01), 0.0)
+            } else if s.perforation && s.perf_skip > 0.0 {
+                (s.perf_cut.max(0.01) + s.perf_skip, s.overcut.max(0.0))
+            } else {
+                return None;
+            };
+            Some((step, s.passes.max(1) as f64, s.kerf, overcut))
+        })
+        .collect()
+}
+
+/// The reason a layer's dots or perforation were left out: `amount` pieces, past
+/// [`MAX_LINE_PIECES`].
+fn too_many_pieces_warning(li: usize, amount: f64) -> String {
+    too_big_warning(
+        tr(
+            "job.warn_too_many_pieces",
+            "The shapes on layer {layer} were left out: their dots or perforation would be {amount} million pieces (the limit is {limit} million). Check their size.",
+        ),
+        li,
+        amount,
+        MAX_LINE_PIECES,
+    )
+}
+
+/// Leaves out the shapes of each layer whose real dots and perforation gaps, counted on the
+/// outlines the generator cuts ([`job::line_pieces`]), pass [`MAX_LINE_PIECES`]: the whole
+/// layer goes, never a part of it, so nothing different fires. `estimates` are the amounts the
+/// early estimate gave, for the warning (the count stops just past the limit). Returns the
+/// layers left out, each with its warning.
+fn drop_too_many_pieces(layers: &mut [Option<LayerInput>], tolerance: f64, estimates: &[f64]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for entry in layers.iter_mut().flatten() {
+        if entry.shapes.is_empty() {
+            continue;
+        }
+        let n = job::line_pieces(entry, tolerance, MAX_LINE_PIECES);
+        if n.is_nan() || n > MAX_LINE_PIECES {
+            entry.shapes.clear();
+            let li = entry.index;
+            out.push((li, too_many_pieces_warning(li, n.max(estimates.get(li).copied().unwrap_or(0.0)))));
+        }
+    }
+    out
+}
+
+/// The reason a layer's shapes were left out for their size, from its translated `text`.
+fn too_big_warning(text: String, li: usize, amount: f64, limit: f64) -> String {
+    text.replace("{layer}", &layer::layer_label(li))
+        .replace("{amount}", &format!("{:.0}", amount / 1e6))
+        .replace("{limit}", &format!("{:.0}", limit / 1e6))
+}
 
 /// The finest line interval of the layer's fill settings, or None when it does not fill.
 fn fill_interval(l: &Layer) -> Option<f64> {
@@ -472,9 +547,18 @@ struct Collected {
     tool_frame: Vec<BezPath>,
     warnings: Vec<String>,
     dropped: usize,
+    /// Why layers were left out for their size (also among `warnings`): when nothing else is
+    /// left, the job is refused with these instead of a plain "nothing to burn".
+    size_warnings: Vec<String>,
 }
 
 impl Collected {
+    /// The error for a job with nothing left to burn: the size reasons when layers were left
+    /// out for their size, else the plain [`BuildError::NothingToBurn`].
+    fn nothing_to_burn(&self) -> BuildError {
+        if self.size_warnings.is_empty() { BuildError::NothingToBurn } else { BuildError::TooBig(self.size_warnings.clone()) }
+    }
+
     /// The origin settings of the build: anchored where "Remove what is outside the work area"
     /// placed the job when it dropped shapes.
     fn origin(&self, input: &BuildInput) -> Result<OriginSettings, BuildError> {
@@ -789,15 +873,10 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     }
     let cancelled = || cancel.is_some_and(|c| c.load(Ordering::Relaxed));
     let mut warnings = Vec::new();
-    let mut dropped = 0usize;
     let area = input.device.area();
     let order_pos: HashMap<usize, usize> = doc.layer_order.iter().enumerate().map(|(i, l)| (*l, i)).collect();
 
-    let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
-    let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
     let mut frame_paths = Vec::new();
-    let mut tool_frame: Vec<BezPath> = Vec::new();
-    let mut kerf_lost = [0usize; layer::LAYER_COUNT];
     // Cylinder, rotary and print-and-cut mapping set up in the project (vision_state.rs).
     let vision_map = crate::vision_state::JobMap::from_doc(doc);
     // Selection bounds for "use selection origin" (all selected shapes, burning or not), where
@@ -842,21 +921,84 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             }
         }
     }
-    let mut fill_too_big = [false; layer::LAYER_COUNT];
+    // Dot mode and perforation split every outline into pieces as long as their step, so an
+    // outline of kilometres (or one scaled up by accident) would be more pieces than there is
+    // memory for: such a layer is left out the same way.
+    // The estimate is taken on what the generator splits: each setting with a kerf cuts the
+    // kerf-offset outline, at most 2π·|kerf| longer for each closed subpath (offsets have round
+    // corners), and a vision mapping (cylinder, rotary, print and cut) is measured on the
+    // mapped outline, its stretch applied to the kerf allowance too. Every such setting and
+    // every pass make their own pieces, each at least one per outline (a dot at its start, or
+    // one gap), and a perforated closed outline is cut on over its start by the overcut. This
+    // is only a quick early exit: the real pieces are counted on the outlines the generator
+    // cuts once they are made (see drop_too_many_pieces), which also covers any mapping.
+    let mut pieces = [0.0_f64; layer::LAYER_COUNT];
+    for top in &tops {
+        for leaf in top.leaves() {
+            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+            let l = doc.layer(li);
+            if !l.outputs() || leaf.is_image() {
+                continue;
+            }
+            let splits = piece_settings(l);
+            if splits.is_empty() {
+                continue;
+            }
+            let outline = leaf.outline();
+            let drawn = darkburn_geom::path::length(&outline);
+            let subpaths = outline.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count() as f64;
+            let estimate = |len: f64, stretch: f64| -> f64 {
+                splits
+                    .iter()
+                    .map(|(step, passes, kerf, overcut)| {
+                        let cut = len + stretch * std::f64::consts::TAU * kerf.abs() * subpaths;
+                        ((cut + (overcut * subpaths).min(cut)) / step + subpaths) * passes
+                    })
+                    .sum()
+            };
+            let mut here = estimate(drawn, 1.0);
+            // A mapped outline is only measured while the drawn one is within the limit (an
+            // outline of kilometres is left out anyway, and mapping it would take as long).
+            if let Some(m) = &vision_map
+                && here <= MAX_LINE_PIECES
+                && drawn > 0.0
+            {
+                let mapped = darkburn_geom::path::length(&m.apply(outline));
+                let stretch = (mapped / drawn).max(1.0);
+                here = estimate(mapped.max(drawn), stretch);
+            }
+            pieces[li] += here;
+        }
+    }
+    let mut too_big = [false; layer::LAYER_COUNT];
+    let mut size_warnings = Vec::new();
     for li in 0..layer::LAYER_COUNT {
+        if pieces[li].is_nan() || pieces[li] > MAX_LINE_PIECES {
+            too_big[li] = true;
+            size_warnings.push(too_many_pieces_warning(li, pieces[li]));
+        }
+    }
+    for li in 0..layer::LAYER_COUNT {
+        if too_big[li] {
+            continue;
+        }
         let (Some(span), Some(interval)) = (fill_span[li], fill_interval(doc.layer(li))) else { continue };
         let rows = span.width().max(span.height()) / interval;
         // (A size that is not a number is not let through either.)
         if rows.is_nan() || rows > MAX_FILL_ROWS {
-            fill_too_big[li] = true;
-            warnings.push(format!(
-                "The shapes on layer {} were left out: the fill would be {:.0} million scan lines (the limit is {:.0} million). Check their size.",
-                layer::layer_label(li),
-                rows / 1e6,
-                MAX_FILL_ROWS / 1e6
+            too_big[li] = true;
+            size_warnings.push(too_big_warning(
+                tr(
+                    "job.warn_too_many_rows",
+                    "The shapes on layer {layer} were left out: the fill would be {amount} million scan lines (the limit is {limit} million). Check their size.",
+                ),
+                li,
+                rows,
+                MAX_FILL_ROWS,
             ));
         }
     }
+    warnings.extend(size_warnings.iter().cloned());
     // "Remove what is outside the work area" tests each shape where the start mode puts it on
     // the bed: from the user origin or the head, the anchor of the whole job (all the shapes
     // that could burn) goes there. Absolute jobs, and jobs from the current position while the
@@ -867,145 +1009,175 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
             StartMode::CurrentPosition => input.head.is_some(),
             StartMode::UserOrigin => true,
         };
-    let place_bounds = if !placing {
-        None
-    } else {
-        tops.iter()
-            .flat_map(|t| t.leaves())
-            .filter(|l| {
-                // A fill layer left out for its size is not part of the job and does not move it.
-                let li = l.layer.min(layer::LAYER_COUNT - 1);
-                doc.layer(li).outputs() && !(fill_too_big[li] && !l.is_image())
-            })
-            .map(|l| placed(&l))
-            .reduce(|a, b| a.union(b))
-    };
-    let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
-    for (n, top) in tops.iter().enumerate() {
-        if cancelled() {
-            return Err(BuildError::Cancelled);
-        }
-        report(0.25 * n as f32 / total as f32);
-        let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
-        for (k, leaf) in top.leaves().into_iter().enumerate() {
-            let li = leaf.layer.min(layer::LAYER_COUNT - 1);
-            let l = doc.layer(li);
-            if !l.outputs() {
-                // Tool layers never burn, but may be framed with the job (LAYER-02).
-                if l.is_tool() && l.frame && !leaf.is_image() {
-                    // Mapped like the shapes that burn, so the frame stays with the job.
-                    let outline = leaf.outline();
-                    tool_frame.push(match &vision_map {
-                        Some(m) => m.apply(outline),
-                        None => outline,
-                    });
-                }
-                continue;
+    // The shapes are placed, tested against the work area and collected; when the real count
+    // below leaves a layer out, all of it is done again without that layer, so a layer left
+    // out never moves the job nor makes other shapes fall outside the work area. Each round
+    // leaves out at least one more layer, so this ends.
+    let warnings_before = warnings.len();
+    let mut real_drops: Vec<String> = Vec::new();
+    let (mut layers, leaves_by_layer, line_frames, tool_frame, kerf_lost, place_bounds, dropped) = loop {
+        warnings.truncate(warnings_before);
+        let mut dropped = 0usize;
+        let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
+        let mut leaves_by_layer: Vec<Vec<(Shape, Option<u32>)>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+        // The outlines of each layer, framed unless the layer is left out for its size.
+        let mut line_frames: Vec<Vec<BezPath>> = (0..layer::LAYER_COUNT).map(|_| Vec::new()).collect();
+        let mut tool_frame: Vec<BezPath> = Vec::new();
+        let mut kerf_lost = [0usize; layer::LAYER_COUNT];
+        let place_bounds = if !placing {
+            None
+        } else {
+            tops.iter()
+                .flat_map(|t| t.leaves())
+                .filter(|l| {
+                    // A layer left out for its size is not part of the job and does not move it.
+                    let li = l.layer.min(layer::LAYER_COUNT - 1);
+                    doc.layer(li).outputs() && !(too_big[li] && !l.is_image())
+                })
+                .map(|l| placed(&l))
+                .reduce(|a, b| a.union(b))
+        };
+        let bed_place = place_bounds.map_or(Affine::IDENTITY, |b| bed_placement(input, selection_bounds, b));
+        for (n, top) in tops.iter().enumerate() {
+            if cancelled() {
+                return Err(BuildError::Cancelled);
             }
-            if fill_too_big[li] && !leaf.is_image() {
-                continue;
-            }
-            let bbox = leaf.bbox();
-            // Measured where the job puts the shape (print and cut and rotary move it, and so
-            // does the start mode).
-            if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
-                dropped += 1;
-                continue;
-            }
-            if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
-                warnings.push(format!(
-                    "Text \"{}\" has no outline yet and was left out.",
-                    match &leaf.kind {
-                        ShapeKind::Text(t) => t.text.as_str(),
-                        _ => "",
+            report(0.25 * n as f32 / total as f32);
+            let group = top.is_group().then_some((top.id.0 & 0xffff_ffff) as u32);
+            for (k, leaf) in top.leaves().into_iter().enumerate() {
+                let li = leaf.layer.min(layer::LAYER_COUNT - 1);
+                let l = doc.layer(li);
+                if !l.outputs() {
+                    // Tool layers never burn, but may be framed with the job (LAYER-02).
+                    if l.is_tool() && l.frame && !leaf.is_image() {
+                        // Mapped like the shapes that burn, so the frame stays with the job.
+                        let outline = leaf.outline();
+                        tool_frame.push(match &vision_map {
+                            Some(m) => m.apply(outline),
+                            None => outline,
+                        });
                     }
-                ));
-                continue;
-            }
-            let entry = layers[li].get_or_insert_with(|| {
-                let mut settings: Vec<job::CutSettings> = l
-                    .settings
-                    .iter()
-                    .map(|s| {
-                        let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
-                        c.constant_power |= input.device.m3_only;
-                        c
-                    })
-                    .collect();
-                for s in &mut settings {
-                    s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
-                }
-                LayerInput {
-                    index: li,
-                    name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
-                    priority: order_pos.get(&li).copied().unwrap_or(li) as i32,
-                    output: true,
-                    settings,
-                    shapes: Vec::new(),
-                    images: Vec::new(),
-                }
-            });
-            if leaf.is_image() {
-                leaves_by_layer[li].push((leaf, group));
-                continue;
-            }
-            let mut path = leaf.outline();
-            if path.elements().is_empty() {
-                continue;
-            }
-            // Each line sub-layer with a kerf offset cuts its own outline; fills keep the drawn one.
-            let kerfs = kerfs_of(l);
-            let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
-            if !kerfs.is_empty() {
-                // How many other cut shapes this one lies inside: odd means a hole.
-                let depth = kerf_depth(&kerf_outlines, (top.id, k), bbox, &path);
-                let mut lost_most = 0;
-                for (setting, kerf) in kerfs {
-                    let kerf = if depth % 2 == 1 { -kerf } else { kerf };
-                    let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
-                    lost_most = lost_most.max(lost);
-                    line_paths.push((setting, offset));
-                }
-                kerf_lost[li] += lost_most;
-            }
-            if let Some(m) = &vision_map {
-                path = m.apply(path);
-                for (_, p) in &mut line_paths {
-                    *p = m.apply(std::mem::take(p));
-                }
-            }
-            let mut si = ShapeInput::new(path);
-            si.line_paths = line_paths;
-            {
-                let used = si.outlines_used(&entry.settings);
-                if used.iter().all(|p| p.elements().is_empty()) {
-                    // Nothing of the shape is left to cut.
                     continue;
                 }
-                frame_paths.extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+                if too_big[li] && !leaf.is_image() {
+                    continue;
+                }
+                let bbox = leaf.bbox();
+                // Measured where the job puts the shape (print and cut and rotary move it, and so
+                // does the start mode).
+                if st.discard_out_of_bounds && is_outside(bed_place.transform_rect_bbox(placed(&leaf)), area) {
+                    dropped += 1;
+                    continue;
+                }
+                if matches!(&leaf.kind, ShapeKind::Text(t) if t.backup.is_none()) {
+                    warnings.push(format!(
+                        "Text \"{}\" has no outline yet and was left out.",
+                        match &leaf.kind {
+                            ShapeKind::Text(t) => t.text.as_str(),
+                            _ => "",
+                        }
+                    ));
+                    continue;
+                }
+                let entry = layers[li].get_or_insert_with(|| {
+                    let mut settings: Vec<job::CutSettings> = l
+                        .settings
+                        .iter()
+                        .map(|s| {
+                            let mut c = map_settings_with(s, l, input.device.z_enabled, &tuning);
+                            c.constant_power |= input.device.m3_only;
+                            c
+                        })
+                        .collect();
+                    for s in &mut settings {
+                        s.line.tabs.pulse_width = input.device.tab_pulse_width.max(0.0);
+                    }
+                    LayerInput {
+                        index: li,
+                        name: if l.name.is_empty() { layer::layer_label(li) } else { l.name.clone() },
+                        priority: order_pos.get(&li).copied().unwrap_or(li) as i32,
+                        output: true,
+                        settings,
+                        shapes: Vec::new(),
+                        images: Vec::new(),
+                    }
+                });
+                if leaf.is_image() {
+                    leaves_by_layer[li].push((leaf, group));
+                    continue;
+                }
+                let mut path = leaf.outline();
+                if path.elements().is_empty() {
+                    continue;
+                }
+                // Each line sub-layer with a kerf offset cuts its own outline; fills keep the drawn one.
+                let kerfs = kerfs_of(l);
+                let mut line_paths: Vec<(usize, BezPath)> = Vec::new();
+                if !kerfs.is_empty() {
+                    // How many other cut shapes this one lies inside: odd means a hole.
+                    let depth = kerf_depth(&kerf_outlines, (top.id, k), bbox, &path);
+                    let mut lost_most = 0;
+                    for (setting, kerf) in kerfs {
+                        let kerf = if depth % 2 == 1 { -kerf } else { kerf };
+                        let (offset, lost) = darkburn_geom::offset::kerf_offset_counted(&path, kerf, input.device.tolerance);
+                        lost_most = lost_most.max(lost);
+                        line_paths.push((setting, offset));
+                    }
+                    kerf_lost[li] += lost_most;
+                }
+                if let Some(m) = &vision_map {
+                    path = m.apply(path);
+                    for (_, p) in &mut line_paths {
+                        *p = m.apply(std::mem::take(p));
+                    }
+                }
+                let mut si = ShapeInput::new(path);
+                si.line_paths = line_paths;
+                {
+                    let used = si.outlines_used(&entry.settings);
+                    if used.iter().all(|p| p.elements().is_empty()) {
+                        // Nothing of the shape is left to cut.
+                        continue;
+                    }
+                    line_frames[li].extend(used.into_iter().filter(|p| !p.elements().is_empty()));
+                }
+                // Tabs and forced start points are stored in the shape's local coordinates; they
+                // go through the same mapping as the outline (the kerf offset keeps them: each
+                // snaps to the nearest point of the path that is cut).
+                let place = |p: &[f64; 2]| {
+                    let q = leaf.transform * Point::new(p[0], p[1]);
+                    vision_map.as_ref().map_or(q, |m| m.apply_point(q))
+                };
+                si.start_point = leaf.start_point.as_ref().map(place);
+                si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
+                si.direction = match leaf.direction {
+                    darkburn_core::CutDirection::Auto => None,
+                    darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
+                    darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
+                    darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
+                };
+                si.tabs = leaf.tabs.iter().map(place).collect();
+                si.group = group;
+                si.priority = leaf.priority;
+                si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
+                entry.shapes.push(si);
             }
-            // Tabs and forced start points are stored in the shape's local coordinates; they
-            // go through the same mapping as the outline (the kerf offset keeps them: each
-            // snaps to the nearest point of the path that is cut).
-            let place = |p: &[f64; 2]| {
-                let q = leaf.transform * Point::new(p[0], p[1]);
-                vision_map.as_ref().map_or(q, |m| m.apply_point(q))
-            };
-            si.start_point = leaf.start_point.as_ref().map(place);
-            si.extra_start_points = leaf.extra_start_points.iter().map(place).collect();
-            si.direction = match leaf.direction {
-                darkburn_core::CutDirection::Auto => None,
-                darkburn_core::CutDirection::Clockwise => Some(job::ForcedDirection::Clockwise),
-                darkburn_core::CutDirection::CounterClockwise => Some(job::ForcedDirection::CounterClockwise),
-                darkburn_core::CutDirection::Reversed => Some(job::ForcedDirection::Reversed),
-            };
-            si.tabs = leaf.tabs.iter().map(place).collect();
-            si.group = group;
-            si.priority = leaf.priority;
-            si.power_scale = (leaf.power_scale / 100.0).clamp(0.0, 1.0);
-            entry.shapes.push(si);
         }
-    }
+        // The estimate above is only an early exit: the real pieces are counted on the outlines
+        // as the generator cuts them (kerf and mapping applied), and a layer past the limit is
+        // left out whole, before anything of it is generated, and the job is placed again.
+        let drops = drop_too_many_pieces(&mut layers, input.device.tolerance, &pieces);
+        if drops.is_empty() {
+            break (layers, leaves_by_layer, line_frames, tool_frame, kerf_lost, place_bounds, dropped);
+        }
+        for (li, why) in drops {
+            too_big[li] = true;
+            real_drops.push(why.clone());
+            size_warnings.push(why);
+        }
+    };
+    warnings.extend(real_drops);
+    frame_paths.extend(line_frames.into_iter().flatten());
     for (li, lost) in kerf_lost.iter().enumerate() {
         if *lost > 0 {
             warnings.push(format!(
@@ -1072,7 +1244,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
     // The engine anchors on what is left. Once shapes are dropped, it anchors on the bounds the
     // test used instead, so the shapes that are kept burn where they passed it.
     let anchor_bounds = if dropped > 0 && (!st.use_selection_origin || selection_bounds.is_none()) { place_bounds } else { None };
-    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped })
+    Ok(Collected { job, bounds, selection_bounds, anchor_bounds, frame_paths, tool_frame, warnings, dropped, size_warnings })
 }
 
 /// The origin settings of a build, given the selection bounds.
@@ -1144,7 +1316,7 @@ fn fires_anywhere(tp: &Toolpath) -> bool {
 /// Build the job. Runs on any thread; `report` gets 0..1; `cancel` stops it between stages.
 pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnMut(f32)) -> Result<BuiltJob, BuildError> {
     let c = collect(input, cancel, report)?;
-    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let bounds = c.bounds.ok_or_else(|| c.nothing_to_burn())?;
     let origin = c.origin(input)?;
     let opts = JobOptions { planner: input.settings.planner.clone(), origin: Some(origin), tolerance: input.device.tolerance, comments: true };
     let mut scaled = |f: f32| report(0.3 + 0.7 * f);
@@ -1152,13 +1324,13 @@ pub fn build_job(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut d
     let toolpath = match job::generate(&c.job, &opts, &mut progress) {
         Ok(tp) => tp,
         Err(JobError::Cancelled) => return Err(BuildError::Cancelled),
-        Err(JobError::Empty) => return Err(BuildError::NothingToBurn),
+        Err(JobError::Empty) => return Err(c.nothing_to_burn()),
         Err(JobError::NotANumber) => return Err(BuildError::NotANumber),
     };
     // A job that fires the laser nowhere (every layer at power 0) is refused like an image at
     // power 0, before anything reaches the machine or a file.
     if !fires_anywhere(&toolpath) {
-        return Err(BuildError::NothingToBurn);
+        return Err(c.nothing_to_burn());
     }
     let design = inverse_ops(&toolpath, origin.transform(bounds));
     let toolpath = if input.device.z_reverse { reverse_z(toolpath) } else { toolpath };
@@ -1386,7 +1558,7 @@ pub fn frame_toolpath(points: &[Point], origin: &OriginSettings, job_bounds: Rec
 /// Frame toolpath for the current document and settings.
 pub fn build_frame(input: &BuildInput, kind: FrameKind, speed: f64, power: Option<f64>) -> Result<Toolpath, BuildError> {
     let c = collect(input, None, &mut |_| {})?;
-    let bounds = c.bounds.ok_or(BuildError::NothingToBurn)?;
+    let bounds = c.bounds.ok_or_else(|| c.nothing_to_burn())?;
     let origin = c.origin(input)?;
     let points = match kind {
         FrameKind::Rectangle => {
@@ -1663,6 +1835,275 @@ mod tests {
         let b = build_job_simple(&input(d)).unwrap();
         assert!(!b.warnings.iter().any(|w| w.contains("scan lines")), "{:?}", b.warnings);
         assert!(b.toolpath.ops.len() > 1500);
+    }
+
+    #[test]
+    fn dots_or_perforation_far_too_many_are_left_out_with_a_warning() {
+        // An outline of about 8e9 mm split into dots or perforation took all the memory there
+        // is; the layer is now left out as a fill that size is, and other layers are unchanged.
+        let set = |d: &mut Document, l: usize, dots: bool| {
+            let s = d.layer_mut(l).main_mut();
+            s.mode = Mode::Line;
+            if dots {
+                s.dot_mode = true;
+                s.dot_spacing = 0.1;
+            } else {
+                s.perforation = true;
+                s.perf_cut = 1.0;
+                s.perf_skip = 1.0;
+            }
+        };
+        for dots in [true, false] {
+            let mut small = Document::new();
+            set(&mut small, 0, dots);
+            small.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+            let plain = build_job_simple(&input(small.clone())).unwrap();
+            assert!(!plain.warnings.iter().any(|w| w.contains("dots or perforation")), "{:?}", plain.warnings);
+            let pieces = if dots {
+                plain.toolpath.ops.iter().filter(|o| matches!(o, Op::Dwell { .. })).count()
+            } else {
+                plain.toolpath.ops.iter().filter(|o| matches!(o, Op::Cut { power, .. } if *power == 0.0)).count()
+            };
+            assert!(pieces >= 20, "a normal outline still gets its pieces: {pieces}");
+            let mut big = small.clone();
+            set(&mut big, 2, dots);
+            big.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+            let started = std::time::Instant::now();
+            let b = build_job_simple(&input(big)).unwrap();
+            assert!(started.elapsed().as_secs() < 30, "held by the limit before any piece is made");
+            assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation")), "{:?}", b.warnings);
+            assert_eq!(b.toolpath.ops, plain.toolpath.ops, "only the small square is cut (dots {dots})");
+        }
+    }
+
+    #[test]
+    fn far_too_many_pieces_counts_zero_passes_every_setting_every_pass_and_the_kerf() {
+        // The estimate follows what the generator makes: a setting at 0 passes still cuts once,
+        // each splitting setting and each pass make their own pieces, and a kerf cuts a longer
+        // outline. Each layer below is left out, with a small square on layer 0 kept.
+        let left_out = |d: Document, why: &str| {
+            let mut d = d;
+            d.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+            let b = build_job_simple(&input(d)).unwrap();
+            assert!(b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation")), "{why}: {:?}", b.warnings);
+            assert!(b.toolpath.ops.len() < 100, "{why}: only the small square is cut ({} operations)", b.toolpath.ops.len());
+        };
+        let perforated = |d: &mut Document, passes: u32| {
+            let s = d.layer_mut(2).main_mut();
+            s.mode = Mode::Line;
+            s.perforation = true;
+            s.perf_cut = 0.5;
+            s.perf_skip = 0.5;
+            s.passes = passes;
+        };
+        // Dots at 0 passes on a huge outline.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.1;
+        s.passes = 0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+        left_out(d, "zero passes");
+        // 120 000 mm of outline at a 1 mm step is 120 000 pieces a pass: 50 passes are 6 million.
+        let big = || Shape::rect(Rect::new(0.0, 0.0, 30_000.0, 30_000.0), 0.0, 2);
+        let mut d = Document::new();
+        perforated(&mut d, 50);
+        d.add(big());
+        left_out(d, "many passes");
+        // Two settings of 25 passes each: 3 million pieces apiece, 6 million together.
+        let mut d = Document::new();
+        perforated(&mut d, 25);
+        let second = d.layer(2).main().clone();
+        d.layer_mut(2).settings.push(second);
+        d.add(big());
+        left_out(d, "two settings");
+        // A 20 mm square with a 10 m kerf: 8000 dots as drawn, about 6.3 million cut.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 10_000.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 20.0, 20.0), 0.0, 2));
+        left_out(d, "big kerf");
+    }
+
+    /// Builds `d` with a small square on layer 0 and checks that layer 2 is left out whole
+    /// with the dots-or-perforation warning, and that only the square is cut.
+    fn far_too_many_left_out(mut d: Document, why: &str) {
+        d.add(Shape::rect(Rect::new(10.0, 10.0, 30.0, 30.0), 0.0, 0));
+        let started = std::time::Instant::now();
+        let b = build_job_simple(&input(d)).unwrap();
+        assert!(started.elapsed().as_secs() < 30, "{why}: held before the pieces are made");
+        let said: Vec<&String> = b.warnings.iter().filter(|w| w.contains("left out") && w.contains("dots or perforation")).collect();
+        assert!(said.len() == 1 && said[0].contains(&layer::layer_label(2)), "{why}: {:?}", b.warnings);
+        assert!(b.toolpath.ops.len() < 100, "{why}: only the small square is cut ({} operations)", b.toolpath.ops.len());
+        assert!(!b.toolpath.ops.iter().any(|o| matches!(o, Op::Dwell { .. })), "{why}: no dot of layer 2 fires");
+        assert!(b.toolpath.layers.iter().all(|l| l.layer_index == 0), "{why}: nothing of layer 2 is left");
+    }
+
+    #[test]
+    fn far_too_many_pieces_counts_the_overcut_of_perforation() {
+        // A 2 mm square perforated every 0.02 mm, 10 000 passes: 4 million gaps as drawn, but
+        // an 8 mm overcut doubles the path that is perforated.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.perforation = true;
+        s.perf_cut = 0.01;
+        s.perf_skip = 0.01;
+        s.passes = 10_000;
+        s.overcut = 8.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 2.0, 2.0), 0.0, 2));
+        far_too_many_left_out(d, "overcut");
+    }
+
+    #[test]
+    fn far_too_many_pieces_counts_one_dot_per_outline_per_pass() {
+        // A 1 mm square with dots 100 mm apart still gets its first dot on every pass:
+        // 20 million passes are 20 million dots.
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 100.0;
+        s.passes = 20_000_000;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1.0), 0.0, 2));
+        far_too_many_left_out(d, "short outline");
+    }
+
+    #[test]
+    fn far_too_many_pieces_are_counted_on_the_real_outline_after_a_stretch() {
+        // A print-and-cut fit that stretches X 1000 times: the estimate scales the kerf corners
+        // by the average stretch (about 0.4 million dots), but the corners become ellipses
+        // 20 m long and the real outline is about 8 million dots. The real count leaves the
+        // layer out, whole.
+        use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
+        let mut d = Document::new();
+        let s = d.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 20.0;
+        d.add(Shape::rect(Rect::new(0.0, 0.0, 1.0, 1000.0), 0.0, 2));
+        let mut v = crate::vision_state::VisionState::default();
+        v.pnc.fit = Some(PnCFit {
+            mode: PnCMode::FullAffine,
+            affine: Affine::scale_non_uniform(1000.0, 1.0),
+            scale: 1000f64.sqrt(),
+            rotation_deg: 0.0,
+            translation: (0.0, 0.0),
+            residuals: ResidualReport { per_target: Vec::new(), rms_mm: 0.0, max_mm: 0.0 },
+        });
+        d.vision_settings = Some(v.to_value());
+        far_too_many_left_out(d, "stretched kerf corners");
+    }
+
+    #[test]
+    fn far_too_many_real_pieces_left_out_do_not_move_the_other_layers() {
+        // Layer 2 passes the early estimate, but its real count (kerf corners stretched 1000
+        // times in X) is past the limit. With "Remove what is outside the work area" from a
+        // user origin, it must not take part in placing the job: layer 0 burns where it does
+        // without layer 2, instead of being pushed off the bed by it and discarded.
+        use darkburn_vision::printcut::{PnCFit, PnCMode, ResidualReport};
+        let mut v = crate::vision_state::VisionState::default();
+        v.pnc.fit = Some(PnCFit {
+            mode: PnCMode::FullAffine,
+            affine: Affine::scale_non_uniform(1000.0, 1.0),
+            scale: 1000f64.sqrt(),
+            rotation_deg: 0.0,
+            translation: (0.0, 0.0),
+            residuals: ResidualReport { per_target: Vec::new(), rms_mm: 0.0, max_mm: 0.0 },
+        });
+        let mut alone = Document::new();
+        alone.vision_settings = Some(v.to_value());
+        // Mapped to [-200, -190] x [0, 10].
+        alone.add(Shape::rect(Rect::new(-0.2, 0.0, -0.19, 10.0), 0.0, 0));
+        let mut both = alone.clone();
+        let s = both.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.01;
+        s.kerf = 20.0;
+        both.add(Shape::rect(Rect::new(0.0, 0.0, 0.001, 100.0), 0.0, 2));
+        let build = |d: Document| {
+            let mut i = input(d);
+            i.settings.discard_out_of_bounds = true;
+            i.settings.start_from = StartMode::UserOrigin;
+            i.settings.anchor = JobAnchor::Center;
+            i.user_origin = Some(Point::new(99.5, 100.0));
+            build_job_simple(&i).unwrap()
+        };
+        let plain = build(alone);
+        assert!(plain.toolpath.ops.iter().any(|o| matches!(o, Op::Cut { power, .. } if *power > 0.0)), "layer 0 burns alone");
+        let b = build(both);
+        assert!(
+            b.warnings.iter().any(|w| w.contains("left out") && w.contains("dots or perforation") && w.contains(&layer::layer_label(2))),
+            "{:?}",
+            b.warnings
+        );
+        assert!(b.toolpath.layers.iter().all(|l| l.layer_index == 0), "nothing of layer 2 is left");
+        assert_eq!(b.toolpath.ops, plain.toolpath.ops, "layer 0 burns where it does without layer 2");
+    }
+
+    #[test]
+    fn far_too_many_real_pieces_leave_the_whole_layer_out() {
+        // The guard on the real count, called on its own: a layer past the limit loses every
+        // shape (nothing of it is generated), one within it is untouched.
+        let layer = |passes: u32| {
+            let mut d = Document::new();
+            let s = d.layer_mut(2).main_mut();
+            s.mode = Mode::Line;
+            s.dot_mode = true;
+            s.dot_spacing = 1.0;
+            for x in [0.0, 20.0, 40.0] {
+                d.add(Shape::rect(Rect::new(x, 0.0, x + 10.0, 10.0), 0.0, 2));
+            }
+            // Built at one pass (the early estimate lets it through), then given its passes.
+            let mut l = collect(&input(d), None, &mut |_| {}).unwrap().job.layers.remove(0);
+            l.settings[0].passes = passes;
+            l
+        };
+        // 3 squares of 40 dots (and the first again): 123 a pass.
+        let mut layers: Vec<Option<LayerInput>> = (0..layer::LAYER_COUNT).map(|_| None).collect();
+        layers[2] = Some(layer(1_000));
+        assert!(drop_too_many_pieces(&mut layers, 0.01, &[0.0; layer::LAYER_COUNT]).is_empty());
+        assert_eq!(layers[2].as_ref().unwrap().shapes.len(), 3);
+        layers[2] = Some(layer(100_000));
+        let n = job::line_pieces(layers[2].as_ref().unwrap(), 0.01, f64::INFINITY);
+        assert!((n - 12_300_000.0).abs() < 1.0, "{n}");
+        // Counting stops at the second square, once past the limit.
+        let held = job::line_pieces(layers[2].as_ref().unwrap(), 0.01, MAX_LINE_PIECES);
+        assert!((held - 8_200_000.0).abs() < 1.0, "{held}");
+        let dropped = drop_too_many_pieces(&mut layers, 0.01, &[0.0; layer::LAYER_COUNT]);
+        assert!(dropped.len() == 1 && dropped[0].0 == 2 && dropped[0].1.contains("dots or perforation"), "{dropped:?}");
+        assert!(layers[2].as_ref().unwrap().shapes.is_empty(), "the whole layer is left out");
+    }
+
+    #[test]
+    fn far_too_big_alone_gives_the_reason_not_just_nothing_to_burn() {
+        // A document whose only shapes are left out for their size says why.
+        let mut dots = Document::new();
+        let s = dots.layer_mut(2).main_mut();
+        s.mode = Mode::Line;
+        s.dot_mode = true;
+        s.dot_spacing = 0.1;
+        dots.add(Shape::rect(Rect::new(0.0, 0.0, 2e9, 2e9), 0.0, 2));
+        let mut fill = Document::new();
+        fill.layer_mut(2).main_mut().mode = Mode::Fill;
+        fill.layer_mut(2).main_mut().interval = 0.1;
+        fill.add(Shape::rect(Rect::new(0.0, 0.0, 6e7, 6e7), 0.0, 2));
+        for (d, what) in [(dots, "dots or perforation"), (fill, "scan lines")] {
+            let job = build_job_simple(&input(d.clone())).unwrap_err();
+            let BuildError::TooBig(reasons) = &job else { panic!("{what}: {job:?}") };
+            assert!(reasons.len() == 1 && reasons[0].contains(what), "{reasons:?}");
+            assert!(job.to_string().contains(what) && job.to_string().contains("nothing left to burn"), "{job}");
+            let frame = build_frame(&input(d), FrameKind::Rectangle, 10.0, None).unwrap_err();
+            assert_eq!(frame, job, "the frame says the same");
+        }
+        // An ordinarily empty document stays a plain "nothing to burn".
+        assert_eq!(build_job_simple(&input(Document::new())).unwrap_err(), BuildError::NothingToBurn);
     }
 
     #[test]

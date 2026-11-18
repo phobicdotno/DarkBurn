@@ -286,13 +286,18 @@ mod tests {
     fn job_build_errors_are_translated() {
         use crate::job_build::BuildError;
         let en = english();
-        for k in ["cancelled", "nothing_to_burn", "nothing_selected", "no_user_origin", "not_a_number", "picture"] {
+        for k in ["cancelled", "nothing_to_burn", "nothing_selected", "no_user_origin", "not_a_number", "picture", "too_big"] {
             assert!(en.contains_key(&format!("job.error_{k}")), "job.error_{k}");
+        }
+        for k in ["job.warn_too_many_pieces", "job.warn_too_many_rows"] {
+            assert!(en.contains_key(k), "{k}");
         }
         assert_eq!(BuildError::NothingToBurn.to_string(), "there is nothing to burn: no shapes on layers that output");
         set_language("nb");
         let want = "sylinderkorrigering kan ikke bøye bilder: slå den av, eller brenn bildene i en egen jobb";
         assert_eq!(BuildError::PictureNotMapped.to_string(), want);
+        let too_big = BuildError::TooBig(vec!["X.".into()]).to_string();
+        assert_eq!(too_big, "det er ingenting igjen å brenne: X.");
         set_language("en");
     }
 

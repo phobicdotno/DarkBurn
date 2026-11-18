@@ -541,11 +541,8 @@ fn editor_side(ui: &mut Ui, app: &mut DarkBurn, s: &mut Session) {
         let old: Vec<(usize, Option<Mode>)> = s.selected.iter().map(|&l| (l, mode_of(app, l))).collect();
         apply_all(app, s, &before, &c);
         if c.mode != before.mode {
-            let changes: Vec<(usize, Mode, Mode)> = old
-                .into_iter()
-                .filter_map(|(l, from)| Some((l, from?, mode_of(app, l)?)))
-                .filter(|(_, from, to)| from != to)
-                .collect();
+            let changes: Vec<(usize, Mode, Mode)> =
+                old.into_iter().filter_map(|(l, from)| Some((l, from?, mode_of(app, l)?))).filter(|(_, from, to)| from != to).collect();
             record_mode_changes(&mut s.mode_notes, sub, &changes, automatic == Some(c.mode));
             ui.ctx().request_repaint();
         }

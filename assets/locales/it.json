@@ -839,6 +839,7 @@
   "shapes.deform_one_line": "i punti della griglia sono allineati: non è stato deformato nulla",
   "edit.too_deep": "{what}: le forme possono trovarsi al massimo a {max} livelli di gruppo.",
   "edit.not_grouped": "Non raggruppato",
+  "edit.drag_too_far": "Annullato: una forma finirebbe troppo lontano.",
   "edit.not_pasted": "Non incollato",
   "files.left_out_title": "Salvato con forme omesse",
   "files.left_out_note": "{path}: non è stato possibile scrivere {n} forma/e, omesse dal file (annidate troppo in profondità, o con una posizione che non è un numero). Sono ancora nel progetto aperto.",

@@ -99,7 +99,7 @@ pub fn open(app: &mut DarkBurn) -> Result<(), String> {
     let mut d = match TraceDialog::new(app, vec![c.id]) {
         Ok(d) => d,
         Err(e) => {
-            app.editor.drop_checkpoint();
+            app.editor.drop_last_step();
             app.editor.history.put_back_redo(c.redo);
             return Err(e);
         }
@@ -115,7 +115,7 @@ pub fn cancel(app: &mut DarkBurn, d: &mut TraceDialog) {
     if let Some(c) = d.capture.take()
         && c.still_last(app)
     {
-        app.editor.drop_checkpoint();
+        app.editor.drop_last_step();
         app.editor.history.put_back_redo(c.redo);
     }
 }
@@ -130,7 +130,7 @@ pub fn finish(app: &mut DarkBurn, d: &TraceDialog) -> Result<TraceReport, String
                 return Err("nothing was found to trace: try a higher threshold".into());
             }
             let layer = image_ops::trace_layer(&app.editor.doc, args.layer, app.editor.current_layer);
-            app.editor.drop_checkpoint();
+            app.editor.drop_last_step();
             image_ops::add_traced_step(&mut app.editor, "Trace camera picture", paths, layer)
         }
         _ => image_ops::trace(&mut app.editor, &d.ids, &args),
@@ -149,7 +149,7 @@ pub fn again(app: &mut DarkBurn, d: &mut TraceDialog) -> Result<(), String> {
     let pic = fresh_picture(app)?;
     let old = d.capture.take().expect("checked above");
     let redo = if old.still_last(app) {
-        app.editor.drop_checkpoint();
+        app.editor.drop_last_step();
         old.redo
     } else {
         // Something was changed after the picture came: the old picture stays where it is.

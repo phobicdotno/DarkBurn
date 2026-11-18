@@ -8,6 +8,11 @@ use crate::canvas::ViewCmd;
 use crate::shell::DarkBurn;
 use crate::tools::Tool;
 
+/// The note when a drag on the canvas is taken back because it put a shape out of reach.
+pub(crate) fn drag_too_far() -> String {
+    crate::i18n::tr("edit.drag_too_far", "Undone: that would put a shape too far out.")
+}
+
 /// The refusal of an edit that would nest shapes deeper than the editor allows.
 pub(crate) fn too_deep(what: &str) -> String {
     crate::i18n::tr("edit.too_deep", "{what}: shapes may sit at most {max} groups deep.")
@@ -32,12 +37,22 @@ pub fn run(app: &mut DarkBurn, ctx: &egui::Context, id: &str) -> bool {
         "tools.polygon" => app.set_tool(Tool::Polygon),
         // Edit
         "edit.undo" => {
+            // A drag still open is settled first, so the tag read is the step Undo takes.
+            if e.settle() == darkburn_core::editor::GestureEnd::Refused {
+                app.shape_ui.status = Some(drag_too_far());
+            }
+            let e = &mut app.editor;
             let tag = e.history.undo_tag();
             if e.undo() && tag != 0 {
                 crate::library::after_undo(app, tag);
             }
         }
         "edit.redo" => {
+            // A drag still open is settled first, so the tag read is the step Redo takes.
+            if e.settle() == darkburn_core::editor::GestureEnd::Refused {
+                app.shape_ui.status = Some(drag_too_far());
+            }
+            let e = &mut app.editor;
             let tag = e.history.redo_tag();
             if e.redo() && tag != 0 {
                 crate::library::after_redo(app, tag);

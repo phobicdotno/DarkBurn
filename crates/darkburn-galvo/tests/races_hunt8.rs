@@ -142,9 +142,10 @@ fn a_disconnect_that_follows_a_start_at_once_means_the_laser_is_never_enabled() 
     let holder = std::thread::spawn(move || {
         let _held = handle.lock().unwrap();
         held_tx.send(()).unwrap();
-        // released a moment after the test has queued its requests
+        // released a while after the test has queued its requests (a slow runner can pause the
+        // test thread between the go and the disconnect: the margin is for that)
         go_rx.recv().unwrap();
-        std::thread::sleep(Duration::from_millis(80));
+        std::thread::sleep(Duration::from_millis(500));
     });
     held_rx.recv().unwrap();
     std::thread::sleep(Duration::from_millis(80));

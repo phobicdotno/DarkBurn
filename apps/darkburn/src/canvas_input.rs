@@ -261,6 +261,16 @@ fn resize_cursor(kind: DragKind) -> CursorIcon {
     }
 }
 
+/// Settle a drag that began with a checkpoint, with the guards of `Editor::edit`: one that
+/// changed nothing leaves no undo step, one that put a shape out of reach is taken back and says so.
+pub(crate) fn end_drag(app: &mut DarkBurn) {
+    let end = app.editor.end_checkpoint();
+    // A command run during the drag may have settled it already and taken it back.
+    if app.editor.take_refused() || end == darkburn_core::editor::GestureEnd::Refused {
+        app.shape_ui.status = Some(crate::actions::drag_too_far());
+    }
+}
+
 /// Undo a transform drag in progress and forget the gesture.
 fn cancel(app: &mut DarkBurn, st: &mut State) {
     if let Gesture::Transform { .. } = st.gesture {
@@ -355,6 +365,8 @@ fn select_tool(ui: &Ui, app: &mut DarkBurn, st: &mut State, response: &Response,
                 st.gesture = Gesture::None;
                 if unchanged {
                     app.editor.drop_checkpoint();
+                } else {
+                    end_drag(app);
                 }
             }
         }
@@ -823,6 +835,72 @@ mod tests {
         let p = dragged_shape(Tool::Polygon, Point::new(0.0, 0.0), Point::new(0.0, 10.0), m, 0).unwrap();
         assert_eq!(p.nodes().len(), tools::POLYGON_SIDES as usize);
         assert!(dragged_shape(Tool::Select, Point::ZERO, Point::new(1.0, 1.0), m, 0).is_none());
+    }
+
+    /// Bug hunt: drags go through `checkpoint`, not `Editor::edit`. A resize of a sliver with
+    /// the pointer still on the canvas makes a transform far past `MAX_COORD`; ending the drag
+    /// takes it back and says so. A drag that ends where it started leaves no undo step.
+    /// A command run during a far drag settles it (taking it back) and still runs; the user is
+    /// told, even when the drag then ends without moving again (CodeRabbit, editor.rs:314).
+    #[test]
+    fn a_far_drag_settled_by_a_command_is_reported() {
+        let ctx = egui::Context::default();
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let mut id = ShapeId(0);
+        app.editor.edit("Add", |d, sel| {
+            id = d.add(Shape::rect(KRect::new(0.0, 0.0, 10.0, 10.0), 0.0, 0));
+            sel.set([id]);
+            true
+        });
+        let t = app.editor.doc.get(id).unwrap().transform;
+        app.editor.checkpoint("Move");
+        app.editor.doc.get_mut(id).unwrap().transform = Affine::translate((1e13, 0.0)) * t;
+        app.editor.touch();
+        app.run(&ctx, "edit.duplicate");
+        assert_eq!(app.editor.doc.len(), 2, "the duplicate is made");
+        assert_eq!(app.editor.doc.get(id).unwrap().transform, t, "the far drag is taken back");
+        assert!(app.shape_ui.status.is_some(), "and the user is told");
+        app.shape_ui.status = None;
+        end_drag(&mut app);
+        assert!(app.shape_ui.status.is_none(), "told once");
+        // Settled by an edit that does not go through a command: the drag's end says it.
+        app.editor.checkpoint("Move");
+        app.editor.doc.get_mut(id).unwrap().transform = Affine::translate((1e13, 0.0)) * t;
+        app.editor.edit("Nudge", |_, _| true);
+        end_drag(&mut app);
+        assert!(app.shape_ui.status.is_some());
+    }
+
+    #[test]
+    fn drags_get_the_guards_of_an_edit() {
+        let mut app = DarkBurn::new(crate::prefs::Prefs::default());
+        let mut id = ShapeId(0);
+        app.editor.edit("Add", |d, sel| {
+            id = d.add(Shape::rect(KRect::new(100.0, 0.0, 100.000001, 10.0), 0.0, 0));
+            sel.set([id]);
+            true
+        });
+        let steps = app.editor.history.len();
+        let before = app.editor.doc.clone();
+        let bbox = app.editor.doc.bbox_of(&[id]).unwrap();
+        let h = Handle { x: 1, y: 0 };
+        let a = tools::drag_transform(DragKind::Scale(h), bbox, h.on(bbox), Point::new(100_000.0, 5.0), Mods { shift: true, ..Mods::default() });
+        assert!(a.as_coeffs().iter().any(|c| c.abs() > darkburn_core::editor::MAX_COORD), "the drag reaches past the guard");
+        app.editor.checkpoint("Resize");
+        let t = app.editor.doc.get(id).unwrap().transform;
+        app.editor.doc.get_mut(id).unwrap().transform = a * t;
+        end_drag(&mut app);
+        assert_eq!(app.editor.doc, before, "taken back");
+        assert_eq!(app.editor.history.len(), steps);
+        assert!(app.shape_ui.status.is_some(), "and the user is told");
+        // Out and back again: no undo step.
+        app.shape_ui.status = None;
+        app.editor.checkpoint("Move");
+        app.editor.doc.get_mut(id).unwrap().transform = Affine::translate((40.0, 0.0)) * t;
+        app.editor.doc.get_mut(id).unwrap().transform = t;
+        end_drag(&mut app);
+        assert_eq!(app.editor.history.len(), steps);
+        assert!(app.shape_ui.status.is_none());
     }
 
     #[test]

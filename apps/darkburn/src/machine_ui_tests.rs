@@ -974,11 +974,15 @@ fn work_area_warning_reaches_the_start_result_and_the_status_line() {
     wait(&mut a, "finish", |a| a.machine.job_log.iter().any(|l| l.starts_with("Job finished")));
     wait(&mut a, "ready again", |a| state(a) == LaserState::Ready);
 
-    // From the current position with the head unknown: allowed, and said.
+    // From the current position with the head unknown: allowed, and said. Every start path
+    // (keyboard, button, menu, MCP, automation socket) ends in `after_build`; the commands
+    // refresh the head from the simulator, so the unknown head is set up here directly.
     run(&mut a, "job.set_origin", json!({ "start_from": "current_position" })).unwrap();
     a.job.head = None;
+    let job = crate::job_cmds::build_now(&a).unwrap();
+    assert!(job.warnings.contains(&note), "{:?}", job.warnings);
     let finished = a.machine.job_log.iter().filter(|l| l.starts_with("Job finished")).count();
-    let r = run(&mut a, "job.start", json!({})).unwrap();
+    let r = crate::machine_job::after_build(&mut a, job, crate::machine_job::Action::Start { from_op: None }).unwrap();
     assert_eq!(r["ok"], true, "{r}");
     let warnings: Vec<String> = serde_json::from_value(r["warnings"].clone()).unwrap();
     assert!(warnings.contains(&note), "{r}");

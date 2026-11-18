@@ -222,13 +222,7 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let loaded = project::load(&bytes).map_err(|e| e.to_string())?;
-    let clipboard = std::mem::take(&mut app.editor.clipboard);
-    app.notes_open = loaded.doc.show_notes_on_load;
-    app.editor = Editor::with_document(loaded.doc);
-    app.editor.clipboard = clipboard;
-    leave_project(app);
-    app.project_path = Some(path.to_path_buf());
-    crate::settings_wiring::on_open_project(app);
+    take_project(app, loaded.doc, Some(path.to_path_buf()));
     remember_recent(&mut app.prefs, path);
     discard_autosave(app);
     if loaded.newer_version {
@@ -239,6 +233,19 @@ pub fn open_path(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// A loaded project takes the place of the open one, set up as File > Open sets it up: its notes
+/// open when it asks for that, and the open-project rules (the job origin) apply. Saved state,
+/// recent files and the auto-save are left to the caller.
+fn take_project(app: &mut DarkBurn, doc: darkburn_core::Document, path: Option<PathBuf>) {
+    let clipboard = std::mem::take(&mut app.editor.clipboard);
+    app.notes_open = doc.show_notes_on_load;
+    app.editor = Editor::with_document(doc);
+    app.editor.clipboard = clipboard;
+    leave_project(app);
+    app.project_path = path;
+    crate::settings_wiring::on_open_project(app);
 }
 
 /// Save to the project's file, asking for one when it has none. Returns whether it was saved.
@@ -512,12 +519,10 @@ pub fn restore_autosave(app: &mut DarkBurn, path: &Path) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let loaded = project::load(&bytes).map_err(|e| e.to_string())?;
     let original = path.parent().and_then(|d| std::fs::read_to_string(d.join(AUTOSAVE_PATH_FILE)).ok()).map(PathBuf::from);
-    let clipboard = std::mem::take(&mut app.editor.clipboard);
-    app.editor = Editor::with_document(loaded.doc);
-    app.editor.clipboard = clipboard;
-    leave_project(app);
+    // Set up like File > Open, but it stays modified, keeps the project's own file (not the
+    // auto-save's) and is not added to the recent files.
+    take_project(app, loaded.doc, original);
     app.editor.touch();
-    app.project_path = original;
     Ok(())
 }
 
@@ -1262,6 +1267,31 @@ mod tests {
             }
             a.safe_mode = true;
         }
+    }
+
+    #[test]
+    fn a_restored_autosave_is_set_up_like_an_opened_project() {
+        let dir = TempDir::new("restore-open");
+        let settings = dir.0.join("settings");
+        let planner = darkburn_job::PlannerSettings::default();
+        let mut doc = darkburn_core::Document::new();
+        doc.add(Shape::rect(Rect::new(0.0, 0.0, 10.0, 10.0), 0.0, 1));
+        doc.show_notes_on_load = true;
+        crate::job_build::JobProjectSettings { cut_selected: true, anchor: darkburn_job::JobAnchor::Center, ..Default::default() }
+            .store(&mut doc);
+        let mine = dir.0.join("mine.dbrn");
+        write_autosave(&settings, &doc, Some(&mine)).unwrap();
+        let mut a = app(&dir);
+        a.prefs.opts.save_job_origin = false;
+        a.files.project_serial = 7;
+        restore_autosave(&mut a, &settings.join(AUTOSAVE_FILE)).unwrap();
+        assert!(a.notes_open, "notes open as File > Open opens them");
+        let s = crate::job_build::JobProjectSettings::from_doc(&a.editor.doc, &planner);
+        assert!(!s.cut_selected && s.anchor == darkburn_job::JobAnchor::BottomLeft, "open-project rules applied");
+        assert!(a.files.project_serial > 7, "the old project's windows were closed");
+        assert!(a.editor.is_modified(), "a restore is never marked saved");
+        assert_eq!(a.project_path.as_deref(), Some(mine.as_path()), "the project's own file, not the auto-save");
+        assert!(!a.prefs.recent.iter().any(|r| r.contains(AUTOSAVE_FILE)), "the auto-save is not a recent file");
     }
 
     #[test]

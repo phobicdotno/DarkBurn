@@ -106,7 +106,7 @@ impl ShapeInput {
     pub fn outlines_used(&self, settings: &[CutSettings]) -> Vec<BezPath> {
         let (mut whole, mut closed) = (false, false);
         let mut out: Vec<BezPath> = Vec::new();
-        for (i, s) in settings.iter().enumerate().filter(|(_, s)| s.enabled && s.passes > 0) {
+        for (i, s) in settings.iter().enumerate().filter(|(_, s)| s.burns()) {
             if matches!(s.mode, CutMode::Line | CutMode::FillLine) {
                 match self.line_paths.iter().find(|(k, _)| *k == i) {
                     Some((_, p)) => out.push(p.clone()),
@@ -194,6 +194,13 @@ impl ImageInput {
             setting: None,
         }
     }
+
+    /// Whether this picture is burned with `settings` (its layer's sub-layers). An image made for
+    /// one sub-layer burns only when that sub-layer is an Image sub-layer that burns; one with no
+    /// sub-layer of its own is left as it is.
+    pub fn burns(&self, settings: &[CutSettings]) -> bool {
+        self.setting.is_none_or(|i| settings.get(i).is_some_and(|s| s.burns() && s.mode == CutMode::Image))
+    }
 }
 
 /// Layer mode.
@@ -234,6 +241,12 @@ pub struct CutSettings {
 }
 
 impl CutSettings {
+    /// Whether [`generate`](crate::generate) burns this sub-layer at all: switched on with at
+    /// least one pass.
+    pub fn burns(&self) -> bool {
+        self.enabled && self.passes > 0
+    }
+
     pub fn line(speed: f64, power: f64) -> Self {
         Self { mode: CutMode::Line, speed, max_power: power, ..Self::default() }
     }

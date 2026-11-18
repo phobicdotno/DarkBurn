@@ -1,0 +1,1 @@
+- Dots and perforation on a giant outline no longer eat all the memory

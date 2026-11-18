@@ -218,7 +218,7 @@ struct ArmFlag {
     /// Set by a disconnect request and never cleared: from then on nothing arms the laser.
     ended: AtomicBool,
     /// Held by the worker across its look at the arm and the transport write of a laser-on word
-    /// (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
+    /// or a marking list packet (never across a reply wait), and by an arm. A clear takes it only after clearing the flag.
     gate: Mutex<()>,
 }
 
@@ -595,7 +595,7 @@ struct ListRun {
 enum ListState {
     Working,
     Done,
-    /// The list marks and the arm was gone: it was not started.
+    /// The list marks and the arm was gone: nothing more was sent (no packet, no start).
     Refused,
 }
 
@@ -618,14 +618,24 @@ fn execute_list(link: &mut Link, arm: Option<&ArmFlag>, run: &mut ListRun) -> io
     Ok(true)
 }
 
-/// One tick of list sending / waiting. `arm` is given for a list that marks; see
-/// [`execute_list`]. A refused start leaves the list unstarted: the stop, disarm or disconnect
-/// that took the arm has its own command queued, and that ends the job.
+/// One tick of list sending / waiting. `arm` is given for a list that marks: every list packet
+/// and the start go out only while armed (see [`execute_list`]). A refusal sends nothing more:
+/// the stop, disarm or disconnect that took the arm has its own command queued, and that ends
+/// the job.
 fn list_tick(link: &mut Link, arm: Option<&ArmFlag>, packets: &[ListPacket], run: &mut ListRun) -> io::Result<ListState> {
     if run.idx < packets.len() {
         let st = link.single(SingleCmd::GetListStatus)?;
         if st.is_ready() {
-            link.transport.write(packets[run.idx].as_bytes())?;
+            let bytes = packets[run.idx].as_bytes();
+            match arm {
+                None => link.transport.write(bytes)?,
+                // A marking packet goes out only while armed, under the gate, so once a stop,
+                // disarm or disconnect has returned no more marking packets reach the board.
+                Some(a) => match a.while_armed(|| link.transport.write(bytes)) {
+                    None => return Ok(ListState::Refused),
+                    Some(r) => r?,
+                },
+            }
             link.single(SingleCmd::SetEndOfList(0))?;
             run.idx += 1;
             if !run.executing && (run.idx >= 3 || run.idx == packets.len()) && !execute_list(link, arm, run)? {

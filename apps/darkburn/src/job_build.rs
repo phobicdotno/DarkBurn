@@ -1220,8 +1220,7 @@ fn collect(input: &BuildInput, cancel: Option<&AtomicBool>, report: &mut dyn FnM
         let Some(entry) = layers[li].as_mut() else { continue };
         // Every image sub-layer that is on scans the pictures with its own settings
         // (interval, angle, mode), in sub-layer order, as two fill or line sub-layers do.
-        let image_settings: Vec<(usize, &CutSetting)> =
-            l.settings.iter().enumerate().filter(|(_, s)| s.enabled && s.mode == Mode::Image).collect();
+        let image_settings: Vec<(usize, &CutSetting)> = l.settings.iter().enumerate().filter(|(_, s)| s.enabled && s.mode == Mode::Image).collect();
         if image_settings.is_empty() {
             warnings.push(
                 tr("job.warn_not_image_mode", "Layer {layer} holds images but is not in Image mode; they were left out.")

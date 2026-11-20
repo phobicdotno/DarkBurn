@@ -17,6 +17,8 @@
 > **Status: pre-release. DarkBurn has not yet burned a job on a real machine.**
 >
 > The machine drivers have run on the built-in simulators and loopback links only. If you connect a real laser, stay at the machine and keep its own stop button within reach. What is missing is listed under [What is not there yet](#what-is-not-there-yet).
+>
+> Work on the machine drivers (galvo, Ruida, the Gweike controller and the line machines) is on hold: the machines are missing, so every change needs testing on a real one first.
 
 ![DarkBurn main window in the dark theme. The canvas shows a sign that reads WORKSHOP, four key tags, a selected gear and a QR code. The Cuts / Layers panel lists five named layers with mode, speed and power, above the Laser panel.](docs/img/hero.png)
 

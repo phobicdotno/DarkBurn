@@ -879,5 +879,7 @@
   "job.rotary_err_object_size": "a tárgy átmérőjének vagy kerületének nullánál nagyobbnak kell lennie",
   "job.rotary_err_roller": "a görgő átmérőjének nullánál nagyobbnak kell lennie",
   "job.rotary_err_slice": "a sáv méretének nullánál nagyobbnak kell lennie",
-  "job.rotary_err_revolutions": "a fordulatszámnak számnak kell lennie"
+  "job.rotary_err_revolutions": "a fordulatszámnak számnak kell lennie",
+  "laser.door_open": "Az ajtó nyitva van",
+  "laser.door_resume": "Az ajtót kinyitották: a folytatáshoz nyomd meg a Resume gombot"
 }

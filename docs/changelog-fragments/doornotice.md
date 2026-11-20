@@ -1,0 +1,1 @@
+- The Laser panel now says when the machine stopped because the door was opened, and that you press Resume to go on.

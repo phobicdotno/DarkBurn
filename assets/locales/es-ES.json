@@ -879,5 +879,7 @@
   "job.rotary_err_object_size": "el diámetro o la circunferencia del objeto debe ser mayor que cero",
   "job.rotary_err_roller": "el diámetro del rodillo debe ser mayor que cero",
   "job.rotary_err_slice": "el tamaño de la franja debe ser mayor que cero",
-  "job.rotary_err_revolutions": "las revoluciones deben ser un número"
+  "job.rotary_err_revolutions": "las revoluciones deben ser un número",
+  "laser.door_open": "La puerta está abierta",
+  "laser.door_resume": "Se abrió la puerta: pulsa Resume para continuar"
 }

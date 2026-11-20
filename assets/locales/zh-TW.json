@@ -879,5 +879,7 @@
   "job.rotary_err_object_size": "物體直徑或周長必須大於零",
   "job.rotary_err_roller": "滾輪直徑必須大於零",
   "job.rotary_err_slice": "切片尺寸必須大於零",
-  "job.rotary_err_revolutions": "圈數必須是數字"
+  "job.rotary_err_revolutions": "圈數必須是數字",
+  "laser.door_open": "門是開著的",
+  "laser.door_resume": "門被打開過：按 Resume 以接著執行"
 }

@@ -879,5 +879,7 @@
   "job.rotary_err_object_size": "średnica lub obwód obiektu musi być większy od zera",
   "job.rotary_err_roller": "średnica rolki musi być większa od zera",
   "job.rotary_err_slice": "rozmiar pasa musi być większy od zera",
-  "job.rotary_err_revolutions": "liczba obrotów musi być liczbą"
+  "job.rotary_err_revolutions": "liczba obrotów musi być liczbą",
+  "laser.door_open": "Drzwiczki są otwarte",
+  "laser.door_resume": "Drzwiczki zostały otwarte: naciśnij Resume, aby kontynuować"
 }

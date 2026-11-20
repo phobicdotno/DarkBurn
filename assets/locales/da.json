@@ -879,5 +879,7 @@
   "job.rotary_err_object_size": "objektets diameter eller omkreds skal være over nul",
   "job.rotary_err_roller": "rullediameteren skal være over nul",
   "job.rotary_err_slice": "strimmelstørrelsen skal være over nul",
-  "job.rotary_err_revolutions": "omdrejninger skal være et tal"
+  "job.rotary_err_revolutions": "omdrejninger skal være et tal",
+  "laser.door_open": "Døren er åben",
+  "laser.door_resume": "Døren blev åbnet: tryk på Resume for at fortsætte"
 }

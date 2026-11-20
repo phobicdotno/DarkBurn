@@ -879,5 +879,7 @@
   "updates.title": "Check for Updates",
   "updates.unreadable": "The update server's answer could not be read:",
   "updates.up_to_date": "DarkBurn is up to date, version",
-  "updates.you_have": "you have"
+  "updates.you_have": "you have",
+  "laser.door_open": "The door is open",
+  "laser.door_resume": "The door was opened: press Resume to go on"
 }

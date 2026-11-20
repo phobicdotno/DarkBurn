@@ -357,6 +357,8 @@ pub struct Snapshot {
     pub overrides: (u16, u16, u16),
     pub fire_on: bool,
     pub alarm: Option<String>,
+    /// GRBL safety door: `Door:n` sub-state while the controller is in a door hold.
+    pub door: Option<u8>,
     pub grbl_settings: BTreeMap<u16, String>,
     pub bed: Option<(f64, f64)>,
     pub ruida: RuidaCache,
@@ -1276,6 +1278,10 @@ impl GrblAdapter {
         s.overrides = (g.status.overrides.feed, g.status.overrides.rapid, g.status.overrides.power);
         s.fire_on = g.fire_on;
         s.alarm = g.last_alarm.as_ref().filter(|_| g.alarm_locked || g.status.state.is_alarm()).map(|(_, m)| m.clone());
+        s.door = match g.status.state {
+            grbl::MachineState::Door(n) => Some(n),
+            _ => None,
+        };
         s.grbl_settings = g.settings.clone();
         s.detected = g.detected.clone();
         let job = g.job.as_ref().map(|p| self.progress(p));

@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "スライスのサイズは0より大きくしてください",
   "job.rotary_err_revolutions": "回転数は数値にしてください",
   "laser.door_open": "ドアが開いています",
-  "laser.door_resume": "ドアが開けられました。続けるには再開を押してください",
-  "device.fire_max_secs": "最長の照射時間"
+  "laser.door_resume": "ドアが開けられました。続けるには Resume を押してください"
 }

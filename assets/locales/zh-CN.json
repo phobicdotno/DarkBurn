@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "切片尺寸必须大于零",
   "job.rotary_err_revolutions": "圈数必须是数字",
   "laser.door_open": "门是开着的",
-  "laser.door_resume": "门被打开过：按“继续”以接着运行",
-  "device.fire_max_secs": "最长出光时间"
+  "laser.door_resume": "门被打开过：按 Resume 以接着运行"
 }

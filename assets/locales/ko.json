@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "슬라이스 크기는 0보다 커야 합니다",
   "job.rotary_err_revolutions": "회전수는 숫자여야 합니다",
   "laser.door_open": "문이 열려 있습니다",
-  "laser.door_resume": "문이 열렸습니다. 계속하려면 재개를 누르세요",
-  "device.fire_max_secs": "최대 발사 시간"
+  "laser.door_resume": "문이 열렸습니다. 계속하려면 Resume를 누르세요"
 }

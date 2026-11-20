@@ -856,11 +856,6 @@ fn file_list(ui: &mut Ui, app: &mut DarkBurn) {
     });
 }
 
-/// Label of the Fire button time limit in Device Settings.
-pub(crate) fn fire_secs_label() -> String {
-    crate::i18n::tr("device.fire_max_secs", "Longest fire time")
-}
-
 /// What a GRBL door hold (`Door:n`) means, in one short line: `Door:1` is the door open, the
 /// other states mean it was closed again (or is being) and the controller waits for Resume.
 pub(crate) fn door_notice(door: u8) -> String {

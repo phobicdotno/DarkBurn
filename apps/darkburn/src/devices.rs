@@ -374,8 +374,6 @@ pub struct DeviceSettings {
     pub scan: crate::scan_offsets::ScanTuning,
     /// The most the Fire button may use, percent.
     pub fire_max_percent: f64,
-    /// The longest one press of the Fire button may keep the laser on, seconds (1 to 60).
-    pub fire_max_secs: f64,
     pub gcode: DeviceGcodeSettings,
     pub dsp: DspSettings,
     pub additional: AdditionalSettings,
@@ -407,7 +405,6 @@ impl Default for DeviceSettings {
             overwrite_files: false,
             scan: crate::scan_offsets::ScanTuning::default(),
             fire_max_percent: 10.0,
-            fire_max_secs: 10.0,
             gcode: DeviceGcodeSettings::default(),
             dsp: DspSettings::default(),
             additional: AdditionalSettings::default(),
@@ -699,7 +696,6 @@ impl Device {
             s_max: (self.family() == Family::Grbl && !self.is_simulator()).then_some(g.s_max),
             bed: Some(self.bed()),
             max_fire_percent: self.settings.fire_max_percent.clamp(0.0, 100.0),
-            max_fire_secs: if self.settings.fire_max_secs.is_finite() { self.settings.fire_max_secs.clamp(1.0, 60.0) } else { 10.0 },
             overwrite_default: self.settings.overwrite_files.then_some(darkburn_ruida::OverwriteChoice::Overwrite),
             net_timeout_ms: (self.family() == Family::Ruida).then_some(self.settings.dsp.network_timeout_ms),
             gcode: self.kind.is_translated().then(|| std::sync::Arc::new(crate::gcode_machines::to_profile(self))),
@@ -1534,17 +1530,11 @@ mod tests {
         d.settings.gcode.s_max = 255.0;
         d.settings.gcode.baud_rate = 57_600;
         d.settings.fire_max_percent = 3.0;
-        d.settings.fire_max_secs = 25.0;
         let ports = vec![port("COM3", Some(0x1A86), Some(0x7523))];
         let spec = d.connect_spec(&ports).unwrap();
         assert_eq!(spec.link, Link::Serial { port: "COM3".into(), baud: 57_600 });
         assert!(spec.config.synchronous && spec.config.toggle_dtr);
         assert_eq!((spec.config.s_max, spec.config.max_fire_percent, spec.config.bed), (Some(255.0), 3.0, Some((400.0, 400.0))));
-        assert_eq!(spec.config.max_fire_secs, 25.0);
-        d.settings.fire_max_secs = 500.0;
-        assert_eq!(d.connect_spec(&ports).unwrap().config.max_fire_secs, 60.0);
-        d.settings.fire_max_secs = f64::NAN;
-        assert_eq!(d.connect_spec(&ports).unwrap().config.max_fire_secs, 10.0);
         let sim = Device::new(DeviceType::SimulatorGrbl).connect_spec(&[]).unwrap();
         assert!(sim.link.is_simulator() && sim.config.s_max.is_none());
         let mut r = Device::new(DeviceType::Ruida);

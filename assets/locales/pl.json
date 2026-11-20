@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "rozmiar pasa musi być większy od zera",
   "job.rotary_err_revolutions": "liczba obrotów musi być liczbą",
   "laser.door_open": "Drzwiczki są otwarte",
-  "laser.door_resume": "Drzwiczki zostały otwarte: naciśnij Wznów, aby kontynuować",
-  "device.fire_max_secs": "Najdłuższy czas strzału"
+  "laser.door_resume": "Drzwiczki zostały otwarte: naciśnij Resume, aby kontynuować"
 }

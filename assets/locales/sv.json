@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "remsstorleken måste vara över noll",
   "job.rotary_err_revolutions": "varv måste vara ett tal",
   "laser.door_open": "Luckan är öppen",
-  "laser.door_resume": "Luckan har öppnats: tryck på Återuppta för att fortsätta",
-  "device.fire_max_secs": "Längsta eldtid"
+  "laser.door_resume": "Luckan har öppnats: tryck på Resume för att fortsätta"
 }

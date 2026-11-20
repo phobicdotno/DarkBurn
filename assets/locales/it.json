@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "la dimensione della fascia deve essere maggiore di zero",
   "job.rotary_err_revolutions": "i giri devono essere un numero",
   "laser.door_open": "Lo sportello è aperto",
-  "laser.door_resume": "Lo sportello è stato aperto: premi Riprendi per continuare",
-  "device.fire_max_secs": "Durata massima di emissione"
+  "laser.door_resume": "Lo sportello è stato aperto: premi Resume per continuare"
 }

@@ -881,6 +881,5 @@
   "updates.up_to_date": "DarkBurn is up to date, version",
   "updates.you_have": "you have",
   "laser.door_open": "The door is open",
-  "laser.door_resume": "The door was opened: press Resume to go on",
-  "device.fire_max_secs": "Longest fire time"
+  "laser.door_resume": "The door was opened: press Resume to go on"
 }

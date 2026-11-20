@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "la taille de la bande doit être supérieure à zéro",
   "job.rotary_err_revolutions": "les révolutions doivent être un nombre",
   "laser.door_open": "La porte est ouverte",
-  "laser.door_resume": "La porte a été ouverte : appuyez sur Reprendre pour continuer",
-  "device.fire_max_secs": "Durée de tir maximale"
+  "laser.door_resume": "La porte a été ouverte : appuyez sur Resume pour continuer"
 }

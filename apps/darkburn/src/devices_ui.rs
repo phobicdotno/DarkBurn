@@ -501,9 +501,6 @@ fn basic_page(ui: &mut Ui, d: &mut Device, app: &mut DarkBurn) {
     ui_kit::row(ui, "Highest power", |ui| {
         ui_kit::number_field(ui, &mut d.settings.fire_max_percent, 0.1..=100.0, 0.1, " %");
     });
-    ui_kit::row(ui, &crate::laser_panel::fire_secs_label(), |ui| {
-        ui_kit::number_field(ui, &mut d.settings.fire_max_secs, 1.0..=60.0, 1.0, " s");
-    });
     ui_kit::section_heading(ui, "Before every job");
     ui_kit::checkbox(ui, "Ask me to tick a checklist", &mut d.settings.checklist_on);
     if d.settings.checklist_on {

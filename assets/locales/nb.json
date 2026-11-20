@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "stripestørrelsen må være over null",
   "job.rotary_err_revolutions": "omdreininger må være et tall",
   "laser.door_open": "Døra er åpen",
-  "laser.door_resume": "Døra ble åpnet: trykk Fortsett for å gå videre",
-  "device.fire_max_secs": "Lengste fyringstid"
+  "laser.door_resume": "Døra ble åpnet: trykk Resume for å gå videre"
 }

@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "de stripgrootte moet groter dan nul zijn",
   "job.rotary_err_revolutions": "de omwentelingen moeten een getal zijn",
   "laser.door_open": "De deur is open",
-  "laser.door_resume": "De deur is geopend: druk op Hervatten om door te gaan",
-  "device.fire_max_secs": "Langste vuurtijd"
+  "laser.door_resume": "De deur is geopend: druk op Resume om door te gaan"
 }

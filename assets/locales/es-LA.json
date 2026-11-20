@@ -881,6 +881,5 @@
   "job.rotary_err_slice": "el tamaño de la franja debe ser mayor que cero",
   "job.rotary_err_revolutions": "las revoluciones deben ser un número",
   "laser.door_open": "La puerta está abierta",
-  "laser.door_resume": "Se abrió la puerta: pulsa Reanudar para continuar",
-  "device.fire_max_secs": "Tiempo máximo de disparo"
+  "laser.door_resume": "Se abrió la puerta: pulsa Resume para continuar"
 }
